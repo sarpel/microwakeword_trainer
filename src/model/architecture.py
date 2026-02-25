@@ -8,6 +8,8 @@ MixedNet architecture based on microWakeWord:
 """
 
 import ast
+import logging
+
 import tensorflow as tf
 
 # Import from our own streaming module
@@ -17,8 +19,9 @@ from src.model.streaming import (
     StridedDrop,
     StridedKeep,
     ChannelSplit,
-    RingBuffer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -44,11 +47,15 @@ def parse_model_param(text):
         elif isinstance(res, list):
             # Handle nested lists like [[5], [9]]
             if res and isinstance(res[0], list):
-                return [[item for item in lst] if isinstance(lst, list) else lst for lst in res]
+                return [
+                    [item for item in lst] if isinstance(lst, list) else lst
+                    for lst in res
+                ]
             return res
         return [res]
-    except (ValueError, SyntaxError):
-        return []
+    except (ValueError, SyntaxError) as exc:
+        logger.error("parse_model_param: failed to parse %r: %s", text, exc)
+        raise ValueError(f"Cannot parse model parameter {text!r}: {exc}") from exc
 
 
 def spectrogram_slices_dropped(flags):
@@ -68,40 +75,46 @@ def spectrogram_slices_dropped(flags):
     spectrogram_slices_dropped = 0
 
     # Handle both object and dict access patterns
-    if hasattr(flags, 'first_conv_filters'):
+    if hasattr(flags, "first_conv_filters"):
         first_conv_filters = flags.first_conv_filters
     else:
-        first_conv_filters = flags.get('first_conv_filters', 0)
+        first_conv_filters = flags.get("first_conv_filters", 0)
 
-    if hasattr(flags, 'first_conv_kernel_size'):
+    if hasattr(flags, "first_conv_kernel_size"):
         first_conv_kernel_size = flags.first_conv_kernel_size
     else:
-        first_conv_kernel_size = flags.get('first_conv_kernel_size', 5)
+        first_conv_kernel_size = flags.get("first_conv_kernel_size", 5)
 
-    if hasattr(flags, 'repeat_in_block'):
+    if hasattr(flags, "repeat_in_block"):
         repeat_in_block = flags.repeat_in_block
     else:
-        repeat_in_block = parse_model_param(flags.get('repeat_in_block', '1,1,1,1'))
+        repeat_in_block = parse_model_param(flags.get("repeat_in_block", "1,1,1,1"))
 
-    if hasattr(flags, 'mixconv_kernel_sizes'):
+    if hasattr(flags, "mixconv_kernel_sizes"):
         mixconv_kernel_sizes = flags.mixconv_kernel_sizes
     else:
-        mixconv_kernel_sizes = parse_model_param(flags.get('mixconv_kernel_sizes', '[5],[9],[13],[21]'))
+        mixconv_kernel_sizes = parse_model_param(
+            flags.get("mixconv_kernel_sizes", "[5],[9],[13],[21]")
+        )
 
-    if hasattr(flags, 'stride'):
+    if hasattr(flags, "stride"):
         stride = flags.stride
     else:
-        stride = flags.get('stride', 1)
+        stride = flags.get("stride", 1)
 
     if first_conv_filters > 0:
-        spectrogram_slices_dropped += first_conv_kernel_size - 1
+        # Only the first conv contribution is scaled by stride
+        first_conv_contribution = (first_conv_kernel_size - 1) * stride
+        spectrogram_slices_dropped += first_conv_contribution
 
+    # Block contributions are NOT scaled by stride (causal padding per-block)
+    block_contributions = 0
     for repeat, ksize in zip(repeat_in_block, mixconv_kernel_sizes):
         # ksize can be a list like [5] or [9, 11]
         max_ksize = max(ksize) if isinstance(ksize, list) else ksize
-        spectrogram_slices_dropped += repeat * (max_ksize - 1)
+        block_contributions += repeat * (max_ksize - 1)
 
-    spectrogram_slices_dropped *= stride
+    spectrogram_slices_dropped += block_contributions
     return spectrogram_slices_dropped
 
 
@@ -138,14 +151,12 @@ class MixConvBlock(tf.keras.layers.Layer):
     """
 
     def __init__(
-        self,
-        kernel_sizes,
-        filters=None,
-        mode=Modes.NON_STREAM_INFERENCE,
-        **kwargs
+        self, kernel_sizes, filters=None, mode=Modes.NON_STREAM_INFERENCE, **kwargs
     ):
         super().__init__(**kwargs)
-        self.kernel_sizes = kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
+        self.kernel_sizes = (
+            kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
+        )
         self.filters = filters
         self.mode = mode
         # Ring buffer length is max kernel size - 1
@@ -160,11 +171,9 @@ class MixConvBlock(tf.keras.layers.Layer):
                 strides=1,
                 padding="same",
                 use_bias=False,
-                name=f"{self.name}_pointwise"
+                name=f"{self.name}_pointwise",
             )
-            self.bn = tf.keras.layers.BatchNormalization(
-                name=f"{self.name}_bn"
-            )
+            self.bn = tf.keras.layers.BatchNormalization(name=f"{self.name}_bn")
         super().build(input_shape)
 
     def call(self, inputs, training=None):
@@ -178,14 +187,18 @@ class MixConvBlock(tf.keras.layers.Layer):
             Output tensor after MixConv
         """
         net = inputs
-        
+
         # Add causal padding to handle small time dimensions
         # This is needed because valid padding reduces time dimension
         if self.mode == Modes.NON_STREAM_INFERENCE or self.mode == Modes.TRAINING:
-            max_ksize = max(self.kernel_sizes) if isinstance(self.kernel_sizes, list) else self.kernel_sizes
+            max_ksize = (
+                max(self.kernel_sizes)
+                if isinstance(self.kernel_sizes, list)
+                else self.kernel_sizes
+            )
             pad_amount = max_ksize - 1
             if pad_amount > 0:
-                net = tf.pad(net, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], 'constant')
+                net = tf.pad(net, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
 
         # Single kernel size - simple depthwise conv
         if len(self.kernel_sizes) == 1:
@@ -193,7 +206,7 @@ class MixConvBlock(tf.keras.layers.Layer):
                 (self.kernel_sizes[0], 1),
                 strides=1,
                 padding="same",
-                name=f"{self.name}_dw"
+                name=f"{self.name}_dw",
             )(net)
         else:
             # Multiple kernel sizes - split channels and apply different convs
@@ -211,20 +224,21 @@ class MixConvBlock(tf.keras.layers.Layer):
 
                 # Depthwise conv with this kernel size
                 x = tf.keras.layers.DepthwiseConv2D(
-                    (ks, 1),
-                    strides=1,
-                    padding="same",
-                    name=f"{self.name}_dw_{i}"
+                    (ks, 1), strides=1, padding="same", name=f"{self.name}_dw_{i}"
                 )(x)
                 x_outputs.append(x)
 
             # Align output time dimensions by dropping extra samples
-            min_time = min(out.shape[1] for out in x_outputs if out.shape[1] is not None)
+            min_time = min(
+                out.shape[1] for out in x_outputs if out.shape[1] is not None
+            )
             for i in range(len(x_outputs)):
-                if x_outputs[i].shape[1] is not None and x_outputs[i].shape[1] > min_time:
+                if (
+                    x_outputs[i].shape[1] is not None
+                    and x_outputs[i].shape[1] > min_time
+                ):
                     x_outputs[i] = StridedDrop(
-                        x_outputs[i].shape[1] - min_time,
-                        mode=self.mode
+                        x_outputs[i].shape[1] - min_time, mode=self.mode
                     )(x_outputs[i])
 
             # Concatenate along channel dimension
@@ -239,11 +253,13 @@ class MixConvBlock(tf.keras.layers.Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update({
-            "kernel_sizes": self.kernel_sizes,
-            "filters": self.filters,
-            "mode": self.mode,
-        })
+        config.update(
+            {
+                "kernel_sizes": self.kernel_sizes,
+                "filters": self.filters,
+                "mode": self.mode,
+            }
+        )
         return config
 
 
@@ -270,11 +286,13 @@ class ResidualBlock(tf.keras.layers.Layer):
         repeat=1,
         use_residual=False,
         mode=Modes.NON_STREAM_INFERENCE,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(**kwargs)
         self.filters = filters
-        self.kernel_sizes = kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
+        self.kernel_sizes = (
+            kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
+        )
         self.repeat = repeat
         self.use_residual = use_residual
         self.mode = mode
@@ -289,12 +307,10 @@ class ResidualBlock(tf.keras.layers.Layer):
                     kernel_sizes=self.kernel_sizes,
                     filters=self.filters,
                     mode=self.mode,
-                    name=f"{self.name}_mixconv_{i}"
+                    name=f"{self.name}_mixconv_{i}",
                 )
             )
-            self.activations.append(
-                tf.keras.layers.ReLU(name=f"{self.name}_relu_{i}")
-            )
+            self.activations.append(tf.keras.layers.ReLU(name=f"{self.name}_relu_{i}"))
 
         # Residual projection
         if self.use_residual:
@@ -304,7 +320,7 @@ class ResidualBlock(tf.keras.layers.Layer):
                 strides=1,
                 padding="same",
                 use_bias=False,
-                name=f"{self.name}_residual_proj"
+                name=f"{self.name}_residual_proj",
             )
             self.residual_bn = tf.keras.layers.BatchNormalization(
                 name=f"{self.name}_residual_bn"
@@ -316,34 +332,47 @@ class ResidualBlock(tf.keras.layers.Layer):
         """Forward pass with residual connection."""
         net = inputs
 
-        residual = None
         if self.use_residual:
-            # Store residual
+            # Compute residual once before the mix-conv loop
             residual = self.residual_proj(inputs)
             residual = self.residual_bn(residual)
+        else:
+            residual = None
 
         for mixconv, activation in zip(self.mixconvs, self.activations):
             net = mixconv(net, training=training)
             net = activation(net)
 
-            if self.use_residual and residual is not None:
-                # Align time dimensions
-                if residual.shape[1] != net.shape[1]:
-                    diff = residual.shape[1] - net.shape[1]
-                    residual = StridedDrop(diff, mode=self.mode)(residual)
-                net = net + residual
+        # Apply residual addition once after all mix-convs
+        if self.use_residual:
+            # Align time dimensions if needed
+            if (
+                residual.shape[1] is not None
+                and net.shape[1] is not None
+                and residual.shape[1] != net.shape[1]
+            ):
+                diff = residual.shape[1] - net.shape[1]
+                if diff < 0:
+                    raise ValueError(
+                        "Residual has fewer time steps than net before StridedDrop "
+                        f"(diff={diff}, residual={residual.shape[1]}, net={net.shape[1]})."
+                    )
+                residual = StridedDrop(diff, mode=self.mode)(residual)
+            net = net + residual
 
         return net
 
     def get_config(self):
         config = super().get_config()
-        config.update({
-            "filters": self.filters,
-            "kernel_sizes": self.kernel_sizes,
-            "repeat": self.repeat,
-            "use_residual": self.use_residual,
-            "mode": self.mode,
-        })
+        config.update(
+            {
+                "filters": self.filters,
+                "kernel_sizes": self.kernel_sizes,
+                "repeat": self.repeat,
+                "use_residual": self.use_residual,
+                "mode": self.mode,
+            }
+        )
         return config
 
 
@@ -384,9 +413,12 @@ class MixedNet(tf.keras.Model):
         dropout_rate=0.0,
         l2_regularization=0.0,
         mode=Modes.NON_STREAM_INFERENCE,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(**kwargs)
+
+        # Store the provided input shape for get_config serialization
+        self._input_shape_arg = input_shape
 
         # Default configurations
         self.first_conv_filters = first_conv_filters
@@ -426,8 +458,7 @@ class MixedNet(tf.keras.Model):
 
         # Input specification - accept 3D input [batch, time, features]
         self.input_spec = tf.keras.layers.InputSpec(
-            shape=(None, *input_shape),  # Allow any batch size
-            dtype=tf.float32
+            shape=(None, *input_shape), dtype=tf.float32  # Allow any batch size
         )
 
     def build(self, input_shape):
@@ -444,31 +475,37 @@ class MixedNet(tf.keras.Model):
                     strides=(self.stride, 1),
                     padding="valid",
                     use_bias=False,
-                    kernel_regularizer=tf.keras.regularizers.l2(self.l2_regularization) if self.l2_regularization else None,
-                    name="initial_conv"
+                    kernel_regularizer=(
+                        tf.keras.regularizers.l2(self.l2_regularization)
+                        if self.l2_regularization
+                        else None
+                    ),
+                    name="initial_conv",
                 ),
                 use_one_step=False,
                 pad_time_dim=None,
                 pad_freq_dim="valid",
-                name="initial_stream"
+                name="initial_stream",
             )
             self.initial_activation = tf.keras.layers.ReLU(name="initial_relu")
 
         # MixConv blocks
         self.blocks = []
-        for i, (filters, repeat, ksize, res) in enumerate(zip(
-            self.pointwise_filters,
-            self.repeat_in_block,
-            self.mixconv_kernel_sizes,
-            self.residual_connections,
-        )):
+        for i, (filters, repeat, ksize, res) in enumerate(
+            zip(
+                self.pointwise_filters,
+                self.repeat_in_block,
+                self.mixconv_kernel_sizes,
+                self.residual_connections,
+            )
+        ):
             block = ResidualBlock(
                 filters=filters,
                 kernel_sizes=ksize,
                 repeat=repeat,
                 use_residual=bool(res),
                 mode=self.mode,
-                name=f"block_{i}"
+                name=f"block_{i}",
             )
             self.blocks.append(block)
 
@@ -477,7 +514,7 @@ class MixedNet(tf.keras.Model):
             cell=tf.keras.layers.Identity(),
             ring_buffer_size_in_time_dim=None,
             use_one_step=False,
-            name="temporal_stream"
+            name="temporal_stream",
         )
 
         # Global pooling (average or flatten)
@@ -490,7 +527,9 @@ class MixedNet(tf.keras.Model):
             self.dropout = None
 
         # Output layer
-        self.output_dense = tf.keras.layers.Dense(1, activation="sigmoid", name="output")
+        self.output_dense = tf.keras.layers.Dense(
+            1, activation="sigmoid", name="output"
+        )
 
         super().build(input_shape)
 
@@ -550,19 +589,21 @@ class MixedNet(tf.keras.Model):
 
     def get_config(self):
         config = super().get_config()
-        config.update({
-            "input_shape": (98, 40),
-            "first_conv_filters": self.first_conv_filters,
-            "first_conv_kernel_size": self.first_conv_kernel_size,
-            "stride": self.stride,
-            "pointwise_filters": self.pointwise_filters,
-            "mixconv_kernel_sizes": self.mixconv_kernel_sizes,
-            "repeat_in_block": self.repeat_in_block,
-            "residual_connections": self.residual_connections,
-            "dropout_rate": self.dropout_rate,
-            "l2_regularization": self.l2_regularization,
-            "mode": self.mode,
-        })
+        config.update(
+            {
+                "input_shape": self._input_shape_arg,
+                "first_conv_filters": self.first_conv_filters,
+                "first_conv_kernel_size": self.first_conv_kernel_size,
+                "stride": self.stride,
+                "pointwise_filters": self.pointwise_filters,
+                "mixconv_kernel_sizes": self.mixconv_kernel_sizes,
+                "repeat_in_block": self.repeat_in_block,
+                "residual_connections": self.residual_connections,
+                "dropout_rate": self.dropout_rate,
+                "l2_regularization": self.l2_regularization,
+                "mode": self.mode,
+            }
+        )
         return config
 
 
@@ -584,7 +625,7 @@ def build_model(
     dropout_rate=0.0,
     l2_regularization=0.0,
     mode="non_stream",
-    **kwargs
+    **kwargs,
 ):
     """Build MixedNet model with specified parameters.
 
@@ -612,6 +653,12 @@ def build_model(
         "stream_internal": Modes.STREAM_INTERNAL_STATE_INFERENCE,
         "stream_external": Modes.STREAM_EXTERNAL_STATE_INFERENCE,
     }
+    if mode not in mode_map:
+        logger.warning(
+            f"build_model: unknown mode %r, defaulting to 'non_stream'. "
+            f"Valid modes are: {list(mode_map.keys())}",
+            mode,
+        )
     mode_enum = mode_map.get(mode, Modes.NON_STREAM_INFERENCE)
 
     # Parse list parameters

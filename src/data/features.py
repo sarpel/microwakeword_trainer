@@ -6,10 +6,11 @@ Provides:
 - FeatureConfig: Configuration for feature extraction
 """
 
+import functools
 import logging
 import random
-from dataclasses import dataclass, field
-from typing import Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -47,24 +48,17 @@ class FeatureConfig:
 
     def __post_init__(self):
         """Validate configuration after initialization."""
-        # Validate sample rate
+        # Warn on non-standard sample rate (informational only)
         if self.sample_rate != 16000:
             logger.warning(
                 f"Non-standard sample rate: {self.sample_rate} Hz. "
                 "Features are optimized for 16000 Hz."
             )
 
-        # Validate window parameters
-        if self.window_size_ms <= 0:
-            raise ValueError("window_size_ms must be positive")
-        if self.window_step_ms <= 0:
-            raise ValueError("window_step_ms must be positive")
-        if self.window_step_ms > self.window_size_ms:
-            raise ValueError("window_step_ms must be <= window_size_ms")
-
-        # Validate mel bins
-        if self.mel_bins < 1:
-            raise ValueError("mel_bins must be >= 1")
+        # Delegate all validation to validate() - single source of truth
+        issues = self.validate()
+        if issues:
+            raise ValueError(f"FeatureConfig validation failed: {'; '.join(issues)}")
 
         # Calculate derived values
         self.window_size_samples = int(self.sample_rate * self.window_size_ms / 1000)
@@ -127,8 +121,8 @@ class MicroFrontend:
     spectrograms using the MicroFrontend algorithm.
 
     Note:
-        Requires pymicro-features to be installed. Falls back to
-        scipy-based implementation if not available.
+        Requires pymicro-features to be installed. GPU training pipeline
+        requires this dependency - no CPU fallback is provided.
     """
 
     def __init__(self, config: Optional[FeatureConfig] = None):
@@ -138,24 +132,23 @@ class MicroFrontend:
             config: Feature configuration (uses defaults if not provided)
         """
         self.config = config or FeatureConfig()
-        self._use_pymicro = self._check_pymicro_features()
+        self._check_pymicro_features()
 
-    def _check_pymicro_features(self) -> bool:
+    def _check_pymicro_features(self) -> None:
         """Check if pymicro-features is available.
 
-        Returns:
-            True if pymicro-features is available
+        Raises:
+            RuntimeError: If pymicro-features is not installed.
         """
         try:
             import pymicro_features
 
             logger.info("Using pymicro-features for feature extraction")
-            return True
         except ImportError:
-            logger.warning(
-                "pymicro-features not available, falling back to scipy implementation"
+            raise RuntimeError(
+                "pymicro-features is required for GPU training pipeline. "
+                "Install: pip install pymicro-features"
             )
-            return False
 
     def compute_mel_spectrogram(self, audio: np.ndarray) -> np.ndarray:
         """Compute mel spectrogram from audio.
@@ -166,10 +159,7 @@ class MicroFrontend:
         Returns:
             Mel spectrogram of shape (num_frames, mel_bins)
         """
-        if self._use_pymicro:
-            return self._compute_mel_spectrogram_pymicro(audio)
-        else:
-            return self._compute_mel_spectrogram_scipy(audio)
+        return self._compute_mel_spectrogram_pymicro(audio)
 
     def _compute_mel_spectrogram_pymicro(self, audio: np.ndarray) -> np.ndarray:
         """Compute mel spectrogram using pymicro-features.
@@ -188,144 +178,17 @@ class MicroFrontend:
         # pymicro-features expects int16 input
         audio_int16 = (audio * 32767).astype(np.int16)
 
-        # Get mel spectrogram
+        # Get mel spectrogram - use mel_bins to match downstream expectations
         mel_spec = pymicro_features.mel_feature(
             audio_int16,
             self.config.sample_rate,
             self.config.window_size_samples,
             self.config.window_step_samples,
-            self.config.num_coeffs,
-        )
-
-        # Shape should be (frames, coeffs)
-        return mel_spec.astype(np.float32)
-
-    def _compute_mel_spectrogram_scipy(self, audio: np.ndarray) -> np.ndarray:
-        """Compute mel spectrogram using scipy (fallback).
-
-        Args:
-            audio: Audio samples
-
-        Returns:
-            Mel spectrogram
-        """
-        from scipy import signal
-        from scipy.signal import windows
-
-        # Ensure correct dtype and range
-        audio = audio.astype(np.float32)
-
-        # Create Hann window
-        window = windows.hann(self.config.window_size_samples)
-
-        # Compute spectrogram using STFT
-        frequencies, times, spec = signal.spectrogram(
-            audio,
-            fs=self.config.sample_rate,
-            window=window,
-            nperseg=self.config.window_size_samples,
-            noverlap=self.config.window_size_samples - self.config.window_step_samples,
-            mode="psd",
-        )
-
-        # Convert to mel scale
-        mel_spec = self._freq_to_mel(frequencies, spec)
-
-        # Trim to desired number of bins
-        if mel_spec.shape[0] > self.config.mel_bins:
-            mel_spec = mel_spec[: self.config.mel_bins, :]
-        elif mel_spec.shape[0] < self.config.mel_bins:
-            # Pad if necessary
-            padding = np.zeros(
-                (self.config.mel_bins - mel_spec.shape[0], mel_spec.shape[1])
-            )
-            mel_spec = np.vstack([mel_spec, padding])
-
-        return mel_spec.T  # Transpose to (frames, bins)
-
-    def _freq_to_mel(self, frequencies: np.ndarray, spec: np.ndarray) -> np.ndarray:
-        """Convert frequency spectrogram to mel scale.
-
-        Args:
-            frequencies: Frequency bins
-            spec: Power spectrogram
-
-        Returns:
-            Mel-scaled spectrogram
-        """
-        # Create mel filterbank
-        num_bins = len(frequencies)
-        mel_filters = self._create_mel_filterbank(
             self.config.mel_bins,
-            num_bins,
-            self.config.sample_rate,
         )
 
-        # Apply mel filterbank
-        mel_spec = np.dot(mel_filters, spec)
-
-        # Log scale (with small offset to avoid log(0))
-        mel_spec = np.log(mel_spec + 1e-10)
-
-        return mel_spec
-
-    def _create_mel_filterbank(
-        self, num_filters: int, num_bins: int, sample_rate: int
-    ) -> np.ndarray:
-        """Create mel filterbank matrix.
-
-        Args:
-            num_filters: Number of mel filters
-            num_bins: Number of frequency bins
-            sample_rate: Sample rate
-
-        Returns:
-            Mel filterbank matrix of shape (num_filters, num_bins)
-        """
-
-        # Convert frequencies to mel scale
-        def hz_to_mel(hz):
-            return 2595 * np.log10(1 + hz / 700)
-
-        def mel_to_hz(mel):
-            return 700 * (10 ** (mel / 2595) - 1)
-
-        # Calculate mel frequency points
-        low_mel = hz_to_mel(self.config.low_freq)
-        high_mel = hz_to_mel(min(self.config.high_freq, sample_rate / 2))
-        mel_points = np.linspace(low_mel, high_mel, num_filters + 2)
-
-        # Convert back to Hz
-        hz_points = mel_to_hz(mel_points)
-
-        # Convert to frequency bin indices
-        bin_points = np.floor((num_bins + 1) * hz_points / (sample_rate / 2)).astype(
-            int
-        )
-
-        # Clip to valid range
-        bin_points = np.clip(bin_points, 0, num_bins)
-
-        # Create filterbank
-        filterbank = np.zeros((num_filters, num_bins))
-        for i in range(1, num_filters + 1):
-            left = int(bin_points[i - 1])
-            center = int(bin_points[i])
-            right = int(bin_points[i + 1])
-
-            # Ensure valid ranges
-            left = max(0, min(left, num_bins - 1))
-            center = max(0, min(center, num_bins - 1))
-            right = max(0, min(right, num_bins))
-
-            for j in range(left, center):
-                if j < num_bins and center > left:
-                    filterbank[i - 1, j] = (j - left) / (center - left)
-            for j in range(center, right):
-                if j < num_bins and right > center:
-                    filterbank[i - 1, j] = (right - j) / (right - center)
-
-        return filterbank
+        # Shape should be (frames, mel_bins)
+        return mel_spec.astype(np.float32)
 
     def extract(self, audio: np.ndarray) -> np.ndarray:
         """Extract features from audio.
@@ -356,30 +219,14 @@ class SpectrogramGeneration:
     def __init__(
         self,
         config: Optional[FeatureConfig] = None,
-        backend: str = "auto",
     ):
         """Initialize spectrogram generator.
 
         Args:
             config: Feature configuration
-            backend: Backend to use ('auto', 'pymicro', 'scipy')
         """
         self.config = config or FeatureConfig()
-        self._backend = backend
-        self._generator: Optional[MicroFrontend] = None
-
-        if backend == "auto":
-            self._frontend = MicroFrontend(self.config)
-        elif backend == "pymicro":
-            self._frontend = MicroFrontend(self.config)
-            if not self._frontend._use_pymicro:
-                raise RuntimeError("pymicro-features not available")
-        elif backend == "scipy":
-            # Force scipy implementation
-            self._frontend = MicroFrontend(self.config)
-            self._frontend._use_pymicro = False
-        else:
-            raise ValueError(f"Unknown backend: {backend}")
+        self._frontend = MicroFrontend(self.config)
 
     @property
     def frame_size(self) -> int:
@@ -496,11 +343,17 @@ class SpectrogramGeneration:
             Batch of spectrograms, shape (batch, frames, mel_bins)
         """
         batch_size = audio_batch.shape[0]
+        if batch_size == 0:
+            return np.zeros((0, 0, self.config.mel_bins), dtype=np.float32)
+
         results = []
 
         for i in range(batch_size):
             spec = self.generate(audio_batch[i])
             results.append(spec)
+
+        if not results:
+            return np.zeros((0, 0, self.config.mel_bins), dtype=np.float32)
 
         # Pad to same length if needed
         max_frames = max(spec.shape[0] for spec in results)
@@ -529,6 +382,35 @@ class SpectrogramGeneration:
 # =============================================================================
 
 
+@functools.lru_cache(maxsize=8)
+def _get_cached_frontend(
+    sample_rate: int,
+    window_size_ms: int,
+    window_step_ms: int,
+    mel_bins: int,
+    num_coeffs: int,
+    fft_size: int,
+    low_freq: int,
+    high_freq: int,
+) -> "MicroFrontend":
+    """Return a cached MicroFrontend instance for the given config parameters.
+
+    Thread-safe because Python's GIL protects lru_cache updates, and
+    MicroFrontend.compute_mel_spectrogram holds no mutable state.
+    """
+    config = FeatureConfig(
+        sample_rate=sample_rate,
+        window_size_ms=window_size_ms,
+        window_step_ms=window_step_ms,
+        mel_bins=mel_bins,
+        num_coeffs=num_coeffs,
+        fft_size=fft_size,
+        low_freq=low_freq,
+        high_freq=high_freq,
+    )
+    return MicroFrontend(config)
+
+
 def extract_features(
     audio: np.ndarray,
     sample_rate: int = 16000,
@@ -538,7 +420,9 @@ def extract_features(
 ) -> np.ndarray:
     """Extract acoustic features from audio.
 
-    Convenience function for feature extraction.
+    Convenience function for feature extraction.  Reuses a cached
+    MicroFrontend instance so repeated calls with the same parameters
+    do not incur construction overhead.
 
     Args:
         audio: Audio samples as float32 array
@@ -550,14 +434,23 @@ def extract_features(
     Returns:
         Feature array of shape (num_frames, mel_bins)
     """
+    # Build a temporary config to derive default values for the un-exposed params
     config = FeatureConfig(
         sample_rate=sample_rate,
         window_size_ms=window_size_ms,
         window_step_ms=window_step_ms,
         mel_bins=mel_bins,
     )
-
-    frontend = MicroFrontend(config)
+    frontend = _get_cached_frontend(
+        config.sample_rate,
+        config.window_size_ms,
+        config.window_step_samples,
+        config.mel_bins,
+        config.num_coeffs,
+        config.fft_size,
+        config.low_freq,
+        config.high_freq,
+    )
     return frontend.extract(audio)
 
 

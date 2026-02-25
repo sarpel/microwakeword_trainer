@@ -1,8 +1,6 @@
 """Hard example mining module for training improved wake word detection."""
 
-import json
 import os
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -174,40 +172,61 @@ class HardExampleMiner:
             epoch: Current training epoch
 
         Returns:
-            Mining result dictionary
+            Mining result dictionary with keys: epoch, num_hard_negatives,
+            indices (global dataset indices), avg_prediction.
         """
-        all_hard_indices = []
+        all_hard_global_indices = []
         all_predictions = []
         all_labels = []
+        all_features = []
 
-        # Collect predictions across dataset
+        # Collect predictions across dataset, tracking global index offset
+        global_offset = 0
         for features, labels, _ in data_generator:
             predictions = model.predict(features, verbose=0)
+            all_features.append(features)
             all_predictions.append(predictions)
             all_labels.append(labels)
 
-            # Get hard indices for this batch
-            hard_indices = self.get_hard_samples(features, labels, predictions)
-            all_hard_indices.extend(hard_indices.tolist())
+            # Get hard indices local to this batch, then convert to global
+            local_hard_indices = self.get_hard_samples(features, labels, predictions)
+            global_hard_indices = local_hard_indices + global_offset
+            all_hard_global_indices.extend(global_hard_indices.tolist())
+
+            global_offset += len(features)
 
         # Combine all predictions
+        all_features = np.concatenate(all_features)
         all_predictions = np.concatenate(all_predictions)
         all_labels = np.concatenate(all_labels)
 
-        # Deduplicate indices
-        unique_indices = list(set(all_hard_indices))
+        # Deduplicate indices while preserving original (hardness-ranked) order
+        unique_indices = list(dict.fromkeys(all_hard_global_indices))
+        selected_indices = unique_indices[: self.max_samples]
 
         # Store mining result
         mining_result = {
             "epoch": epoch,
             "num_hard_negatives": len(unique_indices),
-            "indices": unique_indices[: self.max_samples],
-            "avg_prediction": float(np.mean(all_predictions[unique_indices]))
-            if unique_indices
-            else 0.0,
+            "indices": selected_indices,
+            "avg_prediction": (
+                float(np.mean(all_predictions[unique_indices]))
+                if unique_indices
+                else 0.0
+            ),
         }
 
         self.mining_history.append(mining_result)
+        hard_negative_records = [
+            {
+                "global_index": int(idx),
+                "feature": all_features[idx],
+                "label": int(all_labels[idx]),
+                "prediction": float(all_predictions[idx]),
+            }
+            for idx in selected_indices
+        ]
+        self.hard_negatives.extend(hard_negative_records)
 
         return mining_result
 
@@ -217,7 +236,7 @@ class HardExampleMiner:
         labels: np.ndarray,
         predictions: np.ndarray,
         filepath: Optional[str] = None,
-    ) -> str:
+    ) -> Optional[str]:
         """Save hard negatives to disk for later use.
 
         Args:
@@ -227,24 +246,26 @@ class HardExampleMiner:
             filepath: Optional custom filepath
 
         Returns:
-            Path to saved file
+            Path to saved file, or None if no hard samples were found.
         """
+        # Get hard sample indices
+        hard_indices = self.get_hard_samples(features, labels, predictions)
+
+        if len(hard_indices) == 0:
+            return None
+
         if filepath is None:
             filepath = os.path.join(
                 self.output_dir, f"hard_negatives_step_{len(self.mining_history)}.npz"
             )
 
-        # Get hard sample indices
-        hard_indices = self.get_hard_samples(features, labels, predictions)
-
-        if len(hard_indices) > 0:
-            np.savez(
-                filepath,
-                features=features[hard_indices],
-                labels=labels[hard_indices],
-                predictions=predictions[hard_indices],
-                indices=hard_indices,
-            )
+        np.savez(
+            filepath,
+            features=features[hard_indices],
+            labels=labels[hard_indices],
+            predictions=predictions[hard_indices],
+            indices=hard_indices,
+        )
 
         return filepath
 
@@ -263,7 +284,7 @@ class HardExampleMiner:
         if not os.path.exists(filepath):
             return None
 
-        data = np.load(filepath, allow_pickle=True)
+        data = np.load(filepath)
         return {
             "features": data["features"],
             "labels": data["labels"],

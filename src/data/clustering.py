@@ -6,8 +6,9 @@ Provides:
 - Leakage audit for train/test separation
 """
 
-import os
-from typing import Dict, List, Optional, Tuple
+import logging
+from collections import deque
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -22,20 +23,32 @@ except ImportError:
 
 try:
     import torch
-    from transformers import WavLMForWav2VecCTC, WavLMProcessor
+    from transformers import WavLMModel, WavLMProcessor
 
     HAS_TRANSFORMERS = True
 except ImportError:
     torch = None  # type: ignore
-    WavLMForWav2VecCTC = None  # type: ignore
+    WavLMModel = None  # type: ignore
     WavLMProcessor = None  # type: ignore
     HAS_TRANSFORMERS = False
+
+try:
+    import librosa
+
+    HAS_LIBROSA = True
+except ImportError:
+    librosa = None  # type: ignore
+    HAS_LIBROSA = False
+
+
+logger = logging.getLogger(__name__)
+MAX_DENSE_SIMILARITY_BYTES = 1_000_000_000  # ~1GB safety limit
 
 
 def extract_wavlm_embeddings(
     audio_paths: List[str],
     model_name: str = "microsoft/wavlm-base-plus",
-    device: str = "cuda",
+    device: Optional[str] = None,
     batch_size: int = 8,
 ) -> np.ndarray:
     """Extract speaker embeddings using WavLM.
@@ -43,7 +56,7 @@ def extract_wavlm_embeddings(
     Args:
         audio_paths: List of paths to audio files
         model_name: WavLM model name
-        device: Device to run model on ("cuda" or "cpu")
+        device: Device to run model on ("cuda" or "cpu"). If None, auto-detect.
         batch_size: Batch size for processing
 
     Returns:
@@ -54,10 +67,18 @@ def extract_wavlm_embeddings(
             "transformers and sklearn are required for speaker clustering. "
             "Install: pip install transformers torch scikit-learn"
         )
+    if not HAS_LIBROSA:
+        raise ImportError(
+            "librosa is required to load audio for speaker clustering. "
+            "Install: pip install librosa"
+        )
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Load model and processor
     processor = WavLMProcessor.from_pretrained(model_name)
-    model = WavLMForWav2VecCTC.from_pretrained(model_name)
+    model = WavLMModel.from_pretrained(model_name)
     model = model.to(device)
     model.eval()
 
@@ -69,8 +90,6 @@ def extract_wavlm_embeddings(
 
         for audio_path in batch_paths:
             # Load audio
-            import librosa
-
             audio, sr = librosa.load(audio_path, sr=16000)
 
             # Process audio
@@ -80,8 +99,10 @@ def extract_wavlm_embeddings(
             # Extract embeddings
             with torch.no_grad():
                 outputs = model(**inputs)
-                # Use mean pooling of last hidden state
-                embedding = outputs.logits.mean(dim=1).squeeze().cpu().numpy()
+                # Mean-pool temporal hidden states to obtain speaker embedding
+                embedding = (
+                    outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy()
+                )
                 batch_embeddings.append(embedding)
 
         embeddings.extend(batch_embeddings)
@@ -147,8 +168,20 @@ def _similarity_clustering(
     labels = np.full(n_samples, -1, dtype=int)
     current_label = 0
 
-    # Compute similarity matrix
-    similarity = cosine_similarity(features)
+    n = int(features.shape[0])
+    estimated_bytes = n * n * 8
+    use_dense_similarity = estimated_bytes <= MAX_DENSE_SIMILARITY_BYTES
+
+    if not use_dense_similarity:
+        logger.warning(
+            "Skipping dense cosine similarity matrix: n=%d would require ~%.2f GB. "
+            "Using memory-safe row-wise pairwise computation.",
+            n,
+            estimated_bytes / (1024**3),
+        )
+        similarity = None
+    else:
+        similarity = cosine_similarity(features)
 
     # Find connected components based on threshold
     visited = set()
@@ -158,15 +191,20 @@ def _similarity_clustering(
             continue
 
         # BFS to find all connected samples
-        queue = [i]
+        queue = deque([i])
         labels[i] = current_label
         visited.add(i)
 
         while queue:
-            node = queue.pop(0)
+            node = queue.popleft()
 
             # Find all similar samples not yet visited
-            neighbors = np.where(similarity[node] >= threshold)[0]
+            if similarity is not None:
+                neighbors = np.where(similarity[node] >= threshold)[0]
+            else:
+                # Compute one row at a time to avoid O(n^2) memory blow-up
+                sim_row = cosine_similarity(features[node : node + 1], features)[0]
+                neighbors = np.where(sim_row >= threshold)[0]
             for neighbor in neighbors:
                 if neighbor not in visited:
                     visited.add(neighbor)
@@ -272,7 +310,7 @@ def audit_leakage(
     train_features: np.ndarray,
     test_features: np.ndarray,
     similarity_threshold: float = 0.9,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Audit for speaker leakage between train and test sets.
 
     Checks if any test speakers also appear in training set.
@@ -306,9 +344,11 @@ def audit_leakage(
         "has_leakage": n_leaked > 0,
         "num_leaked_samples": int(n_leaked),
         "total_test_samples": len(test_features),
-        "leakage_percentage": float(n_leaked / len(test_features) * 100)
-        if len(test_features) > 0
-        else 0.0,
+        "leakage_percentage": (
+            float(n_leaked / len(test_features) * 100)
+            if len(test_features) > 0
+            else 0.0
+        ),
         "leaked_test_indices": leaked_test_indices.tolist(),
         "matched_train_indices": matched_train_indices.tolist(),
         "max_similarities": max_sim_per_test.tolist(),
@@ -319,15 +359,20 @@ def cluster_by_speaker(
     audio_paths: List[str],
     embedding_model: str = "microsoft/wavlm-base-plus",
     similarity_threshold: float = 0.72,
+    method: Optional[str] = None,
+    leakage_threshold: float = 0.9,
     leakage_audit_enabled: bool = True,
     train_test_split: Optional[Tuple[List[str], List[str]]] = None,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Complete speaker clustering pipeline.
 
     Args:
         audio_paths: List of audio file paths
         embedding_model: WavLM model to use
         similarity_threshold: Clustering threshold
+        method: Clustering method ("agglomerative" or "threshold").
+            If None, defaults to "threshold" when similarity_threshold is provided.
+        leakage_threshold: Similarity threshold for leakage audit.
         leakage_audit_enabled: Whether to audit for train/test leakage
         train_test_split: Optional (train_paths, test_paths) tuple
 
@@ -338,7 +383,12 @@ def cluster_by_speaker(
     embeddings = extract_wavlm_embeddings(audio_paths, embedding_model)
 
     # Cluster
-    labels = cluster_samples(embeddings, similarity_threshold=similarity_threshold)
+    selected_method = method or "threshold"
+    labels = cluster_samples(
+        embeddings,
+        similarity_threshold=similarity_threshold,
+        method=selected_method,
+    )
 
     result = {
         "audio_paths": audio_paths,
@@ -351,8 +401,10 @@ def cluster_by_speaker(
     if leakage_audit_enabled and train_test_split is not None:
         train_paths, test_paths = train_test_split
 
-        train_indices = [audio_paths.index(p) for p in train_paths]
-        test_indices = [audio_paths.index(p) for p in test_paths]
+        path_to_idx = {p: i for i, p in enumerate(audio_paths)}
+
+        train_indices = [path_to_idx[p] for p in train_paths]
+        test_indices = [path_to_idx[p] for p in test_paths]
 
         train_embeddings = embeddings[train_indices]
         test_embeddings = embeddings[test_indices]
@@ -360,7 +412,7 @@ def cluster_by_speaker(
         leakage = audit_leakage(
             train_embeddings,
             test_embeddings,
-            similarity_threshold=similarity_threshold,
+            similarity_threshold=leakage_threshold,
         )
 
         result["leakage_audit"] = leakage

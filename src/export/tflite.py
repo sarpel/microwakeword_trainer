@@ -1,12 +1,11 @@
 """Export module for model conversion to TFLite."""
 
 import os
-from typing import Any, Callable, Generator, Optional
+from typing import Callable, Generator, Optional
 
 import numpy as np
 
 import tensorflow as tf
-
 
 # =============================================================================
 # STREAMING MODEL CONVERSION
@@ -171,7 +170,7 @@ def _apply_mixconv_block(
             conv = tf.keras.layers.DepthwiseConv2D(
                 kernel_size=(k, 1),
                 strides=(1, 1),
-                padding="same",
+                padding="valid",
                 use_bias=False,
             )(net)
             outputs.append(conv)
@@ -182,7 +181,7 @@ def _apply_mixconv_block(
         net = tf.keras.layers.DepthwiseConv2D(
             kernel_size=(3, 1),
             strides=(1, 1),
-            padding="same",
+            padding="valid",
             use_bias=False,
         )(net)
 
@@ -203,15 +202,27 @@ def _parse_list_config(config_str: str) -> list:
 
 
 def _parse_nested_list_config(config_str: str) -> list:
-    """Parse nested list config string to list of lists."""
+    """Parse nested list config string to list of lists.
+
+    Correctly handles bracket-delimited groups such as "[5],[9,11],[13]".
+    """
+    import re
+
     result = []
-    cleaned = config_str.replace("[", "").replace("]", "")
-    parts = cleaned.split(",")
-    for part in parts:
-        try:
-            result.append([int(part.strip())])
-        except ValueError:
-            pass
+    # Find each bracket-delimited group
+    for match in re.finditer(r"\[([^\]]*)\]", config_str):
+        inner = match.group(1).strip()
+        if not inner:
+            continue
+        group = []
+        for item in inner.split(","):
+            item = item.strip()
+            try:
+                group.append(int(item))
+            except ValueError:
+                pass
+        if group:
+            result.append(group)
     return result if result else [[3]]
 
 
@@ -269,7 +280,8 @@ def convert_saved_model_to_tflite(
     tflite_model = converter.convert()
 
     # Save to file
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    dirpath = os.path.dirname(output_path) or "."
+    os.makedirs(dirpath, exist_ok=True)
     with open(output_path, "wb") as f:
         f.write(tflite_model)
 
@@ -294,7 +306,9 @@ def create_default_representative_dataset(
             sample[0, 0] = 0.0
             sample[0, 1] = 26.0
             for i in range(0, spectrogram_length - stride, stride):
-                yield [sample[i : i + stride, :]]
+                # Yield with shape (1, stride, mel_bins) matching the streaming model input
+                chunk = sample[i : i + stride, :].reshape(1, stride, mel_bins)
+                yield [chunk]
 
     return representative_dataset_gen
 
@@ -343,7 +357,7 @@ def export_to_tflite(
     # Build model config for conversion
     conversion_config = {
         "stride": model_config.get("stride", 3),
-        "spectrogram_length": 49,
+        "spectrogram_length": model_config.get("spectrogram_length", 49),
         "mel_bins": hardware_config.get("mel_bins", 40),
         "first_conv_filters": model_config.get("first_conv_filters", 30),
         "first_conv_kernel_size": model_config.get("first_conv_kernel_size", 5),
@@ -360,7 +374,7 @@ def export_to_tflite(
     tflite_path = os.path.join(output_dir, f"{model_name}.tflite")
 
     # Step 1: Convert to streaming SavedModel
-    print(f"Converting to streaming SavedModel...")
+    print("Converting to streaming SavedModel...")
     streaming_model = convert_model_saved(
         model=model,
         config=conversion_config,
@@ -369,7 +383,7 @@ def export_to_tflite(
     )
 
     # Step 2: Convert to TFLite with quantization
-    print(f"Converting to TFLite with quantization...")
+    print("Converting to TFLite with quantization...")
 
     # Create representative dataset generator
     if representative_data is not None:
@@ -393,6 +407,7 @@ def export_to_tflite(
         "streaming_model_path": stream_model_dir,
         "model_name": model_name,
         "quantized": quantize,
+        "stride": conversion_config.get("stride", 3),
     }
 
 
@@ -401,7 +416,7 @@ def export_to_tflite(
 # =============================================================================
 
 
-def verify_esphome_compatibility(tflite_path: str) -> dict:
+def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
     """Verify TFLite model is compatible with ESPHome micro_wake_word."""
     # Load model
     interpreter = tf.lite.Interpreter(model_path=tflite_path)
@@ -425,9 +440,13 @@ def verify_esphome_compatibility(tflite_path: str) -> dict:
         input_shape = input_details[0]["shape"]
         input_dtype = input_details[0]["dtype"]
 
-        if list(input_shape) != [1, 3, 40]:
+        expected_shape = [1, stride, 40]
+        if (
+            list(input_shape) not in ([1, 3, 40], [1, 1, 40])
+            and list(input_shape) != expected_shape
+        ):
             results["warnings"].append(
-                f"Expected input shape [1, 3, 40], got {list(input_shape)}"
+                f"Expected input shape {expected_shape}, got {list(input_shape)}"
             )
 
         if input_dtype != np.int8:
@@ -511,7 +530,8 @@ def convert_to_tflite(
 
     tflite_model = converter.convert()
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    dirpath = os.path.dirname(output_path) or "."
+    os.makedirs(dirpath, exist_ok=True)
     with open(output_path, "wb") as f:
         f.write(tflite_model)
 
@@ -600,8 +620,7 @@ def main():
         print(f"TFLite model saved to: {result['tflite_path']}")
 
         # Generate manifest
-        from src.export.manifest import create_esphome_package
-        from src.export.manifest import create_esphome_package
+        from export.manifest import create_esphome_package
 
         pkg = create_esphome_package(
             model=None,
@@ -615,7 +634,10 @@ def main():
         print(f"Tensor arena size: {pkg['tensor_arena_size']} bytes")
 
         # Verify compatibility
-        verification = verify_esphome_compatibility(result["tflite_path"])
+        verification = verify_esphome_compatibility(
+            result["tflite_path"],
+            stride=result.get("stride", 3),
+        )
         if verification["compatible"]:
             print("Model is ESPHome compatible!")
         else:

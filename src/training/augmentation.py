@@ -1,6 +1,6 @@
 """Audio augmentation pipeline with configurable augmentation strategies."""
 
-import os
+import logging
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, List, Optional
@@ -22,6 +22,9 @@ try:
     HAS_AUDIOMENTATIONS = True
 except ImportError:
     HAS_AUDIOMENTATIONS = False
+
+
+logger = logging.getLogger(__name__)
 
 
 class AudioAugmentationPipeline:
@@ -110,7 +113,8 @@ class AudioAugmentationPipeline:
                     PitchShift(
                         p=self.probabilities["PitchShift"],
                         sample_rate=self.sample_rate,
-                        pitch_shift_half_steps=(-2, 2),
+                        min_semitones=-2,
+                        max_semitones=2,
                     ),
                 )
             )
@@ -169,7 +173,12 @@ class AudioAugmentationPipeline:
 
         # Always add Gain as it has minimal impact
         gain_prob = self.probabilities.get("Gain", 1.0)
-        self.augmentations.append(("Gain", Gain(p=gain_prob, gain_db=(-3, 3))))
+        self.augmentations.append(
+            (
+                "Gain",
+                Gain(p=gain_prob, min_gain_db=-3.0, max_gain_db=3.0),
+            )
+        )
 
     def augment(self, audio: np.ndarray) -> np.ndarray:
         """Apply augmentation pipeline to single audio sample.
@@ -184,10 +193,10 @@ class AudioAugmentationPipeline:
 
         for name, aug in self.augmentations:
             try:
-                augmented = aug(augmented)
+                augmented = aug(augmented, sample_rate=self.sample_rate)
             except Exception as e:
                 # Keep original if augmentation fails
-                pass
+                logger.exception("Augmentation '%s' failed: %s", name, e)
 
         return augmented
 
@@ -227,17 +236,26 @@ class ParallelAugmenter:
         if self.augmentation_fn is None:
             return audio_samples
 
-        # Submit all augmentation tasks
-        futures = []
-        for audio in audio_samples:
-            # Apply multiple augmentations per sample for diversity
-            augmented = audio
+        def augment_multi(audio: np.ndarray) -> List[np.ndarray]:
+            """Create independent augmented variants for one input sample."""
+            variants: List[np.ndarray] = []
             for _ in range(num_augmentations):
-                augmented = self.augmentation_fn(augmented)
-            futures.append(augmented)
+                variants.append(self.augmentation_fn(audio.copy()))
+            return variants
 
-        # Execute in parallel
-        return list(self.executor.map(lambda x: x, futures))
+        # Submit all tasks to the thread pool and collect in order
+        futures = [
+            self.executor.submit(augment_multi, audio) for audio in audio_samples
+        ]
+        augmented: List[np.ndarray] = []
+        for i, future in enumerate(futures):
+            try:
+                augmented.extend(future.result())
+            except Exception as exc:
+                logger.exception(
+                    "Parallel augmentation failed for sample %d: %s", i, exc
+                )
+        return augmented
 
     def __del__(self):
         """Cleanup thread pool."""

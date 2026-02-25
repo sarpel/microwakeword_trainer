@@ -1,10 +1,14 @@
 """Model manifest generation for deployment."""
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import tensorflow as tf
+
+# Minimum tensor arena size in bytes (26 KB – the minimum for hey_jarvis models)
+DEFAULT_TENSOR_ARENA_SIZE = 26080
 
 
 def generate_manifest(
@@ -21,9 +25,6 @@ def generate_manifest(
 
     Returns:
         V2 manifest dictionary for ESPHome micro_wake_word component
-
-    Raises:
-        KeyError: If required config fields are missing
     """
     # Extract export configuration
     export_config = config.get("export", {})
@@ -36,7 +37,7 @@ def generate_manifest(
         arena_size = calculate_tensor_arena_size(tflite_path)
     else:
         # Use configured value or default
-        arena_size = export_config.get("tensor_arena_size", 26080)
+        arena_size = export_config.get("tensor_arena_size", DEFAULT_TENSOR_ARENA_SIZE)
 
     # Build model filename from path
     model_filename = Path(model_path).name if model_path else "wake_word.tflite"
@@ -59,7 +60,7 @@ def generate_manifest(
             "sliding_window_size": export_config.get("sliding_window_size", 5),
             "tensor_arena_size": arena_size,
             "minimum_esphome_version": export_config.get(
-                "minimum_esphome_version", "2024.7.0"
+                "minimum_esphome_version", "2024.7"
             ),
         },
     }
@@ -117,7 +118,10 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
                 elem_size = 4
             elif dtype == tf.float16:
                 elem_size = 2
-            elif dtype in (tf.int8, tf.uint8, tf.string):
+            elif dtype == tf.string:
+                # tf.string size is variable; use a conservative 32-byte estimate
+                elem_size = 32
+            elif dtype in (tf.int8, tf.uint8):
                 elem_size = 1
             elif dtype == tf.int32:
                 elem_size = 4
@@ -128,8 +132,9 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
 
             num_elements = 1
             for dim in shape:
-                if dim > 0:
-                    num_elements *= dim
+                # Use abs(dim) to handle -1 dynamic dimensions gracefully
+                d = abs(dim) if dim != 0 else 1
+                num_elements *= d
 
             total_memory += num_elements * elem_size
 
@@ -137,13 +142,17 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
         arena_size = int(total_memory * 1.3)
 
         # Ensure minimum size (26KB is the minimum for hey_jarvis models)
-        arena_size = max(arena_size, 26080)
+        arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)
 
         return arena_size
 
     except Exception as e:
-        # Return default if calculation fails
-        return 26080
+        # Return default if calculation fails, but always log the failure
+        logging.warning(
+            f"calculate_tensor_arena_size failed for '{tflite_path}': {e}",
+            exc_info=True,
+        )
+        return DEFAULT_TENSOR_ARENA_SIZE
 
 
 def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
@@ -178,6 +187,10 @@ def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
             results["compatible"] = False
             results["errors"].append(f"Missing required field: {field}")
 
+    # Validate top-level version regardless of whether "micro" is present
+    if manifest.get("version") != 2:
+        results["warnings"].append("Manifest version should be 2 for ESPHome 2024.7+")
+
     # Required micro section fields
     if "micro" in manifest:
         micro_required = [
@@ -192,22 +205,19 @@ def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
                 results["compatible"] = False
                 results["errors"].append(f"Missing required micro field: {field}")
 
-        # Validate version
-        if manifest.get("version") != 2:
-            results["warnings"].append(
-                "Manifest version should be 2 for ESPHome 2024.7.0+"
-            )
-
-        # Validate probability_cutoff range
-        prob_cutoff = manifest.get("micro", {}).get("probability_cutoff", 0)
-        if not (0.0 < prob_cutoff <= 1.0):
-            results["errors"].append("probability_cutoff must be between 0 and 1")
+        # Validate probability_cutoff range only when the key is present
+        micro = manifest.get("micro", {})
+        if "probability_cutoff" in micro:
+            prob_cutoff = micro["probability_cutoff"]
+            if not (0.0 < prob_cutoff <= 1.0):
+                results["compatible"] = False
+                results["errors"].append("probability_cutoff must be between 0 and 1")
 
         # Validate tensor_arena_size is reasonable
-        arena_size = manifest.get("micro", {}).get("tensor_arena_size", 0)
-        if arena_size < 26080:
+        arena_size = micro.get("tensor_arena_size", 0)
+        if arena_size < DEFAULT_TENSOR_ARENA_SIZE:
             results["warnings"].append(
-                f"tensor_arena_size ({arena_size}) is below recommended minimum (26080)"
+                f"tensor_arena_size ({arena_size}) is below recommended minimum ({DEFAULT_TENSOR_ARENA_SIZE})"
             )
 
     return results

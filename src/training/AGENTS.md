@@ -21,8 +21,9 @@ mww-train = src.training.trainer:main
 ```python
 class Trainer:
     def __init__(self, config: dict)
-    def train_epoch(self, dataset)  # One epoch
-    def evaluate(self, dataset)     # Validation
+    def train(self, train_data_factory, val_data_factory, input_shape=(49, 40))
+    def train_step(self, fingerprints, ground_truth, sample_weights)
+    def validate(self, data_factory)   # Accepts callable factory or generator
 ```
 
 ## Configuration

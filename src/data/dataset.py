@@ -133,8 +133,9 @@ class RaggedMmap:
                     mode="r",
                 )
         elif mode == "w":
-            # Will be created on first write
-            pass
+            # Initialize in-memory index as mutable lists for write mode
+            self._offsets = []
+            self._lengths = []
         else:
             raise ValueError(f"Invalid mode: {mode}")
 
@@ -178,6 +179,24 @@ class RaggedMmap:
         with open(self._lengths_file, "ab") as f:
             for length in lengths:
                 f.write(struct.pack("q", length))
+
+        # Update in-memory index so subsequent append() calls can compute offsets
+        if isinstance(self._offsets, list):
+            self._offsets.extend(offsets)
+        else:
+            self._offsets = (
+                list(self._offsets) + list(offsets)
+                if self._offsets is not None
+                else list(offsets)
+            )
+        if isinstance(self._lengths, list):
+            self._lengths.extend(lengths)
+        else:
+            self._lengths = (
+                list(self._lengths) + list(lengths)
+                if self._lengths is not None
+                else list(lengths)
+            )
 
         # Update metadata
         self._num_arrays += len(arrays)
@@ -319,6 +338,7 @@ class FeatureStore:
 
         self.features.append([feature])
         self.labels.append([np.array([label], dtype=np.int32)])
+        self.metadata["num_samples"] += 1
 
     def add_batch(self, features: List[np.ndarray], labels: List[int]):
         """Add a batch of feature-label pairs.
@@ -333,6 +353,7 @@ class FeatureStore:
 
         self.features.append(features)
         self.labels.append([np.array([l], dtype=np.int32) for l in labels])
+        self.metadata["num_samples"] += len(features)
 
     def get(self, idx: int) -> Tuple[np.ndarray, int]:
         """Get feature and label by index.
@@ -422,8 +443,8 @@ class WakeWordDataset:
             self.feature_store = FeatureStore(store_path)
             try:
                 self.feature_store.open()
-            except Exception as e:
-                logger.warning(f"Could not open feature store: {e}")
+            except (FileNotFoundError, PermissionError, OSError, IOError) as e:
+                logger.warning(f"Could not open feature store at {store_path}: {e}")
                 self.feature_store = None
 
     def __len__(self) -> int:

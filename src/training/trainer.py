@@ -10,14 +10,13 @@ Step-based training loop with:
 
 import os
 import time
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from src.model.architecture import WakeWordModel, build_model
+from src.model.architecture import build_model
 from src.training.profiler import TrainingProfiler
 
 
@@ -168,6 +167,21 @@ class Trainer:
         self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
         self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
 
+        # Ensure all per-phase lists have the same length as training_steps_list
+        n_phases = len(self.training_steps_list)
+
+        def _pad_or_trim(lst, default):
+            """Pad (repeating last element) or trim lst to n_phases elements."""
+            if not lst:
+                return [default] * n_phases
+            if len(lst) >= n_phases:
+                return lst[:n_phases]
+            return lst + [lst[-1]] * (n_phases - len(lst))
+
+        self.learning_rates = _pad_or_trim(self.learning_rates, 0.0001)
+        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
+        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
+
         # Checkpoint selection config
         self.minimization_metric = training.get(
             "minimization_metric", "ambient_false_positives_per_hour"
@@ -236,8 +250,6 @@ class Trainer:
         Returns:
             Compiled Keras model
         """
-        model_config = self.config.get("model", {})
-
         # Build model using architecture module
         model = build_model(input_shape=input_shape, num_classes=2)
 
@@ -395,7 +407,10 @@ class Trainer:
 
         # Train on batch
         result = self.model.train_on_batch(
-            train_fingerprints, train_ground_truth, sample_weight=combined_weights
+            train_fingerprints,
+            train_ground_truth,
+            sample_weight=combined_weights,
+            return_dict=True,
         )
 
         # Build metrics dict
@@ -403,13 +418,11 @@ class Trainer:
         if isinstance(result, dict):
             metrics_dict = result
         else:
-            # result is a list [loss, metrics...]
-            metrics_dict["loss"] = result[0]
-            for i, name in enumerate(
-                ["accuracy", "recall", "precision", "tp", "fp", "tn", "fn", "auc"]
-            ):
-                if i + 1 < len(result):
-                    metrics_dict[name] = result[i + 1]
+            # Fallback path for environments not supporting return_dict
+            metric_names = getattr(self.model, "metrics_names", [])
+            for i, value in enumerate(result):
+                name = metric_names[i] if i < len(metric_names) else f"metric_{i}"
+                metrics_dict[name] = value
 
         return metrics_dict
 
@@ -417,17 +430,38 @@ class Trainer:
         """Validate model on validation set.
 
         Args:
-            data_generator: Generator yielding (features, labels, weights) tuples
+            data_generator: Factory callable (invoked to yield batches) or generator.
+                When a callable is provided it is called to get a fresh iterator;
+                this avoids exhausting a one-shot generator.
+                Must yield 3-tuples: (fingerprints, ground_truth, metadata), where
+                fingerprints is a NumPy/Tensor array of model inputs, ground_truth
+                is the label array, and metadata can be any auxiliary batch info.
 
         Returns:
             Dictionary of validation metrics
         """
         self.val_metrics.reset()
 
-        for fingerprints, ground_truth, _ in data_generator:
+        # Accept both a callable factory and a plain generator
+        iterator = data_generator() if callable(data_generator) else data_generator
+
+        for batch in iterator:
+            if not isinstance(batch, tuple) or len(batch) != 3:
+                raise ValueError(
+                    "Trainer.validate() expects data_generator to yield "
+                    "(fingerprints, ground_truth, metadata) 3-tuples. "
+                    f"Got: {type(batch).__name__} with value {batch!r}"
+                )
+            fingerprints, ground_truth, _ = batch
             # Get predictions
-            predictions = self.model(fingerprints, training=False)
-            scores = predictions.numpy().flatten()
+            predictions = self.model(fingerprints, training=False).numpy()
+
+            # Handle both binary [N] and multi-class [N, C] output shapes.
+            # For multi-class (softmax), column 1 is the positive-class probability.
+            if predictions.ndim == 2 and predictions.shape[1] > 1:
+                scores = predictions[:, 1]
+            else:
+                scores = predictions.flatten()
 
             # Update metrics
             self.val_metrics.update(ground_truth, scores)
@@ -436,15 +470,17 @@ class Trainer:
 
     def train(
         self,
-        train_data_generator,
-        val_data_generator,
+        train_data_factory,
+        val_data_factory,
         input_shape: Tuple[int, ...] = (49, 40),
     ) -> tf.keras.Model:
         """Execute full step-based training loop.
 
         Args:
-            train_data_generator: Generator yielding (features, labels, weights) tuples
-            val_data_generator: Generator yielding (features, labels, weights) tuples
+            train_data_factory: Callable that returns a generator yielding
+                (features, labels, weights) tuples.  Passed as a factory so the
+                generator can be restarted when exhausted.
+            val_data_factory: Same pattern for validation data.
             input_shape: Input feature shape
 
         Returns:
@@ -471,6 +507,8 @@ class Trainer:
 
         # Training loop
         start_time = time.time()
+        # Create initial generator from factory so we can restart it if exhausted
+        train_data_generator = train_data_factory()
 
         for step in range(1, total_steps + 1):
             self.current_step = step
@@ -481,11 +519,17 @@ class Trainer:
                     train_data_generator
                 )
             except StopIteration:
-                # Restart generator if exhausted
-                train_data_generator = train_data_generator()
-                train_fingerprints, train_ground_truth, train_sample_weights = next(
-                    train_data_generator
-                )
+                # Restart by calling the factory again
+                train_data_generator = train_data_factory()
+                try:
+                    train_fingerprints, train_ground_truth, train_sample_weights = next(
+                        train_data_generator
+                    )
+                except StopIteration as exc:
+                    raise RuntimeError(
+                        "train_data_factory() returned an empty generator after restart. "
+                        "Cannot continue training without batches."
+                    ) from exc
 
             # Profile data loading if enabled
             if self.profiler and step % self.profile_every_n == 0:
@@ -517,7 +561,7 @@ class Trainer:
             if step % self.eval_step_interval == 0:
                 print(f"\n[EVALUATING at step {step}]")
 
-                val_metrics = self.validate(val_data_generator)
+                val_metrics = self.validate(val_data_factory)
 
                 print(
                     f"Validation - "
@@ -550,8 +594,8 @@ class Trainer:
 def train(config: dict) -> tf.keras.Model:
     """Train wake word model.
 
-    This is the main entry point for training. It sets up the data generators,
-    initializes the trainer, and runs the training loop.
+    Main entry point for training. Sets up the data generators,
+    initializes the Trainer, and runs the training loop.
 
     Args:
         config: Training configuration from config loader
@@ -559,19 +603,40 @@ def train(config: dict) -> tf.keras.Model:
     Returns:
         Trained model
     """
-    # This is a placeholder - actual implementation would:
-    # 1. Create data generators from processed features
-    # 2. Initialize Trainer with config
-    # 3. Call trainer.train()
+    from src.data.dataset import WakeWordDataset
 
-    # For now, return a simple stub
-    print("[TRAIN] Training function called with config:")
-    print(f"  Training steps: {config.get('training', {}).get('training_steps', [])}")
-    print(f"  Learning rates: {config.get('training', {}).get('learning_rates', [])}")
-    print(f"  Batch size: {config.get('training', {}).get('batch_size', 128)}")
+    model_cfg = config.get("model", {})
+    if "spectrogram_length" not in model_cfg:
+        raise ValueError(
+            "Model config must define 'spectrogram_length' under config['model']."
+        )
 
-    # Build a simple model for testing
-    model = build_model(input_shape=(49, 40), num_classes=2)
+    mel_bins = model_cfg.get("mel_bins")
+    if mel_bins is None and "mel_bins" in config.get("hardware", {}):
+        mel_bins = config.get("hardware", {}).get("mel_bins", 40)
+        print(
+            "[TRAINER] Warning: 'model.mel_bins' is missing; using legacy "
+            "'hardware.mel_bins'. Please move mel_bins into config['model']."
+        )
+    elif mel_bins is None:
+        raise ValueError(
+            "Missing 'mel_bins' in config['model'] and no legacy fallback found in config['hardware']."
+        )
+
+    input_shape = (
+        model_cfg.get("spectrogram_length", 49),
+        mel_bins,
+    )
+
+    dataset = WakeWordDataset(config)
+    dataset.build()
+
+    trainer = Trainer(config)
+    model = trainer.train(
+        train_data_factory=dataset.train_generator_factory,
+        val_data_factory=dataset.val_generator_factory,
+        input_shape=input_shape,
+    )
     return model
 
 

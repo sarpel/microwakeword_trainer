@@ -15,7 +15,7 @@ config/
 
 ## ConfigLoader (`loader.py`)
 Heavyweight config system supporting:
-- **Dataclass validation**: 11 config sections (Hardware, Paths, Training, Model, etc.)
+- **Dataclass validation**: 10 config sections (Hardware, Paths, Training, Model, etc.)
 - **Preset loading**: Load base config from `presets/`
 - **Config merging**: Override presets with custom YAML
 - **Env var substitution**: `${VAR}` or `${VAR:-default}`

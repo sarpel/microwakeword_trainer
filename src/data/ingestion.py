@@ -8,11 +8,10 @@ Provides:
 """
 
 import logging
-import os
 import random
 import struct
 import wave
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
@@ -170,13 +169,20 @@ def validate_audio_wave(file_path: Union[str, Path]) -> Tuple[bool, str]:
             if nframes == 0:
                 return False, "Audio file contains no frames"
 
-            # Sanity check: file shouldn't be absurdly large
+            # Sanity check: use dynamic header size instead of fixed 44 bytes.
+            # Any legitimate WAV extra metadata is at most 64 KB.
             file_size = file_path.stat().st_size
-            expected_max_size = (nframes * actual_width * actual_channels) + 44
-            if file_size > expected_max_size * 2:
+            data_bytes = nframes * actual_width * actual_channels
+            actual_header_size = file_size - data_bytes
+            if actual_header_size < 0:
                 logger.warning(
-                    f"File size ({file_size}) much larger than expected "
-                    f"({expected_max_size}), possible compression artifact"
+                    f"File size ({file_size}) is smaller than the raw audio data "
+                    f"({data_bytes} bytes) for {file_path.name}"
+                )
+            elif actual_header_size > 65536:  # > 64 KB of metadata is suspicious
+                logger.warning(
+                    f"File {file_path.name} has an unusually large header/metadata "
+                    f"section ({actual_header_size} bytes), possible compression artifact"
                 )
 
             return True, ""
@@ -215,19 +221,27 @@ def get_audio_info(file_path: Union[str, Path]) -> dict:
 
     Returns:
         Dictionary with audio metadata
+
+    Raises:
+        ValueError: If the file is not a valid WAV or cannot be read
     """
     file_path = Path(file_path)
 
-    with wave.open(str(file_path), "rb") as wf:
-        return {
-            "path": str(file_path),
-            "sample_rate": wf.getframerate(),
-            "sample_width": wf.getsampwidth(),
-            "channels": wf.getnchannels(),
-            "frames": wf.getnframes(),
-            "duration_s": wf.getnframes() / wf.getframerate(),
-            "duration_ms": (wf.getnframes() / wf.getframerate()) * 1000,
-        }
+    try:
+        with wave.open(str(file_path), "rb") as wf:
+            return {
+                "path": str(file_path),
+                "sample_rate": wf.getframerate(),
+                "sample_width": wf.getsampwidth(),
+                "channels": wf.getnchannels(),
+                "frames": wf.getnframes(),
+                "duration_s": wf.getnframes() / wf.getframerate(),
+                "duration_ms": (wf.getnframes() / wf.getframerate()) * 1000,
+            }
+    except (wave.Error, OSError, struct.error) as exc:
+        raise ValueError(
+            f"Could not read audio info from '{file_path}': {exc}"
+        ) from exc
 
 
 def load_audio_wave(
@@ -237,11 +251,21 @@ def load_audio_wave(
 
     Args:
         file_path: Path to audio file
-        target_sr: Target sample rate (currently only 16000 supported)
+        target_sr: Target sample rate (only VALIDATION_SAMPLE_RATE is supported)
 
     Returns:
         Audio array as float32 in range [-1, 1]
+
+    Raises:
+        ValueError: If target_sr differs from VALIDATION_SAMPLE_RATE
     """
+    if target_sr != VALIDATION_SAMPLE_RATE:
+        raise ValueError(
+            f"target_sr={target_sr} is not supported. "
+            f"Only VALIDATION_SAMPLE_RATE ({VALIDATION_SAMPLE_RATE} Hz) is accepted. "
+            "Please resample the audio before calling load_audio_wave."
+        )
+
     file_path = Path(file_path)
 
     validate_audio(file_path)
@@ -401,20 +425,33 @@ class Clips:
     def _extract_speaker_id(self, filename: str) -> Optional[str]:
         """Extract speaker ID from filename.
 
+        Only extracts speaker IDs that match known stable patterns to avoid
+        treating arbitrary filename prefixes as speaker IDs.
+
         Args:
             filename: Audio filename
 
         Returns:
-            Speaker ID if extractable, None otherwise
+            Speaker ID if a stable pattern matches, None otherwise
         """
-        # Common pattern: wakeword_timestamp_variant.wav
-        # Extract base name without variant
-        parts = filename.replace(".wav", "").split("_")
+        import re
 
-        if len(parts) >= 2:
-            # Return first two parts as speaker ID
-            # e.g., "hey_katya_20260128_232017_v1.wav" -> "hey_katya"
-            return "_".join(parts[:2])
+        # Pattern: known prefix (hey_<word>) followed by a timestamp or variant
+        # e.g. "hey_katya_20260128_232017_v1.wav" -> "hey_katya"
+        known_prefix = re.match(
+            r"^(hey_[a-zA-Z0-9]+)_\d{8}",
+            filename.replace(".wav", ""),
+        )
+        if known_prefix:
+            return known_prefix.group(1)
+
+        # Pattern: speakerName_timestamp  (strict timestamp = 8+ digit date)
+        strict_pattern = re.match(
+            r"^([a-zA-Z][a-zA-Z0-9]+)_\d{8,}",
+            filename.replace(".wav", ""),
+        )
+        if strict_pattern:
+            return strict_pattern.group(1)
 
         return None
 
@@ -427,7 +464,7 @@ class Clips:
         Returns:
             Samples with split assigned
         """
-        random.seed(self.config.seed)
+        rng = random.Random(self.config.seed)
 
         if self.config.speaker_based_split and any(s.speaker_id for s in samples):
             # Group by speaker
@@ -440,7 +477,7 @@ class Clips:
 
             # Shuffle speakers and assign splits
             speaker_ids = list(speakers.keys())
-            random.shuffle(speaker_ids)
+            rng.shuffle(speaker_ids)
 
             n_speakers = len(speaker_ids)
             n_train = int(n_speakers * self.config.train_split)
@@ -463,7 +500,7 @@ class Clips:
         else:
             # Random split by sample
             shuffled = samples.copy()
-            random.shuffle(shuffled)
+            rng.shuffle(shuffled)
 
             n = len(shuffled)
             n_train = int(n * self.config.train_split)
@@ -594,12 +631,20 @@ def get_data_statistics(clips: Clips) -> dict:
 
     # Duration statistics
     durations = [s.duration_ms for s in clips.samples]
-    stats["duration"] = {
-        "min_ms": min(durations),
-        "max_ms": max(durations),
-        "mean_ms": np.mean(durations),
-        "total_hours": sum(durations) / (1000 * 60 * 60),
-    }
+    if not durations:
+        stats["duration"] = {
+            "min_ms": None,
+            "max_ms": None,
+            "mean_ms": None,
+            "total_hours": 0.0,
+        }
+    else:
+        stats["duration"] = {
+            "min_ms": float(min(durations)),
+            "max_ms": float(max(durations)),
+            "mean_ms": float(np.mean(durations)),
+            "total_hours": float(sum(durations) / (1000 * 60 * 60)),
+        }
 
     return stats
 

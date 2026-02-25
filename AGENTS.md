@@ -7,7 +7,7 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 
 ## Project Structure
 ```
-/home/sarpel/mww/microwakeword_trainer/
+./
 ├── src/                    # Source code
 │   ├── training/          # Training loop & CLI (mww-train)
 │   ├── data/              # Dataset, augmentation, features
@@ -56,7 +56,7 @@ Loader supports env var substitution (`${VAR}`) and preset merging.
 ## Critical Constraints
 - **GPU Required**: CuPy SpecAugment has no CPU fallback
 - **CUDA 12.x**: Required for CuPy compatibility
-- **Python 3.10-3.12**: ai-edge-litert doesn't support 3.12 yet (use 3.10-3.11)
+- **Python 3.10-3.11**: ai-edge-litert 2.x does not support Python 3.12 (use 3.10 or 3.11)
 - **Separate venvs for TF/PyTorch**: If using speechbrain, use different environments
 
 ## Commands

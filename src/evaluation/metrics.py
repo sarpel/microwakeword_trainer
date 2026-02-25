@@ -1,91 +1,58 @@
-"""Evaluation metrics module for wake word detection models.
+"""Evaluation metrics module for wake word detection models."""
 
-Provides comprehensive metrics including:
-- Standard classification metrics (accuracy, precision, recall, F1)
-- ROC/PR curve computation
-- Wake word specific metrics (FAH, average_viable_recall)
-"""
-
+import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
+from .fah_estimator import FAHEstimator
+
+logger = logging.getLogger(__name__)
+
 
 def compute_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Compute classification accuracy.
-
-    Args:
-        y_true: True labels (binary: 0 or 1)
-        y_pred: Predicted labels (binary: 0 or 1)
-
-    Returns:
-        Accuracy score (0 to 1)
-    """
+    """Compute classification accuracy."""
     if len(y_true) == 0:
         return 0.0
-
-    return np.mean((y_true == y_pred).astype(float))
+    return float(np.mean((y_true == y_pred).astype(float)))
 
 
 def compute_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
-    """Compute ROC AUC score.
-
-    Args:
-        y_true: True binary labels
-        y_scores: Prediction scores/probabilities (0 to 1)
-
-    Returns:
-        AUC-ROC score (0 to 1)
-    """
+    """Compute ROC AUC score."""
     if len(np.unique(y_true)) < 2:
-        # Only one class present - AUC is undefined
         return 0.5
 
     try:
         from sklearn.metrics import roc_auc_score
 
-        return roc_auc_score(y_true, y_scores)
+        return float(roc_auc_score(y_true, y_scores))
     except ImportError:
-        # Fallback: manual ROC computation
         return _manual_roc_auc(y_true, y_scores)
 
 
 def _manual_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
     """Manually compute ROC AUC using trapezoidal rule."""
-    # Sort by scores descending
     order = np.argsort(-y_scores)
     y_true_sorted = y_true[order]
 
-    # Calculate TPR and FPR at each threshold
     tps = np.cumsum(y_true_sorted)
     fps = np.cumsum(1 - y_true_sorted)
 
     tpr = tps / tps[-1] if tps[-1] > 0 else tps
     fpr = fps / fps[-1] if fps[-1] > 0 else fps
 
-    # Add origin point
     tpr = np.concatenate([[0], tpr])
     fpr = np.concatenate([[0], fpr])
 
-    # Compute AUC using trapezoidal rule
-    auc = np.trapz(tpr, fpr)
-    return auc
+    return float(np.trapz(tpr, fpr))
 
 
 def compute_precision_recall(
     y_true: np.ndarray,
     y_pred: np.ndarray,
 ) -> Tuple[float, float, float]:
-    """Compute precision, recall, and F1 score.
-
-    Args:
-        y_true: True binary labels
-        y_pred: Predicted binary labels
-
-    Returns:
-        Tuple of (precision, recall, f1)
-    """
+    """Compute precision, recall, and F1 score."""
     tp = np.sum((y_true == 1) & (y_pred == 1))
     fp = np.sum((y_true == 0) & (y_pred == 1))
     fn = np.sum((y_true == 1) & (y_pred == 0))
@@ -98,7 +65,17 @@ def compute_precision_recall(
         else 0.0
     )
 
-    return precision, recall, f1
+    return float(precision), float(recall), float(f1)
+
+
+def _synchronize_output(output: Any) -> None:
+    """Force eager execution completion for timing accuracy."""
+    if hasattr(output, "numpy"):
+        _ = output.numpy()
+        return
+    if isinstance(output, (list, tuple)):
+        for item in output:
+            _synchronize_output(item)
 
 
 def compute_latency(
@@ -107,42 +84,27 @@ def compute_latency(
     n_runs: int = 100,
     warmup_runs: int = 10,
 ) -> Dict[str, float]:
-    """Compute inference latency statistics.
-
-    Args:
-        model: Model to evaluate (TensorFlow/Keras or similar with __call__)
-        input_shape: Input shape for a single inference
-        n_runs: Number of runs for timing
-        warmup_runs: Number of warmup runs before timing
-
-    Returns:
-        Latency statistics including mean, std, min, max (in milliseconds)
-    """
+    """Compute inference latency statistics."""
     import tensorflow as tf
 
-    # Prepare dummy input
     dummy_input = np.random.randn(*input_shape).astype(np.float32)
+    has_gpu = bool(tf.config.list_physical_devices("GPU"))
 
-    # Warmup runs
     for _ in range(warmup_runs):
-        _ = model(dummy_input, training=False)
+        output = model(dummy_input, training=False)
+        if has_gpu:
+            _synchronize_output(output)
 
-    # Synchronize GPU
-    if tf.config.list_physical_devices("GPU"):
-        tf.keras.backend.sync_to_session()
-
-    # Timed runs
     latencies = []
     for _ in range(n_runs):
         start_time = time.perf_counter()
-        _ = model(dummy_input, training=False)
+        output = model(dummy_input, training=False)
 
-        # Synchronize for accurate timing
-        if tf.config.list_physical_devices("GPU"):
-            tf.keras.backend.sync_to_session()
+        if has_gpu:
+            _synchronize_output(output)
 
         end_time = time.perf_counter()
-        latencies.append((end_time - start_time) * 1000)  # Convert to ms
+        latencies.append((end_time - start_time) * 1000)
 
     latencies = np.array(latencies)
 
@@ -157,54 +119,12 @@ def compute_latency(
     }
 
 
-def compute_fah_metrics(
-    y_true: np.ndarray,
-    y_scores: np.ndarray,
-    ambient_duration_hours: float,
-    threshold: float = 0.5,
-) -> Dict[str, float]:
-    """Compute false accepts per hour (FAH) metrics.
-
-    Args:
-        y_true: True labels for ambient/negative audio
-        y_scores: Prediction scores
-        ambient_duration_hours: Total duration of ambient audio in hours
-        threshold: Classification threshold
-
-    Returns:
-        Dict with FAH metrics
-    """
-    # Predict at threshold
-    y_pred = (y_scores >= threshold).astype(int)
-
-    # Count false positives
-    fp = np.sum((y_true == 0) & (y_pred == 1))
-
-    # Calculate FAH
-    fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else 0.0
-
-    return {
-        "ambient_false_positives": int(fp),
-        "ambient_false_positives_per_hour": float(fah),
-        "ambient_duration_hours": float(ambient_duration_hours),
-    }
-
-
 def compute_roc_pr_curves(
     y_true: np.ndarray,
     y_scores: np.ndarray,
     n_thresholds: int = 101,
 ) -> Dict[str, np.ndarray]:
-    """Compute ROC and PR curves at multiple thresholds.
-
-    Args:
-        y_true: True binary labels
-        y_scores: Prediction scores
-        n_thresholds: Number of threshold values to compute
-
-    Returns:
-        Dict with ROC and PR curve data
-    """
+    """Compute ROC and PR curves at multiple thresholds."""
     thresholds = np.linspace(0, 1, n_thresholds)
 
     tpr_list = []
@@ -232,8 +152,8 @@ def compute_roc_pr_curves(
 
     return {
         "thresholds": thresholds,
-        "tpr": np.array(tpr_list),  # True positive rate (recall)
-        "fpr": np.array(fpr_list),  # False positive rate
+        "tpr": np.array(tpr_list),
+        "fpr": np.array(fpr_list),
         "precision": np.array(precision_list),
         "recall": np.array(recall_list),
     }
@@ -242,44 +162,25 @@ def compute_roc_pr_curves(
 def compute_recall_at_no_faph(
     y_true: np.ndarray,
     y_scores: np.ndarray,
-    ambient_duration_hours: float,
 ) -> Tuple[float, float]:
-    """Compute recall when FAH = 0 (no false accepts).
-
-    Finds the highest threshold that results in zero false accepts,
-    then returns the recall at that threshold.
-
-    Args:
-        y_true: True labels (positive samples)
-        y_scores: Prediction scores
-        ambient_duration_hours: Total duration of ambient audio in hours
-
-    Returns:
-        Tuple of (recall_at_no_faph, threshold_for_no_faph)
-    """
-    # Get thresholds in descending order
+    """Compute recall at the lowest threshold yielding zero false positives."""
     thresholds = np.linspace(0, 1, 101)
 
-    # Find threshold with zero false accepts
-    for thresh in reversed(thresholds):
-        # Count false positives at this threshold on negative samples
+    for thresh in thresholds:
         neg_mask = y_true == 0
-        fp = np.sum((y_scores[neg_mask] >= thresh))
+        fp = np.sum(y_scores[neg_mask] >= thresh)
 
         if fp == 0:
-            # This threshold gives zero FAH
-            # Calculate recall for positive samples
             pos_mask = y_true == 1
-            tp = np.sum((y_scores[pos_mask] >= thresh))
+            tp = np.sum(y_scores[pos_mask] >= thresh)
             recall = tp / np.sum(pos_mask) if np.sum(pos_mask) > 0 else 0.0
             return float(recall), float(thresh)
 
-    # If no threshold gives zero FAH, return lowest threshold result
-    thresh = thresholds[0]
+    thresh = float(thresholds[-1])
     pos_mask = y_true == 1
-    tp = np.sum((y_scores[pos_mask] >= thresh))
+    tp = np.sum(y_scores[pos_mask] >= thresh)
     recall = tp / np.sum(pos_mask) if np.sum(pos_mask) > 0 else 0.0
-    return float(recall), float(thresh)
+    return float(recall), thresh
 
 
 def compute_average_viable_recall(
@@ -288,41 +189,22 @@ def compute_average_viable_recall(
     ambient_duration_hours: float,
     max_fah: float = 10.0,
 ) -> float:
-    """Compute average viable recall (area under recall vs FAH curve).
-
-    This metric summarizes model quality by measuring recall at various
-    FAH levels up to max_fah. Higher is better.
-
-    Args:
-        y_true: True labels
-        y_scores: Prediction scores
-        ambient_duration_hours: Total duration of ambient audio in hours
-        max_fah: Maximum FAH to consider (default: 10 FAH)
-
-    Returns:
-        Average viable recall (area under curve)
-    """
+    """Compute average viable recall (AUC of recall vs normalized FAH)."""
     thresholds = np.linspace(0, 1, 101)
 
     recalls = []
     fahs = []
 
     for thresh in thresholds:
-        # Get predictions at threshold
         y_pred = (y_scores >= thresh).astype(int)
 
-        # Calculate TP, FP, FN
         tp = np.sum((y_true == 1) & (y_pred == 1))
         fp = np.sum((y_true == 0) & (y_pred == 1))
         fn = np.sum((y_true == 1) & (y_pred == 0))
 
-        # Calculate recall
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-
-        # Calculate FAH
         fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else 0.0
 
-        # Only consider up to max_fah
         if fah <= max_fah:
             recalls.append(recall)
             fahs.append(fah)
@@ -330,14 +212,166 @@ def compute_average_viable_recall(
     if len(recalls) < 2:
         return 0.0
 
-    # Integrate using trapezoidal rule
     fahs = np.array(fahs)
     recalls = np.array(recalls)
 
-    # Normalize FAH to [0, 1] for integration
-    avg_recall = np.trapz(recalls, fahs / max_fah)
+    sort_idx = np.argsort(fahs)
+    fahs = fahs[sort_idx]
+    recalls = recalls[sort_idx]
 
+    avg_recall = np.trapz(recalls, fahs / max_fah)
     return float(avg_recall)
+
+
+class MetricsCalculator:
+    """Class-based entry point for evaluation metrics computation."""
+
+    def __init__(
+        self,
+        y_true: np.ndarray,
+        y_pred: Optional[np.ndarray] = None,
+        y_score: Optional[np.ndarray] = None,
+        sample_weight: Optional[np.ndarray] = None,
+        **opts: Any,
+    ):
+        self.y_true = y_true
+        self.y_pred = y_pred
+        self.y_score = y_score
+        self.sample_weight = sample_weight
+        self.opts = opts
+        self.fah_estimator = FAHEstimator(
+            ambient_duration_hours=float(opts.get("ambient_duration_hours", 0.0))
+        )
+
+    def compute_fah_metrics(
+        self,
+        threshold: float = 0.5,
+        ambient_duration_hours: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        if self.y_score is None:
+            raise ValueError("MetricsCalculator.compute_fah_metrics requires y_score")
+        return self.fah_estimator.compute_fah_metrics(
+            self.y_true,
+            self.y_score,
+            threshold=threshold,
+            ambient_duration_hours=ambient_duration_hours,
+        )
+
+    def compute_roc_pr_curves(self, n_thresholds: int = 101) -> Dict[str, np.ndarray]:
+        if self.y_score is None:
+            raise ValueError("MetricsCalculator.compute_roc_pr_curves requires y_score")
+        return compute_roc_pr_curves(self.y_true, self.y_score, n_thresholds)
+
+    def compute_average_viable_recall(
+        self,
+        ambient_duration_hours: float,
+        max_fah: float = 10.0,
+    ) -> float:
+        if self.y_score is None:
+            raise ValueError(
+                "MetricsCalculator.compute_average_viable_recall requires y_score"
+            )
+        return compute_average_viable_recall(
+            self.y_true,
+            self.y_score,
+            ambient_duration_hours=ambient_duration_hours,
+            max_fah=max_fah,
+        )
+
+    def compute_recall_at_no_faph(self) -> Tuple[float, float]:
+        if self.y_score is None:
+            raise ValueError(
+                "MetricsCalculator.compute_recall_at_no_faph requires y_score"
+            )
+        return compute_recall_at_no_faph(self.y_true, self.y_score)
+
+    def compute_all_metrics(
+        self,
+        ambient_duration_hours: float = 0.0,
+        threshold: float = 0.5,
+    ) -> Dict[str, Any]:
+        if self.y_score is None:
+            raise ValueError("MetricsCalculator.compute_all_metrics requires y_score")
+
+        y_pred = (self.y_score >= threshold).astype(int)
+
+        accuracy = compute_accuracy(self.y_true, y_pred)
+        precision, recall, f1 = compute_precision_recall(self.y_true, y_pred)
+        auc_roc = compute_roc_auc(self.y_true, self.y_score)
+
+        auc_pr: Optional[float] = None
+        unique_classes = np.unique(self.y_true)
+        if len(unique_classes) >= 2:
+            try:
+                from sklearn.metrics import average_precision_score
+
+                auc_pr = float(average_precision_score(self.y_true, self.y_score))
+            except ImportError:
+                logger.warning(
+                    "sklearn not available; setting auc_pr=None in compute_all_metrics"
+                )
+        else:
+            logger.warning(
+                "Only one class present in y_true; auc_pr is undefined and set to None"
+            )
+
+        metrics: Dict[str, Any] = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1_score": f1,
+            "auc_roc": auc_roc,
+            "auc_pr": auc_pr,
+        }
+
+        if ambient_duration_hours > 0:
+            self.fah_estimator.ambient_duration_hours = float(ambient_duration_hours)
+            metrics.update(self.compute_fah_metrics(threshold=threshold))
+
+            recall_no_faph, thresh_no_faph = self.compute_recall_at_no_faph()
+            metrics["recall_at_no_faph"] = recall_no_faph
+            metrics["threshold_for_no_faph"] = thresh_no_faph
+
+            metrics["average_viable_recall"] = self.compute_average_viable_recall(
+                ambient_duration_hours=ambient_duration_hours
+            )
+
+        return metrics
+
+    def compute_latency(
+        self,
+        model: Any,
+        input_shape: Tuple[int, ...],
+        n_runs: int = 100,
+        warmup_runs: int = 10,
+    ) -> Dict[str, float]:
+        return compute_latency(
+            model, input_shape, n_runs=n_runs, warmup_runs=warmup_runs
+        )
+
+    def compute_precision_recall(self) -> Tuple[float, float, float]:
+        if self.y_pred is None:
+            raise ValueError(
+                "MetricsCalculator.compute_precision_recall requires y_pred"
+            )
+        return compute_precision_recall(self.y_true, self.y_pred)
+
+
+# Backward-compatible wrappers
+
+
+def compute_fah_metrics(
+    y_true: np.ndarray,
+    y_scores: np.ndarray,
+    ambient_duration_hours: float,
+    threshold: float = 0.5,
+) -> Dict[str, Any]:
+    calculator = MetricsCalculator(
+        y_true=y_true,
+        y_score=y_scores,
+        ambient_duration_hours=ambient_duration_hours,
+    )
+    return calculator.compute_fah_metrics(threshold=threshold)
 
 
 def compute_all_metrics(
@@ -345,62 +379,9 @@ def compute_all_metrics(
     y_scores: np.ndarray,
     ambient_duration_hours: float = 0.0,
     threshold: float = 0.5,
-) -> Dict[str, float]:
-    """Compute all evaluation metrics.
-
-    Args:
-        y_true: True binary labels
-        y_scores: Prediction scores
-        ambient_duration_hours: Duration of ambient audio (for FAH)
-        threshold: Classification threshold
-
-    Returns:
-        Dictionary of all computed metrics
-    """
-    # Binary predictions
-    y_pred = (y_scores >= threshold).astype(int)
-
-    # Basic classification metrics
-    accuracy = compute_accuracy(y_true, y_pred)
-    precision, recall, f1 = compute_precision_recall(y_true, y_pred)
-
-    # ROC/PR metrics
-    try:
-        from sklearn.metrics import roc_auc_score, average_precision_score
-
-        auc_roc = roc_auc_score(y_true, y_scores)
-        auc_pr = average_precision_score(y_true, y_scores)
-    except ImportError:
-        auc_roc = _manual_roc_auc(y_true, y_scores)
-        auc_pr = 0.0
-
-    metrics = {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1_score": f1,
-        "auc_roc": auc_roc,
-        "auc_pr": auc_pr,
-    }
-
-    # FAH metrics if ambient duration provided
-    if ambient_duration_hours > 0:
-        fah_metrics = compute_fah_metrics(
-            y_true, y_scores, ambient_duration_hours, threshold
-        )
-        metrics.update(fah_metrics)
-
-        # Recall at no FAH
-        recall_no_faph, thresh_no_faph = compute_recall_at_no_faph(
-            y_true, y_scores, ambient_duration_hours
-        )
-        metrics["recall_at_no_faph"] = recall_no_faph
-        metrics["threshold_for_no_faph"] = thresh_no_faph
-
-        # Average viable recall
-        avg_viable_recall = compute_average_viable_recall(
-            y_true, y_scores, ambient_duration_hours
-        )
-        metrics["average_viable_recall"] = avg_viable_recall
-
-    return metrics
+) -> Dict[str, Any]:
+    calculator = MetricsCalculator(y_true=y_true, y_score=y_scores)
+    return calculator.compute_all_metrics(
+        ambient_duration_hours=ambient_duration_hours,
+        threshold=threshold,
+    )

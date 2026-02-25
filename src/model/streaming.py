@@ -6,7 +6,7 @@ Streaming layers and state management for wake word detection.
 Implements:
 - Stream wrapper layer with ring buffer state management
 - Modes enum for different inference modes
-- StridedSlice and Concatenation for streaming
+- StridedDrop and StridedKeep for streaming dimension management
 - RingBuffer for efficient state storage
 - ChannelSplit for MixConv channel partitioning
 
@@ -26,7 +26,6 @@ References:
 """
 
 import tensorflow as tf
-
 
 # =============================================================================
 # MODES ENUMERATION
@@ -99,17 +98,20 @@ class RingBuffer:
         """Update buffer with new data (shift and append).
 
         Args:
-            new_data: New time step data [batch, ...]
+            new_data: New time step data [batch, 1, ...]
+                The time axis of new_data must be exactly 1.
 
         Returns:
-            Updated buffer
+            Updated buffer [batch, size, ...]
         """
         if self.buffer is None:
-            return new_data
+            self.buffer = new_data
+            return self.buffer
 
-        # Shift buffer left and append new data
-        # [batch, (size-1), ...] + [batch, 1, ...] -> [batch, size, ...]
-        shifted = self.buffer[:, 1:, ...] if self.size > 1 else self.buffer
+        # Shift buffer left and append new data.
+        # Always use [:, 1:, ...] so we get a consistent (size-1) prefix,
+        # even when self.size == 1 (producing an empty intermediate).
+        shifted = self.buffer[:, 1:, ...]
         self.buffer = tf.concat([shifted, new_data], axis=1)
         return self.buffer
 
@@ -214,13 +216,21 @@ class Stream(tf.keras.layers.Layer):
             kernel_size = config.get("kernel_size", (1, 1))
             padding = config.get("padding", "valid")
 
-            self.stride = strides[0] if isinstance(strides, tuple) else strides
+            # Normalize scalar values to 2-element tuples so indexing is safe
+            if isinstance(strides, int):
+                strides = (strides, strides)
+            if isinstance(dilation_rate, int):
+                dilation_rate = (dilation_rate, dilation_rate)
+            if isinstance(kernel_size, int):
+                kernel_size = (kernel_size, kernel_size)
+
+            self.stride = strides[0]
             self.stride_freq = strides[1] if len(strides) > 1 else self.stride
             self.dilation_freq = (
-                dilation_rate[1] if len(dilation_rate) > 1 else dilation_rate
+                dilation_rate[1] if len(dilation_rate) > 1 else dilation_rate[0]
             )
             self.kernel_size_freq = (
-                kernel_size[1] if len(kernel_size) > 1 else kernel_size
+                kernel_size[1] if len(kernel_size) > 1 else kernel_size[0]
             )
 
             # Calculate ring buffer size
@@ -258,10 +268,15 @@ class Stream(tf.keras.layers.Layer):
         # Calculate state shape
         if self.ring_buffer_size_in_time_dim and self.ring_buffer_size_in_time_dim > 0:
             # State shape: [batch, ring_buffer_size, ...features]
+            shape_as_list = (
+                list(input_shape)
+                if isinstance(input_shape, (list, tuple))
+                else tf.TensorShape(input_shape).as_list()
+            )
             self.state_shape = [
                 self.inference_batch_size,
                 self.ring_buffer_size_in_time_dim,
-            ] + (list(input_shape) if isinstance(input_shape, tuple) else input_shape.as_list())[2:]
+            ] + shape_as_list[2:]
 
         # Create state variable for internal streaming
         if self.mode == Modes.STREAM_INTERNAL_STATE_INFERENCE:
@@ -273,7 +288,7 @@ class Stream(tf.keras.layers.Layer):
                     name="states",
                     shape=self.state_shape,
                     trainable=False,
-                    initializer=tf.zeros_initializer,
+                    initializer=tf.zeros_initializer(),
                     dtype=tf.float32,
                 )
 
@@ -313,25 +328,13 @@ class Stream(tf.keras.layers.Layer):
 
     def _streaming_internal_state(self, inputs):
         """Streaming with internal state management."""
-        if self.states is None:
-            # Initialize states on first call
-            batch_size = tf.shape(inputs)[0]
-            feature_shape = inputs.shape[1:]
-            self.states = self.add_weight(
-                name="states",
-                shape=[batch_size, self.ring_buffer_size_in_time_dim]
-                + list(feature_shape[1:]),
-                trainable=False,
-                initializer=tf.zeros_initializer,
-                dtype=tf.float32,
-            )
-
         if self.use_one_step:
-            # Time dimension must be 1 in streaming mode
-            if inputs.shape[1] != 1:
-                raise ValueError(
-                    f"inputs.shape[1] must be 1 in streaming mode, got {inputs.shape[1]}"
-                )
+            # Use tf.debugging so the check works under @tf.function / tracing
+            tf.debugging.assert_equal(
+                tf.shape(inputs)[1],
+                1,
+                message="inputs time dimension must be 1 in one-step streaming mode",
+            )
 
             # Shift buffer and add new input
             # Remove oldest: [batch, 1:buffer_size, ...]
@@ -360,8 +363,11 @@ class Stream(tf.keras.layers.Layer):
     def _streaming_external_state(self, inputs):
         """Streaming with external state management."""
         if self.use_one_step:
-            if inputs.shape[1] != 1:
-                raise ValueError(f"inputs.shape[1] must be 1 in streaming mode")
+            tf.debugging.assert_equal(
+                tf.shape(inputs)[1],
+                1,
+                message="inputs time dimension must be 1 in one-step streaming mode",
+            )
 
             # Shift buffer and add new input
             memory = self.input_state[:, 1 : self.ring_buffer_size_in_time_dim, :]
@@ -400,6 +406,7 @@ class Stream(tf.keras.layers.Layer):
         config = super().get_config()
         config.update(
             {
+                "cell": tf.keras.layers.serialize(self.cell),
                 "inference_batch_size": self.inference_batch_size,
                 "mode": self.mode,
                 "pad_time_dim": self.pad_time_dim,
@@ -411,6 +418,14 @@ class Stream(tf.keras.layers.Layer):
             }
         )
         return config
+
+    @classmethod
+    def from_config(cls, config):
+        config = config.copy()
+        cell_config = config.pop("cell", None)
+        if cell_config is not None:
+            config["cell"] = tf.keras.layers.deserialize(cell_config)
+        return cls(**config)
 
     def get_input_state(self):
         """Get input state for external streaming."""
@@ -433,8 +448,9 @@ class Stream(tf.keras.layers.Layer):
 class StridedDrop(tf.keras.layers.Layer):
     """Drop time slices for dimension matching in streaming.
 
-    In non-streaming mode, drops the specified number of time slices from the beginning.
-    In streaming mode, passes through unchanged.
+    In streaming modes (STREAM_INTERNAL / STREAM_EXTERNAL), drops the specified
+    number of time slices from the beginning.
+    In non-streaming modes (TRAINING, NON_STREAM_INFERENCE), passes through unchanged.
 
     Used for matching dimensions between residual connections and conv outputs.
     """
@@ -448,8 +464,11 @@ class StridedDrop(tf.keras.layers.Layer):
         self.state_shape = []
 
     def call(self, inputs):
-        if self.mode == Modes.NON_STREAM_INFERENCE:
-            return inputs[:, self.time_slices_to_drop :, :, :]
+        if self.mode in (
+            Modes.STREAM_INTERNAL_STATE_INFERENCE,
+            Modes.STREAM_EXTERNAL_STATE_INFERENCE,
+        ):
+            return inputs[:, self.time_slices_to_drop :, ...]
         return inputs
 
     def get_config(self):
@@ -472,8 +491,9 @@ class StridedDrop(tf.keras.layers.Layer):
 class StridedKeep(tf.keras.layers.Layer):
     """Keep only specified time slices for streaming.
 
-    In streaming mode, keeps only the last N time slices.
-    In non-streaming mode, passes through unchanged.
+    In streaming modes (STREAM_INTERNAL / STREAM_EXTERNAL), keeps only the last
+    N time slices.
+    In non-streaming modes (TRAINING, NON_STREAM_INFERENCE), passes through unchanged.
 
     Used in MixConv to split ring buffer into branches with different kernel sizes.
     """
@@ -487,9 +507,12 @@ class StridedKeep(tf.keras.layers.Layer):
         self.state_shape = []
 
     def call(self, inputs):
-        if self.mode != Modes.NON_STREAM_INFERENCE:
+        if self.mode in (
+            Modes.STREAM_INTERNAL_STATE_INFERENCE,
+            Modes.STREAM_EXTERNAL_STATE_INFERENCE,
+        ):
             # In streaming mode, keep only the last N slices
-            return inputs[:, -self.time_slices_to_keep :, :, :]
+            return inputs[:, -self.time_slices_to_keep :, ...]
         return inputs
 
     def get_config(self):
@@ -557,7 +580,7 @@ class ChannelSplit(tf.keras.layers.Layer):
 # =============================================================================
 
 
-def frequeny_pad(inputs, dilation, stride, kernel_size):
+def frequency_pad(inputs, dilation, stride, kernel_size):
     """Pad input tensor in frequency domain.
 
     Args:
@@ -583,6 +606,22 @@ def frequeny_pad(inputs, dilation, stride, kernel_size):
     pad = [[0, 0]] * inputs.shape.rank
     pad[2] = [pad_left, pad_right]
     return tf.pad(inputs, pad, "constant")
+
+
+def frequeny_pad(inputs, dilation, stride, kernel_size):
+    """Deprecated alias for frequency_pad (typo in original name).
+
+    .. deprecated::
+        Use :func:`frequency_pad` instead.
+    """
+    import warnings
+
+    warnings.warn(
+        "frequeny_pad is a deprecated alias; use frequency_pad instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return frequency_pad(inputs, dilation, stride, kernel_size)
 
 
 # =============================================================================
@@ -663,9 +702,14 @@ class StreamingMixedNet:
             self.state[name] = None
 
     def reset(self):
-        """Reset all state variables to zero."""
-        for name in self.state:
-            self.state[name] = None
+        """Reset all state variables to zero tensors."""
+        state_names = get_streaming_state_names()
+        for name in state_names:
+            current = self.state.get(name)
+            if current is not None:
+                self.state[name] = tf.zeros_like(current)
+            else:
+                self.state[name] = None
 
     def predict(self, features):
         """Run inference on features.
@@ -676,8 +720,8 @@ class StreamingMixedNet:
         Returns:
             Detection probability [batch, 1]
         """
-        # Run model with current state
-        output = self.model(features, training=False, state=self.state)
+        # Run model inference (state is managed internally by the streaming model)
+        output = self.model(features, training=False)
         return output
 
     def predict_clip(self, audio_samples, sample_rate=16000, step_ms=30):
