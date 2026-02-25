@@ -1,0 +1,200 @@
+# ─────────────────────────────────────────────────────────────────
+# STANDARD PRESET - Balanced quality and speed
+# Use for: Production training with good quality/speed balance
+# ─────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────
+# HARDWARE PARAMETERS (IMMUTABLE)
+# ─────────────────────────────────────────────────────────────────
+hardware:
+  sample_rate_hz: 16000
+  mel_bins: 40
+  window_size_ms: 30
+  window_step_ms: 10
+  clip_duration_ms: 1000
+
+# ─────────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────────
+paths:
+  positive_dir: "./data/raw/positive"
+  negative_dir: "./data/raw/negative"
+  hard_negative_dir: "./data/raw/hard_negative"
+  background_dir: "./data/raw/background"
+  rir_dir: "./data/raw/rirs"
+  processed_dir: "./data/processed"
+  checkpoint_dir: "./checkpoints"
+  export_dir: "./models/exported"
+
+# ─────────────────────────────────────────────────────────────────
+# TRAINING PARAMETERS
+# ─────────────────────────────────────────────────────────────────
+training:
+  # Standard step-based training
+  training_steps: [20000, 10000]
+  learning_rates: [0.001, 0.0001]
+  batch_size: 128
+  eval_step_interval: 500
+
+  # Class weights
+  positive_class_weight: [1.0, 1.0]
+  negative_class_weight: [20.0, 20.0]
+
+  # SpecAugment disabled (using full audio augmentation)
+  time_mask_max_size: [0, 0]
+  time_mask_count: [0, 0]
+  freq_mask_max_size: [0, 0]
+  freq_mask_count: [0, 0]
+
+  # Checkpoint selection
+  minimization_metric: "ambient_false_positives_per_hour"
+  target_minimization: 0.5
+  maximization_metric: "average_viable_recall"
+
+# ─────────────────────────────────────────────────────────────────
+# MIXEDNET ARCHITECTURE
+# ─────────────────────────────────────────────────────────────────
+model:
+  architecture: "mixednet"
+
+  # Variant A (hey_jarvis - simpler)
+  first_conv_filters: 30
+  first_conv_kernel_size: 5
+  stride: 3
+  pointwise_filters: "60,60,60,60"
+  mixconv_kernel_sizes: "[5],[9],[13],[21]"
+  repeat_in_block: "1,1,1,1"
+  residual_connection: "0,0,0,0"
+
+  # Common settings
+  dropout_rate: 0.0
+  l2_regularization: 0.0
+
+# ─────────────────────────────────────────────────────────────────
+# FEATURE SETS (Standard - multiple negative sources)
+# ─────────────────────────────────────────────────────────────────
+features:
+  - features_dir: "generated_augmented_features"
+    sampling_weight: 2.0
+    penalty_weight: 1.0
+    truth: true
+    truncation_strategy: "truncate_start"
+    type: "mmap"
+
+  - features_dir: "negative_datasets/speech"
+    sampling_weight: 10.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: "random"
+    type: "mmap"
+
+  - features_dir: "negative_datasets/dinner_party"
+    sampling_weight: 10.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: "random"
+    type: "mmap"
+
+  - features_dir: "negative_datasets/no_speech"
+    sampling_weight: 5.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: "random"
+    type: "mmap"
+
+  - features_dir: "negative_datasets/dinner_party_eval"
+    sampling_weight: 0.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: "split"
+    type: "mmap"
+
+# ─────────────────────────────────────────────────────────────────
+# AUGMENTATION (Full - verified from notebook)
+# ─────────────────────────────────────────────────────────────────
+augmentation:
+  # Time-domain augmentations
+  SevenBandParametricEQ: 0.1
+  TanhDistortion: 0.1
+  PitchShift: 0.1
+  BandStopFilter: 0.1
+  AddColorNoise: 0.1
+  AddBackgroundNoise: 0.75
+  Gain: 1.0
+  RIR: 0.5
+
+  # Noise mixing parameters
+  background_min_snr_db: -5
+  background_max_snr_db: 10
+  min_jitter_s: 0.195
+  max_jitter_s: 0.205
+
+  # Background sources
+  impulse_paths: ['mit_rirs']
+  background_paths: ['fma_16k', 'audioset_16k']
+  augmentation_duration_s: 3.2
+
+# ─────────────────────────────────────────────────────────────────
+# PERFORMANCE CONFIGURATION
+# ─────────────────────────────────────────────────────────────────
+performance:
+  # GPU if available, otherwise use CPU with good resources
+  gpu_only: false
+  mixed_precision: true
+
+  # Standard CPU resources
+  num_workers: 16
+  num_threads_per_worker: 2
+  prefetch_factor: 8
+  pin_memory: true
+  max_memory_gb: 60
+
+  # Standard parallelism
+  inter_op_parallelism: 16
+  intra_op_parallelism: 16
+
+  # Profiling enabled
+  enable_profiling: true
+  profile_every_n_steps: 100
+  profile_output_dir: "./profiles"
+
+  # TensorBoard enabled
+  tensorboard_enabled: true
+  tensorboard_log_dir: "./logs"
+
+# ─────────────────────────────────────────────────────────────────
+# SPEAKER CLUSTERING (Enabled for standard quality)
+# ─────────────────────────────────────────────────────────────────
+speaker_clustering:
+  enabled: true
+  method: "wavlm_ecapa"
+  embedding_model: "microsoft/wavlm-base-plus"
+  similarity_threshold: 0.72
+  leakage_audit_enabled: true
+
+# ─────────────────────────────────────────────────────────────────
+# HARD NEGATIVE MINING (Enabled for standard quality)
+# ─────────────────────────────────────────────────────────────────
+hard_negative_mining:
+  enabled: true
+  fp_threshold: 0.8
+  max_samples: 5000
+  mining_interval_epochs: 5
+
+# ─────────────────────────────────────────────────────────────────
+# EXPORT SETTINGS
+# ─────────────────────────────────────────────────────────────────
+export:
+  wake_word: "Hey Katya"
+  author: "Your Name"
+  website: "https://your-repo.com"
+  trained_languages: ["en"]
+
+  quantize: true
+  inference_input_type: "int8"
+  inference_output_type: "uint8"
+
+  probability_cutoff: 0.97
+  sliding_window_size: 5
+  tensor_arena_size: 26080
+  minimum_esphome_version: "2024.7.0"
