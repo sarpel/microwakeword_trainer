@@ -29,7 +29,7 @@ dist
 build
 *.egg
 *.egg-info
-
-
-
+.ruff_cache
+.mypy_cache
+__pycache__
 

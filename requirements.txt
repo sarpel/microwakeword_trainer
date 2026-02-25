@@ -2,7 +2,7 @@
 # Version 2.0 - GPU-Accelerated Training Pipeline
 
 # Core ML Frameworks
-python==3.10
+
 tensorflow>=2.16
 ai-edge-litert
 pymicro-features>=0.1

@@ -6,3 +6,6 @@ checkpoint management for wake word model training.
 """
 
 __version__ = "2.0.0"
+
+# Import main classes for convenience
+from .trainer import Trainer, TrainingMetrics, train, main

@@ -1,32 +1,368 @@
-"""Clustering module for sample mining and diversity."""
+"""Clustering module for speaker diversity and leakage auditing.
+
+Provides:
+- Speaker clustering using WavLM embeddings
+- Similarity threshold-based clustering
+- Leakage audit for train/test separation
+"""
+
+import os
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+# Optional dependencies for embeddings and clustering
+try:
+    from sklearn.cluster import AgglomerativeClustering
+    from sklearn.metrics.pairwise import cosine_similarity
 
-def cluster_samples(features: np.ndarray, n_clusters: int = 100) -> np.ndarray:
+    HAS_SKLEARN = True
+except ImportError:
+    HAS_SKLEARN = False
+
+try:
+    import torch
+    from transformers import WavLMForWav2VecCTC, WavLMProcessor
+
+    HAS_TRANSFORMERS = True
+except ImportError:
+    torch = None  # type: ignore
+    WavLMForWav2VecCTC = None  # type: ignore
+    WavLMProcessor = None  # type: ignore
+    HAS_TRANSFORMERS = False
+
+
+def extract_wavlm_embeddings(
+    audio_paths: List[str],
+    model_name: str = "microsoft/wavlm-base-plus",
+    device: str = "cuda",
+    batch_size: int = 8,
+) -> np.ndarray:
+    """Extract speaker embeddings using WavLM.
+
+    Args:
+        audio_paths: List of paths to audio files
+        model_name: WavLM model name
+        device: Device to run model on ("cuda" or "cpu")
+        batch_size: Batch size for processing
+
+    Returns:
+        Array of embeddings [n_samples, embedding_dim]
+    """
+    if not HAS_TRANSFORMERS or not HAS_SKLEARN:
+        raise ImportError(
+            "transformers and sklearn are required for speaker clustering. "
+            "Install: pip install transformers torch scikit-learn"
+        )
+
+    # Load model and processor
+    processor = WavLMProcessor.from_pretrained(model_name)
+    model = WavLMForWav2VecCTC.from_pretrained(model_name)
+    model = model.to(device)
+    model.eval()
+
+    embeddings = []
+
+    for i in range(0, len(audio_paths), batch_size):
+        batch_paths = audio_paths[i : i + batch_size]
+        batch_embeddings = []
+
+        for audio_path in batch_paths:
+            # Load audio
+            import librosa
+
+            audio, sr = librosa.load(audio_path, sr=16000)
+
+            # Process audio
+            inputs = processor(audio, sampling_rate=16000, return_tensors="pt")
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            # Extract embeddings
+            with torch.no_grad():
+                outputs = model(**inputs)
+                # Use mean pooling of last hidden state
+                embedding = outputs.logits.mean(dim=1).squeeze().cpu().numpy()
+                batch_embeddings.append(embedding)
+
+        embeddings.extend(batch_embeddings)
+
+    return np.array(embeddings)
+
+
+def cluster_samples(
+    features: np.ndarray,
+    n_clusters: int = 100,
+    similarity_threshold: float = 0.72,
+    method: str = "agglomerative",
+) -> np.ndarray:
     """Cluster feature samples for diversity.
 
     Args:
+        features: Feature array [n_samples, feature_dim]
+        n_clusters: Target number of clusters (may differ based on threshold)
+        similarity_threshold: Cosine similarity threshold for clustering
+        method: Clustering method ("agglomerative" or "threshold")
+
+    Returns:
+        Cluster labels [n_samples]
+    """
+    if not HAS_SKLEARN:
+        raise ImportError("scikit-learn is required for clustering")
+
+    if method == "agglomerative":
+        # Use AgglomerativeClustering with cosine affinity
+        clustering = AgglomerativeClustering(
+            n_clusters=n_clusters,
+            metric="cosine",
+            linkage="average",
+        )
+        labels = clustering.fit_predict(features)
+
+    elif method == "threshold":
+        # Similarity-based clustering with threshold
+        labels = _similarity_clustering(features, similarity_threshold)
+
+    else:
+        raise ValueError(f"Unknown clustering method: {method}")
+
+    return labels
+
+
+def _similarity_clustering(
+    features: np.ndarray,
+    threshold: float = 0.72,
+) -> np.ndarray:
+    """Similarity-based clustering with threshold.
+
+    Clusters samples that have cosine similarity above threshold.
+
+    Args:
         features: Feature array
-        n_clusters: Number of clusters
+        threshold: Similarity threshold for same cluster
 
     Returns:
         Cluster labels
     """
-    pass
+    n_samples = len(features)
+    labels = np.full(n_samples, -1, dtype=int)
+    current_label = 0
+
+    # Compute similarity matrix
+    similarity = cosine_similarity(features)
+
+    # Find connected components based on threshold
+    visited = set()
+
+    for i in range(n_samples):
+        if i in visited:
+            continue
+
+        # BFS to find all connected samples
+        queue = [i]
+        labels[i] = current_label
+        visited.add(i)
+
+        while queue:
+            node = queue.pop(0)
+
+            # Find all similar samples not yet visited
+            neighbors = np.where(similarity[node] >= threshold)[0]
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    labels[neighbor] = current_label
+                    queue.append(neighbor)
+
+        current_label += 1
+
+    return labels
 
 
 def select_diverse_samples(
-    features: np.ndarray, labels: np.ndarray, samples_per_cluster: int = 10
+    features: np.ndarray,
+    labels: np.ndarray,
+    samples_per_cluster: int = 10,
+    selection_strategy: str = "random",
 ) -> np.ndarray:
     """Select diverse samples from clusters.
 
     Args:
-        features: Feature array
-        labels: Cluster labels
-        samples_per_cluster: Number of samples per cluster
+        features: Feature array [n_samples, feature_dim]
+        labels: Cluster labels [n_samples]
+        samples_per_cluster: Number of samples to select per cluster
+        selection_strategy: How to select ("random", "centroid", "boundary")
 
     Returns:
         Indices of selected samples
     """
-    pass
+    unique_labels = np.unique(labels)
+    selected_indices = []
+
+    for label in unique_labels:
+        # Get indices for this cluster
+        cluster_mask = labels == label
+        cluster_indices = np.where(cluster_mask)[0]
+        cluster_features = features[cluster_mask]
+
+        if len(cluster_indices) == 0:
+            continue
+
+        n_select = min(samples_per_cluster, len(cluster_indices))
+
+        if selection_strategy == "random":
+            # Random selection
+            chosen = np.random.choice(cluster_indices, n_select, replace=False)
+
+        elif selection_strategy == "centroid":
+            # Select samples closest to centroid
+            centroid = cluster_features.mean(axis=0)
+            distances = np.linalg.norm(cluster_features - centroid, axis=1)
+            sorted_indices = cluster_indices[np.argsort(distances)]
+            chosen = sorted_indices[:n_select]
+
+        elif selection_strategy == "boundary":
+            # Select samples most different from each other
+            chosen = _select_boundary_samples(
+                cluster_indices, cluster_features, n_select
+            )
+
+        else:
+            raise ValueError(f"Unknown selection strategy: {selection_strategy}")
+
+        selected_indices.extend(chosen.tolist())
+
+    return np.array(selected_indices)
+
+
+def _select_boundary_samples(
+    indices: np.ndarray,
+    features: np.ndarray,
+    n_select: int,
+) -> np.ndarray:
+    """Select boundary samples (most different from each other)."""
+    if len(indices) <= n_select:
+        return indices
+
+    # Greedy selection: iteratively add most different sample
+    selected = [indices[0]]
+    remaining = list(indices[1:])
+
+    while len(selected) < n_select and remaining:
+        # Find sample most different from current selections
+        selected_features = features[[i in selected for i in indices]]
+
+        max_min_dist = -1
+        best_idx = remaining[0]
+
+        for idx in remaining:
+            feat = features[indices == idx]
+            min_dist = np.min(np.linalg.norm(selected_features - feat, axis=1))
+
+            if min_dist > max_min_dist:
+                max_min_dist = min_dist
+                best_idx = idx
+
+        selected.append(best_idx)
+        remaining.remove(best_idx)
+
+    return np.array(selected)
+
+
+def audit_leakage(
+    train_features: np.ndarray,
+    test_features: np.ndarray,
+    similarity_threshold: float = 0.9,
+) -> Dict[str, any]:
+    """Audit for speaker leakage between train and test sets.
+
+    Checks if any test speakers also appear in training set.
+
+    Args:
+        train_features: Training set features
+        test_features: Test set features
+        similarity_threshold: Threshold to consider same speaker
+
+    Returns:
+        Audit results with leakage statistics
+    """
+    if not HAS_SKLEARN:
+        raise ImportError("scikit-learn is required for leakage audit")
+
+    # Compute similarity between train and test
+    similarity = cosine_similarity(test_features, train_features)
+
+    # Find maximum similarity for each test sample
+    max_sim_per_test = similarity.max(axis=1)
+
+    # Count potential leakage
+    leakage_mask = max_sim_per_test >= similarity_threshold
+    n_leaked = np.sum(leakage_mask)
+
+    # Get indices of leaked samples
+    leaked_test_indices = np.where(leakage_mask)[0]
+    matched_train_indices = similarity[leaked_test_indices].argmax(axis=1)
+
+    return {
+        "has_leakage": n_leaked > 0,
+        "num_leaked_samples": int(n_leaked),
+        "total_test_samples": len(test_features),
+        "leakage_percentage": float(n_leaked / len(test_features) * 100)
+        if len(test_features) > 0
+        else 0.0,
+        "leaked_test_indices": leaked_test_indices.tolist(),
+        "matched_train_indices": matched_train_indices.tolist(),
+        "max_similarities": max_sim_per_test.tolist(),
+    }
+
+
+def cluster_by_speaker(
+    audio_paths: List[str],
+    embedding_model: str = "microsoft/wavlm-base-plus",
+    similarity_threshold: float = 0.72,
+    leakage_audit_enabled: bool = True,
+    train_test_split: Optional[Tuple[List[str], List[str]]] = None,
+) -> Dict[str, any]:
+    """Complete speaker clustering pipeline.
+
+    Args:
+        audio_paths: List of audio file paths
+        embedding_model: WavLM model to use
+        similarity_threshold: Clustering threshold
+        leakage_audit_enabled: Whether to audit for train/test leakage
+        train_test_split: Optional (train_paths, test_paths) tuple
+
+    Returns:
+        Dict with cluster labels and audit results
+    """
+    # Extract embeddings
+    embeddings = extract_wavlm_embeddings(audio_paths, embedding_model)
+
+    # Cluster
+    labels = cluster_samples(embeddings, similarity_threshold=similarity_threshold)
+
+    result = {
+        "audio_paths": audio_paths,
+        "embeddings": embeddings,
+        "cluster_labels": labels,
+        "n_clusters": len(np.unique(labels)),
+    }
+
+    # Leakage audit if requested
+    if leakage_audit_enabled and train_test_split is not None:
+        train_paths, test_paths = train_test_split
+
+        train_indices = [audio_paths.index(p) for p in train_paths]
+        test_indices = [audio_paths.index(p) for p in test_paths]
+
+        train_embeddings = embeddings[train_indices]
+        test_embeddings = embeddings[test_indices]
+
+        leakage = audit_leakage(
+            train_embeddings,
+            test_embeddings,
+            similarity_threshold=similarity_threshold,
+        )
+
+        result["leakage_audit"] = leakage
+
+    return result
