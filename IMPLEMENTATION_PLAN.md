@@ -1,9 +1,10 @@
 # ESPHome microWakeWord Training Pipeline — IMPLEMENTATION PLAN (v2.0 PERFORMANCE EDITION)
 
 **Version:** 2.0 (Performance Optimized + GPU-First)
-**Status:** Production-Ready with Performance Enhancements
+**Status:** ✅ ALL PHASES COMPLETE - Production-Ready
 **Date:** 2025-02-25
 **Verification:** All facts verified via official model TFLite analysis + ESPHome C++ source
+**Implementation Status:** 100% - All config variables implemented and connected
 
 ---
 
@@ -16,6 +17,41 @@ This plan is based on **definitive analysis** of official ESPHome microWakeWord 
 All architectural claims verified against actual TFLite flatbuffers.
 
 **v2.0 Additions**: GPU-first execution policy, performance optimization phases, profiling infrastructure, and enhanced monitoring.
+
+---
+
+## ✅ IMPLEMENTATION STATUS - ALL PHASES COMPLETE
+
+### Recent Implementation Completion (2025-02-26)
+
+**ALL configuration variables are now fully implemented and connected:**
+
+| Config Section | Status | Implementation Location |
+|----------------|--------|-------------------------|
+| **PathsConfig** | ✅ COMPLETE | `src/data/ingestion.py` - Individual directory paths supported |
+| **SpeakerClusteringConfig** | ✅ COMPLETE | `src/data/clustering.py` - WavLM embeddings, clustering, leakage audit |
+| **HardNegativeMiningConfig** | ✅ COMPLETE | `src/data/hard_negatives.py` - FP detection, automatic mining |
+| **AugmentationConfig** | ✅ COMPLETE | `src/data/augmentation.py` - All 8 augmentation types |
+| **PerformanceConfig** | ✅ COMPLETE | `src/training/trainer.py` - Threading, workers, TensorBoard |
+
+### Critical Bugs Fixed
+
+1. **architecture.py** - Fixed duplicate `output_dense` layer, ensured float32 dtype for mixed precision
+2. **export/tflite.py** - Fixed import: `from export.manifest` → `from src.export.manifest`
+3. **trainer.py** - Removed duplicate class weight assignments
+4. **config/loader.py** - Removed duplicate TrainingConfig field definitions
+
+### New Files Created
+
+- `src/data/hard_negatives.py` - Hard negative mining implementation
+- `src/data/augmentation.py` - Complete audio augmentation pipeline
+
+### Files Modified
+
+- `src/data/ingestion.py` - PathsConfig implementation, individual directory support
+- `src/data/clustering.py` - Added SpeakerClustering class
+- `src/training/trainer.py` - PerformanceConfig threading implementation
+- `config/loader.py` - Added `training_steps` and `spectrogram_length` fields
 
 ---
 
@@ -209,14 +245,13 @@ microwakeword_trainer/
 │       ├── fast_test.yaml
 │       ├── standard.yaml
 │       └── max_quality.yaml
-├── data/
-│   ├── raw/
-│   │   ├── positive/              # Wake word samples
-│   │   ├── negative/              # Negative samples
-│   │   ├── hard_negative/         # Hard negatives
-│   │   └── background/            # Background noise
-│   ├── processed/                 # Ragged Mmap spectrograms
-│   └── clustered/                 # Speaker assignments
+├── dataset/
+│   ├── positive/              # Wake word samples
+│   ├── negative/             # Negative samples
+│   ├── hard_negative/        # Hard negatives
+│   ├── background/           # Background noise
+│   ├── rirs/                 # Room impulse responses
+│   └── processed/            # Ragged Mmap spectrograms
 ├── src/
 │   ├── config/
 │   │   └── loader.py
@@ -274,12 +309,12 @@ hardware:
 # PATHS
 # ─────────────────────────────────────────────────────────────────
 paths:
-  positive_dir: "./data/raw/positive"
-  negative_dir: "./data/raw/negative"
-  hard_negative_dir: "./data/raw/hard_negative"
-  background_dir: "./data/raw/background"
-  rir_dir: "./data/raw/rirs"
-  processed_dir: "./data/processed"
+  positive_dir: "./dataset/positive"
+  negative_dir: "./dataset/negative"
+  hard_negative_dir: "./dataset/hard_negative"
+  background_dir: "./dataset/background"
+  rir_dir: "./dataset/rirs"
+  processed_dir: "./dataset/processed"
   checkpoint_dir: "./checkpoints"
   export_dir: "./models/exported"
 
@@ -325,47 +360,9 @@ model:
   residual_connection: "0,0,0,0"
 
   # Common settings
-  dropout_rate: 0.0
-  l2_regularization: 0.0
+  dropout_rate: 0.2
+  l2_regularization: 0.001
 
-# ─────────────────────────────────────────────────────────────────
-# FEATURE SETS
-# ─────────────────────────────────────────────────────────────────
-features:
-  - features_dir: "generated_augmented_features"
-    sampling_weight: 2.0
-    penalty_weight: 1.0
-    truth: True
-    truncation_strategy: "truncate_start"
-    type: "mmap"
-
-  - features_dir: "negative_datasets/speech"
-    sampling_weight: 10.0
-    penalty_weight: 1.0
-    truth: False
-    truncation_strategy: "random"
-    type: "mmap"
-
-  - features_dir: "negative_datasets/dinner_party"
-    sampling_weight: 10.0
-    penalty_weight: 1.0
-    truth: False
-    truncation_strategy: "random"
-    type: "mmap"
-
-  - features_dir: "negative_datasets/no_speech"
-    sampling_weight: 5.0
-    penalty_weight: 1.0
-    truth: False
-    truncation_strategy: "random"
-    type: "mmap"
-
-  - features_dir: "negative_datasets/dinner_party_eval"
-    sampling_weight: 0.0        # Validation only
-    penalty_weight: 1.0
-    truth: False
-    truncation_strategy: "split"
-    type: "mmap"
 
 # ─────────────────────────────────────────────────────────────────
 # AUGMENTATION (VERIFIED from notebook)
@@ -939,7 +936,7 @@ def mine_hard_negatives(model, data_processor, threshold=0.8):
 ### 11.2 Iterative Mining
 
 - Run every `mining_interval_epochs` (default: 5)
-- Save to `data/raw/hard_negative/`
+- Save to `dataset/hard_negative/`
 - Increase sampling weight for hard negatives
 
 ---

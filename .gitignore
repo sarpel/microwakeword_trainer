@@ -11,10 +11,6 @@ __pycache__/
 .env*.local
 *.sh
 dataset
-__pycache__
-*.pyc
-*.pyo
-*.pyd
 *.log
 *.sqlite3
 *.db
@@ -28,8 +24,6 @@ __pycache__
 dist
 build
 *.egg
-*.egg-info
-
-
-
-
+.ruff_cache
+checkpoints/
+data/

@@ -1,30 +1,38 @@
 # microwakeword_trainer - Wake Word Training Framework
 # Version 2.0 - GPU-Accelerated Training Pipeline
+#
+# IMPORTANT: This project requires SEPARATE virtual environments for TensorFlow and PyTorch.
+# See README.md 'Environment Setup' section for details.
+#
+# This file is for the TENSORFLOW environment (main training).
+# For PyTorch environment (speaker clustering), use requirements-torch.txt.
 
 # Core ML Frameworks
-python==3.10
-tensorflow>=2.16
-ai-edge-litert
+tensorflow[and-cuda]>=2.19,<2.21
+ai-edge-litert<3.0
 pymicro-features>=0.1
+
+# Audio/Data Processing
 numpy>=1.26
 scipy
 pyyaml
 mmap_ninja
-datasets>=2.14
+
 audiomentations
 audio_metadata
 webrtcvad-wheels
 absl-py
 
-# Performance (v2.0)
+# Performance (GPU-Required for SpecAugment)
+psutil>=5.9.0
+GPUtil>=1.4.0
 cupy-cuda12x>=13.0
-pyarrow>=15.0
 numba>=0.58
 
-# Optional
-speechbrain>=1.0.0
-transformers>=4.40.0
-scikit-learn>=1.4.0
-optuna>=3.6.0
+# Visualization & Monitoring
 matplotlib
 seaborn
+tensorboard>=2.19
+
+# Optional: Hyperparameter Optimization
+optuna>=3.6.0

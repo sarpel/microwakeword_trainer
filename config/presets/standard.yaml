@@ -17,11 +17,11 @@ hardware:
 # PATHS
 # ─────────────────────────────────────────────────────────────────
 paths:
-  positive_dir: "./data/raw/positive"
-  negative_dir: "./data/raw/negative"
-  hard_negative_dir: "./data/raw/hard_negative"
-  background_dir: "./data/raw/background"
-  rir_dir: "./data/raw/rirs"
+  positive_dir: "./dataset/positive"
+  negative_dir: "./dataset/negative"
+  hard_negative_dir: "./dataset/hard_negative"
+  background_dir: "./dataset/background"
+  rir_dir: "./dataset/rirs"
   processed_dir: "./data/processed"
   checkpoint_dir: "./checkpoints"
   export_dir: "./models/exported"
@@ -35,10 +35,12 @@ training:
   learning_rates: [0.001, 0.0001]
   batch_size: 128
   eval_step_interval: 500
+  steps_per_epoch: 1000  # Approximate steps per epoch for mining calculations
 
-  # Class weights
+  # Class weights - hard negatives get higher weight to reduce false accepts
   positive_class_weight: [1.0, 1.0]
   negative_class_weight: [20.0, 20.0]
+  hard_negative_class_weight: [40.0, 40.0]
 
   # SpecAugment disabled (using full audio augmentation)
   time_mask_max_size: [0, 0]
@@ -61,6 +63,7 @@ model:
   first_conv_filters: 30
   first_conv_kernel_size: 5
   stride: 3
+  spectrogram_length: 49
   pointwise_filters: "60,60,60,60"
   mixconv_kernel_sizes: "[5],[9],[13],[21]"
   repeat_in_block: "1,1,1,1"
@@ -71,46 +74,7 @@ model:
   l2_regularization: 0.0
 
 # ─────────────────────────────────────────────────────────────────
-# FEATURE SETS (Standard - multiple negative sources)
-# ─────────────────────────────────────────────────────────────────
-features:
-  - features_dir: "generated_augmented_features"
-    sampling_weight: 2.0
-    penalty_weight: 1.0
-    truth: true
-    truncation_strategy: "truncate_start"
-    type: "mmap"
-
-  - features_dir: "negative_datasets/speech"
-    sampling_weight: 10.0
-    penalty_weight: 1.0
-    truth: false
-    truncation_strategy: "random"
-    type: "mmap"
-
-  - features_dir: "negative_datasets/dinner_party"
-    sampling_weight: 10.0
-    penalty_weight: 1.0
-    truth: false
-    truncation_strategy: "random"
-    type: "mmap"
-
-  - features_dir: "negative_datasets/no_speech"
-    sampling_weight: 5.0
-    penalty_weight: 1.0
-    truth: false
-    truncation_strategy: "random"
-    type: "mmap"
-
-  - features_dir: "negative_datasets/dinner_party_eval"
-    sampling_weight: 0.0
-    penalty_weight: 1.0
-    truth: false
-    truncation_strategy: "split"
-    type: "mmap"
-
-# ─────────────────────────────────────────────────────────────────
-# AUGMENTATION (Full - verified from notebook)
+# AUGMENTATION
 # ─────────────────────────────────────────────────────────────────
 augmentation:
   # Time-domain augmentations
@@ -129,9 +93,9 @@ augmentation:
   min_jitter_s: 0.195
   max_jitter_s: 0.205
 
-  # Background sources
-  impulse_paths: ['mit_rirs']
-  background_paths: ['fma_16k', 'audioset_16k']
+  # Background sources - use your own dataset paths
+  impulse_paths: ["./dataset/rirs"]
+  background_paths: ["./dataset/background"]
   augmentation_duration_s: 3.2
 
 # ─────────────────────────────────────────────────────────────────
@@ -186,15 +150,15 @@ hard_negative_mining:
 # ─────────────────────────────────────────────────────────────────
 export:
   wake_word: "Hey Katya"
-  author: "Your Name"
-  website: "https://your-repo.com"
+  author: "Sarpel GURAY"
+  website: "https://github.com/sarpel/microwakeword-training-platform"
   trained_languages: ["en"]
 
   quantize: true
   inference_input_type: "int8"
   inference_output_type: "uint8"
 
-  probability_cutoff: 0.97
+  probability_cutoff: 0.52
   sliding_window_size: 5
-  tensor_arena_size: 26080
+  tensor_arena_size: 22860
   minimum_esphome_version: "2024.7.0"

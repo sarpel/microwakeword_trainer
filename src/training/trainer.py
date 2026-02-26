@@ -1,36 +1,811 @@
-"""Trainer module for model training."""
+"""Trainer module for wake word model training.
 
+Step-based training loop with:
+- Class weighting for imbalanced data
+- Two-priority checkpoint selection
+- Evaluation at regular intervals
+- Mixed precision training support
+- Integration with TrainingProfiler
+"""
+
+import os
+import time
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
 import tensorflow as tf
+from tensorflow import keras
+
+from src.model.architecture import build_model
+from src.training.profiler import TrainingProfiler
+from src.training.miner import HardExampleMiner
+from src.data.spec_augment_gpu import batch_spec_augment_gpu
+
+
+class TrainingMetrics:
+    """Track training metrics at multiple thresholds for ROC/PR curves."""
+
+    def __init__(self, cutoffs: Optional[np.ndarray] = None):
+        """Initialize metrics tracker.
+
+        Args:
+            cutoffs: Array of threshold values (default: 101 points from 0 to 1)
+        """
+        if cutoffs is None:
+            cutoffs = np.linspace(0.0, 1.0, 101)
+        self.cutoffs = cutoffs.tolist()
+
+        # Accumulated predictions and labels
+        self.all_y_true: list = []
+        self.all_y_scores: list = []
+
+        # Per-threshold metrics
+        self.tp_at_threshold: Dict[float, int] = {c: 0 for c in self.cutoffs}
+        self.fp_at_threshold: Dict[float, int] = {c: 0 for c in self.cutoffs}
+        self.tn_at_threshold: Dict[float, int] = {c: 0 for c in self.cutoffs}
+        self.fn_at_threshold: Dict[float, int] = {c: 0 for c in self.cutoffs}
+
+    def update(self, y_true: np.ndarray, y_scores: np.ndarray) -> None:
+        """Update metrics with batch predictions.
+
+        Args:
+            y_true: Ground truth labels (0 or 1)
+            y_scores: Prediction scores (0 to 1)
+        """
+        # Flatten arrays to prevent broadcasting issues
+        y_true_flat = np.ravel(y_true)
+        y_scores_flat = np.ravel(y_scores)
+
+        self.all_y_true.extend(y_true_flat.tolist())
+        self.all_y_scores.extend(y_scores_flat.tolist())
+
+        # Update per-threshold metrics
+        for cutoff in self.cutoffs:
+            y_pred = (y_scores_flat >= cutoff).astype(np.int32)
+
+            tp = int(np.sum((y_pred == 1) & (y_true_flat == 1)))
+            fp = int(np.sum((y_pred == 1) & (y_true_flat == 0)))
+            tn = int(np.sum((y_pred == 0) & (y_true_flat == 0)))
+            fn = int(np.sum((y_pred == 0) & (y_true_flat == 1)))
+
+            self.tp_at_threshold[cutoff] += tp
+            self.fp_at_threshold[cutoff] += fp
+            self.tn_at_threshold[cutoff] += tn
+            self.fn_at_threshold[cutoff] += fn
+
+    def compute_metrics(self) -> Dict[str, float]:
+        """Compute all metrics from accumulated predictions.
+
+        Returns:
+            Dictionary of computed metrics
+        """
+        if not self.all_y_true:
+            return {}
+
+        y_true = np.array(self.all_y_true)
+        y_scores = np.array(self.all_y_scores)
+
+        # Basic metrics
+        tp_total = np.sum((y_scores >= 0.5) & (y_true == 1))
+        fp_total = np.sum((y_scores >= 0.5) & (y_true == 0))
+        tn_total = np.sum((y_scores < 0.5) & (y_true == 0))
+        fn_total = np.sum((y_scores < 0.5) & (y_true == 1))
+
+        # Avoid division by zero
+        precision_denom = tp_total + fp_total
+        recall_denom = tp_total + fn_total
+
+        metrics = {
+            "accuracy": (tp_total + tn_total) / len(y_true) if len(y_true) > 0 else 0,
+            "precision": tp_total / precision_denom if precision_denom > 0 else 0,
+            "recall": tp_total / recall_denom if recall_denom > 0 else 0,
+            "tp": int(tp_total),
+            "fp": int(fp_total),
+            "tn": int(tn_total),
+            "fn": int(fn_total),
+        }
+
+        # AUC calculation
+        try:
+            from sklearn.metrics import roc_auc_score, average_precision_score
+
+            if len(np.unique(y_true)) > 1:
+                metrics["auc_roc"] = roc_auc_score(y_true, y_scores)
+                metrics["auc_pr"] = average_precision_score(y_true, y_scores)
+        except ImportError:
+            pass
+
+        # Compute metrics at all thresholds for ROC/PR curves
+        for cutoff in self.cutoffs:
+            tp = self.tp_at_threshold[cutoff]
+            fp = self.fp_at_threshold[cutoff]
+            tn = self.tn_at_threshold[cutoff]
+            fn = self.fn_at_threshold[cutoff]
+
+            total = tp + fp + tn + fn
+            if total > 0:
+                acc = (tp + tn) / total
+            else:
+                acc = 0
+
+            prec_denom = tp + fp
+            rec_denom = tp + fn
+
+            metrics[f"precision_{cutoff:.2f}"] = (
+                tp / prec_denom if prec_denom > 0 else 0
+            )
+            metrics[f"recall_{cutoff:.2f}"] = tp / rec_denom if rec_denom > 0 else 0
+            metrics[f"accuracy_{cutoff:.2f}"] = acc
+
+        return metrics
+
+    def reset(self) -> None:
+        """Reset all accumulated metrics."""
+        self.all_y_true = []
+        self.all_y_scores = []
+        self.tp_at_threshold = {c: 0 for c in self.cutoffs}
+        self.fp_at_threshold = {c: 0 for c in self.cutoffs}
+        self.tn_at_threshold = {c: 0 for c in self.cutoffs}
+        self.fn_at_threshold = {c: 0 for c in self.cutoffs}
+
+
+class Trainer:
+    """Training orchestrator with step-based training loop."""
+
+    def __init__(self, config: Dict[str, Any]):
+        """Initialize trainer.
+
+        Args:
+            config: Training configuration from config loader
+        """
+        self.config = config
+        self.model: Optional[tf.keras.Model] = None
+        self.profiler: Optional[TrainingProfiler] = None
+
+        # Extract training config
+        training = config.get("training", {})
+        self.training_steps_list = training.get("training_steps", [20000, 10000])
+        self.learning_rates = training.get("learning_rates", [0.001, 0.0001])
+        self.batch_size = training.get("batch_size", 128)
+        self.eval_step_interval = training.get("eval_step_interval", 500)
+        self.steps_per_epoch = training.get(
+            "steps_per_epoch", 1000
+        )  # For mining epoch calculation
+
+        # Class weights (positive=1.0, negative=20.0, hard_negative=40.0 typical for wake word)
+        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
+        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
+        self.hard_negative_weights = training.get(
+            "hard_negative_class_weight", [40.0, 40.0]
+        )
+
+        # Ensure all per-phase lists have the same length as training_steps_list
+        n_phases = len(self.training_steps_list)
+
+        def _pad_or_trim(lst, default):
+            """Pad (repeating last element) or trim lst to n_phases elements."""
+            if not lst:
+                return [default] * n_phases
+            if len(lst) >= n_phases:
+                return lst[:n_phases]
+            return lst + [lst[-1]] * (n_phases - len(lst))
+
+        self.learning_rates = _pad_or_trim(self.learning_rates, 0.0001)
+        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
+        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
+        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
+
+        # SpecAugment configuration (per-phase)
+        self.time_mask_max_size = _pad_or_trim(
+            training.get("time_mask_max_size", [0, 0]), 0
+        )
+        self.time_mask_count = _pad_or_trim(training.get("time_mask_count", [0, 0]), 0)
+        self.freq_mask_max_size = _pad_or_trim(
+            training.get("freq_mask_max_size", [0, 0]), 0
+        )
+        self.freq_mask_count = _pad_or_trim(training.get("freq_mask_count", [0, 0]), 0)
+        self.spec_augment_enabled = any(
+            self.time_mask_max_size
+            + self.time_mask_count
+            + self.freq_mask_max_size
+            + self.freq_mask_count
+        )
+
+        # Checkpoint selection config
+        self.minimization_metric = training.get(
+            "minimization_metric", "ambient_false_positives_per_hour"
+        )
+        self.target_minimization = training.get("target_minimization", 0.5)
+        self.maximization_metric = training.get(
+            "maximization_metric", "average_viable_recall"
+        )
+
+        # Performance config
+        performance = config.get("performance", {})
+        self.mixed_precision = performance.get("mixed_precision", True)
+        self.enable_profiling = performance.get("enable_profiling", True)
+        self.profile_every_n = performance.get("profile_every_n_steps", 100)
+        self.profile_output_dir = performance.get("profile_output_dir", "./profiles")
+        self.num_workers = performance.get("num_workers", 4)
+        self.prefetch_factor = performance.get("prefetch_factor", 2)
+        self.pin_memory = performance.get("pin_memory", False)
+        self.inter_op_parallelism = performance.get("inter_op_parallelism", 0)
+        self.intra_op_parallelism = performance.get("intra_op_parallelism", 0)
+        self.tensorboard_enabled = performance.get("tensorboard_enabled", True)
+        self.tensorboard_log_dir = performance.get("tensorboard_log_dir", "./logs")
+
+        # Apply threading config
+        if self.inter_op_parallelism > 0:
+            tf.config.threading.set_inter_op_parallelism_threads(
+                self.inter_op_parallelism
+            )
+        if self.intra_op_parallelism > 0:
+            tf.config.threading.set_intra_op_parallelism_threads(
+                self.intra_op_parallelism
+            )
+
+        # Paths
+        paths = config.get("paths", {})
+        self.checkpoint_dir = paths.get("checkpoint_dir", "./checkpoints")
+
+        # Training state
+        self.current_step = 0
+        self.best_fah = float("inf")
+        self.best_recall = 0.0
+        self.best_weights_path: Optional[str] = None
+
+        # SpecAugment warning flag to prevent log flooding
+        self._spec_augment_warning_shown = False
+
+        # Metrics trackers
+        self.train_metrics = TrainingMetrics()
+        self.val_metrics = TrainingMetrics()
+
+        # Hard negative mining
+        hn_config = config.get("hard_negative_mining", {})
+        self.hard_negative_mining_enabled = hn_config.get("enabled", False)
+        self.hard_negative_miner: Optional[HardExampleMiner] = None
+        if self.hard_negative_mining_enabled:
+            self.hard_negative_miner = HardExampleMiner(
+                fp_threshold=hn_config.get("fp_threshold", 0.8),
+                max_samples=hn_config.get("max_samples", 5000),
+                mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
+                output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
+            )
+            print(
+                f"[TRAINER] Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, "
+                f"max_samples={hn_config.get('max_samples', 5000)}"
+            )
+        self.val_metrics = TrainingMetrics()
+
+    def _get_current_phase_settings(self, step: int) -> Dict[str, Any]:
+        """Get training settings for current step.
+
+        Args:
+            step: Current training step
+
+        Returns:
+            Dictionary with learning_rate and class weights for current phase
+        """
+        # Calculate cumulative steps per phase
+        cumulative_steps = 0
+        current_phase = 0
+
+        for i, phase_steps in enumerate(self.training_steps_list):
+            if step < cumulative_steps + phase_steps:
+                current_phase = i
+                break
+            cumulative_steps += phase_steps
+        else:
+            # If beyond total steps, use last phase
+            current_phase = len(self.training_steps_list) - 1
+
+        return {
+            "phase": current_phase,
+            "learning_rate": self.learning_rates[current_phase],
+            "positive_weight": self.positive_weights[current_phase],
+            "negative_weight": self.negative_weights[current_phase],
+            "hard_negative_weight": self.hard_negative_weights[current_phase],
+        }
+
+    def _build_model(self, input_shape: Tuple[int, ...]) -> tf.keras.Model:
+        """Build the model architecture.
+
+        Args:
+            input_shape: Input feature shape (timesteps, mel_bins)
+
+        Returns:
+            Compiled Keras model
+        """
+        # Build model using architecture module
+        model = build_model(input_shape=input_shape, num_classes=2)
+
+        # Get current phase settings
+        phase_settings = self._get_current_phase_settings(0)
+
+        # Compile model with BinaryCrossentropy loss
+        optimizer = keras.optimizers.Adam(learning_rate=phase_settings["learning_rate"])
+
+        model.compile(
+            optimizer=optimizer,
+            loss=keras.losses.BinaryCrossentropy(from_logits=False),
+            metrics=[
+                keras.metrics.BinaryAccuracy(name="accuracy"),
+                keras.metrics.Recall(name="recall"),
+                keras.metrics.Precision(name="precision"),
+                keras.metrics.TruePositives(name="tp"),
+                keras.metrics.FalsePositives(name="fp"),
+                keras.metrics.TrueNegatives(name="tn"),
+                keras.metrics.FalseNegatives(name="fn"),
+                keras.metrics.AUC(name="auc", curve="ROC"),
+            ],
+        )
+
+        return model
+
+    def _apply_class_weights(
+        self,
+        y_true: np.ndarray,
+        sample_weights: np.ndarray,
+        positive_weight: float,
+        negative_weight: float,
+        hard_negative_weight: float,
+        is_hard_negative: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Apply class weights to sample weights.
+
+        Args:
+            y_true: Ground truth labels (1=positive, 0=negative)
+            sample_weights: Existing sample weights
+            positive_weight: Weight for positive class
+            negative_weight: Weight for regular negative samples
+            hard_negative_weight: Weight for hard negative samples (false positives)
+            is_hard_negative: Optional boolean array indicating hard negative samples
+
+        Returns:
+            Combined weights
+        """
+        if is_hard_negative is not None:
+            # Three-class weighting: positive, hard_negative, regular_negative
+            class_weights = np.where(
+                y_true == 1,
+                positive_weight,
+                np.where(is_hard_negative, hard_negative_weight, negative_weight),
+            )
+        else:
+            # Binary weighting: positive vs negative (hard negatives get negative_weight)
+            class_weights = np.where(y_true == 1, positive_weight, negative_weight)
+        return sample_weights * class_weights
+
+    def _is_best_model(
+        self, metrics: Dict[str, float], target_fah: float, target_recall: float
+    ) -> Tuple[bool, str]:
+        """Determine if current model is best based on two-priority checkpoint selection.
+
+        Priority 1: Minimize FAH (false accepts per hour) below target
+        Priority 2: Maximize recall
+
+        Args:
+            metrics: Computed validation metrics
+            target_fah: Target false accepts per hour
+            target_recall: Current best recall
+
+        Returns:
+            Tuple of (is_best, reason)
+        """
+        # Calculate false accept rate (using FP at 0.5 threshold)
+        fp = metrics.get("fp", 0)
+        # Estimate FAH based on FP - this is a simplified version
+        # In practice, you'd calculate based on hours of negative audio
+        fah = fp / max(metrics.get("tn", 1), 1) * 1000  # Normalized FAH estimate
+
+        current_recall = metrics.get("recall", 0)
+
+        # Case 1: Achieved target FAH and improved recall
+        if fah <= target_fah and current_recall > self.best_recall:
+            return (
+                True,
+                f"Case 1: FAH={fah:.2f} <= target={target_fah}, recall improved to {current_recall:.4f}",
+            )
+
+        # Case 2: Haven't achieved target but decreased FAH
+        if fah < self.best_fah:
+            return True, f"Case 2: FAH decreased from {self.best_fah:.2f} to {fah:.2f}"
+
+        # Case 3: Tied FAH and improved recall
+        if fah == self.best_fah and current_recall > self.best_recall:
+            return (
+                True,
+                f"Case 3: FAH tied at {fah:.2f}, recall improved to {current_recall:.4f}",
+            )
+
+        return (
+            False,
+            f"No improvement: FAH={fah:.2f} (best={self.best_fah:.2f}), recall={current_recall:.4f} (best={self.best_recall:.4f})",
+        )
+
+    def _save_checkpoint(
+        self, metrics: Dict[str, float], is_best: bool, reason: str
+    ) -> None:
+        """Save model checkpoint.
+
+        Args:
+            metrics: Current validation metrics
+            is_best: Whether this is the best model
+            reason: Reason for saving/not saving
+        """
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+        if is_best:
+            # Save best weights
+            self.best_weights_path = os.path.join(
+                self.checkpoint_dir, "best_weights.weights.h5"
+            )
+            self.model.save_weights(self.best_weights_path)
+            print(f"[CHECKPOINT] Saved best weights: {reason}")
+
+            # Update best metrics
+            fp = metrics.get("fp", 0)
+            self.best_fah = fp / max(metrics.get("tn", 1), 1) * 1000
+            self.best_recall = metrics.get("recall", 0)
+
+        # Save periodic checkpoint
+        checkpoint_path = os.path.join(
+            self.checkpoint_dir, f"checkpoint_step_{self.current_step}.weights.h5"
+        )
+        self.model.save_weights(checkpoint_path)
+
+    def train_step(
+        self,
+        train_fingerprints: np.ndarray,
+        train_ground_truth: np.ndarray,
+        train_sample_weights: np.ndarray,
+        is_hard_negative: Optional[np.ndarray] = None,
+    ) -> Dict[str, float]:
+        """Execute single training step.
+
+        Args:
+            train_fingerprints: Input features
+            train_ground_truth: Ground truth labels
+            train_sample_weights: Sample weights from data processor
+            is_hard_negative: Optional boolean array indicating hard negative samples
+
+        Returns:
+            Dictionary of training metrics
+        """
+        # Get current phase settings
+        phase_settings = self._get_current_phase_settings(self.current_step)
+
+        # Update learning rate
+        self.model.optimizer.learning_rate.assign(phase_settings["learning_rate"])
+
+        # Apply class weights
+        combined_weights = self._apply_class_weights(
+            train_ground_truth,
+            train_sample_weights,
+            phase_settings["positive_weight"],
+            phase_settings["negative_weight"],
+            phase_settings["hard_negative_weight"],
+            is_hard_negative,
+        )
+
+        # Train on batch
+        result = self.model.train_on_batch(
+            train_fingerprints,
+            train_ground_truth,
+            sample_weight=combined_weights,
+            return_dict=True,
+        )
+
+        # Build metrics dict
+        metrics_dict = {}
+        if isinstance(result, dict):
+            metrics_dict = result
+        else:
+            # Fallback path for environments not supporting return_dict
+            metric_names = getattr(self.model, "metrics_names", [])
+            for i, value in enumerate(result):
+                name = metric_names[i] if i < len(metric_names) else f"metric_{i}"
+                metrics_dict[name] = value
+
+        return metrics_dict
+
+    def validate(self, data_generator) -> Dict[str, float]:
+        """Validate model on validation set.
+
+        Args:
+            data_generator: Factory callable (invoked to yield batches) or generator.
+                When a callable is provided it is called to get a fresh iterator;
+                this avoids exhausting a one-shot generator.
+                Must yield 3-tuples: (fingerprints, ground_truth, metadata), where
+                fingerprints is a NumPy/Tensor array of model inputs, ground_truth
+                is the label array, and metadata can be any auxiliary batch info.
+
+        Returns:
+            Dictionary of validation metrics
+        """
+        self.val_metrics.reset()
+
+        # Accept both a callable factory and a plain generator
+        iterator = data_generator() if callable(data_generator) else data_generator
+
+        for batch in iterator:
+            if not isinstance(batch, tuple) or len(batch) != 3:
+                raise ValueError(
+                    "Trainer.validate() expects data_generator to yield "
+                    "(fingerprints, ground_truth, metadata) 3-tuples. "
+                    f"Got: {type(batch).__name__} with value {batch!r}"
+                )
+            fingerprints, ground_truth, _ = batch
+            # Get predictions
+            predictions = self.model(fingerprints, training=False).numpy()
+
+            # Handle both binary [N] and multi-class [N, C] output shapes.
+            # For multi-class (softmax), column 1 is the positive-class probability.
+            if predictions.ndim == 2 and predictions.shape[1] > 1:
+                scores = predictions[:, 1]
+            else:
+                scores = predictions.flatten()
+
+            # Update metrics
+            self.val_metrics.update(ground_truth, scores)
+
+        return self.val_metrics.compute_metrics()
+
+    def train(
+        self,
+        train_data_factory,
+        val_data_factory,
+        input_shape: Tuple[int, ...] = (49, 40),
+    ) -> tf.keras.Model:
+        """Execute full step-based training loop.
+
+        Args:
+            train_data_factory: Callable that returns a generator yielding
+                (features, labels, weights) tuples.  Passed as a factory so the
+                generator can be restarted when exhausted.
+            val_data_factory: Same pattern for validation data.
+            input_shape: Input feature shape
+
+        Returns:
+            Trained model
+        """
+        # Build and compile model
+        print("[TRAINER] Building model...")
+        self.model = self._build_model(input_shape)
+        self.model.summary(print_fn=print)
+
+        # Setup profiler
+        if self.enable_profiling:
+            self.profiler = TrainingProfiler(self.profile_output_dir)
+
+        # Calculate total training steps
+        total_steps = sum(self.training_steps_list)
+        print(f"[TRAINER] Starting step-based training for {total_steps} steps...")
+        print(f"[TRAINER] Training phases: {self.training_steps_list}")
+        print(f"[TRAINER] Learning rates: {self.learning_rates}")
+        print(
+            f"[TRAINER] Class weights (positive/negative): {self.positive_weights}/{self.negative_weights}"
+        )
+        print(f"[TRAINER] Evaluation interval: {self.eval_step_interval} steps")
+
+        # Training loop
+        start_time = time.time()
+        # Create initial generator from factory so we can restart it if exhausted
+        train_data_generator = train_data_factory()
+
+        for step in range(1, total_steps + 1):
+            self.current_step = step
+
+            # Get training batch
+            try:
+                train_fingerprints, train_ground_truth, train_sample_weights = next(
+                    train_data_generator
+                )
+            except StopIteration:
+                # Restart by calling the factory again
+                train_data_generator = train_data_factory()
+                try:
+                    train_fingerprints, train_ground_truth, train_sample_weights = next(
+                        train_data_generator
+                    )
+                except StopIteration as exc:
+                    raise RuntimeError(
+                        "train_data_factory() returned an empty generator after restart. "
+                        "Cannot continue training without batches."
+                    ) from exc
+
+            # Apply SpecAugment if enabled (GPU-accelerated)
+            if self.spec_augment_enabled:
+                phase_settings = self._get_current_phase_settings(step)
+                current_phase = phase_settings["phase"]
+                if (
+                    self.time_mask_count[current_phase] > 0
+                    or self.freq_mask_count[current_phase] > 0
+                ):
+                    try:
+                        train_fingerprints = batch_spec_augment_gpu(
+                            train_fingerprints,
+                            time_mask_max_size=self.time_mask_max_size[current_phase],
+                            time_mask_count=self.time_mask_count[current_phase],
+                            freq_mask_max_size=self.freq_mask_max_size[current_phase],
+                            freq_mask_count=self.freq_mask_count[current_phase],
+                        )
+                    except RuntimeError as e:
+                        # GPU not available or CuPy not installed, skip SpecAugment
+                        if not self._spec_augment_warning_shown:
+                            print(f"[WARNING] SpecAugment skipped: {e}")
+                            self._spec_augment_warning_shown = True
+            # Profile data loading if enabled
+            if self.profiler and step % self.profile_every_n == 0:
+                with self.profiler.profile_section(f"step_{step}"):
+                    train_metrics = self.train_step(
+                        train_fingerprints, train_ground_truth, train_sample_weights
+                    )
+            else:
+                train_metrics = self.train_step(
+                    train_fingerprints, train_ground_truth, train_sample_weights
+                )
+
+            # Log training progress
+            if step % 100 == 0:
+                elapsed = time.time() - start_time
+                steps_per_sec = step / elapsed
+                eta = (total_steps - step) / steps_per_sec
+
+                lr = self.model.optimizer.learning_rate.numpy()
+                print(
+                    f"[STEP {step}/{total_steps}] "
+                    f"loss={train_metrics.get('loss', 0):.4f} "
+                    f"acc={train_metrics.get('accuracy', 0):.4f} "
+                    f"lr={lr:.6f} "
+                    f"({steps_per_sec:.1f} steps/s, ETA: {eta / 60:.1f} min)"
+                )
+
+            # Evaluate every N steps
+            if step % self.eval_step_interval == 0:
+                print(f"\n[EVALUATING at step {step}]")
+
+                val_metrics = self.validate(val_data_factory)
+
+                print(
+                    f"Validation - "
+                    f"loss: N/A (eval mode) "
+                    f"acc: {val_metrics.get('accuracy', 0):.4f} "
+                    f"recall: {val_metrics.get('recall', 0):.4f} "
+                    f"precision: {val_metrics.get('precision', 0):.4f}"
+                )
+
+                # Check if best model
+                is_best, reason = self._is_best_model(
+                    val_metrics, self.target_minimization, self.best_recall
+                )
+
+                self._save_checkpoint(val_metrics, is_best, reason)
+                print()
+
+                # Hard negative mining (during evaluation)
+                if self.hard_negative_miner and step % self.eval_step_interval == 0:
+                    # Calculate approximate epoch from steps per epoch
+                    approx_epoch = (
+                        step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
+                    )
+                    if (
+                        approx_epoch > 0
+                        and approx_epoch
+                        % self.hard_negative_miner.mining_interval_epochs
+                        == 0
+                        and approx_epoch != getattr(self, "_last_mined_epoch", -1)
+                    ):
+                        print(
+                            f"[MINING] Mining hard negatives at epoch {approx_epoch}..."
+                        )
+                        try:
+                            mining_result = self.hard_negative_miner.mine_from_dataset(
+                                self.model, val_data_factory, approx_epoch
+                            )
+                            print(
+                                f"[MINING] Found {mining_result['num_hard_negatives']} hard negatives"
+                            )
+                            self._last_mined_epoch = approx_epoch
+                        except IOError as e:
+                            print(
+                                f"[MINING] Warning: Hard negative mining failed (IOError): {e}"
+                            )
+                        except RuntimeError as e:
+                            print(
+                                f"[MINING] Warning: Hard negative mining failed (RuntimeError): {e}"
+                            )
+                        except Exception as e:
+                            raise
+                print()
+
+        # Training complete
+        total_time = time.time() - start_time
+        print(f"[TRAINER] Training complete in {total_time / 60:.1f} minutes")
+        print(f"[TRAINER] Best weights saved to: {self.best_weights_path}")
+
+        # Load best weights for return
+        if self.best_weights_path and os.path.exists(self.best_weights_path):
+            self.model.load_weights(self.best_weights_path)
+
+        return self.model
 
 
 def train(config: dict) -> tf.keras.Model:
     """Train wake word model.
-    
+
+    Main entry point for training. Sets up the data generators,
+    initializes the Trainer, and runs the training loop.
+
     Args:
-        config: Training configuration
-        
+        config: Training configuration from config loader
+
     Returns:
         Trained model
     """
-    pass
+    from src.data.dataset import WakeWordDataset
+
+    model_cfg = config.get("model", {})
+    if "spectrogram_length" not in model_cfg:
+        raise ValueError(
+            "Model config must define 'spectrogram_length' under config['model']."
+        )
+
+    mel_bins = model_cfg.get("mel_bins")
+    if mel_bins is None and "mel_bins" in config.get("hardware", {}):
+        mel_bins = config.get("hardware", {}).get("mel_bins", 40)
+        print(
+            "[TRAINER] Warning: 'model.mel_bins' is missing; using legacy "
+            "'hardware.mel_bins'. Please move mel_bins into config['model']."
+        )
+    elif mel_bins is None:
+        raise ValueError(
+            "Missing 'mel_bins' in config['model'] and no legacy fallback found in config['hardware']."
+        )
+
+    input_shape = (
+        model_cfg.get("spectrogram_length", 49),
+        mel_bins,
+    )
+
+    dataset = WakeWordDataset(config)  # type: ignore[arg-type]
+    dataset.build()  # type: ignore[attr-defined]
+
+    trainer = Trainer(config)
+    model = trainer.train(
+        train_data_factory=dataset.train_generator_factory,  # type: ignore[attr-defined]
+        val_data_factory=dataset.val_generator_factory,  # type: ignore[attr-defined]
+        input_shape=input_shape,
+    )
+    return model
 
 
-class Trainer:
-    """Training orchestrator."""
-    
-    def __init__(self, config: dict):
-        """Initialize trainer.
-        
-        Args:
-            config: Training configuration
-        """
-        self.config = config
-        self.model = None
-    
-    def train_epoch(self, dataset):
-        """Train one epoch."""
-        pass
-    
-    def evaluate(self, dataset):
-        """Evaluate model."""
-        pass
+def main():
+    """Main entry point for mww-train command."""
+    import argparse
+    from config.loader import load_full_config
+
+    parser = argparse.ArgumentParser(description="Train wake word model")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="standard",
+        help="Config preset name or path to config file",
+    )
+    parser.add_argument(
+        "--override", type=str, default=None, help="Override config file path"
+    )
+    args = parser.parse_args()
+
+    # Load config
+    config = load_full_config(args.config, args.override)
+
+    # Train model
+    train(config)
+
+    print("\n[TRAIN] Training completed successfully!")
+
+
+if __name__ == "__main__":
+    main()

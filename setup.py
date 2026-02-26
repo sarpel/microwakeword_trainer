@@ -23,14 +23,14 @@ setup(
         "scipy",
         "pyyaml",
         "mmap_ninja",
-        "datasets>=2.14",
         "audiomentations",
         "audio_metadata",
         "webrtcvad-wheels",
         "absl-py",
         # Performance (v2.0)
+        "psutil>=5.9.0",
+        "GPUtil>=1.4.0",
         "cupy-cuda12x>=13.0",
-        "pyarrow>=15.0",
         "numba>=0.58",
     ],
     extras_require={
