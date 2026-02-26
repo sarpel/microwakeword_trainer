@@ -3,6 +3,7 @@
 from typing import Dict
 
 import numpy as np
+from scipy.special import expit
 
 
 def compute_calibration_curve(
@@ -52,8 +53,5 @@ def calibrate_probabilities(
 
     logits = np.log(y_prob_clipped / y_prob_complement_clipped)
     calibrated_logits = scale * logits + bias
-
-    # Numerically stable sigmoid using scipy.special.expit
-    from scipy.special import expit
 
     return expit(calibrated_logits)

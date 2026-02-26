@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import numpy as np
 import tensorflow as tf
 
 # Minimum tensor arena size in bytes (26 KB – the minimum for hey_jarvis models)
@@ -115,19 +116,19 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
             shape = tensor.get("shape", [])
             dtype = tensor.get("dtype")
 
-            # Get element size based on dtype
-            if dtype == tf.float32:
+            # Get element size based on dtype (using numpy dtypes)
+            if dtype == np.float32:
                 elem_size = 4
-            elif dtype == tf.float16:
+            elif dtype == np.float16:
                 elem_size = 2
-            elif dtype == tf.string:
-                # tf.string size is variable; use a conservative 32-byte estimate
+            elif dtype == np.string_ or dtype == np.object_:
+                # String size is variable; use a conservative 32-byte estimate
                 elem_size = 32
-            elif dtype in (tf.int8, tf.uint8):
+            elif dtype in (np.int8, np.uint8):
                 elem_size = 1
-            elif dtype == tf.int32:
+            elif dtype == np.int32:
                 elem_size = 4
-            elif dtype == tf.int64:
+            elif dtype == np.int64:
                 elem_size = 8
             else:
                 elem_size = 4  # Default assumption
@@ -231,6 +232,7 @@ def create_esphome_package(
     output_dir: str,
     model_name: str = "wake_word",
     tflite_path: Optional[str] = None,
+    analysis_results: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Create complete ESPHome package with manifest and model files.
 
@@ -243,6 +245,7 @@ def create_esphome_package(
         output_dir: Output directory for package files
         model_name: Name for the model (used in filenames)
         tflite_path: Optional path to TFLite model
+        analysis_results: Optional ai_edge_litert analysis results to include
 
     Returns:
         Dictionary with paths and metadata:
@@ -264,12 +267,38 @@ def create_esphome_package(
         tflite_path=tflite_path,
     )
 
+    # Add ai_edge_litert analysis results to manifest if provided
+    if analysis_results is not None:
+        # Include key validation metrics in manifest metadata
+        validation = analysis_results.get("validation_results", {})
+        performance = analysis_results.get("performance_estimation", {})
+        architecture = analysis_results.get("architecture_analysis", {})
+
+        manifest["_metadata"] = {
+            "model_valid": analysis_results.get("model_valid"),
+            "analysis": {
+                "layer_count": architecture.get("layer_count"),
+                "operators": architecture.get("operators"),
+                "quantized": architecture.get("has_quantization"),
+                "model_size_kb": performance.get("model_size_kb"),
+                "estimated_latency_ms": performance.get("estimated_latency_ms"),
+                "tensor_arena_estimate_kb": performance.get("tensor_arena_estimate_kb"),
+            },
+            "validation": {
+                "errors": validation.get("errors", []),
+                "warnings": validation.get("warnings", []),
+                "info": validation.get("info", {}),
+            },
+        }
+
     # Save manifest
     manifest_path = str(Path(output_dir) / "manifest.json")
     save_manifest(manifest, manifest_path)
 
     # Get tensor arena size from manifest
-    tensor_arena_size = manifest.get("micro", {}).get("tensor_arena_size", 26080)
+    tensor_arena_size = manifest.get("micro", {}).get(
+        "tensor_arena_size", DEFAULT_TENSOR_ARENA_SIZE
+    )
 
     return {
         "manifest_path": manifest_path,

@@ -358,12 +358,19 @@ class Clips:
         self._speaker_cache: dict = {}
 
         # Validate split ratios
+        for name, value in [
+            ("train_split", self.config.train_split),
+            ("val_split", self.config.val_split),
+            ("test_split", self.config.test_split),
+        ]:
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0.0, 1.0], got {value}")
+
         total_split = (
             self.config.train_split + self.config.val_split + self.config.test_split
         )
         if abs(total_split - 1.0) > 0.001:
             raise ValueError(f"Split ratios must sum to 1.0, got {total_split}")
-
         # Load samples
         self._discover_samples()
 

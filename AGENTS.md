@@ -18,7 +18,7 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 │   └── config/            # Config loading
 ├── config/                # YAML presets & loader
 │   ├── presets/           # standard.yaml, max_quality.yaml, fast_test.yaml
-│   └── loader.py          # Complex config system (733 lines)
+│   └── loader.py          # Complex config system (625 lines)
 ├── dataset/               # Audio data
 │   ├── positive/          # Wake word samples
 │   ├── negative/          # Background speech
@@ -43,7 +43,6 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 - **cupy-cuda12x>=13.0** - GPU SpecAugment (no CPU fallback)
 - **ai-edge-litert** - TFLite export (formerly TF Lite)
 - **pymicro-features** - Audio feature extraction
-- **datasets>=2.14** - HuggingFace datasets integration
 
 ## Configuration System
 Heavy YAML-based config with presets in `config/presets/`:
@@ -105,19 +104,11 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 
 ## Notes
 - ✅ **ALL PHASES COMPLETE** - All config variables implemented and connected
-- Large config loader (733 lines) - complex validation and merging
-- Uses HuggingFace `datasets` library for data loading
+- Large config loader (625 lines) - complex validation and merging
+- Uses custom RaggedMmap storage for efficient audio data loading
 - Speaker clustering and hard negative mining fully implemented
 - Audio augmentation pipeline complete with 8 augmentation types
-| Task | Location | Notes |
-|------|----------|-------|
-| Training loop | `src/training/trainer.py` | Trainer class, main() |
-| Data pipeline | `src/data/` | 6 modules, GPU augmentation |
-| Model arch | `src/model/architecture.py` | tf.keras.Model subclasses |
-| Config loading | `config/loader.py` | Complex dataclass-based loader |
-| TFLite export | `src/export/tflite.py` | ai-edge-litert usage |
-| Performance | `src/utils/performance.py` | Profiling utilities |
-
+## Anti-Patterns (This Project)
 ## Anti-Patterns (This Project)
 - **Don't install nvidia-driver inside WSL** - Install on Windows host only
 - **Don't mix TF and PyTorch in same venv** - Use separate environments
@@ -131,8 +122,8 @@ alias mww-tf='source ~/venvs/mww-tf/bin/activate && cd /home/sarpel/mww/microwak
 alias mww-torch='source ~/venvs/mww-torch/bin/activate && cd /home/sarpel/mww/microwakeword_trainer'
 ```
 
-## Notes
+## Development Notes
 - Project is in active development (v2.0.0, Beta status)
-- Large config loader (733 lines) - complex validation and merging
-- Uses HuggingFace `datasets` library for data loading
+- Large config loader (625 lines) - complex validation and merging
+- Uses custom RaggedMmap storage for efficient audio data loading
 - Supports speaker clustering and hard negative mining

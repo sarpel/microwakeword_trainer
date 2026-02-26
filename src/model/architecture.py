@@ -174,7 +174,7 @@ class MixConvBlock(tf.keras.layers.Layer):
                 name=f"{self.name}_pointwise",
             )
             self.bn = tf.keras.layers.BatchNormalization(name=f"{self.name}_bn")
-        
+
         # Create depthwise conv layers for each kernel size
         self.depthwise_convs = []
         for i, ks in enumerate(self.kernel_sizes):
@@ -183,8 +183,9 @@ class MixConvBlock(tf.keras.layers.Layer):
                     (ks, 1), strides=1, padding="same", name=f"{self.name}_dw_{i}"
                 )
             )
-        
+
         super().build(input_shape)
+
     def call(self, inputs, training=None):
         """Forward pass with MixConv logic.
 
@@ -531,9 +532,6 @@ class MixedNet(tf.keras.Model):
         # Output layer - must be float32 for numerical stability with mixed precision
         self.output_dense = tf.keras.layers.Dense(
             1, activation="sigmoid", name="output", dtype=tf.float32
-        )
-        self.output_dense = tf.keras.layers.Dense(
-            1, activation="sigmoid", name="output"
         )
 
         super().build(input_shape)

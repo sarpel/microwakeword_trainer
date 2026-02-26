@@ -111,14 +111,10 @@ def verify_esphome_compatibility(
 
                 # Expected: [1, 3, 40] (batch=1, stride=3 frames, 40 mel bins)
                 if input_shape != [1, 3, 40]:
-                if input_shape != [1, 3, 40]:
                     results["compatible"] = False
                     results["errors"].append(
                         f"Expected input shape [1, 3, 40], got {input_shape}. "
                         "ESPHome requires exactly [1, 3, 40] input shape."
-                    )
-                        f"Expected input shape [1, 3, 40], got {input_shape}. "
-                        "This may affect ESPHome compatibility."
                     )
 
                 # Must be int8

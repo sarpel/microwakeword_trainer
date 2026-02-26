@@ -6,11 +6,6 @@
 **Verification:** All facts verified via official model TFLite analysis + ESPHome C++ source
 **Implementation Status:** 100% - All config variables implemented and connected
 
-**Version:** 2.0 (Performance Optimized + GPU-First)
-**Status:** Production-Ready with Performance Enhancements
-**Date:** 2025-02-25
-**Verification:** All facts verified via official model TFLite analysis + ESPHome C++ source
-
 ---
 
 ## EXECUTIVE SUMMARY
@@ -59,8 +54,6 @@ All architectural claims verified against actual TFLite flatbuffers.
 - `config/loader.py` - Added `training_steps` and `spectrogram_length` fields
 
 ---
-
-## TABLE OF CONTENTS
 
 ## TABLE OF CONTENTS
 

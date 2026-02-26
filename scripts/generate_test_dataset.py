@@ -4,7 +4,6 @@ Generate synthetic test dataset for microwakeword training pipeline.
 Creates minimal synthetic WAV files for testing purposes.
 """
 
-import os
 import wave
 import numpy as np
 from pathlib import Path
@@ -99,7 +98,7 @@ def create_negative_samples():
         if (i + 1) % 10 == 0:
             print(f"  Created {i + 1} negative samples...")
 
-    print(f"  Total: 50 negative samples\n")
+    print("  Total: 50 negative samples\n")
 
 
 def verify_wav_file(filepath: Path) -> dict:
@@ -121,7 +120,7 @@ def main():
     print("=" * 60)
     print("Synthetic Test Dataset Generator")
     print("=" * 60)
-    print(f"Configuration:")
+    print("Configuration:")
     print(f"  Sample Rate: {SAMPLE_RATE} Hz")
     print(f"  Duration: {DURATION} seconds")
     print(f"  Channels: {NUM_CHANNELS} (mono)")

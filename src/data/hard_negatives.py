@@ -170,10 +170,19 @@ class HardNegativeMiner:
         Returns:
             Destination path
         """
-        # Create filename with score
+        import uuid
+
+        # Create filename with score and unique suffix to prevent collisions
         base_name = audio_path.stem
-        new_name = f"{base_name}_score{score:.3f}.wav"
+        unique_suffix = uuid.uuid4().hex[:8]
+        new_name = f"{base_name}_score{score:.3f}_{unique_suffix}.wav"
         dest_path = self.hard_negative_dir / new_name
+
+        # Handle potential collision (should be rare with uuid)
+        while dest_path.exists():
+            unique_suffix = uuid.uuid4().hex[:8]
+            new_name = f"{base_name}_score{score:.3f}_{unique_suffix}.wav"
+            dest_path = self.hard_negative_dir / new_name
 
         # Copy file
         shutil.copy2(audio_path, dest_path)
@@ -222,30 +231,36 @@ def integrate_hard_negative_mining(
     config: HardNegativeMiningConfig,
     negative_audio_dir: Path,
     hard_negative_dir: Path,
+    mining_interval_steps: int = 2500,  # Mine every N steps
 ):
     """Integrate hard negative mining into training loop.
 
     This is a helper function to add mining to an existing trainer.
+    Mining is triggered at validation intervals based on steps.
 
     Args:
-        trainer: Trainer object with train() method
+        trainer: Trainer object with train() method and validate method
         config: Mining configuration
         negative_audio_dir: Directory with negative samples to mine from
         hard_negative_dir: Directory to store mined hard negatives
+        mining_interval_steps: Mine every N steps (default: 2500)
     """
     miner = HardNegativeMiner(config, hard_negative_dir)
 
-    # Store original train method
-    original_train = trainer.train
+    # Store original validate method
+    original_validate = trainer.validate
+    last_mining_step = 0
 
-    def train_with_mining(*args, **kwargs):
-        """Wrapped train method with mining."""
-        # Get current epoch if available
-        epoch = getattr(trainer, "current_epoch", 0)
+    def validate_with_mining(data_factory):
+        """Wrapped validate method with mining at intervals."""
+        nonlocal last_mining_step
 
-        # Mine hard negatives if it's time
-        if miner.should_mine(epoch):
-            logger.info(f"Epoch {epoch}: Mining hard negatives...")
+        # Get current step
+        current_step = getattr(trainer, "current_step", 0)
+
+        # Mine hard negatives if it's time (based on steps)
+        if current_step - last_mining_step >= mining_interval_steps:
+            logger.info(f"Step {current_step}: Mining hard negatives...")
 
             # Get negative audio files
             negative_files = list(negative_audio_dir.glob("*.wav"))
@@ -262,11 +277,13 @@ def integrate_hard_negative_mining(
                         negative_files[:1000],  # Limit to avoid slow mining
                     )
 
-        # Call original train
-        return original_train(*args, **kwargs)
+            last_mining_step = current_step
 
-    # Replace train method
-    trainer.train = train_with_mining
+        # Call original validate
+        return original_validate(data_factory)
+
+    # Replace validate method
+    trainer.validate = validate_with_mining
     trainer.hard_negative_miner = miner
 
     logger.info("Hard negative mining integrated into trainer")

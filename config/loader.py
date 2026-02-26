@@ -87,30 +87,6 @@ class ModelConfig:
     dropout_rate: float = 0.0
     l2_regularization: float = 0.0
 
-@dataclass
-class FeatureSetConfig:
-    """Single feature set configuration."""
-
-    features_dir: str
-    sampling_weight: float = 1.0
-    penalty_weight: float = 1.0
-    truth: bool = False
-    truncation_strategy: str = "random"
-    type: str = "mmap"
-
-
-@dataclass
-class FeaturesConfig:
-    """Feature sets configuration (list of FeatureSetConfig)."""
-
-    features: List[FeatureSetConfig] = field(default_factory=list)
-
-    @classmethod
-    def from_dict(cls, data: List[Dict[str, Any]]) -> "FeaturesConfig":
-        """Create FeaturesConfig from list of dicts."""
-        features = [FeatureSetConfig(**f) for f in data]
-        return cls(features=features)
-
 
 @dataclass
 class AugmentationConfig:
@@ -209,7 +185,7 @@ class FullConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
-    features: FeaturesConfig = field(default_factory=FeaturesConfig)
+
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
     speaker_clustering: SpeakerClusteringConfig = field(
@@ -246,7 +222,6 @@ class ConfigLoader:
         "paths": PathsConfig,
         "training": TrainingConfig,
         "model": ModelConfig,
-        "features": FeaturesConfig,
         "augmentation": AugmentationConfig,
         "performance": PerformanceConfig,
         "speaker_clustering": SpeakerClusteringConfig,
@@ -451,12 +426,7 @@ class ConfigLoader:
             if section_name in config:
                 section_data = config[section_name]
 
-                # Handle features specially (list of FeatureSetConfig)
-                if section_name == "features":
-                    result[section_name] = FeaturesConfig.from_dict(section_data)
-                else:
-                    result[section_name] = section_class(**section_data)
-
+                result[section_name] = section_class(**section_data)
         return FullConfig(**result)
 
     # =========================================================================
@@ -532,9 +502,8 @@ class ConfigLoader:
         """
         Resolve relative paths relative to config file location.
 
-        Only resolves paths that start with ../ (parent directory references).
-        Paths starting with ./ are left as-is to allow user to define
-        their own base directory.
+        Resolves paths that start with ../ (parent directory), ./ (current directory),
+        or bare relative paths (not starting with / and not being absolute URLs).
 
         Args:
             value: String potentially containing a path
@@ -546,13 +515,22 @@ class ConfigLoader:
         if not isinstance(value, str):
             return value
 
-        # Only resolve ../ (parent directory) references
-        # Leave ./ and relative paths as-is for user flexibility
-        if value.startswith("../") and self._config_dir is not None:
-            resolved = (self._config_dir / value).resolve()
-            return str(resolved)
+        # Skip URLs and absolute paths
+        if value.startswith(("http://", "https://", "file://", "/")):
+            return value
+
+        # Resolve relative paths against config directory
+        if self._config_dir is not None:
+            if value.startswith("../") or value.startswith("./"):
+                resolved = (self._config_dir / value).resolve()
+                return str(resolved)
+            # Handle bare relative paths (e.g., "config/data.yaml")
+            if not os.path.isabs(value) and "/" in value:
+                resolved = (self._config_dir / value).resolve()
+                return str(resolved)
 
         return value
+
     def _deep_copy_dict(self, d: Dict[str, Any]) -> Dict[str, Any]:
         """Create deep copy of dictionary."""
         result = {}

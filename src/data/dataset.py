@@ -148,9 +148,6 @@ class RaggedMmap:
             # Initialize in-memory index as mutable lists for write mode
             self._offsets = []
             self._lengths = []
-            # Initialize in-memory index as mutable lists for write mode
-            self._offsets = []
-            self._lengths = []
         else:
             raise ValueError(f"Invalid mode: {mode}")
 
@@ -172,6 +169,7 @@ class RaggedMmap:
 
         # Get lengths (in bytes for offset calculation)
         # Get lengths (in bytes for offset calculation)
+        lengths = [arr.nbytes for arr in arrays]
         lengths = [arr.nbytes for arr in arrays]
 
         # Calculate offsets
@@ -233,7 +231,12 @@ class RaggedMmap:
         offset = int(self._offsets[idx])
         length = int(self._lengths[idx])
 
-        return np.array(self._data[offset : offset + length])
+        # Convert byte offsets/lengths to element counts
+        itemsize = self._data.itemsize
+        elem_offset = offset // itemsize
+        elem_length = length // itemsize
+
+        return np.array(self._data[elem_offset : elem_offset + elem_length])
 
     def __len__(self) -> int:
         """Get number of stored arrays."""
@@ -339,9 +342,9 @@ class FeatureStore:
 
         self.metadata = {
             "num_samples": 0,
+            "expected_samples": num_samples,
             "feature_dim": feature_dim,
         }
-
     def add(self, feature: np.ndarray, label: int):
         """Add a single feature-label pair.
 

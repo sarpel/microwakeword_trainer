@@ -18,6 +18,8 @@ from tensorflow import keras
 
 from src.model.architecture import build_model
 from src.training.profiler import TrainingProfiler
+from src.training.miner import HardExampleMiner
+from src.data.spec_augment_gpu import batch_spec_augment_gpu
 
 
 class TrainingMetrics:
@@ -50,17 +52,21 @@ class TrainingMetrics:
             y_true: Ground truth labels (0 or 1)
             y_scores: Prediction scores (0 to 1)
         """
-        self.all_y_true.extend(y_true.tolist())
-        self.all_y_scores.extend(y_scores.tolist())
+        # Flatten arrays to prevent broadcasting issues
+        y_true_flat = np.ravel(y_true)
+        y_scores_flat = np.ravel(y_scores)
+
+        self.all_y_true.extend(y_true_flat.tolist())
+        self.all_y_scores.extend(y_scores_flat.tolist())
 
         # Update per-threshold metrics
         for cutoff in self.cutoffs:
-            y_pred = (y_scores >= cutoff).astype(np.int32)
+            y_pred = (y_scores_flat >= cutoff).astype(np.int32)
 
-            tp = np.sum((y_pred == 1) & (y_true == 1))
-            fp = np.sum((y_pred == 1) & (y_true == 0))
-            tn = np.sum((y_pred == 0) & (y_true == 0))
-            fn = np.sum((y_pred == 0) & (y_true == 1))
+            tp = int(np.sum((y_pred == 1) & (y_true_flat == 1)))
+            fp = int(np.sum((y_pred == 1) & (y_true_flat == 0)))
+            tn = int(np.sum((y_pred == 0) & (y_true_flat == 0)))
+            fn = int(np.sum((y_pred == 0) & (y_true_flat == 1)))
 
             self.tp_at_threshold[cutoff] += tp
             self.fp_at_threshold[cutoff] += fp
@@ -162,6 +168,9 @@ class Trainer:
         self.learning_rates = training.get("learning_rates", [0.001, 0.0001])
         self.batch_size = training.get("batch_size", 128)
         self.eval_step_interval = training.get("eval_step_interval", 500)
+        self.steps_per_epoch = training.get(
+            "steps_per_epoch", 1000
+        )  # For mining epoch calculation
 
         # Class weights (positive=1.0, negative=20.0, hard_negative=40.0 typical for wake word)
         self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
@@ -185,6 +194,22 @@ class Trainer:
         self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
         self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
         self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
+
+        # SpecAugment configuration (per-phase)
+        self.time_mask_max_size = _pad_or_trim(
+            training.get("time_mask_max_size", [0, 0]), 0
+        )
+        self.time_mask_count = _pad_or_trim(training.get("time_mask_count", [0, 0]), 0)
+        self.freq_mask_max_size = _pad_or_trim(
+            training.get("freq_mask_max_size", [0, 0]), 0
+        )
+        self.freq_mask_count = _pad_or_trim(training.get("freq_mask_count", [0, 0]), 0)
+        self.spec_augment_enabled = any(
+            self.time_mask_max_size
+            + self.time_mask_count
+            + self.freq_mask_max_size
+            + self.freq_mask_count
+        )
 
         # Checkpoint selection config
         self.minimization_metric = training.get(
@@ -229,8 +254,28 @@ class Trainer:
         self.best_recall = 0.0
         self.best_weights_path: Optional[str] = None
 
+        # SpecAugment warning flag to prevent log flooding
+        self._spec_augment_warning_shown = False
+
         # Metrics trackers
         self.train_metrics = TrainingMetrics()
+        self.val_metrics = TrainingMetrics()
+
+        # Hard negative mining
+        hn_config = config.get("hard_negative_mining", {})
+        self.hard_negative_mining_enabled = hn_config.get("enabled", False)
+        self.hard_negative_miner: Optional[HardExampleMiner] = None
+        if self.hard_negative_mining_enabled:
+            self.hard_negative_miner = HardExampleMiner(
+                fp_threshold=hn_config.get("fp_threshold", 0.8),
+                max_samples=hn_config.get("max_samples", 5000),
+                mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
+                output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
+            )
+            print(
+                f"[TRAINER] Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, "
+                f"max_samples={hn_config.get('max_samples', 5000)}"
+            )
         self.val_metrics = TrainingMetrics()
 
     def _get_current_phase_settings(self, step: int) -> Dict[str, Any]:
@@ -570,6 +615,27 @@ class Trainer:
                         "Cannot continue training without batches."
                     ) from exc
 
+            # Apply SpecAugment if enabled (GPU-accelerated)
+            if self.spec_augment_enabled:
+                phase_settings = self._get_current_phase_settings(step)
+                current_phase = phase_settings["phase"]
+                if (
+                    self.time_mask_count[current_phase] > 0
+                    or self.freq_mask_count[current_phase] > 0
+                ):
+                    try:
+                        train_fingerprints = batch_spec_augment_gpu(
+                            train_fingerprints,
+                            time_mask_max_size=self.time_mask_max_size[current_phase],
+                            time_mask_count=self.time_mask_count[current_phase],
+                            freq_mask_max_size=self.freq_mask_max_size[current_phase],
+                            freq_mask_count=self.freq_mask_count[current_phase],
+                        )
+                    except RuntimeError as e:
+                        # GPU not available or CuPy not installed, skip SpecAugment
+                        if not self._spec_augment_warning_shown:
+                            print(f"[WARNING] SpecAugment skipped: {e}")
+                            self._spec_augment_warning_shown = True
             # Profile data loading if enabled
             if self.profiler and step % self.profile_every_n == 0:
                 with self.profiler.profile_section(f"step_{step}"):
@@ -616,6 +682,42 @@ class Trainer:
                 )
 
                 self._save_checkpoint(val_metrics, is_best, reason)
+                print()
+
+                # Hard negative mining (during evaluation)
+                if self.hard_negative_miner and step % self.eval_step_interval == 0:
+                    # Calculate approximate epoch from steps per epoch
+                    approx_epoch = (
+                        step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
+                    )
+                    if (
+                        approx_epoch > 0
+                        and approx_epoch
+                        % self.hard_negative_miner.mining_interval_epochs
+                        == 0
+                        and approx_epoch != getattr(self, "_last_mined_epoch", -1)
+                    ):
+                        print(
+                            f"[MINING] Mining hard negatives at epoch {approx_epoch}..."
+                        )
+                        try:
+                            mining_result = self.hard_negative_miner.mine_from_dataset(
+                                self.model, val_data_factory, approx_epoch
+                            )
+                            print(
+                                f"[MINING] Found {mining_result['num_hard_negatives']} hard negatives"
+                            )
+                            self._last_mined_epoch = approx_epoch
+                        except IOError as e:
+                            print(
+                                f"[MINING] Warning: Hard negative mining failed (IOError): {e}"
+                            )
+                        except RuntimeError as e:
+                            print(
+                                f"[MINING] Warning: Hard negative mining failed (RuntimeError): {e}"
+                            )
+                        except Exception as e:
+                            raise
                 print()
 
         # Training complete
@@ -699,7 +801,6 @@ def main():
     # Load config
     config = load_full_config(args.config, args.override)
 
-    # Train model
     # Train model
     train(config)
 

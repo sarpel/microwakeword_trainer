@@ -8,6 +8,9 @@ Provides:
 
 import functools
 import logging
+import math
+import random
+import logging
 import random
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -162,6 +165,47 @@ class MicroFrontend:
         return self._compute_mel_spectrogram_pymicro(audio)
 
     def _compute_mel_spectrogram_pymicro(self, audio: np.ndarray) -> np.ndarray:
+        """Compute mel spectrogram using pymicro-features.
+
+        Uses the TFLite Micro audio frontend for ESPHome-compatible
+        feature extraction (40 mel bins, 16kHz, 30ms window, 10ms step).
+
+        Args:
+            audio: Audio samples as float32 array in range [-1, 1]
+
+        Returns:
+            Mel spectrogram of shape (num_frames, mel_bins)
+        """
+        import pymicro_features
+
+        # Initialize the MicroFrontend (lazy initialization for efficiency)
+        if not hasattr(self, "_frontend"):
+            self._frontend = pymicro_features.MicroFrontend(
+                sample_rate=self.config.sample_rate,
+                mel_bins=self.config.mel_bins,
+                frame_length=self.config.window_size_samples,
+                frame_shift=self.config.window_step_samples,
+            )
+
+        # Ensure correct dtype
+        audio = audio.astype(np.float32)
+
+        # Convert float32 [-1, 1] to 16-bit PCM
+        audio_int16 = (audio * 32767.0).astype(np.int16)
+
+        # Convert to bytes (little-endian, mono)
+        audio_bytes = audio_int16.tobytes()
+
+        # Process the entire audio - pymicro-features handles chunking internally
+        # It processes 10ms frames (160 samples at 16kHz) and returns all frames
+        output = self._frontend.process_samples(audio_bytes)
+
+        # Convert to numpy array with correct shape (frames, mel_bins)
+        mel_spec = np.array(output, dtype=np.float32)
+
+        return mel_spec
+
+    def _compute_mel_spectrogram_librosa(self, audio: np.ndarray) -> np.ndarray:
         """Compute mel spectrogram using librosa.
 
         Args:
@@ -182,6 +226,20 @@ class MicroFrontend:
         n_mels = self.config.mel_bins
 
         # Compute mel spectrogram
+        mel_spec = librosa.feature.melspectrogram(
+            y=audio,
+            sr=self.config.sample_rate,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            n_mels=n_mels,
+            fmin=0,
+            fmax=self.config.sample_rate / 2,
+        )
+
+        # Convert to log scale (dB)
+        mel_spec = librosa.power_to_db(mel_spec, ref=np.max)
+
+        return mel_spec.astype(np.float32)
         mel_spec = librosa.feature.melspectrogram(
             y=audio,
             sr=self.config.sample_rate,
@@ -286,8 +344,11 @@ class SpectrogramGeneration:
         else:
             actual_length = len(audio)
 
-        # Calculate number of frames
-        num_frames = max(1, 1 + (actual_length - frame_length) // frame_step)
+        # Calculate number of frames using ceiling to include tail frame
+        if actual_length >= frame_length:
+            num_frames = int(math.ceil((actual_length - frame_length) / frame_step)) + 1
+        else:
+            num_frames = 1
 
         # Create frames
         frames = np.zeros((num_frames, frame_length), dtype=audio.dtype)
@@ -300,7 +361,8 @@ class SpectrogramGeneration:
             else:
                 # Last frame may be shorter, pad with zeros
                 remaining = actual_length - start
-                frames[i, :remaining] = audio[start:]
+                if remaining > 0:
+                    frames[i, :remaining] = audio[start:]
 
         return frames
 
@@ -331,8 +393,8 @@ class SpectrogramGeneration:
         """
         from .ingestion import load_audio_wave
 
-        audio = load_audio_wave(file_path)
-
+        # Load audio with configured sample rate
+        audio = load_audio_wave(file_path, target_sr=self.config.sample_rate)
         if target_length is not None:
             if len(audio) > target_length:
                 # Truncate or random crop
@@ -369,9 +431,13 @@ class SpectrogramGeneration:
         # Pad to same length if needed
         max_frames = max(spec.shape[0] for spec in results)
 
-        padded = np.zeros((batch_size, max_frames, self.config.mel_bins))
+        # Use consistent dtype from results
+        target_dtype = results[0].dtype
+        padded = np.zeros(
+            (batch_size, max_frames, self.config.mel_bins), dtype=target_dtype
+        )
         for i, spec in enumerate(results):
-            padded[i, : spec.shape[0], :] = spec
+            padded[i, : spec.shape[0], :] = spec.astype(target_dtype)
 
         return padded
 

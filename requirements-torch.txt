@@ -1,11 +1,11 @@
 # microwakeword_trainer - PyTorch Environment Requirements
-# Version 2.0 - For Speaker Clustering and WavLM Embeddings
+# Version 2.0 - For Speaker Clustering and SpeechBrain ECAPA-TDNN Embeddings
 #
 # IMPORTANT: This is a SEPARATE environment from the TensorFlow training environment.
 # TensorFlow and PyTorch conflict - do NOT install them together.
 #
 # Use this environment ONLY for:
-# - Speaker clustering with WavLM embeddings
+# - Speaker clustering with SpeechBrain ECAPA-TDNN embeddings
 # - Hard negative mining with speechbrain
 # - Data preprocessing with transformers
 #

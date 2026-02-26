@@ -133,14 +133,15 @@ class AudioAugmentation:
         if apply_all or random.random() < self.config.AddColorNoise:
             augmented = self.apply_color_noise(augmented)
 
-        # Apply background noise
-        if apply_all or random.random() < self.config.AddBackgroundNoise:
+        # Apply background noise (check both old and new keys)
+        bg_noise_prob = self.config.AddBackgroundNoiseFromFile or self.config.AddBackgroundNoise
+        if apply_all or random.random() < bg_noise_prob:
             augmented = self.apply_background_noise(augmented)
 
-        # Apply RIR
-        if apply_all or random.random() < self.config.RIR:
+        # Apply RIR (check both old and new keys)
+        rir_prob = self.config.ApplyImpulseResponse or self.config.RIR
+        if apply_all or random.random() < rir_prob:
             augmented = self.apply_rir(augmented)
-
         return augmented
 
     def apply_gain(

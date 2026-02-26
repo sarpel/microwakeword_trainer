@@ -1,12 +1,13 @@
 """Clustering module for speaker diversity and leakage auditing.
 
 Provides:
-- Speaker clustering using WavLM embeddings
+- Speaker clustering using SpeechBrain ECAPA-TDNN embeddings
 - Similarity threshold-based clustering
 - Leakage audit for train/test separation
 """
 
 import logging
+import os
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
@@ -24,14 +25,17 @@ except ImportError:
 
 try:
     import torch
-    from transformers import WavLMModel, WavLMProcessor  # type: ignore[attr-defined]
+    import torchaudio
 
-    HAS_TRANSFORMERS = True
+    # SpeechBrain for speaker embeddings (ECAPA-TDNN)
+    from speechbrain.pretrained import EncoderClassifier
+
+    HAS_SPEECHBRAIN = True
 except ImportError:
     torch = None  # type: ignore
-    WavLMModel = None  # type: ignore
-    WavLMProcessor = None  # type: ignore
-    HAS_TRANSFORMERS = False
+    torchaudio = None  # type: ignore
+    EncoderClassifier = None  # type: ignore
+    HAS_SPEECHBRAIN = False
 
 try:
     import librosa
@@ -46,27 +50,27 @@ logger = logging.getLogger(__name__)
 MAX_DENSE_SIMILARITY_BYTES = 1_000_000_000  # ~1GB safety limit
 
 
-def extract_wavlm_embeddings(
+def extract_speaker_embeddings(
     audio_paths: List[str],
-    model_name: str = "microsoft/wavlm-base-plus",
+    model_name: str = "speechbrain/ecapa-tdnn-voxceleb",
     device: Optional[str] = None,
     batch_size: int = 8,
 ) -> np.ndarray:
-    """Extract speaker embeddings using WavLM.
+    """Extract speaker embeddings using SpeechBrain ECAPA-TDNN.
 
     Args:
         audio_paths: List of paths to audio files
-        model_name: WavLM model name
+        model_name: SpeechBrain model name (default: ecapa-tdnn-voxceleb)
         device: Device to run model on ("cuda" or "cpu"). If None, auto-detect.
         batch_size: Batch size for processing
 
     Returns:
         Array of embeddings [n_samples, embedding_dim]
     """
-    if not HAS_TRANSFORMERS or not HAS_SKLEARN:
+    if not HAS_SPEECHBRAIN or not HAS_SKLEARN:
         raise ImportError(
-            "transformers and sklearn are required for speaker clustering. "
-            "Install: pip install transformers torch scikit-learn"
+            "speechbrain and sklearn are required for speaker clustering. "
+            "Install: pip install speechbrain torch scikit-learn"
         )
     if not HAS_LIBROSA:
         raise ImportError(
@@ -74,14 +78,23 @@ def extract_wavlm_embeddings(
             "Install: pip install librosa"
         )
 
+    import tempfile
+
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Load model and processor
-    processor = WavLMProcessor.from_pretrained(model_name)  # type: ignore[arg-type]
-    model = WavLMModel.from_pretrained(model_name)
-    model = model.to(device)  # type: ignore[arg-type]
-    model.eval()
+    # Sanitize model name for use in path
+    sanitized_name = model_name.replace("/", "_")
+    savedir = os.path.join(
+        tempfile.gettempdir(), f"speechbrain_embeddings_{sanitized_name}"
+    )
+
+    # Load SpeechBrain encoder classifier for speaker embeddings
+    classifier = EncoderClassifier.from_hparams(
+        source=model_name,
+        savedir=savedir,
+        run_opts={"device": device},
+    )
 
     embeddings = []
 
@@ -90,20 +103,19 @@ def extract_wavlm_embeddings(
         batch_embeddings = []
 
         for audio_path in batch_paths:
-            # Load audio
+            # Load audio using librosa (resample to 16kHz if needed)
             audio, sr = librosa.load(audio_path, sr=16000)
 
-            # Process audio
-            inputs = processor(audio, sampling_rate=16000, return_tensors="pt")
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+            # SpeechBrain expects (batch, waveform) or (waveform,)
+            # The encoder expects torch tensor with shape [1, samples]
+            audio_tensor = torch.tensor(audio).unsqueeze(0).to(device)
 
-            # Extract embeddings
+            # Extract embeddings using the encoder method
+            # encoder_classifier encodes audio and returns embeddings
             with torch.no_grad():
-                outputs = model(**inputs)
-                # Mean-pool temporal hidden states to obtain speaker embedding
-                embedding = (
-                    outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy()
-                )
+                embedding = classifier.encode_batch(audio_tensor)
+                # Shape: [1, 1, embedding_dim] -> squeeze to [embedding_dim]
+                embedding = embedding.squeeze().cpu().numpy()
                 batch_embeddings.append(embedding)
 
         embeddings.extend(batch_embeddings)
@@ -111,9 +123,38 @@ def extract_wavlm_embeddings(
     return np.array(embeddings)
 
 
+def extract_wavlm_embeddings(
+    audio_paths: List[str],
+    model_name: str = "microsoft/wavlm-base-plus",
+    device: Optional[str] = None,
+    batch_size: int = 8,
+) -> np.ndarray:
+    """Extract speaker embeddings using WavLM (legacy wrapper).
+
+    This function is kept for backward compatibility.
+    Use extract_speaker_embeddings() for SpeechBrain ECAPA-TDNN.
+
+    Args:
+        audio_paths: List of paths to audio files
+        model_name: WavLM model name (ignored, kept for compatibility)
+        device: Device to run model on ("cuda" or "cpu"). If None, auto-detect.
+        batch_size: Batch size for processing
+
+    Returns:
+        Array of embeddings [n_samples, embedding_dim]
+    """
+    # Redirect to the new SpeechBrain implementation
+    return extract_speaker_embeddings(
+        audio_paths,
+        model_name="speechbrain/ecapa-tdnn-voxceleb",
+        device=device,
+        batch_size=batch_size,
+    )
+
+
 def cluster_samples(
     features: np.ndarray,
-    n_clusters: int = 100,
+    n_clusters: int = 2,
     similarity_threshold: float = 0.72,
     method: str = "agglomerative",
 ) -> np.ndarray:
@@ -131,10 +172,19 @@ def cluster_samples(
     if not HAS_SKLEARN:
         raise ImportError("scikit-learn is required for clustering")
 
+    # Handle empty input
+    if features.size == 0 or len(features) == 0:
+        return np.array([], dtype=int)
+
+    # Bound n_clusters to number of samples
+    effective_n_clusters = min(n_clusters, len(features))
+    if effective_n_clusters < 1:
+        effective_n_clusters = 1
+
     if method == "agglomerative":
         # Use AgglomerativeClustering with cosine affinity
         clustering = AgglomerativeClustering(
-            n_clusters=n_clusters,
+            n_clusters=effective_n_clusters,
             metric="cosine",
             linkage="average",
         )
@@ -166,6 +216,11 @@ def _similarity_clustering(
         Cluster labels
     """
     n_samples = len(features)
+
+    # Handle empty input
+    if n_samples == 0 or features.size == 0:
+        return np.array([], dtype=int)
+
     labels = np.full(n_samples, -1, dtype=int)
     current_label = 0
 
@@ -327,6 +382,29 @@ def audit_leakage(
     if not HAS_SKLEARN:
         raise ImportError("scikit-learn is required for leakage audit")
 
+    # Handle empty inputs
+    if test_features.size == 0:
+        return {
+            "has_leakage": False,
+            "num_leaked_samples": 0,
+            "total_test_samples": 0,
+            "leakage_percentage": 0.0,
+            "leaked_test_indices": [],
+            "matched_train_indices": [],
+            "max_similarities": [],
+        }
+
+    if train_features.size == 0:
+        return {
+            "has_leakage": False,
+            "num_leaked_samples": 0,
+            "total_test_samples": len(test_features),
+            "leakage_percentage": 0.0,
+            "leaked_test_indices": [],
+            "matched_train_indices": [],
+            "max_similarities": [0.0] * len(test_features),
+        }
+
     # Compute similarity between train and test
     similarity = cosine_similarity(test_features, train_features)
 
@@ -358,7 +436,7 @@ def audit_leakage(
 
 def cluster_by_speaker(
     audio_paths: List[str],
-    embedding_model: str = "microsoft/wavlm-base-plus",
+    embedding_model: str = "speechbrain/ecapa-tdnn-voxceleb",
     similarity_threshold: float = 0.72,
     method: Optional[str] = None,
     leakage_threshold: float = 0.9,
@@ -369,7 +447,7 @@ def cluster_by_speaker(
 
     Args:
         audio_paths: List of audio file paths
-        embedding_model: WavLM model to use
+        embedding_model: SpeechBrain model to use (default: ecapa-tdnn-voxceleb)
         similarity_threshold: Clustering threshold
         method: Clustering method ("agglomerative" or "threshold").
             If None, defaults to "threshold" when similarity_threshold is provided.
@@ -380,8 +458,8 @@ def cluster_by_speaker(
     Returns:
         Dict with cluster labels and audit results
     """
-    # Extract embeddings
-    embeddings = extract_wavlm_embeddings(audio_paths, embedding_model)
+    # Extract embeddings using SpeechBrain ECAPA-TDNN
+    embeddings = extract_speaker_embeddings(audio_paths, model_name=embedding_model)
 
     # Cluster
     selected_method = method or "threshold"
@@ -435,20 +513,22 @@ def cluster_by_speaker(
 # =============================================================================
 
 
-
 @dataclass
 class SpeakerClusteringConfig:
-    """Configuration for speaker clustering."""
+    """Configuration for speaker clustering using SpeechBrain ECAPA-TDNN."""
 
     enabled: bool = True
-    method: str = "wavlm_ecapa"
-    embedding_model: str = "microsoft/wavlm-base-plus"
+    method: str = "agglomerative"
+    embedding_model: str = "speechbrain/ecapa-tdnn-voxceleb"
     similarity_threshold: float = 0.72
     leakage_audit_enabled: bool = True
+    leakage_similarity_threshold: float = (
+        0.9  # Stricter threshold for leakage detection
+    )
 
 
 class SpeakerClustering:
-    """Speaker clustering using WavLM embeddings."""
+    """Speaker clustering using SpeechBrain ECAPA-TDNN embeddings."""
 
     def __init__(self, config=None):
         self.config = config or SpeakerClusteringConfig()
@@ -458,14 +538,20 @@ class SpeakerClustering:
         if not self.config.enabled:
             return {p: 0 for p in audio_paths}
 
-        embeddings = extract_wavlm_embeddings(
+        embeddings = extract_speaker_embeddings(
             audio_paths, model_name=self.config.embedding_model
         )
+
+        # Determine clustering method from config
+        cluster_method = self.config.method
+        # Map legacy method names if needed
+        if cluster_method in ("wavlm_ecapa", "ecapa"):
+            cluster_method = "agglomerative"  # Map to valid method
 
         labels = cluster_samples(
             embeddings,
             similarity_threshold=self.config.similarity_threshold,
-            method="agglomerative",
+            method=cluster_method,
         )
 
         return {p: int(label) for p, label in zip(audio_paths, labels)}
@@ -476,13 +562,16 @@ class SpeakerClustering:
             return {"audited": False}
 
         all_paths = train_paths + test_paths
-        embeddings = extract_wavlm_embeddings(
+        embeddings = extract_speaker_embeddings(
             all_paths, model_name=self.config.embedding_model
         )
 
         train_emb = embeddings[: len(train_paths)]
         test_emb = embeddings[len(train_paths) :]
 
+        # Use stricter leakage threshold, fallback to 0.9 if not set
+        leakage_threshold = getattr(self.config, "leakage_similarity_threshold", 0.9)
+
         return audit_leakage(
-            train_emb, test_emb, similarity_threshold=self.config.similarity_threshold
+            train_emb, test_emb, similarity_threshold=leakage_threshold
         )

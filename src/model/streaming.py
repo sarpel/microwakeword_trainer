@@ -187,9 +187,7 @@ class Stream(tf.keras.layers.Layer):
     def get_core_layer(self):
         """Get the core layer being wrapped."""
         core_layer = self.cell
-        # Handle wrapper layers
-        if isinstance(core_layer, tf.keras.layers.Wrapper):
-            core_layer = core_layer.layer
+        # Handle wrapper layers (unwrapping once is sufficient)
         if isinstance(core_layer, tf.keras.layers.Wrapper):
             core_layer = core_layer.layer
         return core_layer
@@ -753,6 +751,7 @@ class StreamingMixedNet:
         # Resample if needed (simple resampling)
         if sample_rate != 16000:
             from scipy import signal
+
             num_samples = int(len(audio_samples) * 16000 / sample_rate)
             audio_samples = signal.resample(audio_samples, num_samples)
 
@@ -761,19 +760,25 @@ class StreamingMixedNet:
         frontend = MicroFrontend(config)
         spectrogram = frontend.compute_mel_spectrogram(audio_samples)
 
-        # Get stride from model config (default 3 for 30ms)
-        stride = getattr(self, 'stride', 3)
+        # Convert step_ms to stride (number of frames)
+        # step_ms=30ms -> stride=3 frames (at 10ms per frame)
+        step_samples = int(step_ms / 10)
+        if step_samples < 1:
+            step_samples = 1
 
-        # Run streaming inference
+        # Get model stride from config (for window size)
+        model_stride = getattr(self, "stride", 3)
+
+        # Run streaming inference with configurable step size
         probabilities = []
-        for i in range(0, spectrogram.shape[0] - stride + 1, stride):
+        for i in range(0, spectrogram.shape[0] - model_stride + 1, step_samples):
             # Extract window
-            window = spectrogram[i:i + stride, :]
+            window = spectrogram[i : i + model_stride, :]
 
             # Pad if needed
-            if window.shape[0] < stride:
-                pad_width = ((0, stride - window.shape[0]), (0, 0))
-                window = np.pad(window, pad_width, mode='constant')
+            if window.shape[0] < model_stride:
+                pad_width = ((0, model_stride - window.shape[0]), (0, 0))
+                window = np.pad(window, pad_width, mode="constant")
 
             # Add batch dimension: [1, stride, mel_bins]
             features = np.expand_dims(window, axis=0).astype(np.float32)

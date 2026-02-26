@@ -35,6 +35,7 @@ training:
   learning_rates: [0.001, 0.0001]
   batch_size: 128
   eval_step_interval: 500
+  steps_per_epoch: 1000  # Approximate steps per epoch for mining calculations
 
   # Class weights - higher negative weight for fewer false accepts
   positive_class_weight: [1.0, 1.0]

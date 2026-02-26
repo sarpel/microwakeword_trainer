@@ -144,32 +144,39 @@ class AudioAugmentationPipeline:
                 )
             )
 
-        if self.probabilities.get("AddBackgroundNoise", 0) > 0 and background_paths:
+        # Check both old and new keys for background noise
+        bg_prob = self.probabilities.get(
+            "AddBackgroundNoiseFromFile", 0
+        ) or self.probabilities.get("AddBackgroundNoise", 0)
+        if bg_prob > 0 and background_paths:
             self.augmentations.append(
                 (
                     "AddBackgroundNoise",
                     AddBackgroundNoise(
-                        p=self.probabilities["AddBackgroundNoise"],
+                        p=bg_prob,
                         sample_rate=self.sample_rate,
                         min_snr_db=self.background_min_snr_db,
                         max_snr_db=self.background_max_snr_db,
-                        background_paths=background_paths,
+                        sounds_path=background_paths,
                     ),
                 )
             )
 
-        if self.probabilities.get("RIR", 0) > 0 and impulse_paths:
+        # Check both old and new keys for impulse response
+        rir_prob = self.probabilities.get(
+            "ApplyImpulseResponse", 0
+        ) or self.probabilities.get("RIR", 0)
+        if rir_prob > 0 and impulse_paths:
             self.augmentations.append(
                 (
                     "ApplyImpulseResponse",
                     ApplyImpulseResponse(
-                        p=self.probabilities["RIR"],
+                        p=rir_prob,
                         sample_rate=self.sample_rate,
-                        ir_paths=impulse_paths,
+                        ir_path=impulse_paths,
                     ),
                 )
             )
-
         # Always add Gain as it has minimal impact
         gain_prob = self.probabilities.get("Gain", 1.0)
         self.augmentations.append(
