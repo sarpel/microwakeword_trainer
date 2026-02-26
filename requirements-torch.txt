@@ -12,8 +12,8 @@
 # For the main training pipeline, use requirements.txt (TensorFlow environment).
 
 # PyTorch (CPU or CUDA version based on your system)
-torch>=2.0.0
-torchaudio>=2.0.0
+torch>=2.8.0,<2.11
+torchaudio>=2.8.0,<2.11
 
 # Speaker Recognition & Embeddings
 speechbrain>=1.0.0
@@ -23,7 +23,7 @@ transformers>=4.40.0
 scikit-learn>=1.4.0
 
 # Audio/Data (same as TF env)
-numpy>=1.26,<2.0
+numpy>=1.26
 scipy
 pyyaml
 datasets>=2.14

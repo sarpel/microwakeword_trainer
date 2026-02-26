@@ -17,7 +17,6 @@ try:
         SevenBandParametricEQ,
         TanhDistortion,
     )
-    from audiomentations.core.utils import calculate_desired_noise_rms
 
     HAS_AUDIOMENTATIONS = True
 except ImportError:
@@ -189,6 +188,7 @@ class AudioAugmentationPipeline:
         Returns:
             Augmented audio
         """
+        original = audio.copy()
         augmented = audio.copy()
 
         for name, aug in self.augmentations:
@@ -197,6 +197,7 @@ class AudioAugmentationPipeline:
             except Exception as e:
                 # Keep original if augmentation fails
                 logger.exception("Augmentation '%s' failed: %s", name, e)
+                return original.copy()  # Return original on failure
 
         return augmented
 
@@ -255,9 +256,11 @@ class ParallelAugmenter:
                 logger.exception(
                     "Parallel augmentation failed for sample %d: %s", i, exc
                 )
+                # Preserve batch size by using original samples
+                augmented.extend([audio_samples[i].copy()] * num_augmentations)
         return augmented
 
     def __del__(self):
         """Cleanup thread pool."""
         if hasattr(self, "executor"):
-            self.executor.shutdown(wait=False)
+            self.executor.shutdown(wait=True)

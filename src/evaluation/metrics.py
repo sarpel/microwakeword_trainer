@@ -106,16 +106,16 @@ def compute_latency(
         end_time = time.perf_counter()
         latencies.append((end_time - start_time) * 1000)
 
-    latencies = np.array(latencies)
+    latencies_arr = np.array(latencies)
 
     return {
-        "mean_ms": float(np.mean(latencies)),
-        "std_ms": float(np.std(latencies)),
-        "min_ms": float(np.min(latencies)),
-        "max_ms": float(np.max(latencies)),
-        "p50_ms": float(np.percentile(latencies, 50)),
-        "p95_ms": float(np.percentile(latencies, 95)),
-        "p99_ms": float(np.percentile(latencies, 99)),
+        "mean_ms": float(np.mean(latencies_arr)),
+        "std_ms": float(np.std(latencies_arr)),
+        "min_ms": float(np.min(latencies_arr)),
+        "max_ms": float(np.max(latencies_arr)),
+        "p50_ms": float(np.percentile(latencies_arr, 50)),
+        "p95_ms": float(np.percentile(latencies_arr, 95)),
+        "p99_ms": float(np.percentile(latencies_arr, 99)),
     }
 
 
@@ -212,14 +212,14 @@ def compute_average_viable_recall(
     if len(recalls) < 2:
         return 0.0
 
-    fahs = np.array(fahs)
-    recalls = np.array(recalls)
+    fahs_arr = np.array(fahs)
+    recalls_arr = np.array(recalls)
 
-    sort_idx = np.argsort(fahs)
-    fahs = fahs[sort_idx]
-    recalls = recalls[sort_idx]
+    sort_idx = np.argsort(fahs_arr)
+    fahs_arr = fahs_arr[sort_idx]
+    recalls_arr = recalls_arr[sort_idx]
 
-    avg_recall = np.trapz(recalls, fahs / max_fah)
+    avg_recall = np.trapz(recalls_arr, fahs_arr / max_fah)
     return float(avg_recall)
 
 
@@ -325,8 +325,12 @@ class MetricsCalculator:
         }
 
         if ambient_duration_hours > 0:
-            self.fah_estimator.ambient_duration_hours = float(ambient_duration_hours)
-            metrics.update(self.compute_fah_metrics(threshold=threshold))
+            # Pass ambient_duration_hours explicitly instead of mutating estimator state
+            metrics.update(
+                self.compute_fah_metrics(
+                    threshold=threshold, ambient_duration_hours=ambient_duration_hours
+                )
+            )
 
             recall_no_faph, thresh_no_faph = self.compute_recall_at_no_faph()
             metrics["recall_at_no_faph"] = recall_no_faph

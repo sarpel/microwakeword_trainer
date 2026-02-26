@@ -1,7 +1,7 @@
 """Export module for model conversion to TFLite."""
 
 import os
-from typing import Callable, Generator, Optional
+from typing import Any, Callable, Dict, Generator, Optional
 
 import numpy as np
 
@@ -124,7 +124,7 @@ def _convert_to_streaming_savedmodel(
 
     # Classification head (from trained model)
     net = tf.keras.layers.Flatten()(net)
-    outputs = tf.keras.layers.Dense(1, activation="sigmoid")(net)
+    outputs = tf.keras.layers.Dense(1, activation="sigmoid", dtype=tf.float32)(net)
 
     # Create streaming model
     streaming_model = tf.keras.Model(
@@ -141,11 +141,10 @@ def _convert_to_streaming_savedmodel(
     return streaming_model
 
 
-def _create_streaming_state(shape: tuple, name: str) -> tf.Tensor:
+def _create_streaming_state(shape: tuple, name: str) -> tf.Variable:
     """Create a streaming state variable."""
     initial_state = tf.zeros(shape, dtype=tf.float32)
-    return initial_state
-
+    return tf.Variable(initial_state, trainable=False, name=name)
 
 def _streaming_concat(net: tf.Tensor, state: tf.Tensor, stride: int) -> tf.Tensor:
     """Concatenate streaming state with current input."""
@@ -162,36 +161,44 @@ def _apply_mixconv_block(
     stride: int,
 ) -> tf.Tensor:
     """Apply MixConv block with streaming state."""
-    net = _streaming_concat(net, state, stride)
+    residual_input = net
 
-    outputs = []
-    for k in kernel_sizes:
-        if k > 1:
-            conv = tf.keras.layers.DepthwiseConv2D(
-                kernel_size=(k, 1),
+    for _ in range(repeat):
+        net = _streaming_concat(net, state, stride)
+
+        outputs = []
+        for k in kernel_sizes:
+            if k > 1:
+                conv = tf.keras.layers.DepthwiseConv2D(
+                    kernel_size=(k, 1),
+                    strides=(1, 1),
+                    padding="valid",
+                    use_bias=False,
+                )(net)
+                outputs.append(conv)
+
+        if outputs:
+            net = tf.concat(outputs, axis=-1)
+        else:
+            net = tf.keras.layers.DepthwiseConv2D(
+                kernel_size=(3, 1),
                 strides=(1, 1),
                 padding="valid",
                 use_bias=False,
             )(net)
-            outputs.append(conv)
 
-    if outputs:
-        net = tf.concat(outputs, axis=-1)
-    else:
-        net = tf.keras.layers.DepthwiseConv2D(
-            kernel_size=(3, 1),
-            strides=(1, 1),
-            padding="valid",
+        net = tf.keras.layers.Conv2D(
+            filters=filters,
+            kernel_size=1,
             use_bias=False,
         )(net)
+        net = tf.keras.layers.BatchNormalization()(net)
+        net = tf.keras.layers.Activation("relu")(net)
 
-    net = tf.keras.layers.Conv2D(
-        filters=filters,
-        kernel_size=1,
-        use_bias=False,
-    )(net)
-    net = tf.keras.layers.BatchNormalization()(net)
-    net = tf.keras.layers.Activation("relu")(net)
+        # Apply residual connection if enabled and stride == 1
+        if use_residual and stride == 1:
+            net = net + residual_input
+            residual_input = net  # Update for next repeat
 
     return net
 
@@ -219,8 +226,8 @@ def _parse_nested_list_config(config_str: str) -> list:
             item = item.strip()
             try:
                 group.append(int(item))
-            except ValueError:
-                pass
+            except ValueError as e:
+                raise ValueError(f"Invalid integer '{item}' in config '{config_str}'") from e
         if group:
             result.append(group)
     return result if result else [[3]]
@@ -350,7 +357,8 @@ def export_to_tflite(
     2. Convert SavedModel to TFLite with quantization
     """
     # Extract export config
-    export_config = config.get("export", {})
+    # Extract export config
+    config.get("export", {})  # Validate export section exists
     model_config = config.get("model", {})
     hardware_config = config.get("hardware", {})
 
@@ -375,7 +383,8 @@ def export_to_tflite(
 
     # Step 1: Convert to streaming SavedModel
     print("Converting to streaming SavedModel...")
-    streaming_model = convert_model_saved(
+    print("Converting to streaming SavedModel...")
+    convert_model_saved(
         model=model,
         config=conversion_config,
         folder=stream_model_dir,
@@ -393,7 +402,7 @@ def export_to_tflite(
     else:
         rep_data_gen = None
 
-    tflite_model = convert_saved_model_to_tflite(
+    convert_saved_model_to_tflite(
         config=conversion_config,
         path_to_model=stream_model_dir,
         output_path=tflite_path,
@@ -422,7 +431,7 @@ def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
     interpreter = tf.lite.Interpreter(model_path=tflite_path)
     interpreter.allocate_tensors()
 
-    results = {
+    results: Dict[str, Any] = {
         "compatible": True,
         "errors": [],
         "warnings": [],
@@ -620,7 +629,7 @@ def main():
         print(f"TFLite model saved to: {result['tflite_path']}")
 
         # Generate manifest
-        from export.manifest import create_esphome_package
+        from src.export.manifest import create_esphome_package
 
         pkg = create_esphome_package(
             model=None,

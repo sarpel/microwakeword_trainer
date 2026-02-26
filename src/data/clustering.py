@@ -9,6 +9,7 @@ Provides:
 import logging
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -23,7 +24,7 @@ except ImportError:
 
 try:
     import torch
-    from transformers import WavLMModel, WavLMProcessor
+    from transformers import WavLMModel, WavLMProcessor  # type: ignore[attr-defined]
 
     HAS_TRANSFORMERS = True
 except ImportError:
@@ -77,9 +78,9 @@ def extract_wavlm_embeddings(
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Load model and processor
-    processor = WavLMProcessor.from_pretrained(model_name)
+    processor = WavLMProcessor.from_pretrained(model_name)  # type: ignore[arg-type]
     model = WavLMModel.from_pretrained(model_name)
-    model = model.to(device)
+    model = model.to(device)  # type: ignore[arg-type]
     model.eval()
 
     embeddings = []
@@ -403,6 +404,15 @@ def cluster_by_speaker(
 
         path_to_idx = {p: i for i, p in enumerate(audio_paths)}
 
+        # Validate that all train/test paths exist in audio_paths
+        all_split_paths = set(train_paths) | set(test_paths)
+        missing_paths = all_split_paths - set(path_to_idx.keys())
+        if missing_paths:
+            raise ValueError(
+                f"Found {len(missing_paths)} paths in train/test split that are missing "
+                f"from audio_paths. First few missing: {list(missing_paths)[:5]}"
+            )
+
         train_indices = [path_to_idx[p] for p in train_paths]
         test_indices = [path_to_idx[p] for p in test_paths]
 
@@ -418,3 +428,61 @@ def cluster_by_speaker(
         result["leakage_audit"] = leakage
 
     return result
+
+
+# =============================================================================
+# SPEAKER CLUSTERING CLASS (CONFIG-DRIVEN)
+# =============================================================================
+
+
+
+@dataclass
+class SpeakerClusteringConfig:
+    """Configuration for speaker clustering."""
+
+    enabled: bool = True
+    method: str = "wavlm_ecapa"
+    embedding_model: str = "microsoft/wavlm-base-plus"
+    similarity_threshold: float = 0.72
+    leakage_audit_enabled: bool = True
+
+
+class SpeakerClustering:
+    """Speaker clustering using WavLM embeddings."""
+
+    def __init__(self, config=None):
+        self.config = config or SpeakerClusteringConfig()
+
+    def cluster_samples(self, audio_paths):
+        """Cluster audio samples by speaker."""
+        if not self.config.enabled:
+            return {p: 0 for p in audio_paths}
+
+        embeddings = extract_wavlm_embeddings(
+            audio_paths, model_name=self.config.embedding_model
+        )
+
+        labels = cluster_samples(
+            embeddings,
+            similarity_threshold=self.config.similarity_threshold,
+            method="agglomerative",
+        )
+
+        return {p: int(label) for p, label in zip(audio_paths, labels)}
+
+    def audit_leakage(self, train_paths, test_paths):
+        """Audit for speaker leakage between train and test."""
+        if not self.config.leakage_audit_enabled:
+            return {"audited": False}
+
+        all_paths = train_paths + test_paths
+        embeddings = extract_wavlm_embeddings(
+            all_paths, model_name=self.config.embedding_model
+        )
+
+        train_emb = embeddings[: len(train_paths)]
+        test_emb = embeddings[len(train_paths) :]
+
+        return audit_leakage(
+            train_emb, test_emb, similarity_threshold=self.config.similarity_threshold
+        )

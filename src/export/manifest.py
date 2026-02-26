@@ -166,7 +166,7 @@ def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dictionary with 'compatible' bool and 'errors' list
     """
-    results = {
+    results: Dict[str, Any] = {
         "compatible": True,
         "errors": [],
         "warnings": [],

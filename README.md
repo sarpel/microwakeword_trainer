@@ -40,12 +40,15 @@ nvidia-smi
 Used for: Training, export, inference, data processing
 
 ```bash
+# Adjust paths to match your installation directory
+# Example: Replace $PROJECT_DIR and ~/.venvs/mww-tf with your actual paths
+
 # Create environment
-python3.11 -m venv ~/venvs/mww-tf
-source ~/venvs/mww-tf/bin/activate
+python3.11 -m venv ~/.venvs/mww-tf
+source ~/.venvs/mww-tf/bin/activate
 
 # Install TensorFlow dependencies
-cd /home/sarpel/mww/microwakeword_trainer
+cd $PROJECT_DIR
 pip install -r requirements.txt
 ```
 
@@ -54,12 +57,15 @@ pip install -r requirements.txt
 Used for: Speaker clustering, WavLM embeddings, hard negative mining (optional)
 
 ```bash
+# Adjust paths to match your installation directory
+# Example: Replace $PROJECT_DIR and ~/.venvs/mww-torch with your actual paths
+
 # Create environment
-python3.11 -m venv ~/venvs/mww-torch
-source ~/venvs/mww-torch/bin/activate
+python3.11 -m venv ~/.venvs/mww-torch
+source ~/.venvs/mww-torch/bin/activate
 
 # Install PyTorch dependencies
-cd /home/sarpel/mww/microwakeword_trainer
+cd $PROJECT_DIR
 pip install -r requirements-torch.txt
 ```
 
@@ -68,11 +74,14 @@ pip install -r requirements-torch.txt
 Add to your `~/.bashrc` or `~/.zshrc`:
 
 ```bash
+# Adjust paths to match your installation directory
+# Example: Replace $PROJECT_DIR with your actual project path
+
 # TensorFlow environment (default for training)
-alias mww-tf='source ~/venvs/mww-tf/bin/activate && cd /home/sarpel/mww/microwakeword_trainer'
+alias mww-tf='source ~/.venvs/mww-tf/bin/activate && cd $PROJECT_DIR'
 
 # PyTorch environment (for clustering)
-alias mww-torch='source ~/venvs/mww-torch/bin/activate && cd /home/sarpel/mww/microwakeword_trainer'
+alias mww-torch='source ~/.venvs/mww-torch/bin/activate && cd $PROJECT_DIR'
 ```
 
 Then use:
@@ -175,10 +184,10 @@ export:
   wake_word: "Hey Computer"    # Your wake word name
   author: "Your Name"
   website: "https://github.com/yourusername"
-  
+
 training:
   batch_size: 64                 # Reduce if OOM errors
-  
+
 model:
   first_conv_filters: 30         # Model size (20-30 for smaller models)
 ```
@@ -480,7 +489,7 @@ training:
   training_steps: [20000, 10000]
   learning_rates: [0.001, 0.0001]
   batch_size: 128
-  
+
 model:
   architecture: "mixednet"
   first_conv_filters: 30
@@ -488,7 +497,7 @@ model:
   stride: 3
   pointwise_filters: "60,60,60,60"
   mixconv_kernel_sizes: "[5],[9],[13],[21]"
-  
+
 export:
   wake_word: "Hey Computer"
   quantize: true
@@ -506,10 +515,10 @@ Create a custom YAML that overrides preset values:
 # Loads standard preset, then applies these overrides
 training:
   batch_size: 64  # Smaller batch for limited VRAM
-  
+
 model:
   first_conv_filters: 20  # Smaller model
-  
+
 export:
   wake_word: "Hey Jarvis"
   author: "Your Name"
@@ -655,7 +664,7 @@ For smaller models (ESP32-S3 with limited RAM):
 model:
   first_conv_filters: 20
   pointwise_filters: "40,40,40,40"  # Smaller than default 60
-  
+
 export:
   tensor_arena_size: 20000  # Smaller arena
 ```

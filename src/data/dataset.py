@@ -11,7 +11,7 @@ import os
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -29,7 +29,7 @@ class RaggedMmapConfig:
 
     base_dir: Path
     name: str
-    dtype: np.dtype = np.float32
+    dtype: "np.dtype[Any]" = np.dtype(np.float32)
     create: bool = True
 
 
@@ -55,7 +55,7 @@ class RaggedMmap:
         self,
         base_dir: Union[str, Path],
         name: str = "ragged",
-        dtype: np.dtype = np.float32,
+        dtype: "np.dtype[Any]" = np.dtype(np.float32),
         create: bool = True,
     ):
         """Initialize RaggedMmap storage.
@@ -73,8 +73,8 @@ class RaggedMmap:
         self._offsets_file: Optional[str] = None
         self._lengths_file: Optional[str] = None
         self._data: Optional[np.memmap] = None
-        self._offsets: Optional[np.ndarray] = None
-        self._lengths: Optional[np.ndarray] = None
+        self._offsets: Union[List[int], np.ndarray, None] = None
+        self._lengths: Union[List[int], np.ndarray, None] = None
         self._num_arrays: int = 0
         self._total_elements: int = 0
 
@@ -118,6 +118,13 @@ class RaggedMmap:
             self._num_arrays = len(self._lengths)
             self._total_elements = int(self._lengths.sum())
 
+            # Validate offsets and lengths have the same length
+            if len(self._offsets) != len(self._lengths):
+                raise ValueError(
+                    f"Offsets ({len(self._offsets)}) and lengths ({len(self._lengths)}) mismatch"
+                )
+            self._total_elements = int(self._lengths.sum())
+
     def open(self, mode: str = "r"):
         """Open the storage for reading or writing.
 
@@ -133,6 +140,14 @@ class RaggedMmap:
                     mode="r",
                 )
         elif mode == "w":
+            # Truncate existing files before writing to prevent data corruption
+            for f in [self._data_file, self._offsets_file, self._lengths_file]:
+                if os.path.exists(f):
+                    os.truncate(f, 0)
+
+            # Initialize in-memory index as mutable lists for write mode
+            self._offsets = []
+            self._lengths = []
             # Initialize in-memory index as mutable lists for write mode
             self._offsets = []
             self._lengths = []
@@ -155,8 +170,9 @@ class RaggedMmap:
         # Convert to numpy arrays
         arrays = [np.asarray(arr, dtype=self.dtype) for arr in arrays]
 
-        # Get lengths
-        lengths = [len(arr) for arr in arrays]
+        # Get lengths (in bytes for offset calculation)
+        # Get lengths (in bytes for offset calculation)
+        lengths = [arr.nbytes for arr in arrays]
 
         # Calculate offsets
         if self._num_arrays > 0:
@@ -228,7 +244,7 @@ class RaggedMmap:
         arrays: List[np.ndarray],
         base_dir: Union[str, Path],
         name: str = "ragged",
-        dtype: np.dtype = np.float32,
+        dtype: "np.dtype[Any]" = np.dtype(np.float32),
     ) -> "RaggedMmap":
         """Create RaggedMmap from list of arrays.
 
@@ -264,7 +280,7 @@ class FeatureStoreConfig:
     features_name: str = "features"
     labels_name: str = "labels"
     metadata_name: str = "metadata"
-    dtype: np.dtype = np.float32
+    dtype: "np.dtype[Any]" = np.dtype(np.float32)
 
 
 class FeatureStore:
@@ -317,7 +333,7 @@ class FeatureStore:
         self.labels = RaggedMmap(
             self.base_dir,
             self.config.labels_name,
-            np.int32,  # Labels as integers
+            np.dtype(np.int32),  # Labels as integers
             create=True,
         )
 
@@ -352,7 +368,7 @@ class FeatureStore:
             self.initialize(len(features), features[0].shape[-1])
 
         self.features.append(features)
-        self.labels.append([np.array([l], dtype=np.int32) for l in labels])
+        self.labels.append([np.array([label], dtype=np.int32) for label in labels])
         self.metadata["num_samples"] += len(features)
 
     def get(self, idx: int) -> Tuple[np.ndarray, int]:

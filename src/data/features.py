@@ -141,7 +141,7 @@ class MicroFrontend:
             RuntimeError: If pymicro-features is not installed.
         """
         try:
-            import pymicro_features
+            import pymicro_features  # noqa: F401
 
             logger.info("Using pymicro-features for feature extraction")
         except ImportError:
@@ -176,6 +176,7 @@ class MicroFrontend:
         audio = audio.astype(np.float32)
 
         # pymicro-features expects int16 input
+        audio = np.clip(audio, -1.0, 1.0)
         audio_int16 = (audio * 32767).astype(np.int16)
 
         # Get mel spectrogram - use mel_bins to match downstream expectations
@@ -444,7 +445,7 @@ def extract_features(
     frontend = _get_cached_frontend(
         config.sample_rate,
         config.window_size_ms,
-        config.window_step_samples,
+        config.window_step_ms,
         config.mel_bins,
         config.num_coeffs,
         config.fft_size,

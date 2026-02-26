@@ -77,6 +77,38 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 ```
 
 ## Where to Look
+
+| Task | Location | Notes |
+|------|----------|-------|
+| Training loop | `src/training/trainer.py` | Trainer class, main() |
+| Data pipeline | `src/data/` | 7 modules, GPU augmentation |
+| Model arch | `src/model/architecture.py` | tf.keras.Model subclasses |
+| Config loading | `config/loader.py` | Dataclass-based loader |
+| TFLite export | `src/export/tflite.py` | ai-edge-litert usage |
+| Performance | `src/utils/performance.py` | Profiling utilities |
+| Speaker clustering | `src/data/clustering.py` | WavLM embeddings, leakage audit |
+| Hard negative mining | `src/data/hard_negatives.py` | FP detection, auto-mining |
+| Audio augmentation | `src/data/augmentation.py` | 8 augmentation types |
+
+## Implemented Configurations
+
+| Config | Status | Implementation |
+|--------|--------|----------------|
+| PathsConfig | ✅ Complete | `src/data/ingestion.py` - Individual dirs |
+| TrainingConfig | ✅ Complete | `src/training/trainer.py` |
+| ModelConfig | ✅ Complete | `src/model/architecture.py` |
+| AugmentationConfig | ✅ Complete | `src/data/augmentation.py` |
+| PerformanceConfig | ✅ Complete | `src/training/trainer.py` |
+| SpeakerClusteringConfig | ✅ Complete | `src/data/clustering.py` |
+| HardNegativeMiningConfig | ✅ Complete | `src/data/hard_negatives.py` |
+| ExportConfig | ✅ Complete | `src/export/manifest.py` |
+
+## Notes
+- ✅ **ALL PHASES COMPLETE** - All config variables implemented and connected
+- Large config loader (733 lines) - complex validation and merging
+- Uses HuggingFace `datasets` library for data loading
+- Speaker clustering and hard negative mining fully implemented
+- Audio augmentation pipeline complete with 8 augmentation types
 | Task | Location | Notes |
 |------|----------|-------|
 | Training loop | `src/training/trainer.py` | Trainer class, main() |

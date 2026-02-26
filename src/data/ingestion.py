@@ -14,7 +14,7 @@ import wave
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -278,9 +278,9 @@ def load_audio_wave(
         audio = np.frombuffer(raw_data, dtype=np.int16)
 
         # Convert to float32 in range [-1, 1]
-        audio = audio.astype(np.float32) / 32768.0
+        audio_float: np.ndarray = audio.astype(np.float32) / 32768.0
 
-        return audio
+        return audio_float
 
 
 # =============================================================================
@@ -292,7 +292,13 @@ def load_audio_wave(
 class ClipsLoaderConfig:
     """Configuration for Clips loader."""
 
-    data_dir: Path
+    # Individual directory paths from PathsConfig
+    positive_dir: Optional[Path] = None
+    negative_dir: Optional[Path] = None
+    hard_negative_dir: Optional[Path] = None
+    background_dir: Optional[Path] = None
+    # Legacy: single data_dir for backward compatibility
+    data_dir: Optional[Path] = None
     train_split: float = 0.8
     val_split: float = 0.1
     test_split: float = 0.1
@@ -301,16 +307,30 @@ class ClipsLoaderConfig:
     max_duration_ms: float = 3000.0
     speaker_based_split: bool = True
 
+    def __post_init__(self):
+        """Normalize paths after initialization."""
+        if self.positive_dir:
+            self.positive_dir = Path(self.positive_dir)
+        if self.negative_dir:
+            self.negative_dir = Path(self.negative_dir)
+        if self.hard_negative_dir:
+            self.hard_negative_dir = Path(self.hard_negative_dir)
+        if self.background_dir:
+            self.background_dir = Path(self.background_dir)
+        if self.data_dir:
+            self.data_dir = Path(self.data_dir)
+
 
 class Clips:
     """Loader for audio clips with train/val/test splitting.
 
-    Loads audio files from data directory structure:
-        data_dir/
-            positive/      - Wake word samples
-            negative/      - Background speech
-            hard_negative/ - False positives
-            background/   - Noise/ambient
+    Loads audio files from individual directory paths from config:
+        positive_dir/      - Wake word samples
+        negative_dir/      - Background speech
+        hard_negative_dir/ - False positives
+        background_dir/    - Noise/ambient
+
+    Or from legacy data_dir structure for backward compatibility.
 
     Attributes:
         samples: List of SampleRecord objects
@@ -319,17 +339,20 @@ class Clips:
 
     def __init__(
         self,
-        data_dir: Union[str, Path],
+        data_dir: Optional[Union[str, Path]] = None,
         config: Optional[ClipsLoaderConfig] = None,
     ):
         """Initialize Clips loader.
 
         Args:
-            data_dir: Root directory containing audio subdirectories
-            config: Optional configuration (uses defaults if not provided)
+            data_dir: Root directory containing audio subdirectories (legacy)
+            config: Optional configuration with individual paths from PathsConfig
         """
-        self.data_dir = Path(data_dir)
-        self.config = config or ClipsLoaderConfig(data_dir=self.data_dir)
+        self.config = config or ClipsLoaderConfig()
+
+        # Handle legacy data_dir for backward compatibility
+        if data_dir is not None:
+            self.config.data_dir = Path(data_dir)
 
         self.samples: List[SampleRecord] = []
         self._speaker_cache: dict = {}
@@ -345,25 +368,37 @@ class Clips:
         self._discover_samples()
 
     def _discover_samples(self):
-        """Discover and load all audio samples from data directory."""
-        logger.info(f"Discovering samples in {self.data_dir}")
-
-        # Mapping from directory name to label
-        dir_to_label = {
-            "positive": Label.POSITIVE,
-            "negative": Label.NEGATIVE,
-            "hard_negative": Label.HARD_NEGATIVE,
-            "background": Label.BACKGROUND,
+        """Discover and load all audio samples from configured directories."""
+        # Build mapping of label to directory path
+        label_to_dir: Dict[Label, Optional[Path]] = {
+            Label.POSITIVE: self.config.positive_dir,
+            Label.NEGATIVE: self.config.negative_dir,
+            Label.HARD_NEGATIVE: self.config.hard_negative_dir,
+            Label.BACKGROUND: self.config.background_dir,
         }
+
+        # Fallback to legacy data_dir structure if individual paths not set
+        if self.config.data_dir and not any(label_to_dir.values()):
+            logger.info(f"Using legacy data_dir structure: {self.config.data_dir}")
+            label_to_dir = {
+                Label.POSITIVE: self.config.data_dir / "positive",
+                Label.NEGATIVE: self.config.data_dir / "negative",
+                Label.HARD_NEGATIVE: self.config.data_dir / "hard_negative",
+                Label.BACKGROUND: self.config.data_dir / "background",
+            }
 
         all_samples: List[SampleRecord] = []
 
-        for dir_name, label in dir_to_label.items():
-            dir_path = self.data_dir / dir_name
+        for label, dir_path in label_to_dir.items():
+            if dir_path is None:
+                logger.debug(f"No directory configured for {label.value}")
+                continue
 
             if not dir_path.exists():
                 logger.warning(f"Directory not found: {dir_path}")
                 continue
+
+            logger.info(f"Loading {label.value} samples from {dir_path}")
 
             # Find all WAV files
             wav_files = list(dir_path.glob("*.wav"))
@@ -395,7 +430,6 @@ class Clips:
                         continue
 
                     # Extract speaker ID from filename if present
-                    # Pattern: hey_katya_YYYYMMDD_HHMMSS_vN.wav
                     speaker_id = self._extract_speaker_id(wav_file.name)
 
                     sample = SampleRecord(
@@ -610,7 +644,7 @@ def get_data_statistics(clips: Clips) -> dict:
     Returns:
         Dictionary with statistics
     """
-    stats = {
+    stats: Dict[str, Any] = {
         "total_samples": len(clips),
         "by_split": {},
         "by_label": {},
@@ -678,4 +712,4 @@ def load_clips(
         test_split=1.0 - train_split - val_split,
         seed=seed,
     )
-    return Clips(data_dir, config)
+    return Clips(config=config)

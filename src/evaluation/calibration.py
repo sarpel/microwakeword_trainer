@@ -45,6 +45,15 @@ def calibrate_probabilities(
     bias: float = 0.0,
 ) -> np.ndarray:
     """Apply a lightweight logistic calibration transform."""
-    logits = np.log(np.clip(y_prob, 1e-7, 1 - 1e-7) / np.clip(1 - y_prob, 1e-7, 1))
+    # Use consistent epsilon for both y_prob and its complement
+    eps = 1e-7
+    y_prob_clipped = np.clip(y_prob, eps, 1 - eps)
+    y_prob_complement_clipped = np.clip(1 - y_prob, eps, 1 - eps)
+
+    logits = np.log(y_prob_clipped / y_prob_complement_clipped)
     calibrated_logits = scale * logits + bias
-    return 1.0 / (1.0 + np.exp(-calibrated_logits))
+
+    # Numerically stable sigmoid using scipy.special.expit
+    from scipy.special import expit
+
+    return expit(calibrated_logits)

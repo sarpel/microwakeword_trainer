@@ -150,7 +150,9 @@ export:
   inference_input_type: "int8"
   inference_output_type: "uint8"
 
-  probability_cutoff: 0.52
+  # Wake word detection threshold (high-confidence for production)
+  # Set to 0.70 for testing; validated threshold: 0.95-0.98 for production
+  probability_cutoff: 0.70
   sliding_window_size: 5
   tensor_arena_size: 22860
   minimum_esphome_version: "2024.7.0"

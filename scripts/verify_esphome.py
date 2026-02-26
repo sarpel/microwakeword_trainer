@@ -111,7 +111,12 @@ def verify_esphome_compatibility(
 
                 # Expected: [1, 3, 40] (batch=1, stride=3 frames, 40 mel bins)
                 if input_shape != [1, 3, 40]:
-                    results["warnings"].append(
+                if input_shape != [1, 3, 40]:
+                    results["compatible"] = False
+                    results["errors"].append(
+                        f"Expected input shape [1, 3, 40], got {input_shape}. "
+                        "ESPHome requires exactly [1, 3, 40] input shape."
+                    )
                         f"Expected input shape [1, 3, 40], got {input_shape}. "
                         "This may affect ESPHome compatibility."
                     )
@@ -335,7 +340,7 @@ Examples:
         return 2
 
     if not model_path.suffix == ".tflite":
-        print(f"Warning: File does not have .tflite extension", file=sys.stderr)
+        print("Warning: File does not have .tflite extension", file=sys.stderr)
 
     try:
         results = verify_esphome_compatibility(str(model_path), verbose=args.verbose)

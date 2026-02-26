@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-
 # =============================================================================
 # DATACLASS CONFIGURATION STRUCTURES
 # =============================================================================
@@ -58,7 +57,9 @@ class TrainingConfig:
     # Class weights
     positive_class_weight: List[float] = field(default_factory=lambda: [1.0, 1.0])
     negative_class_weight: List[float] = field(default_factory=lambda: [20.0, 20.0])
-    hard_negative_class_weight: List[float] = field(default_factory=lambda: [40.0, 40.0])  # Higher weight for false positives
+    hard_negative_class_weight: List[float] = field(
+        default_factory=lambda: [40.0, 40.0]
+    )  # Higher weight for false positives
     # SpecAugment parameters
     time_mask_max_size: List[int] = field(default_factory=lambda: [0, 0])
     time_mask_count: List[int] = field(default_factory=lambda: [0, 0])
@@ -68,21 +69,6 @@ class TrainingConfig:
     minimization_metric: str = "ambient_false_positives_per_hour"
     target_minimization: float = 0.5
     maximization_metric: str = "average_viable_recall"
-    negative_class_weight: List[float] = field(default_factory=lambda: [20.0, 20.0])
-    hard_negative_class_weight: List[float] = field(default_factory=lambda: [40.0, 40.0])  # Higher weight for false positives
-    learning_rates: List[float] = field(default_factory=lambda: [0.001, 0.0001])
-    batch_size: int = 128
-    eval_step_interval: int = 500
-    # SpecAugment parameters
-    time_mask_max_size: List[int] = field(default_factory=lambda: [0, 0])
-    time_mask_count: List[int] = field(default_factory=lambda: [0, 0])
-    freq_mask_max_size: List[int] = field(default_factory=lambda: [0, 0])
-    freq_mask_count: List[int] = field(default_factory=lambda: [0, 0])
-    # Checkpoint selection
-    minimization_metric: str = "ambient_false_positives_per_hour"
-    target_minimization: float = 0.5
-    maximization_metric: str = "average_viable_recall"
-
 
 
 @dataclass
@@ -100,16 +86,6 @@ class ModelConfig:
     residual_connection: str = "0,0,0,0"
     dropout_rate: float = 0.0
     l2_regularization: float = 0.0
-    first_conv_filters: int = 30
-    first_conv_kernel_size: int = 5
-    stride: int = 3
-    pointwise_filters: str = "60,60,60,60"
-    mixconv_kernel_sizes: str = "[5],[9],[13],[21]"
-    repeat_in_block: str = "1,1,1,1"
-    residual_connection: str = "0,0,0,0"
-    dropout_rate: float = 0.0
-    l2_regularization: float = 0.0
-
 
 @dataclass
 class FeatureSetConfig:
@@ -459,7 +435,7 @@ class ConfigLoader:
 
         return issues
 
-    def to_dataclass(self, config: Dict[str, Any]) -> FullConfig:
+    def to_dataclass(self, config: Dict[str, Any]) -> "FullConfig":
         """
         Convert dictionary config to FullConfig dataclass.
 
@@ -469,7 +445,7 @@ class ConfigLoader:
         Returns:
             FullConfig instance with nested dataclasses
         """
-        result = {}
+        result: Dict[str, Any] = {}
 
         for section_name, section_class in self.SECTION_CLASSES.items():
             if section_name in config:
@@ -555,117 +531,28 @@ class ConfigLoader:
     def _resolve_path(self, value: str) -> str:
         """
         Resolve relative paths relative to config file location.
-        
+
         Only resolves paths that start with ../ (parent directory references).
         Paths starting with ./ are left as-is to allow user to define
         their own base directory.
-        
+
         Args:
             value: String potentially containing a path
-            
+
         Returns:
             Resolved path string
         """
         # Only resolve obvious path patterns
         if not isinstance(value, str):
             return value
-        
+
         # Only resolve ../ (parent directory) references
         # Leave ./ and relative paths as-is for user flexibility
-        if value.startswith('../') and self._config_dir is not None:
-            resolved = (self._config_dir / value).resolve()
-            return str(resolved)
-        
-        return value
-        """
-        Resolve relative paths relative to config file location.
-        
-        Only resolves paths that:
-        - Start with ./ or ../ (explicit relative paths)
-        - Contain path separators but don't look like identifiers
-        
-        Args:
-            value: String potentially containing a path
-            
-        Returns:
-            Resolved path string
-        """
-        # Only resolve obvious path patterns
-        if not isinstance(value, str):
-            return value
-        
-        # Check if it looks like a path - must start with ./ or ../
-        # or be an absolute path
-        is_relative_path = value.startswith('./') or value.startswith('../')
-        
-        if is_relative_path and self._config_dir is not None:
-            # Resolve relative to config file directory
-            resolved = (self._config_dir / value).resolve()
-            return str(resolved)
-        
-        return value
-        """
-        Resolve relative paths relative to config file location.
-        
-        Only resolves paths that look like file/directory paths
-        (contain path separators like / or are clearly relative paths like ./ or ../).
-        
-        Args:
-            value: String potentially containing a path
-            
-        Returns:
-            Resolved path string
-        """
-        # Only resolve obvious path patterns
-        if not isinstance(value, str):
-            return value
-        
-        # Check if it looks like a path - must contain path separator
-        # or start with ./ or ../
-        is_path = (
-            value.startswith('./') or 
-            value.startswith('../') or 
-            ('/' in value and not value.startswith('$'))
-        )
-        
-        if is_path and self._config_dir is not None:
-            # Resolve relative to config file directory
-            resolved = (self._config_dir / value).resolve()
-            return str(resolved)
-        
-        return value
-        """
-        Resolve relative paths relative to config file location.
-
-        Only resolves paths that look like file/directory paths
-        (start with ./ or ../ or are relative without leading /).
-
-        Args:
-            value: String potentially containing a path
-
-        Returns:
-            Resolved path string
-        """
-        # Only resolve obvious path patterns
-        if not isinstance(value, str):
-            return value
-
-        # Check if it looks like a path
-        path_patterns = [
-            r"^\.\./",  # starts with ../
-            r"^\./",  # starts with ./
-            r"^[^/]",  # starts with non-/ (relative path)
-        ]
-
-        is_path = any(re.match(p, value) for p in path_patterns)
-
-        if is_path and self._config_dir is not None:
-            # Resolve relative to config file directory
+        if value.startswith("../") and self._config_dir is not None:
             resolved = (self._config_dir / value).resolve()
             return str(resolved)
 
         return value
-
     def _deep_copy_dict(self, d: Dict[str, Any]) -> Dict[str, Any]:
         """Create deep copy of dictionary."""
         result = {}
@@ -673,7 +560,7 @@ class ConfigLoader:
             if isinstance(value, dict):
                 result[key] = self._deep_copy_dict(value)
             elif isinstance(value, list):
-                result[key] = list(value)  # Shallow copy for lists
+                result[key] = list(value)  # type: ignore[assignment]  # shallow copy for lists
             else:
                 result[key] = value
         return result

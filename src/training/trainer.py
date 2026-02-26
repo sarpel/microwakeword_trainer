@@ -166,7 +166,9 @@ class Trainer:
         # Class weights (positive=1.0, negative=20.0, hard_negative=40.0 typical for wake word)
         self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
         self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
-        self.hard_negative_weights = training.get("hard_negative_class_weight", [40.0, 40.0])
+        self.hard_negative_weights = training.get(
+            "hard_negative_class_weight", [40.0, 40.0]
+        )
 
         # Ensure all per-phase lists have the same length as training_steps_list
         n_phases = len(self.training_steps_list)
@@ -183,29 +185,6 @@ class Trainer:
         self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
         self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
         self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
-        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
-        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
-        self.hard_negative_weights = training.get("hard_negative_class_weight", [40.0, 40.0])
-        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
-        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
-
-        # Ensure all per-phase lists have the same length as training_steps_list
-        n_phases = len(self.training_steps_list)
-
-        def _pad_or_trim(lst, default):
-            """Pad (repeating last element) or trim lst to n_phases elements."""
-            if not lst:
-                return [default] * n_phases
-            if len(lst) >= n_phases:
-                return lst[:n_phases]
-            return lst + [lst[-1]] * (n_phases - len(lst))
-
-        self.learning_rates = _pad_or_trim(self.learning_rates, 0.0001)
-        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
-        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
-        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
-        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
-        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
 
         # Checkpoint selection config
         self.minimization_metric = training.get(
@@ -222,6 +201,23 @@ class Trainer:
         self.enable_profiling = performance.get("enable_profiling", True)
         self.profile_every_n = performance.get("profile_every_n_steps", 100)
         self.profile_output_dir = performance.get("profile_output_dir", "./profiles")
+        self.num_workers = performance.get("num_workers", 4)
+        self.prefetch_factor = performance.get("prefetch_factor", 2)
+        self.pin_memory = performance.get("pin_memory", False)
+        self.inter_op_parallelism = performance.get("inter_op_parallelism", 0)
+        self.intra_op_parallelism = performance.get("intra_op_parallelism", 0)
+        self.tensorboard_enabled = performance.get("tensorboard_enabled", True)
+        self.tensorboard_log_dir = performance.get("tensorboard_log_dir", "./logs")
+
+        # Apply threading config
+        if self.inter_op_parallelism > 0:
+            tf.config.threading.set_inter_op_parallelism_threads(
+                self.inter_op_parallelism
+            )
+        if self.intra_op_parallelism > 0:
+            tf.config.threading.set_intra_op_parallelism_threads(
+                self.intra_op_parallelism
+            )
 
         # Paths
         paths = config.get("paths", {})
@@ -266,7 +262,6 @@ class Trainer:
             "negative_weight": self.negative_weights[current_phase],
             "hard_negative_weight": self.hard_negative_weights[current_phase],
         }
-
 
     def _build_model(self, input_shape: Tuple[int, ...]) -> tf.keras.Model:
         """Build the model architecture.
@@ -330,7 +325,7 @@ class Trainer:
             class_weights = np.where(
                 y_true == 1,
                 positive_weight,
-                np.where(is_hard_negative, hard_negative_weight, negative_weight)
+                np.where(is_hard_negative, hard_negative_weight, negative_weight),
             )
         else:
             # Binary weighting: positive vs negative (hard negatives get negative_weight)
@@ -456,9 +451,6 @@ class Trainer:
             sample_weight=combined_weights,
             return_dict=True,
         )
-
-        # Build metrics dict
-        metrics_dict = {}
 
         # Build metrics dict
         metrics_dict = {}
@@ -675,13 +667,13 @@ def train(config: dict) -> tf.keras.Model:
         mel_bins,
     )
 
-    dataset = WakeWordDataset(config)
-    dataset.build()
+    dataset = WakeWordDataset(config)  # type: ignore[arg-type]
+    dataset.build()  # type: ignore[attr-defined]
 
     trainer = Trainer(config)
     model = trainer.train(
-        train_data_factory=dataset.train_generator_factory,
-        val_data_factory=dataset.val_generator_factory,
+        train_data_factory=dataset.train_generator_factory,  # type: ignore[attr-defined]
+        val_data_factory=dataset.val_generator_factory,  # type: ignore[attr-defined]
         input_shape=input_shape,
     )
     return model
@@ -708,7 +700,8 @@ def main():
     config = load_full_config(args.config, args.override)
 
     # Train model
-    model = train(config)
+    # Train model
+    train(config)
 
     print("\n[TRAIN] Training completed successfully!")
 

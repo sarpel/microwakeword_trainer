@@ -8,12 +8,12 @@
 # For PyTorch environment (speaker clustering), use requirements-torch.txt.
 
 # Core ML Frameworks
-tensorflow[and-cuda]>=2.16,<2.17
+tensorflow[and-cuda]>=2.19,<2.21
 ai-edge-litert<3.0
 pymicro-features>=0.1
 
 # Audio/Data Processing
-numpy>=1.26,<2.0
+numpy>=1.26
 scipy
 pyyaml
 mmap_ninja
@@ -31,7 +31,7 @@ numba>=0.58
 # Visualization & Monitoring
 matplotlib
 seaborn
-tensorboard>=2.16
+tensorboard>=2.19
 
 # Optional: Hyperparameter Optimization
 optuna>=3.6.0

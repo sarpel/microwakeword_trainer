@@ -374,12 +374,14 @@ class Stream(tf.keras.layers.Layer):
             memory = tf.concat([memory, inputs], axis=1)
 
             output = self.cell(memory)
+            self.output_state = memory
             return output, memory
         else:
             # Strided mode
             memory = tf.concat([self.input_state, inputs], axis=1)
             state_update = memory[:, -self.ring_buffer_size_in_time_dim :, :]
             output = self.cell(memory)
+            self.output_state = state_update
             return output, state_update
 
     def _non_streaming(self, inputs, training=None):
