@@ -225,7 +225,7 @@ class MixConvBlock(tf.keras.layers.Layer):
             for i, (x, ks) in enumerate(zip(x_splits, self.kernel_sizes)):
                 # StridedKeep for streaming - keep only the needed samples
                 if self.mode not in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
-                    x = StridedKeep(ks)(x)
+                    x = StridedKeep(ks, mode=self.mode)(x)
 
                 # Depthwise conv with this kernel size
                 x = self.depthwise_convs[i](x)
@@ -485,6 +485,7 @@ class MixedNet(tf.keras.Model):
                     ),
                     name="initial_conv",
                 ),
+                mode=self.mode,
                 use_one_step=False,
                 pad_time_dim=None,
                 pad_freq_dim="valid",
@@ -513,9 +514,18 @@ class MixedNet(tf.keras.Model):
             self.blocks.append(block)
 
         # Streaming for temporal pooling
+        # Calculate ring_buffer_size based on input shape and stride
+        # After stride 3 conv: time_dim = ceil(input_shape[0] / stride)
+        # ring_buffer_size = time_dim - 1
+        if input_shape and len(input_shape) >= 1 and input_shape[0]:
+            temporal_rb_size = max(
+                0, (input_shape[0] + self.stride - 1) // self.stride - 1
+            )
+        else:
+            temporal_rb_size = 0
         self.temporal_stream = Stream(
             cell=tf.keras.layers.Identity(),
-            ring_buffer_size_in_time_dim=None,
+            ring_buffer_size_in_time_dim=temporal_rb_size,
             use_one_step=False,
             name="temporal_stream",
         )
@@ -565,16 +575,8 @@ class MixedNet(tf.keras.Model):
 
         # Temporal streaming before pooling
         if net.shape[1] is not None and net.shape[1] > 1:
-            # Get ring buffer size from actual shape
-            ring_buffer_size = net.shape[1] - 1
-            if ring_buffer_size > 0:
-                temporal_stream = Stream(
-                    cell=tf.keras.layers.Identity(),
-                    ring_buffer_size_in_time_dim=ring_buffer_size,
-                    use_one_step=False,
-                )
-                net = temporal_stream(net)
-
+            # Use cached temporal_stream layer instead of creating new one
+            net = self.temporal_stream(net)
         # Global pooling
         net = self.pooling(net)
 

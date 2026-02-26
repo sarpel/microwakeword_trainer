@@ -54,7 +54,7 @@ pip install -r requirements.txt
 
 ### Environment 2: PyTorch (Speaker Clustering)
 
-Used for: Speaker clustering, WavLM embeddings, hard negative mining (optional)
+Used for: Speaker clustering, ECAPA-TDNN embeddings, hard negative mining (optional)
 
 ```bash
 # Adjust paths to match your installation directory

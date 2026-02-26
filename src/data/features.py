@@ -10,8 +10,6 @@ import functools
 import logging
 import math
 import random
-import logging
-import random
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -36,8 +34,8 @@ class FeatureConfig:
         mel_bins: Number of mel frequency bins (default: 40)
         num_coeffs: Number of coefficients to extract (default: 10)
         fft_size: FFT size for spectrogram computation (default: 512)
-        low_freq: Lowest frequency in Hz (default: 0)
-        high_freq: Highest frequency in Hz (default: 8000)
+        low_freq: Lowest frequency in Hz (default: 125)
+        high_freq: Highest frequency in Hz (default: 7500)
     """
 
     sample_rate: int = 16000
@@ -46,16 +44,16 @@ class FeatureConfig:
     mel_bins: int = 40
     num_coeffs: int = 10
     fft_size: int = 512
-    low_freq: int = 0
-    high_freq: int = 8000
+    low_freq: int = 125
+    high_freq: int = 7500
 
     def __post_init__(self):
         """Validate configuration after initialization."""
-        # Warn on non-standard sample rate (informational only)
+        # Reject non-16kHz sample rates - the pipeline only supports 16kHz
         if self.sample_rate != 16000:
-            logger.warning(
-                f"Non-standard sample rate: {self.sample_rate} Hz. "
-                "Features are optimized for 16000 Hz."
+            raise ValueError(
+                f"Unsupported sample rate: {self.sample_rate} Hz. "
+                "Only 16000 Hz is supported. Resample your audio before processing."
             )
 
         # Delegate all validation to validate() - single source of truth
@@ -170,6 +168,11 @@ class MicroFrontend:
         Uses the TFLite Micro audio frontend for ESPHome-compatible
         feature extraction (40 mel bins, 16kHz, 30ms window, 10ms step).
 
+        The pymicro_features.MicroFrontend requires frame-by-frame feeding
+        (480 samples = 30ms at 16kHz per chunk) and returns a flat list of
+        floats in .features, where every consecutive mel_bins values form
+        one spectrogram frame.
+
         Args:
             audio: Audio samples as float32 array in range [-1, 1]
 
@@ -178,99 +181,44 @@ class MicroFrontend:
         """
         import pymicro_features
 
-        # Initialize the MicroFrontend (lazy initialization for efficiency)
-        if not hasattr(self, "_frontend"):
-            self._frontend = pymicro_features.MicroFrontend(
-                sample_rate=self.config.sample_rate,
-                mel_bins=self.config.mel_bins,
-                frame_length=self.config.window_size_samples,
-                frame_shift=self.config.window_step_samples,
-            )
+        # Create a fresh frontend per call to avoid state leakage
+        frontend = pymicro_features.MicroFrontend()
 
         # Ensure correct dtype
         audio = audio.astype(np.float32)
 
         # Convert float32 [-1, 1] to 16-bit PCM
-        audio_int16 = (audio * 32767.0).astype(np.int16)
+        audio_int16 = np.clip(audio, -1.0, 1.0)
+        audio_int16 = (audio_int16 * 32767.0).astype(np.int16)
 
-        # Convert to bytes (little-endian, mono)
-        audio_bytes = audio_int16.tobytes()
+        # Feed audio in 480-sample chunks (30ms window at 16kHz)
+        frame_size = 480  # 30ms * 16000 / 1000
+        all_features = []
 
-        # Process the entire audio - pymicro-features handles chunking internally
-        # It processes 10ms frames (160 samples at 16kHz) and returns all frames
-        output = self._frontend.process_samples(audio_bytes)
+        for i in range(0, len(audio_int16), frame_size):
+            chunk = audio_int16[i : i + frame_size]
+            if len(chunk) < frame_size:
+                # Pad last chunk with zeros if needed
+                chunk = np.pad(chunk, (0, frame_size - len(chunk)))
+            chunk_bytes = chunk.tobytes()
+            output = frontend.process_samples(chunk_bytes)
+            if output.features:
+                all_features.extend(output.features)
 
-        # Convert to numpy array with correct shape (frames, mel_bins)
-        mel_spec = np.array(output, dtype=np.float32)
+        if not all_features:
+            # Return empty spectrogram with correct shape
+            return np.zeros((0, self.config.mel_bins), dtype=np.float32)
+
+        # Reshape flat features list to (num_frames, mel_bins)
+        mel_bins = self.config.mel_bins
+        num_features = len(all_features)
+        num_frames = num_features // mel_bins
+        # Trim any incomplete frame
+        all_features = all_features[: num_frames * mel_bins]
+
+        mel_spec = np.array(all_features, dtype=np.float32).reshape(num_frames, mel_bins)
 
         return mel_spec
-
-    def _compute_mel_spectrogram_librosa(self, audio: np.ndarray) -> np.ndarray:
-        """Compute mel spectrogram using librosa.
-
-        Args:
-            audio: Audio samples
-
-        Returns:
-            Mel spectrogram of shape (num_frames, mel_bins)
-        """
-        import librosa
-
-        # Ensure correct dtype
-        audio = audio.astype(np.float32)
-
-        # Compute mel spectrogram using librosa
-        # n_fft is typically 2^p where p is chosen so n_fft >= window_size_samples
-        n_fft = 512  # Standard value for 16kHz audio with 30ms window
-        hop_length = self.config.window_step_samples
-        n_mels = self.config.mel_bins
-
-        # Compute mel spectrogram
-        mel_spec = librosa.feature.melspectrogram(
-            y=audio,
-            sr=self.config.sample_rate,
-            n_fft=n_fft,
-            hop_length=hop_length,
-            n_mels=n_mels,
-            fmin=0,
-            fmax=self.config.sample_rate / 2,
-        )
-
-        # Convert to log scale (dB)
-        mel_spec = librosa.power_to_db(mel_spec, ref=np.max)
-
-        return mel_spec.astype(np.float32)
-        mel_spec = librosa.feature.melspectrogram(
-            y=audio,
-            sr=self.config.sample_rate,
-            n_fft=n_fft,
-            hop_length=hop_length,
-            n_mels=n_mels,
-            fmin=0,
-            fmax=self.config.sample_rate // 2,
-        )
-
-        # Transpose to get (frames, mel_bins) shape
-        # librosa returns (mel_bins, frames)
-        mel_spec = mel_spec.T
-
-        # Convert to log scale (dB) - common practice for mel spectrograms
-        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
-
-        return mel_spec_db.astype(np.float32)
-
-    def extract(self, audio: np.ndarray) -> np.ndarray:
-        """Extract features from audio.
-
-        Alias for compute_mel_spectrogram.
-
-        Args:
-            audio: Audio samples
-
-        Returns:
-            Feature array of shape (num_frames, mel_bins)
-        """
-        return self.compute_mel_spectrogram(audio)
 
 
 # =============================================================================

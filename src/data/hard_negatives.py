@@ -150,7 +150,18 @@ class HardNegativeMiner:
         # Extract features
         # Note: This should match training feature extraction
         extractor = MicroFrontend()
-        features = extractor.extract(audio)
+        features = extractor.compute_mel_spectrogram(audio)
+
+        # Adjust temporal dimension to match model input shape
+        expected_time = model.input_shape[1]
+        if features.shape[0] > expected_time:
+            features = features[:expected_time, :]
+        elif features.shape[0] < expected_time:
+            padding = np.zeros(
+                (expected_time - features.shape[0], features.shape[1]),
+                dtype=features.dtype,
+            )
+            features = np.concatenate([features, padding], axis=0)
 
         # Add batch dimension
         features = np.expand_dims(features, axis=0)

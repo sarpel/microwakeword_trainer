@@ -9,7 +9,7 @@
 
 # Core ML Frameworks
 tensorflow[and-cuda]>=2.19,<2.21
-ai-edge-litert<3.0
+
 pymicro-features>=0.1
 
 # Audio/Data Processing
@@ -26,13 +26,14 @@ absl-py
 # Performance (GPU-Required for SpecAugment)
 psutil>=5.9.0
 GPUtil>=1.4.0
-cupy-cuda12x>=13.0
+cupy-cuda12x>=13.0; sys_platform == "linux"
 numba>=0.58
 
 # Visualization & Monitoring
 matplotlib
 seaborn
 tensorboard>=2.19
+rich>=13.0
 
 # Optional: Hyperparameter Optimization
 optuna>=3.6.0

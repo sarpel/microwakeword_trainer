@@ -15,7 +15,6 @@ setup(
     },
     install_requires=[
         # Core
-        "python>=3.10,<3.13",
         "tensorflow>=2.16",
         "ai-edge-litert",
         "pymicro-features>=0.1",
@@ -30,7 +29,7 @@ setup(
         # Performance (v2.0)
         "psutil>=5.9.0",
         "GPUtil>=1.4.0",
-        "cupy-cuda12x>=13.0",
+        "cupy-cuda12x>=13.0; sys_platform == 'linux'",
         "numba>=0.58",
     ],
     extras_require={

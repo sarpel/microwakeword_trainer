@@ -62,11 +62,16 @@ def extract_speaker_embeddings(
         audio_paths: List of paths to audio files
         model_name: SpeechBrain model name (default: ecapa-tdnn-voxceleb)
         device: Device to run model on ("cuda" or "cpu"). If None, auto-detect.
-        batch_size: Batch size for processing
+        batch_size: Batch size for processing (must be >= 1)
 
     Returns:
         Array of embeddings [n_samples, embedding_dim]
+
+    Raises:
+        ValueError: If batch_size < 1
     """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
     if not HAS_SPEECHBRAIN or not HAS_SKLEARN:
         raise ImportError(
             "speechbrain and sklearn are required for speaker clustering. "
@@ -182,6 +187,10 @@ def cluster_samples(
         effective_n_clusters = 1
 
     if method == "agglomerative":
+        # Single sample: clustering is trivial
+        if len(features) == 1:
+            return np.array([0])
+
         # Use AgglomerativeClustering with cosine affinity
         clustering = AgglomerativeClustering(
             n_clusters=effective_n_clusters,

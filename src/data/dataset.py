@@ -76,7 +76,7 @@ class RaggedMmap:
         self._offsets: Union[List[int], np.ndarray, None] = None
         self._lengths: Union[List[int], np.ndarray, None] = None
         self._num_arrays: int = 0
-        self._total_elements: int = 0
+        self._total_bytes: int = 0
 
         if create:
             self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -97,7 +97,7 @@ class RaggedMmap:
     @property
     def total_elements(self) -> int:
         """Get total number of elements across all arrays."""
-        return self._total_elements
+        return self._total_bytes
 
     def _load_index(self):
         """Load index files (offsets and lengths)."""
@@ -116,14 +116,14 @@ class RaggedMmap:
             self._lengths = np.frombuffer(length_data, dtype=np.int64)
 
             self._num_arrays = len(self._lengths)
-            self._total_elements = int(self._lengths.sum())
+            self._total_bytes = int(self._lengths.sum())
 
             # Validate offsets and lengths have the same length
             if len(self._offsets) != len(self._lengths):
                 raise ValueError(
                     f"Offsets ({len(self._offsets)}) and lengths ({len(self._lengths)}) mismatch"
                 )
-            self._total_elements = int(self._lengths.sum())
+            self._total_bytes = int(self._lengths.sum())
 
     def open(self, mode: str = "r"):
         """Open the storage for reading or writing.
@@ -214,7 +214,7 @@ class RaggedMmap:
 
         # Update metadata
         self._num_arrays += len(arrays)
-        self._total_elements += sum(lengths)
+        self._total_bytes += sum(lengths)
 
     def __getitem__(self, idx: int) -> np.ndarray:
         """Get array by index.
@@ -365,7 +365,18 @@ class FeatureStore:
         Args:
             features: List of feature arrays
             labels: List of labels
+
+        Raises:
+            ValueError: If features and labels have different lengths or are empty
         """
+        if not features:
+            raise ValueError("features must be non-empty")
+        if len(features) != len(labels):
+            raise ValueError(
+                f"features and labels must have the same length, "
+                f"got {len(features)} vs {len(labels)}"
+            )
+
         if self.features is None:
             # Initialize with first sample to get feature dim
             self.initialize(len(features), features[0].shape[-1])
@@ -596,7 +607,7 @@ class WakeWordDataset:
                 features = frontend.compute_mel_spectrogram(audio)
 
                 # Determine label (0 for negative, 1 for positive/hard_negative)
-                label = 1 if sample.label in (Label.POSITIVE, Label.HARD_NEGATIVE) else 0
+                label = 1 if sample.label == Label.POSITIVE else 0
 
                 # Add to store
                 train_store.add(features, label)
@@ -622,7 +633,7 @@ class WakeWordDataset:
                         audio = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32767.0
 
                     features = frontend.compute_mel_spectrogram(audio)
-                    label = 1 if sample.label in (Label.POSITIVE, Label.HARD_NEGATIVE) else 0
+                    label = 1 if sample.label == Label.POSITIVE else 0
                     val_store.add(features, label)
 
                 except Exception as e:
@@ -791,4 +802,4 @@ def load_dataset(
     Returns:
         WakeWordDataset instance
     """
-    return WakeWordDataset(data_path, split, batch_size)
+    return WakeWordDataset(data_path=data_path, split=split, batch_size=batch_size)

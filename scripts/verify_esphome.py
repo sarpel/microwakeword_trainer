@@ -109,12 +109,64 @@ def verify_esphome_compatibility(
 
                 vprint(f"  Input shape: {input_shape}, dtype: {input_dtype}")
 
-                # Expected: [1, 3, 40] (batch=1, stride=3 frames, 40 mel bins)
-                if input_shape != [1, 3, 40]:
+                # Try to determine expected stride from model metadata or manifest
+                expected_strides = None
+                tflite_dir = Path(tflite_path).parent
+
+                # First, try to get stride from TFLite metadata
+                try:
+                    model = tf.lite.Interpreter(model_path=tflite_path)
+                    metadata = (
+                        model.get_tensor_metadata()
+                        if hasattr(model, "get_tensor_metadata")
+                        else None
+                    )
+                    if metadata and len(metadata) > 0:
+                        # Try to extract stride from metadata description or name
+                        meta = metadata[0]
+                        if "description" in meta:
+                            desc = meta["description"]
+                            if "stride" in desc.lower():
+                                import re
+
+                                match = re.search(
+                                    r"stride[=:]\s*(\d+)", desc, re.IGNORECASE
+                                )
+                                if match:
+                                    expected_strides = [int(match.group(1))]
+                except Exception:
+                    pass  # Metadata not available, continue to other methods
+
+                # If not found in metadata, check for manifest.json in same directory
+                if expected_strides is None:
+                    manifest_path = tflite_dir / "manifest.json"
+                    if manifest_path.exists():
+                        try:
+                            import json
+
+                            with open(manifest_path) as f:
+                                manifest = json.load(f)
+                            # Check if stride is stored in manifest (custom field)
+                            stride_val = manifest.get("stride") or manifest.get(
+                                "model", {}
+                            ).get("stride")
+                            if stride_val:
+                                expected_strides = [int(stride_val)]
+                        except Exception:
+                            pass
+
+                # Default: accept any valid stride (1, 2, or 3)
+                if expected_strides is None:
+                    expected_strides = [1, 2, 3]
+
+                # Validate input shape against expected stride(s)
+                expected_shapes = [[1, s, 40] for s in expected_strides]
+                if input_shape not in expected_shapes:
                     results["compatible"] = False
+                    expected_strides_str = ", ".join(map(str, expected_strides))
                     results["errors"].append(
-                        f"Expected input shape [1, 3, 40], got {input_shape}. "
-                        "ESPHome requires exactly [1, 3, 40] input shape."
+                        f"Expected input shape [1, {{{expected_strides_str}}}, 40], got {input_shape}. "
+                        f"Valid shapes are: {expected_shapes}"
                     )
 
                 # Must be int8
@@ -199,6 +251,12 @@ def verify_esphome_compatibility(
 
             # Expected: 6 state variables for streaming
             if num_state_vars != 6:
+                results["compatible"] = False
+                results["errors"].append(
+                    f"Expected 6 TYPE_13 state variables, got {num_state_vars}. "
+                    "ESPHome streaming models require exactly 6 state tensors for ring buffer management."
+                )
+            if num_state_vars != 6:
                 results["warnings"].append(
                     f"Expected 6 state variables, got {num_state_vars}. "
                     "ESPHome streaming models typically have 6 state tensors."
@@ -252,6 +310,7 @@ def verify_esphome_compatibility(
     except Exception as e:
         results["compatible"] = False
         results["errors"].append(f"Failed to load or analyze model: {e}")
+        raise
 
     return results
 

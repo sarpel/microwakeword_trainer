@@ -429,8 +429,8 @@ Speaker clustering configuration for data leakage detection.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | true | Enable speaker clustering. |
-| `method` | string | `wavlm_ecapa` | Clustering method. |
-| `embedding_model` | string | `microsoft/wavlm-base-plus` | WavLM model for embeddings. |
+| `method` | string | `agglomerative` | Clustering method. |
+| `embedding_model` | string | `speechbrain/ecapa-tdnn-voxceleb` | SpeechBrain ECAPA-TDNN model for embeddings. |
 | `similarity_threshold` | float | 0.72 | Similarity threshold for clustering (0.0-1.0). |
 | `leakage_audit_enabled` | bool | true | Enable train/val leakage detection. |
 
@@ -438,8 +438,8 @@ Speaker clustering configuration for data leakage detection.
 ```yaml
 speaker_clustering:
   enabled: true
-  method: "wavlm_ecapa"
-  embedding_model: "microsoft/wavlm-base-plus"
+  method: "agglomerative"
+  embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
   similarity_threshold: 0.72
   leakage_audit_enabled: true
 ```
@@ -667,8 +667,8 @@ performance:
 
 speaker_clustering:
   enabled: true
-  method: "wavlm_ecapa"
-  embedding_model: "microsoft/wavlm-base-plus"
+  method: "agglomerative"
+  embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
   similarity_threshold: 0.72
   leakage_audit_enabled: true
 

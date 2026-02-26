@@ -407,8 +407,8 @@ class Clips:
 
             logger.info(f"Loading {label.value} samples from {dir_path}")
 
-            # Find all WAV files
-            wav_files = list(dir_path.glob("*.wav"))
+            # Find all WAV files (recursively in subdirectories)
+            wav_files = list(dir_path.rglob("*.wav"))
 
             for wav_file in wav_files:
                 try:
@@ -436,8 +436,8 @@ class Clips:
                         )
                         continue
 
-                    # Extract speaker ID from filename if present
-                    speaker_id = self._extract_speaker_id(wav_file.name)
+                    # Extract speaker ID from filename or parent directory
+                    speaker_id = self._extract_speaker_id(wav_file)
 
                     sample = SampleRecord(
                         path=wav_file,
@@ -463,19 +463,20 @@ class Clips:
             f"test={len(self.get_split(Split.TEST))}"
         )
 
-    def _extract_speaker_id(self, filename: str) -> Optional[str]:
-        """Extract speaker ID from filename.
+    def _extract_speaker_id(self, wav_path: Path) -> Optional[str]:
+        """Extract speaker ID from filename or parent directory.
 
-        Only extracts speaker IDs that match known stable patterns to avoid
-        treating arbitrary filename prefixes as speaker IDs.
+        Tries filename patterns first, then falls back to parent directory name.
 
         Args:
-            filename: Audio filename
+            wav_path: Full path to audio file
 
         Returns:
             Speaker ID if a stable pattern matches, None otherwise
         """
         import re
+
+        filename = wav_path.name
 
         # Pattern: known prefix (hey_<word>) followed by a timestamp or variant
         # e.g. "hey_katya_20260128_232017_v1.wav" -> "hey_katya"
@@ -493,6 +494,12 @@ class Clips:
         )
         if strict_pattern:
             return strict_pattern.group(1)
+
+        # Fallback: use parent directory name as speaker ID
+        # e.g. /data/positive/speaker_001/sample.wav -> "speaker_001"
+        parent_name = wav_path.parent.name
+        if parent_name and parent_name not in ("positive", "negative", "hard_negative", "background"):
+            return parent_name
 
         return None
 

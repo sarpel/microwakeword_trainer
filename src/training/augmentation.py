@@ -89,7 +89,6 @@ class AudioAugmentationPipeline:
                     "SevenBandParametricEQ",
                     SevenBandParametricEQ(
                         p=self.probabilities["SevenBandParametricEQ"],
-                        sample_rate=self.sample_rate,
                     ),
                 )
             )
@@ -100,7 +99,6 @@ class AudioAugmentationPipeline:
                     "TanhDistortion",
                     TanhDistortion(
                         p=self.probabilities["TanhDistortion"],
-                        sample_rate=self.sample_rate,
                     ),
                 )
             )
@@ -111,7 +109,6 @@ class AudioAugmentationPipeline:
                     "PitchShift",
                     PitchShift(
                         p=self.probabilities["PitchShift"],
-                        sample_rate=self.sample_rate,
                         min_semitones=-2,
                         max_semitones=2,
                     ),
@@ -124,7 +121,6 @@ class AudioAugmentationPipeline:
                     "BandStopFilter",
                     BandStopFilter(
                         p=self.probabilities["BandStopFilter"],
-                        sample_rate=self.sample_rate,
                         min_center_freq=100,
                         max_center_freq=5000,
                     ),
@@ -137,7 +133,6 @@ class AudioAugmentationPipeline:
                     "AddColorNoise",
                     AddColorNoise(
                         p=self.probabilities["AddColorNoise"],
-                        sample_rate=self.sample_rate,
                         min_snr_db=self.background_min_snr_db,
                         max_snr_db=self.background_max_snr_db,
                     ),
@@ -154,7 +149,6 @@ class AudioAugmentationPipeline:
                     "AddBackgroundNoise",
                     AddBackgroundNoise(
                         p=bg_prob,
-                        sample_rate=self.sample_rate,
                         min_snr_db=self.background_min_snr_db,
                         max_snr_db=self.background_max_snr_db,
                         sounds_path=background_paths,
@@ -172,7 +166,6 @@ class AudioAugmentationPipeline:
                     "ApplyImpulseResponse",
                     ApplyImpulseResponse(
                         p=rir_prob,
-                        sample_rate=self.sample_rate,
                         ir_path=impulse_paths,
                     ),
                 )

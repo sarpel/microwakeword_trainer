@@ -9,7 +9,7 @@ Audio data pipeline: ingestion, feature extraction, augmentation, and clustering
 | `ingestion.py` | Audio loading and metadata | `SampleRecord`, `Clips`, `Split`, `Label` |
 | `features.py` | Mel spectrogram generation | `FeatureConfig`, `MicroFrontend`, `SpectrogramGeneration` |
 | `dataset.py` | Training dataset with mmap | `RaggedMmap`, `WakeWordDataset`, `FeatureStore` |
-| `clustering.py` | Speaker diversity via embeddings | `extract_wavlm_embeddings`, `cluster_samples` |
+| `clustering.py` | Speaker diversity via embeddings | `extract_speaker_embeddings`, `cluster_samples` |
 | `spec_augment_gpu.py` | CuPy SpecAugment (GPU-only) | `spec_augment_gpu`, `batch_spec_augment_gpu` |
 
 ## Data Flow
@@ -28,7 +28,7 @@ Augmentation happens after features: spectrograms → `spec_augment_gpu.py` → 
 - **RaggedMmap**: Variable-length audio stored as memory-mapped files (data.bin + offsets.bin + lengths.bin)
 - **16kHz mono**: All audio normalized to 16-bit PCM, 16kHz, single channel
 - **40 mel bins**: Standard feature output shape [time_frames, 40]
-- **Optional clustering**: WavLM embeddings for speaker diversity (requires torch+transformers)
+- **Optional clustering**: SpeechBrain ECAPA-TDNN embeddings for speaker diversity (requires torch+speechbrain)
 
 ## Anti-Patterns
 
@@ -40,6 +40,6 @@ Augmentation happens after features: spectrograms → `spec_augment_gpu.py` → 
 ## Notes
 
 - CuPy SpecAugment raises RuntimeError if GPU unavailable, no fallback
-- Clustering requires optional deps: `pip install transformers torch scikit-learn`
+- Clustering requires optional deps: `pip install speechbrain torch scikit-learn`
 - RaggedMmap creates `.data`, `.offsets`, `.lengths` files in storage directory
 - FeatureConfig validates on init, warns if sample rate != 16000 Hz

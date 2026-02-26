@@ -95,14 +95,16 @@ def _convert_to_streaming_savedmodel(
         config.get("residual_connection", "0,0,0,0")
     )
 
-    # Create state variables for each MixConv block
-    state_shapes = [
-        (1, 4, 1, 30),
-        (1, 8, 1, 60),
-        (1, 12, 1, 60),
-        (1, 20, 1, 60),
-        (1, 4, 1, 60),
-    ]
+    # Calculate state shapes dynamically based on model configuration
+    # Format: (batch, time_frames, channel, features)
+    # time_frames = max_kernel_size - 1 (needed for ring buffer)
+    dynamic_state_shapes = []
+    for kernels, filters in zip(mixconv_kernel_sizes, pointwise_filters):
+        max_kernel = max(kernels) if kernels else 3
+        dynamic_state_shapes.append((1, max_kernel - 1, 1, filters))
+
+    # Use dynamic shapes instead of hardcoded
+    state_shapes = dynamic_state_shapes
 
     # Build MixConv blocks
     for i, (filters, kernels, repeat, use_res) in enumerate(
@@ -190,9 +192,17 @@ def _create_streaming_state(shape: tuple, name: str) -> tf.Variable:
     return tf.Variable(initial_state, trainable=False, name=name)
 
 
-def _streaming_concat(net: tf.Tensor, state: tf.Tensor, stride: int) -> tf.Tensor:
-    """Concatenate streaming state with current input."""
-    return tf.concat([state, net], axis=1)
+def _streaming_concat(net: tf.Tensor, state: tf.Variable, stride: int) -> tf.Tensor:
+    """Concatenate streaming state with current input and advance the ring buffer.
+
+    After concatenation, the state variable is updated to hold the most recent
+    frames so the next invocation starts from the correct position.
+    """
+    combined = tf.concat([state, net], axis=1)
+    # Advance: keep only the tail that the state needs for the next call
+    new_state = combined[:, -state.shape[1]:, :]
+    state.assign(new_state)
+    return combined
 
 
 def _apply_mixconv_block(
@@ -358,10 +368,8 @@ def create_default_representative_dataset(
             ).astype(np.float32)
             sample[0, 0] = 0.0
             sample[0, 1] = 26.0
-            for i in range(0, spectrogram_length - stride, stride):
-                # Yield with shape (1, stride, mel_bins) matching the streaming model input
-                chunk = sample[i : i + stride, :].reshape(1, stride, mel_bins)
-                yield [chunk]
+            # Yield full spectrogram matching model input shape
+            yield [sample.reshape(1, spectrogram_length, mel_bins)]
 
     return representative_dataset_gen
 
@@ -545,10 +553,20 @@ def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
     }
 
     # Check 1: Number of subgraphs (must be 2)
-    subgraphs = interpreter.get_subgraphs()
-    if len(subgraphs) != 2:
-        results["compatible"] = False
-        results["errors"].append(f"Expected 2 subgraphs, got {len(subgraphs)}")
+    if hasattr(interpreter, "get_subgraphs"):
+        subgraphs = interpreter.get_subgraphs()
+        if len(subgraphs) != 2:
+            results["compatible"] = False
+            results["errors"].append(f"Expected 2 subgraphs, got {len(subgraphs)}")
+    elif hasattr(interpreter, "num_subgraphs"):
+        num_sg = interpreter.num_subgraphs()
+        if num_sg != 2:
+            results["compatible"] = False
+            results["errors"].append(f"Expected 2 subgraphs, got {num_sg}")
+    else:
+        results["warnings"].append(
+            "Cannot check subgraph count: interpreter lacks get_subgraphs/num_subgraphs"
+        )
 
     # Check 2: Input shape [1, stride, 40] and dtype int8
     input_details = interpreter.get_input_details()
@@ -602,6 +620,7 @@ def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
 def calculate_tensor_arena_size(tflite_path: str) -> int:
     """Calculate required tensor arena size for TFLite model."""
     interpreter = tf.lite.Interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
     allocation = interpreter.get_tensor_details()
 
     total_memory = 0
@@ -708,9 +727,13 @@ def main():
 
     # Load configuration
     try:
-        from config.loader import load_preset
+        from config.loader import load_preset, load_config
 
-        config = load_preset(args.config)
+        # Distinguish preset name from file path
+        if os.path.isfile(args.config) or args.config.endswith((".yaml", ".yml")):
+            config = load_config(args.config)
+        else:
+            config = load_preset(args.config)
     except Exception as e:
         print(f"Error loading config: {e}", file=sys.stderr)
         sys.exit(1)

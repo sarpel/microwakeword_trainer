@@ -11,7 +11,25 @@ def compute_calibration_curve(
     y_prob: np.ndarray,
     n_bins: int = 10,
 ) -> Dict[str, np.ndarray]:
-    """Compute a simple reliability diagram curve."""
+    """Compute a simple reliability diagram curve.
+
+    Raises:
+        ValueError: If n_bins < 1, shapes mismatch, or values out of range
+    """
+    y_true = np.asarray(y_true).ravel()
+    y_prob = np.asarray(y_prob).ravel()
+
+    if n_bins < 1:
+        raise ValueError(f"n_bins must be >= 1, got {n_bins}")
+    if len(y_true) != len(y_prob):
+        raise ValueError(
+            f"y_true and y_prob must have the same length, "
+            f"got {len(y_true)} vs {len(y_prob)}"
+        )
+    if not np.all((y_prob >= 0) & (y_prob <= 1)):
+        raise ValueError("y_prob values must be in [0, 1]")
+    if not np.all(np.isin(y_true, [0, 1])):
+        raise ValueError("y_true must contain only 0 and 1")
     bins = np.linspace(0.0, 1.0, n_bins + 1)
     bin_ids = np.digitize(y_prob, bins, right=True) - 1
     bin_ids = np.clip(bin_ids, 0, n_bins - 1)
@@ -36,7 +54,24 @@ def compute_calibration_curve(
 
 
 def compute_brier_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
-    """Compute Brier score for probabilistic binary predictions."""
+    """Compute Brier score for probabilistic binary predictions.
+
+    Raises:
+        ValueError: If shapes mismatch, or values out of range
+    """
+    y_true = np.asarray(y_true).ravel()
+    y_prob = np.asarray(y_prob).ravel()
+
+    if len(y_true) != len(y_prob):
+        raise ValueError(
+            f"y_true and y_prob must have the same length, "
+            f"got {len(y_true)} vs {len(y_prob)}"
+        )
+    if not np.all((y_prob >= 0) & (y_prob <= 1)):
+        raise ValueError("y_prob values must be in [0, 1]")
+    if not np.all(np.isin(y_true, [0, 1])):
+        raise ValueError("y_true must contain only 0 and 1")
+
     return float(np.mean((y_prob - y_true) ** 2))
 
 

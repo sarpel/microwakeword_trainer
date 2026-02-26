@@ -85,7 +85,7 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 | Config loading | `config/loader.py` | Dataclass-based loader |
 | TFLite export | `src/export/tflite.py` | ai-edge-litert usage |
 | Performance | `src/utils/performance.py` | Profiling utilities |
-| Speaker clustering | `src/data/clustering.py` | WavLM embeddings, leakage audit |
+| Speaker clustering | `src/data/clustering.py` | SpeechBrain ECAPA-TDNN embeddings, leakage audit |
 | Hard negative mining | `src/data/hard_negatives.py` | FP detection, auto-mining |
 | Audio augmentation | `src/data/augmentation.py` | 8 augmentation types |
 

@@ -52,6 +52,11 @@ training:
   minimization_metric: "ambient_false_positives_per_hour"
   target_minimization: 0.3
   maximization_metric: "average_viable_recall"
+  # Hours of negative/background audio for FAH calculation
+  ambient_duration_hours: 10.0
+  minimization_metric: "ambient_false_positives_per_hour"
+  target_minimization: 0.3
+  maximization_metric: "average_viable_recall"
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -135,8 +140,8 @@ performance:
 # ─────────────────────────────────────────────────────────────────
 speaker_clustering:
   enabled: true
-  method: "wavlm_ecapa"
-  embedding_model: "microsoft/wavlm-base-plus"
+  method: "agglomerative"
+  embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
   similarity_threshold: 0.75
   leakage_audit_enabled: true
 

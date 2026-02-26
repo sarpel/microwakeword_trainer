@@ -52,6 +52,8 @@ training:
   minimization_metric: "ambient_false_positives_per_hour"
   target_minimization: 0.5
   maximization_metric: "average_viable_recall"
+  # Hours of negative/background audio for FAH calculation
+  ambient_duration_hours: 10.0
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -151,8 +153,8 @@ export:
   inference_input_type: "int8"
   inference_output_type: "uint8"
 
-  # Wake word detection threshold (high-confidence for production)
-  # Set to 0.70 for testing; validated threshold: 0.95-0.98 for production
+  # Testing threshold (NOT for production)
+  # For production use, set to 0.95-0.98 for high-confidence detection
   probability_cutoff: 0.70
   sliding_window_size: 5
   tensor_arena_size: 22860

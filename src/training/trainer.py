@@ -20,20 +20,33 @@ from src.model.architecture import build_model
 from src.training.profiler import TrainingProfiler
 from src.training.miner import HardExampleMiner
 from src.data.spec_augment_gpu import batch_spec_augment_gpu
+from src.evaluation.metrics import MetricsCalculator
+from src.training.rich_logger import RichTrainingLogger
 
 
-class TrainingMetrics:
-    """Track training metrics at multiple thresholds for ROC/PR curves."""
+class EvaluationMetrics:
+    """Wrapper around MetricsCalculator that supports batch accumulation.
 
-    def __init__(self, cutoffs: Optional[np.ndarray] = None):
+    This provides backward compatibility with TrainingMetrics' update pattern
+    while using the evaluation package for computations.
+    """
+
+    def __init__(
+        self,
+        cutoffs: Optional[list] = None,
+        ambient_duration_hours: float = 0.0,
+    ):
         """Initialize metrics tracker.
 
         Args:
             cutoffs: Array of threshold values (default: 101 points from 0 to 1)
         """
         if cutoffs is None:
-            cutoffs = np.linspace(0.0, 1.0, 101)
-        self.cutoffs = cutoffs.tolist()
+            cutoffs = np.linspace(0.0, 1.0, 101).tolist()
+        elif hasattr(cutoffs, "tolist"):
+            cutoffs = cutoffs.tolist()
+        self.cutoffs = cutoffs
+        self.ambient_duration_hours = ambient_duration_hours
 
         # Accumulated predictions and labels
         self.all_y_true: list = []
@@ -85,37 +98,20 @@ class TrainingMetrics:
         y_true = np.array(self.all_y_true)
         y_scores = np.array(self.all_y_scores)
 
-        # Basic metrics
-        tp_total = np.sum((y_scores >= 0.5) & (y_true == 1))
-        fp_total = np.sum((y_scores >= 0.5) & (y_true == 0))
-        tn_total = np.sum((y_scores < 0.5) & (y_true == 0))
-        fn_total = np.sum((y_scores < 0.5) & (y_true == 1))
+        # Use MetricsCalculator for main metrics computation
+        calc = MetricsCalculator(
+            y_true=y_true,
+            y_score=y_scores,
+            ambient_duration_hours=self.ambient_duration_hours,
+        )
 
-        # Avoid division by zero
-        precision_denom = tp_total + fp_total
-        recall_denom = tp_total + fn_total
+        # Get basic metrics using default threshold 0.5
+        metrics = calc.compute_all_metrics(
+            ambient_duration_hours=self.ambient_duration_hours,
+            threshold=0.5,
+        )
 
-        metrics = {
-            "accuracy": (tp_total + tn_total) / len(y_true) if len(y_true) > 0 else 0,
-            "precision": tp_total / precision_denom if precision_denom > 0 else 0,
-            "recall": tp_total / recall_denom if recall_denom > 0 else 0,
-            "tp": int(tp_total),
-            "fp": int(fp_total),
-            "tn": int(tn_total),
-            "fn": int(fn_total),
-        }
-
-        # AUC calculation
-        try:
-            from sklearn.metrics import roc_auc_score, average_precision_score
-
-            if len(np.unique(y_true)) > 1:
-                metrics["auc_roc"] = roc_auc_score(y_true, y_scores)
-                metrics["auc_pr"] = average_precision_score(y_true, y_scores)
-        except ImportError:
-            pass
-
-        # Compute metrics at all thresholds for ROC/PR curves
+        # Add per-threshold metrics for backward compatibility (ROC/PR curves)
         for cutoff in self.cutoffs:
             tp = self.tp_at_threshold[cutoff]
             fp = self.fp_at_threshold[cutoff]
@@ -147,6 +143,10 @@ class TrainingMetrics:
         self.fp_at_threshold = {c: 0 for c in self.cutoffs}
         self.tn_at_threshold = {c: 0 for c in self.cutoffs}
         self.fn_at_threshold = {c: 0 for c in self.cutoffs}
+
+
+# Backward-compatible alias
+TrainingMetrics = EvaluationMetrics
 
 
 class Trainer:
@@ -226,13 +226,28 @@ class Trainer:
         self.enable_profiling = performance.get("enable_profiling", True)
         self.profile_every_n = performance.get("profile_every_n_steps", 100)
         self.profile_output_dir = performance.get("profile_output_dir", "./profiles")
-        self.num_workers = performance.get("num_workers", 4)
-        self.prefetch_factor = performance.get("prefetch_factor", 2)
-        self.pin_memory = performance.get("pin_memory", False)
-        self.inter_op_parallelism = performance.get("inter_op_parallelism", 0)
-        self.intra_op_parallelism = performance.get("intra_op_parallelism", 0)
+        self.num_workers = performance.get("num_workers", 16)
+        self.prefetch_factor = performance.get("prefetch_factor", 8)
+        self.pin_memory = performance.get("pin_memory", True)
+        self.inter_op_parallelism = performance.get("inter_op_parallelism", 16)
+        self.intra_op_parallelism = performance.get("intra_op_parallelism", 16)
         self.tensorboard_enabled = performance.get("tensorboard_enabled", True)
         self.tensorboard_log_dir = performance.get("tensorboard_log_dir", "./logs")
+        
+        # Rich terminal logger
+        self.logger = RichTrainingLogger()
+        # FAH calculation - get ambient duration hours from training config
+        self.ambient_duration_hours = training.get("ambient_duration_hours", 10.0)
+        if self.ambient_duration_hours > 0:
+            self.logger.log_info(
+                f"FAH calculation enabled with {self.ambient_duration_hours:.2f} hours of ambient audio"
+            )
+        evaluation = config.get("evaluation", {})
+        self.ambient_duration_hours = evaluation.get("ambient_duration_hours", 0.0)
+        if self.ambient_duration_hours > 0:
+            self.logger.log_info(
+                f"FAH calculation enabled with {self.ambient_duration_hours:.2f} hours of ambient audio"
+            )
 
         # Apply threading config
         if self.inter_op_parallelism > 0:
@@ -258,8 +273,12 @@ class Trainer:
         self._spec_augment_warning_shown = False
 
         # Metrics trackers
-        self.train_metrics = TrainingMetrics()
-        self.val_metrics = TrainingMetrics()
+        self.train_metrics = TrainingMetrics(
+            ambient_duration_hours=self.ambient_duration_hours
+        )
+        self.val_metrics = TrainingMetrics(
+            ambient_duration_hours=self.ambient_duration_hours
+        )
 
         # Hard negative mining
         hn_config = config.get("hard_negative_mining", {})
@@ -272,12 +291,10 @@ class Trainer:
                 mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
                 output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
             )
-            print(
-                f"[TRAINER] Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, "
+            self.logger.log_info(
+                f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, "
                 f"max_samples={hn_config.get('max_samples', 5000)}"
             )
-        self.val_metrics = TrainingMetrics()
-
     def _get_current_phase_settings(self, step: int) -> Dict[str, Any]:
         """Get training settings for current step.
 
@@ -317,8 +334,23 @@ class Trainer:
         Returns:
             Compiled Keras model
         """
-        # Build model using architecture module
-        model = build_model(input_shape=input_shape, num_classes=2)
+        # Extract model config params to forward to build_model
+        model_cfg = self.config.get("model", {})
+
+        # Build model using architecture module with all config params
+        model = build_model(
+            input_shape=input_shape,
+            num_classes=2,
+            first_conv_filters=model_cfg.get("first_conv_filters", 30),
+            first_conv_kernel_size=model_cfg.get("first_conv_kernel_size", 5),
+            stride=model_cfg.get("stride", 3),
+            pointwise_filters=model_cfg.get("pointwise_filters", "60,60,60,60"),
+            mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[9],[13],[21]"),
+            repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
+            residual_connection=model_cfg.get("residual_connection", "0,0,0,0"),
+            dropout_rate=model_cfg.get("dropout_rate", 0.0),
+            l2_regularization=model_cfg.get("l2_regularization", 0.0),
+        )
 
         # Get current phase settings
         phase_settings = self._get_current_phase_settings(0)
@@ -393,11 +425,17 @@ class Trainer:
         Returns:
             Tuple of (is_best, reason)
         """
-        # Calculate false accept rate (using FP at 0.5 threshold)
-        fp = metrics.get("fp", 0)
-        # Estimate FAH based on FP - this is a simplified version
-        # In practice, you'd calculate based on hours of negative audio
-        fah = fp / max(metrics.get("tn", 1), 1) * 1000  # Normalized FAH estimate
+        # Use proper FAH from evaluation package if available
+        if "ambient_false_positives_per_hour" in metrics:
+            fah = metrics.get("ambient_false_positives_per_hour", float("inf"))
+        else:
+            # Fallback: estimate FAH based on FP
+            fp = metrics.get("fp", 0)
+            fah = (
+                fp / max(self.ambient_duration_hours, 0.001)
+                if self.ambient_duration_hours > 0
+                else float("inf")
+            )
 
         current_recall = metrics.get("recall", 0)
 
@@ -442,11 +480,20 @@ class Trainer:
                 self.checkpoint_dir, "best_weights.weights.h5"
             )
             self.model.save_weights(self.best_weights_path)
-            print(f"[CHECKPOINT] Saved best weights: {reason}")
+            self.logger.log_checkpoint(reason, True, self.best_weights_path)
 
             # Update best metrics
-            fp = metrics.get("fp", 0)
-            self.best_fah = fp / max(metrics.get("tn", 1), 1) * 1000
+            if "ambient_false_positives_per_hour" in metrics:
+                self.best_fah = metrics.get(
+                    "ambient_false_positives_per_hour", float("inf")
+                )
+            else:
+                fp = metrics.get("fp", 0)
+                self.best_fah = (
+                    fp / max(self.ambient_duration_hours, 0.001)
+                    if self.ambient_duration_hours > 0
+                    else float("inf")
+                )
             self.best_recall = metrics.get("recall", 0)
 
         # Save periodic checkpoint
@@ -571,9 +618,9 @@ class Trainer:
             Trained model
         """
         # Build and compile model
-        print("[TRAINER] Building model...")
+        self.logger.log_info("Building model...")
         self.model = self._build_model(input_shape)
-        self.model.summary(print_fn=print)
+        self.model.summary(print_fn=self.logger.console.print)
 
         # Setup profiler
         if self.enable_profiling:
@@ -581,14 +628,13 @@ class Trainer:
 
         # Calculate total training steps
         total_steps = sum(self.training_steps_list)
-        print(f"[TRAINER] Starting step-based training for {total_steps} steps...")
-        print(f"[TRAINER] Training phases: {self.training_steps_list}")
-        print(f"[TRAINER] Learning rates: {self.learning_rates}")
-        print(
-            f"[TRAINER] Class weights (positive/negative): {self.positive_weights}/{self.negative_weights}"
-        )
-        print(f"[TRAINER] Evaluation interval: {self.eval_step_interval} steps")
+        self.logger.log_header(self.config, total_steps)
+        # Create progress bar
+        progress, progress_task = self.logger.create_progress(total_steps)
+        progress.start()
+        prev_phase = -1
 
+        # Training loop
         # Training loop
         start_time = time.time()
         # Create initial generator from factory so we can restart it if exhausted
@@ -634,7 +680,7 @@ class Trainer:
                     except RuntimeError as e:
                         # GPU not available or CuPy not installed, skip SpecAugment
                         if not self._spec_augment_warning_shown:
-                            print(f"[WARNING] SpecAugment skipped: {e}")
+                            self.logger.log_warning(f"SpecAugment skipped: {e}")
                             self._spec_augment_warning_shown = True
             # Profile data loading if enabled
             if self.profiler and step % self.profile_every_n == 0:
@@ -647,34 +693,37 @@ class Trainer:
                     train_fingerprints, train_ground_truth, train_sample_weights
                 )
 
-            # Log training progress
-            if step % 100 == 0:
-                elapsed = time.time() - start_time
-                steps_per_sec = step / elapsed
-                eta = (total_steps - step) / steps_per_sec
+            # Update progress bar and detect phase transitions
+            phase_settings_display = self._get_current_phase_settings(step)
+            self.logger.update_step(progress, progress_task, step, train_metrics, phase_settings_display)
 
-                lr = self.model.optimizer.learning_rate.numpy()
-                print(
-                    f"[STEP {step}/{total_steps}] "
-                    f"loss={train_metrics.get('loss', 0):.4f} "
-                    f"acc={train_metrics.get('accuracy', 0):.4f} "
-                    f"lr={lr:.6f} "
-                    f"({steps_per_sec:.1f} steps/s, ETA: {eta / 60:.1f} min)"
-                )
+            # Detect and announce phase transitions
+            current_phase = phase_settings_display["phase"]
+            if current_phase != prev_phase:
+                if prev_phase >= 0:  # Skip announcement for initial phase
+                    progress.stop()
+                    self.logger.log_phase_transition(
+                        current_phase,
+                        len(self.training_steps_list),
+                        phase_settings_display["learning_rate"],
+                        phase_settings_display["positive_weight"],
+                        phase_settings_display["negative_weight"],
+                    )
+                    progress.start()
+                prev_phase = current_phase
 
             # Evaluate every N steps
-            if step % self.eval_step_interval == 0:
-                print(f"\n[EVALUATING at step {step}]")
-
                 val_metrics = self.validate(val_data_factory)
 
-                print(
-                    f"Validation - "
-                    f"loss: N/A (eval mode) "
-                    f"acc: {val_metrics.get('accuracy', 0):.4f} "
-                    f"recall: {val_metrics.get('recall', 0):.4f} "
-                    f"precision: {val_metrics.get('precision', 0):.4f}"
-                )
+                # Log validation results with Rich table and confusion matrix
+                self.logger.log_validation_results(val_metrics, step, total_steps)
+
+                # Confusion matrix at threshold 0.5
+                tp = self.val_metrics.tp_at_threshold.get(0.5, 0)
+                fp = self.val_metrics.fp_at_threshold.get(0.5, 0)
+                tn = self.val_metrics.tn_at_threshold.get(0.5, 0)
+                fn = self.val_metrics.fn_at_threshold.get(0.5, 0)
+                self.logger.log_confusion_matrix(tp, fp, tn, fn)
 
                 # Check if best model
                 is_best, reason = self._is_best_model(
@@ -682,7 +731,6 @@ class Trainer:
                 )
 
                 self._save_checkpoint(val_metrics, is_best, reason)
-                print()
 
                 # Hard negative mining (during evaluation)
                 if self.hard_negative_miner and step % self.eval_step_interval == 0:
@@ -697,33 +745,32 @@ class Trainer:
                         == 0
                         and approx_epoch != getattr(self, "_last_mined_epoch", -1)
                     ):
-                        print(
-                            f"[MINING] Mining hard negatives at epoch {approx_epoch}..."
-                        )
+                        self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
                         try:
                             mining_result = self.hard_negative_miner.mine_from_dataset(
                                 self.model, val_data_factory, approx_epoch
                             )
-                            print(
-                                f"[MINING] Found {mining_result['num_hard_negatives']} hard negatives"
+                            self.logger.log_mining(
+                                f"Completed at epoch {approx_epoch}",
+                                count=mining_result['num_hard_negatives'],
                             )
                             self._last_mined_epoch = approx_epoch
                         except IOError as e:
-                            print(
-                                f"[MINING] Warning: Hard negative mining failed (IOError): {e}"
-                            )
+                            self.logger.log_warning(f"Hard negative mining failed (IOError): {e}")
                         except RuntimeError as e:
-                            print(
-                                f"[MINING] Warning: Hard negative mining failed (RuntimeError): {e}"
-                            )
-                        except Exception as e:
+                            self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
+                        except Exception:
                             raise
-                print()
+
+                # Resume progress bar
+                progress.start()
 
         # Training complete
-        total_time = time.time() - start_time
-        print(f"[TRAINER] Training complete in {total_time / 60:.1f} minutes")
-        print(f"[TRAINER] Best weights saved to: {self.best_weights_path}")
+        progress.stop()
+        self.logger.log_completion(
+            total_time, self.best_weights_path or "N/A",
+            self.best_fah, self.best_recall,
+        )
 
         # Load best weights for return
         if self.best_weights_path and os.path.exists(self.best_weights_path):
@@ -752,17 +799,10 @@ def train(config: dict) -> tf.keras.Model:
             "Model config must define 'spectrogram_length' under config['model']."
         )
 
-    mel_bins = model_cfg.get("mel_bins")
-    if mel_bins is None and "mel_bins" in config.get("hardware", {}):
-        mel_bins = config.get("hardware", {}).get("mel_bins", 40)
-        print(
-            "[TRAINER] Warning: 'model.mel_bins' is missing; using legacy "
-            "'hardware.mel_bins'. Please move mel_bins into config['model']."
-        )
-    elif mel_bins is None:
-        raise ValueError(
-            "Missing 'mel_bins' in config['model'] and no legacy fallback found in config['hardware']."
-        )
+    # mel_bins: prefer hardware config (the canonical location)
+    mel_bins = config.get("hardware", {}).get("mel_bins")
+    if mel_bins is None:
+        mel_bins = model_cfg.get("mel_bins", 40)
 
     input_shape = (
         model_cfg.get("spectrogram_length", 49),
@@ -774,8 +814,8 @@ def train(config: dict) -> tf.keras.Model:
 
     trainer = Trainer(config)
     model = trainer.train(
-        train_data_factory=dataset.train_generator_factory,  # type: ignore[attr-defined]
-        val_data_factory=dataset.val_generator_factory,  # type: ignore[attr-defined]
+        train_data_factory=dataset.train_generator_factory(),  # type: ignore[attr-defined]
+        val_data_factory=dataset.val_generator_factory(),  # type: ignore[attr-defined]
         input_shape=input_shape,
     )
     return model
@@ -801,10 +841,16 @@ def main():
     # Load config
     config = load_full_config(args.config, args.override)
 
-    # Train model
-    train(config)
+    # Convert dataclass to dict since train() expects a dict
+    import dataclasses
+    config_dict = dataclasses.asdict(config)
 
-    print("\n[TRAIN] Training completed successfully!")
+    # Train model
+    train(config_dict)
+
+    # Final message
+    logger = RichTrainingLogger()
+    logger.log_info("Training completed successfully!")
 
 
 if __name__ == "__main__":

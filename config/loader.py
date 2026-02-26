@@ -69,6 +69,8 @@ class TrainingConfig:
     minimization_metric: str = "ambient_false_positives_per_hour"
     target_minimization: float = 0.5
     maximization_metric: str = "average_viable_recall"
+    steps_per_epoch: int = 1000
+    ambient_duration_hours: float = 11.3
 
 
 @dataclass
@@ -394,7 +396,7 @@ class ConfigLoader:
         # Validate model section
         if "model" in config:
             md = config["model"]
-            valid_architectures = ["mixednet", "dnn", "cnn", "crnn"]
+            valid_architectures = ["mixednet"]
             if md.get("architecture") not in valid_architectures:
                 issues.append(
                     f"model.architecture must be one of: {valid_architectures}"
@@ -425,8 +427,17 @@ class ConfigLoader:
         for section_name, section_class in self.SECTION_CLASSES.items():
             if section_name in config:
                 section_data = config[section_name]
-
-                result[section_name] = section_class(**section_data)
+                # Filter to only fields the dataclass accepts
+                import dataclasses as _dc
+                valid_fields = {f.name for f in _dc.fields(section_class)}
+                filtered = {k: v for k, v in section_data.items() if k in valid_fields}
+                if len(filtered) < len(section_data):
+                    unknown = set(section_data) - valid_fields
+                    logger.warning(
+                        f"Config section '{section_name}' has unknown fields "
+                        f"(ignored): {unknown}"
+                    )
+                result[section_name] = section_class(**filtered)
         return FullConfig(**result)
 
     # =========================================================================
@@ -500,10 +511,14 @@ class ConfigLoader:
 
     def _resolve_path(self, value: str) -> str:
         """
-        Resolve relative paths relative to config file location.
+        Resolve relative paths.
 
-        Resolves paths that start with ../ (parent directory), ./ (current directory),
-        or bare relative paths (not starting with / and not being absolute URLs).
+        - Paths starting with ``./`` resolve against the **current working
+          directory** (project root), because they represent data/output paths.
+        - Paths starting with ``../`` resolve against the **config file
+          directory**, because they reference sibling/parent configs.
+        - Bare relative paths with slashes (e.g. ``config/data.yaml``) resolve
+          against CWD if they look like file paths.
 
         Args:
             value: String potentially containing a path
@@ -511,7 +526,6 @@ class ConfigLoader:
         Returns:
             Resolved path string
         """
-        # Only resolve obvious path patterns
         if not isinstance(value, str):
             return value
 
@@ -519,14 +533,28 @@ class ConfigLoader:
         if value.startswith(("http://", "https://", "file://", "/")):
             return value
 
-        # Resolve relative paths against config directory
-        if self._config_dir is not None:
-            if value.startswith("../") or value.startswith("./"):
-                resolved = (self._config_dir / value).resolve()
-                return str(resolved)
-            # Handle bare relative paths (e.g., "config/data.yaml")
-            if not os.path.isabs(value) and "/" in value:
-                resolved = (self._config_dir / value).resolve()
+        # Skip HuggingFace-style model IDs (e.g. "microsoft/wavlm-base-plus")
+        import re
+        if re.match(r'^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$', value) and '.' not in value.split('/')[-1].rsplit('-', 1)[0]:
+            return value
+
+        # ./paths → resolve against CWD (project root)
+        if value.startswith("./"):
+            resolved = (Path.cwd() / value).resolve()
+            return str(resolved)
+
+        # ../paths → resolve against config file directory
+        if value.startswith("../") and self._config_dir is not None:
+            resolved = (self._config_dir / value).resolve()
+            return str(resolved)
+
+        # Bare relative paths with slashes → resolve against CWD
+        if self._config_dir is not None and not os.path.isabs(value) and "/" in value:
+            parts = value.split("/")
+            has_extension = "." in parts[-1]
+            has_multiple_segments = len(parts) > 2
+            if has_extension or has_multiple_segments:
+                resolved = (Path.cwd() / value).resolve()
                 return str(resolved)
 
         return value

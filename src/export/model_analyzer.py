@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+from ai_edge_litert.interpreter import Interpreter
 import tensorflow as tf
 
 # =============================================================================
@@ -16,7 +17,7 @@ import tensorflow as tf
 def analyze_model_architecture(model_path: str) -> Dict[str, Any]:
     """Analyze detailed architecture of a TFLite model using ai_edge_litert.
 
-    Uses tf.lite.experimental.Analyzer.analyze() for detailed layer analysis.
+    Uses ai_edge_litert.Interpreter for model analysis.
 
     Args:
         model_path: Path to the TFLite model file
@@ -139,12 +140,12 @@ def validate_model_quality(
         expected_output_dtype = np.uint8
 
     try:
-        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter = Interpreter(model_path=model_path)
         interpreter.allocate_tensors()
 
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
-        subgraphs = interpreter.get_subgraphs()
+        num_subgraphs = interpreter.num_subgraphs()
 
         if input_details:
             inp = input_details[0]
@@ -198,12 +199,13 @@ def validate_model_quality(
                     results["info"]["output_scale"] = float(qp["scales"][0])
                     results["info"]["output_zero_point"] = int(qp["zero_points"][0])
 
-        if len(subgraphs) != 2:
+        if num_subgraphs != 2:
             results["warnings"].append(
-                f"Expected 2 subgraphs for streaming model, found {len(subgraphs)}"
+                f"Expected 2 subgraphs for streaming model, found {num_subgraphs}"
             )
         else:
             results["info"]["subgraph_count_correct"] = True
+            results["info"]["subgraph_count"] = num_subgraphs
 
         tensor_details = interpreter.get_tensor_details()
         results["info"]["total_tensors"] = len(tensor_details)
@@ -337,7 +339,7 @@ def estimate_performance(
 
         analysis = analyze_model_architecture(model_path)
 
-        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter = Interpreter(model_path=model_path)
         interpreter.allocate_tensors()
         tensor_details = interpreter.get_tensor_details()
 
@@ -469,12 +471,13 @@ def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
     ]
 
     # Check for positive indicators
+    import re
+
     has_positive = False
     for pattern in positive_indicators:
-        if pattern in analysis_text:
+        if re.search(re.escape(pattern), analysis_text, re.IGNORECASE):
             # Check if there's a negation nearby (within 50 characters)
             for neg_pattern in negative_patterns:
-                import re
 
                 # Find all occurrences of the positive pattern
                 for match in re.finditer(

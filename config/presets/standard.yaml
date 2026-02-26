@@ -53,6 +53,9 @@ training:
   target_minimization: 0.5
   maximization_metric: "average_viable_recall"
 
+  # Hours of negative/background audio for FAH calculation
+  ambient_duration_hours: 10.0
+
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
 # ─────────────────────────────────────────────────────────────────
@@ -69,9 +72,9 @@ model:
   repeat_in_block: "1,1,1,1"
   residual_connection: "0,0,0,0"
 
-  # Common settings
-  dropout_rate: 0.0
-  l2_regularization: 0.0
+  # Regularization
+  dropout_rate: 0.2
+  l2_regularization: 0.001
 
 # ─────────────────────────────────────────────────────────────────
 # AUGMENTATION
@@ -131,8 +134,8 @@ performance:
 # ─────────────────────────────────────────────────────────────────
 speaker_clustering:
   enabled: true
-  method: "wavlm_ecapa"
-  embedding_model: "microsoft/wavlm-base-plus"
+  method: "agglomerative"
+  embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
   similarity_threshold: 0.72
   leakage_audit_enabled: true
 
@@ -158,7 +161,7 @@ export:
   inference_input_type: "int8"
   inference_output_type: "uint8"
 
-  probability_cutoff: 0.52
+  probability_cutoff: 0.97
   sliding_window_size: 5
   tensor_arena_size: 22860
   minimum_esphome_version: "2024.7.0"

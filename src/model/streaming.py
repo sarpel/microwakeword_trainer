@@ -305,12 +305,14 @@ class Stream(tf.keras.layers.Layer):
 
         super().build(input_shape)
 
-    def call(self, inputs, training=None):
+    def call(self, inputs, training=None, state=None):
         """Forward pass with streaming logic.
 
         Args:
             inputs: Input tensor
             training: Training flag
+            state: Optional runtime state tensor for external streaming.
+                   If provided, overrides self.input_state.
 
         Returns:
             Output tensor, or (output, output_state) for external streaming
@@ -318,7 +320,7 @@ class Stream(tf.keras.layers.Layer):
         if self.mode == Modes.STREAM_INTERNAL_STATE_INFERENCE:
             return self._streaming_internal_state(inputs)
         elif self.mode == Modes.STREAM_EXTERNAL_STATE_INFERENCE:
-            return self._streaming_external_state(inputs)
+            return self._streaming_external_state(inputs, state=state)
         elif self.mode in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
             return self._non_streaming(inputs, training)
         else:
@@ -358,8 +360,14 @@ class Stream(tf.keras.layers.Layer):
             else:
                 return self.cell(inputs)
 
-    def _streaming_external_state(self, inputs):
-        """Streaming with external state management."""
+    def _streaming_external_state(self, inputs, state=None):
+        """Streaming with external state management.
+
+        Args:
+            inputs: Input tensor
+            state: Optional runtime state tensor. If None, uses self.input_state.
+        """
+        input_state = state if state is not None else self.input_state
         if self.use_one_step:
             tf.debugging.assert_equal(
                 tf.shape(inputs)[1],
@@ -368,7 +376,7 @@ class Stream(tf.keras.layers.Layer):
             )
 
             # Shift buffer and add new input
-            memory = self.input_state[:, 1 : self.ring_buffer_size_in_time_dim, :]
+            memory = input_state[:, 1 : self.ring_buffer_size_in_time_dim, :]
             memory = tf.concat([memory, inputs], axis=1)
 
             output = self.cell(memory)
@@ -376,7 +384,7 @@ class Stream(tf.keras.layers.Layer):
             return output, memory
         else:
             # Strided mode
-            memory = tf.concat([self.input_state, inputs], axis=1)
+            memory = tf.concat([input_state, inputs], axis=1)
             state_update = memory[:, -self.ring_buffer_size_in_time_dim :, :]
             output = self.cell(memory)
             self.output_state = state_update
