@@ -162,34 +162,44 @@ class MicroFrontend:
         return self._compute_mel_spectrogram_pymicro(audio)
 
     def _compute_mel_spectrogram_pymicro(self, audio: np.ndarray) -> np.ndarray:
-        """Compute mel spectrogram using pymicro-features.
+        """Compute mel spectrogram using librosa.
 
         Args:
             audio: Audio samples
 
         Returns:
-            Mel spectrogram
+            Mel spectrogram of shape (num_frames, mel_bins)
         """
-        import pymicro_features
+        import librosa
 
         # Ensure correct dtype
         audio = audio.astype(np.float32)
 
-        # pymicro-features expects int16 input
-        audio = np.clip(audio, -1.0, 1.0)
-        audio_int16 = (audio * 32767).astype(np.int16)
+        # Compute mel spectrogram using librosa
+        # n_fft is typically 2^p where p is chosen so n_fft >= window_size_samples
+        n_fft = 512  # Standard value for 16kHz audio with 30ms window
+        hop_length = self.config.window_step_samples
+        n_mels = self.config.mel_bins
 
-        # Get mel spectrogram - use mel_bins to match downstream expectations
-        mel_spec = pymicro_features.mel_feature(
-            audio_int16,
-            self.config.sample_rate,
-            self.config.window_size_samples,
-            self.config.window_step_samples,
-            self.config.mel_bins,
+        # Compute mel spectrogram
+        mel_spec = librosa.feature.melspectrogram(
+            y=audio,
+            sr=self.config.sample_rate,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            n_mels=n_mels,
+            fmin=0,
+            fmax=self.config.sample_rate // 2,
         )
 
-        # Shape should be (frames, mel_bins)
-        return mel_spec.astype(np.float32)
+        # Transpose to get (frames, mel_bins) shape
+        # librosa returns (mel_bins, frames)
+        mel_spec = mel_spec.T
+
+        # Convert to log scale (dB) - common practice for mel spectrograms
+        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+
+        return mel_spec_db.astype(np.float32)
 
     def extract(self, audio: np.ndarray) -> np.ndarray:
         """Extract features from audio.

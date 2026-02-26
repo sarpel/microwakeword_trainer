@@ -430,7 +430,8 @@ class WakeWordDataset:
 
     def __init__(
         self,
-        data_path: Union[str, Path],
+        config: Optional[Dict[str, Any]] = None,
+        data_path: Optional[Union[str, Path]] = None,
         split: str = "train",
         batch_size: int = 32,
         feature_dim: int = 40,
@@ -438,20 +439,38 @@ class WakeWordDataset:
         """Initialize dataset.
 
         Args:
-            data_path: Path to processed data directory
+            config: Configuration dictionary with paths and hardware settings.
+                   When provided, the build() method can be called to process
+                   raw audio files into features.
+            data_path: Path to processed data directory (legacy compatibility)
             split: Data split ('train', 'val', 'test')
             batch_size: Batch size for training
             feature_dim: Dimension of feature vectors
         """
-        self.data_path = Path(data_path)
-        self.split = split
-        self.batch_size = batch_size
-        self.feature_dim = feature_dim
+        # Handle config-based initialization
+        if config is not None:
+            self._config = config
+            paths_cfg = config.get("paths", {})
+            hardware_cfg = config.get("hardware", {})
+            training_cfg = config.get("training", {})
+
+            self.data_path = Path(paths_cfg.get("processed_dir", "./data/processed"))
+            self.batch_size = training_cfg.get("batch_size", batch_size)
+            self.feature_dim = hardware_cfg.get("mel_bins", feature_dim)
+            self.split = split
+            self._is_built = False
+        else:
+            # Legacy initialization
+            self._config = None
+            self.data_path = Path(data_path) if data_path else Path("./data/processed")
+            self.split = split
+            self.batch_size = batch_size
+            self.feature_dim = feature_dim
+            self._is_built = False
 
         # Try to load from store
         self.feature_store: Optional[FeatureStore] = None
         self._load_store()
-
     def _load_store(self):
         """Load feature store if available."""
         store_path = self.data_path / self.split
@@ -482,6 +501,221 @@ class WakeWordDataset:
             raise RuntimeError("Feature store not available")
 
         return self.feature_store.get(idx)
+
+    def build(self, config: Optional[Dict[str, Any]] = None) -> "WakeWordDataset":
+        """Build the dataset from raw audio files.
+
+        Args:
+            config: Configuration dictionary with paths and hardware settings.
+                   If not provided, uses config from __init__.
+
+        Returns:
+            self for method chaining
+        """
+        # Use provided config or fall back to stored config
+        cfg = config if config is not None else self._config
+        if cfg is None:
+            raise ValueError(
+                "No config provided. Pass config to __init__ or build(config)"
+            )
+
+        # Extract paths from config
+        paths_cfg = cfg.get("paths", {})
+        positive_dir = paths_cfg.get("positive_dir")
+        negative_dir = paths_cfg.get("negative_dir")
+        hard_negative_dir = paths_cfg.get("hard_negative_dir")
+        processed_dir = paths_cfg.get("processed_dir", "./data/processed")
+
+        # Extract hardware config for feature extraction
+        hardware_cfg = cfg.get("hardware", {})
+        sample_rate = hardware_cfg.get("sample_rate_hz", 16000)
+        mel_bins = hardware_cfg.get("mel_bins", 40)
+        window_size_ms = hardware_cfg.get("window_size_ms", 30)
+        window_step_ms = hardware_cfg.get("window_step_ms", 10)
+
+        # Create feature config
+        from src.data.features import FeatureConfig, MicroFrontend
+        from src.data.ingestion import Clips, ClipsLoaderConfig, Split, Label
+
+        feature_config = FeatureConfig(
+            sample_rate=sample_rate,
+            mel_bins=mel_bins,
+            window_size_ms=window_size_ms,
+            window_step_ms=window_step_ms,
+        )
+
+        # Initialize feature extractor
+        frontend = MicroFrontend(feature_config)
+
+        # Ensure processed directories exist
+        dirs = ensure_processed_directory(processed_dir)
+
+        # Load clips using ClipsLoaderConfig
+        logger.info("Loading audio clips from dataset directories...")
+
+        clips_config = ClipsLoaderConfig(
+            positive_dir=Path(positive_dir) if positive_dir else None,
+            negative_dir=Path(negative_dir) if negative_dir else None,
+            hard_negative_dir=Path(hard_negative_dir) if hard_negative_dir else None,
+            train_split=0.8,
+            val_split=0.2,
+            test_split=0.0,
+            seed=42,
+        )
+
+        clips = Clips(config=clips_config)
+
+        # Get train and val samples
+        train_samples = clips.get_split(Split.TRAIN)
+        val_samples = clips.get_split(Split.VAL)
+
+        logger.info(f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples")
+
+        if not train_samples:
+            raise RuntimeError("No training samples found. Please check your dataset directories.")
+
+        # Extract features and store for training
+        logger.info(f"Extracting features for {len(train_samples)} training clips...")
+        train_store = FeatureStore(dirs["train"])
+        train_store.initialize(len(train_samples), feature_dim=mel_bins)
+
+        for sample in train_samples:
+            try:
+                # Load audio
+                import wave
+
+                with wave.open(str(sample.path), 'rb') as wf:
+                    n_frames = wf.getnframes()
+                    audio_data = wf.readframes(n_frames)
+                    audio = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32767.0
+
+                # Extract features
+                features = frontend.compute_mel_spectrogram(audio)
+
+                # Determine label (0 for negative, 1 for positive/hard_negative)
+                label = 1 if sample.label in (Label.POSITIVE, Label.HARD_NEGATIVE) else 0
+
+                # Add to store
+                train_store.add(features, label)
+
+            except Exception as e:
+                logger.warning(f"Failed to process {sample.path}: {e}")
+                continue
+
+        train_store.close()
+        logger.info(f"Processed {len(train_store)} training samples")
+
+        # Extract features for validation
+        if val_samples:
+            logger.info(f"Extracting features for {len(val_samples)} validation clips...")
+            val_store = FeatureStore(dirs["val"])
+            val_store.initialize(len(val_samples), feature_dim=mel_bins)
+
+            for sample in val_samples:
+                try:
+                    with wave.open(str(sample.path), 'rb') as wf:
+                        n_frames = wf.getnframes()
+                        audio_data = wf.readframes(n_frames)
+                        audio = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32767.0
+
+                    features = frontend.compute_mel_spectrogram(audio)
+                    label = 1 if sample.label in (Label.POSITIVE, Label.HARD_NEGATIVE) else 0
+                    val_store.add(features, label)
+
+                except Exception as e:
+                    logger.warning(f"Failed to process {sample.path}: {e}")
+                    continue
+
+            val_store.close()
+            logger.info(f"Processed {len(val_store)} validation samples")
+
+        # Reload the train store for training
+        self._load_store()
+
+        return self
+    def _pad_or_truncate(self, features: np.ndarray, max_time_frames: int) -> np.ndarray:
+        """Pad or truncate features to fixed time length."""
+        # Handle potentially flattened array from RaggedMmap
+        if features.ndim == 1:
+            total_elements = features.shape[0]
+            time_frames = total_elements // self.feature_dim
+            if time_frames * self.feature_dim != total_elements:
+                raise ValueError(f"Cannot reshape flattened array")
+            features = features.reshape(time_frames, self.feature_dim)
+
+        current_length = features.shape[0]
+        if current_length > max_time_frames:
+            return features[:max_time_frames, :]
+        elif current_length < max_time_frames:
+            padding = np.zeros((max_time_frames - current_length, self.feature_dim), dtype=features.dtype)
+            return np.vstack([features, padding])
+        return features
+
+    def train_generator_factory(self, max_time_frames: int = 49):
+        """Create a factory for infinite training data generator."""
+        def factory():
+            num_samples = len(self)
+            if num_samples == 0:
+                return iter([])
+            indices = list(range(num_samples))
+            rng = np.random.RandomState(42)
+            while True:
+                epoch_indices = rng.permutation(indices).tolist()
+                batch_features = []
+                batch_labels = []
+                for idx in epoch_indices:
+                    try:
+                        feature, label = self[idx]
+                    except (RuntimeError, IndexError):
+                        continue
+                    fixed_feature = self._pad_or_truncate(feature, max_time_frames)
+                    batch_features.append(fixed_feature)
+                    batch_labels.append(label)
+                    if len(batch_features) >= self.batch_size:
+                        fingerprints = np.array(batch_features, dtype=np.float32)
+                        ground_truth = np.array(batch_labels, dtype=np.int32)
+                        sample_weights = np.ones(len(batch_labels), dtype=np.float32)
+                        yield (fingerprints, ground_truth, sample_weights)
+                        batch_features = []
+                        batch_labels = []
+                if batch_features:
+                    fingerprints = np.array(batch_features, dtype=np.float32)
+                    ground_truth = np.array(batch_labels, dtype=np.int32)
+                    sample_weights = np.ones(len(batch_labels), dtype=np.float32)
+                    yield (fingerprints, ground_truth, sample_weights)
+        return factory
+
+    def val_generator_factory(self, max_time_frames: int = 49):
+        """Create a factory for finite validation data generator."""
+        def factory():
+            num_samples = len(self)
+            if num_samples == 0:
+                return iter([])
+            indices = list(range(num_samples))
+            batch_features = []
+            batch_labels = []
+            for idx in indices:
+                try:
+                    feature, label = self[idx]
+                except (RuntimeError, IndexError):
+                    continue
+                fixed_feature = self._pad_or_truncate(feature, max_time_frames)
+                batch_features.append(fixed_feature)
+                batch_labels.append(label)
+                if len(batch_features) >= self.batch_size:
+                    fingerprints = np.array(batch_features, dtype=np.float32)
+                    ground_truth = np.array(batch_labels, dtype=np.int32)
+                    sample_weights = np.ones(len(batch_labels), dtype=np.float32)
+                    yield (fingerprints, ground_truth, sample_weights)
+                    batch_features = []
+                    batch_labels = []
+            if batch_features:
+                fingerprints = np.array(batch_features, dtype=np.float32)
+                ground_truth = np.array(batch_labels, dtype=np.int32)
+                sample_weights = np.ones(len(batch_labels), dtype=np.float32)
+                yield (fingerprints, ground_truth, sample_weights)
+        return factory
+
 
 
 # =============================================================================

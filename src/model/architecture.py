@@ -174,8 +174,17 @@ class MixConvBlock(tf.keras.layers.Layer):
                 name=f"{self.name}_pointwise",
             )
             self.bn = tf.keras.layers.BatchNormalization(name=f"{self.name}_bn")
+        
+        # Create depthwise conv layers for each kernel size
+        self.depthwise_convs = []
+        for i, ks in enumerate(self.kernel_sizes):
+            self.depthwise_convs.append(
+                tf.keras.layers.DepthwiseConv2D(
+                    (ks, 1), strides=1, padding="same", name=f"{self.name}_dw_{i}"
+                )
+            )
+        
         super().build(input_shape)
-
     def call(self, inputs, training=None):
         """Forward pass with MixConv logic.
 
@@ -202,12 +211,7 @@ class MixConvBlock(tf.keras.layers.Layer):
 
         # Single kernel size - simple depthwise conv
         if len(self.kernel_sizes) == 1:
-            net = tf.keras.layers.DepthwiseConv2D(
-                (self.kernel_sizes[0], 1),
-                strides=1,
-                padding="same",
-                name=f"{self.name}_dw",
-            )(net)
+            net = self.depthwise_convs[0](net)
         else:
             # Multiple kernel sizes - split channels and apply different convs
             filters = net.shape[-1]
@@ -223,9 +227,7 @@ class MixConvBlock(tf.keras.layers.Layer):
                     x = StridedKeep(ks)(x)
 
                 # Depthwise conv with this kernel size
-                x = tf.keras.layers.DepthwiseConv2D(
-                    (ks, 1), strides=1, padding="same", name=f"{self.name}_dw_{i}"
-                )(x)
+                x = self.depthwise_convs[i](x)
                 x_outputs.append(x)
 
             # Align output time dimensions by dropping extra samples

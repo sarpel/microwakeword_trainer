@@ -25,4 +25,5 @@ dist
 build
 *.egg
 .ruff_cache
-
+checkpoints/
+data/
