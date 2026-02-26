@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 import tensorflow as tf
 
 # Minimum tensor arena size in bytes (26 KB – the minimum for hey_jarvis models)
-DEFAULT_TENSOR_ARENA_SIZE = 26080
+DEFAULT_TENSOR_ARENA_SIZE = 22860
 
 
 def generate_manifest(
@@ -49,8 +49,10 @@ def generate_manifest(
     manifest = {
         "type": "micro",
         "wake_word": export_config.get("wake_word", "Hey Katya"),
-        "author": export_config.get("author", "Your Name"),
-        "website": export_config.get("website", "https://your-repo.com"),
+        "author": export_config.get("author", "Sarpel GURAY"),
+        "website": export_config.get(
+            "website", "https://github.com/sarpel/microwakeword_trainer"
+        ),
         "model": model_filename,
         "trained_languages": export_config.get("trained_languages", ["en"]),
         "version": 2,
@@ -60,7 +62,7 @@ def generate_manifest(
             "sliding_window_size": export_config.get("sliding_window_size", 5),
             "tensor_arena_size": arena_size,
             "minimum_esphome_version": export_config.get(
-                "minimum_esphome_version", "2024.7"
+                "minimum_esphome_version", "2024.7.0"
             ),
         },
     }

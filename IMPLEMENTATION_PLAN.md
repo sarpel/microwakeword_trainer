@@ -274,11 +274,11 @@ hardware:
 # PATHS
 # ─────────────────────────────────────────────────────────────────
 paths:
-  positive_dir: "./data/raw/positive"
-  negative_dir: "./data/raw/negative"
-  hard_negative_dir: "./data/raw/hard_negative"
-  background_dir: "./data/raw/background"
-  rir_dir: "./data/raw/rirs"
+  positive_dir: "./dataset/positive"
+  negative_dir: "./dataset/negative"
+  hard_negative_dir: "./dataset/hard_negative"
+  background_dir: "./dataset/background"
+  rir_dir: "./dataset/rirs"
   processed_dir: "./data/processed"
   checkpoint_dir: "./checkpoints"
   export_dir: "./models/exported"
@@ -325,8 +325,8 @@ model:
   residual_connection: "0,0,0,0"
 
   # Common settings
-  dropout_rate: 0.0
-  l2_regularization: 0.0
+  dropout_rate: 0.2
+  l2_regularization: 0.001
 
 # ─────────────────────────────────────────────────────────────────
 # FEATURE SETS
@@ -939,7 +939,7 @@ def mine_hard_negatives(model, data_processor, threshold=0.8):
 ### 11.2 Iterative Mining
 
 - Run every `mining_interval_epochs` (default: 5)
-- Save to `data/raw/hard_negative/`
+- Save to `dataset/hard_negative/`
 - Increase sampling weight for hard negatives
 
 ---

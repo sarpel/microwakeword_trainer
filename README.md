@@ -14,7 +14,7 @@ This framework provides a complete pipeline for training wake word detection mod
 
 ## Requirements
 
-- **Python**: 3.10, 3.11, or 3.12 (3.12 not yet supported by ai-edge-litert)
+- **Python**: 3.10 or 3.11 (3.12 not yet supported by ai-edge-litert)
 - **GPU**: CUDA-capable NVIDIA GPU (training requires GPU)
 - **CUDA**: Version 12.x (required for CuPy compatibility)
 - **RAM**: 16GB+ recommended for standard training
@@ -31,29 +31,59 @@ sudo apt-get install -y libsndfile1 ffmpeg
 nvidia-smi
 ```
 
-## Installation
+## Environment Setup (CRITICAL)
 
-### 1. Create Virtual Environment
+**⚠️ This project requires TWO separate virtual environments.** TensorFlow and PyTorch cannot coexist in the same environment without conflicts.
+
+### Environment 1: TensorFlow (Main Training)
+
+Used for: Training, export, inference, data processing
 
 ```bash
-# Using uv (recommended)
-uv venv --python 3.11 ~/venvs/mww-tf
-source ~/venvs/mww-tf/bin/activate
-
-# Or using venv
+# Create environment
 python3.11 -m venv ~/venvs/mww-tf
 source ~/venvs/mww-tf/bin/activate
-```
 
-### 2. Install Dependencies
-
-```bash
+# Install TensorFlow dependencies
 cd /home/sarpel/mww/microwakeword_trainer
 pip install -r requirements.txt
 ```
 
-### 3. Verify Installation
+### Environment 2: PyTorch (Speaker Clustering)
 
+Used for: Speaker clustering, WavLM embeddings, hard negative mining (optional)
+
+```bash
+# Create environment
+python3.11 -m venv ~/venvs/mww-torch
+source ~/venvs/mww-torch/bin/activate
+
+# Install PyTorch dependencies
+cd /home/sarpel/mww/microwakeword_trainer
+pip install -r requirements-torch.txt
+```
+
+### Quick Environment Switching
+
+Add to your `~/.bashrc` or `~/.zshrc`:
+
+```bash
+# TensorFlow environment (default for training)
+alias mww-tf='source ~/venvs/mww-tf/bin/activate && cd /home/sarpel/mww/microwakeword_trainer'
+
+# PyTorch environment (for clustering)
+alias mww-torch='source ~/venvs/mww-torch/bin/activate && cd /home/sarpel/mww/microwakeword_trainer'
+```
+
+Then use:
+```bash
+mww-tf        # Switch to TF env
+mww-torch     # Switch to PyTorch env
+```
+
+### Verify Installation
+
+**In TensorFlow environment:**
 ```bash
 # Check TensorFlow GPU
 python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
@@ -62,19 +92,219 @@ python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU')
 python -c "import cupy; print(cupy.cuda.runtime.getDeviceCount())"
 ```
 
-## Quick Start
+**In PyTorch environment:**
+```bash
+# Check PyTorch
+python -c "import torch; print(torch.__version__)"
 
-Train your first wake word model in three commands:
+# Check speechbrain
+python -c "import speechbrain; print(speechbrain.__version__)"
+```
+
+---
+
+## User Guide
+
+### Complete Workflow
+
+Follow these steps to train and deploy a custom wake word:
+
+#### Step 1: Prepare Your Dataset
+
+Create the dataset directory structure:
 
 ```bash
-# 1. Prepare your dataset (see Dataset Preparation below)
+mkdir -p dataset/{positive,negative,hard_negative,background,rirs}
+```
 
-# 2. Train with standard preset
+Organize your audio files:
+
+```
+dataset/
+├── positive/           # Your wake word recordings
+│   ├── speaker_001/    # Organize by speaker
+│   │   ├── rec_001.wav
+│   │   ├── rec_002.wav
+│   │   └── ...
+│   ├── speaker_002/
+│   └── ...
+├── negative/           # Background speech (not wake word)
+│   └── speech/
+│       ├── conv_001.wav
+│       └── ...
+├── hard_negative/      # Sounds similar to wake word
+│   ├── false_positive_001.wav
+│   └── ...
+├── background/         # Ambient noise
+│   ├── noise_001.wav
+│   └── ...
+└── rirs/              # Room impulse responses (optional)
+    └── reverb_001.wav
+```
+
+**Audio Requirements:**
+- Format: WAV, 16-bit PCM
+- Sample rate: 16kHz (will be resampled if needed)
+- Length: 1-3 seconds per clip
+- Channels: Mono
+
+**Recording Tips:**
+- Record at least 100 wake word samples (1000+ recommended)
+- Use 5+ different speakers for diversity
+- Record at various distances (1-3 meters)
+- Record in different rooms/environments
+- Include variations in tone and speed
+
+#### Step 2: Configure Your Training
+
+Choose a preset configuration:
+
+| Preset | Use Case | Training Time | Accuracy |
+|--------|----------|---------------|----------|
+| `fast_test.yaml` | Quick iteration | ~1 hour | Basic |
+| `standard.yaml` | Production | ~8 hours | Good |
+| `max_quality.yaml` | Best accuracy | ~24 hours | Excellent |
+
+Create a custom configuration override:
+
+```yaml
+# my_config.yaml
+# This overrides the standard preset
+
+export:
+  wake_word: "Hey Computer"    # Your wake word name
+  author: "Your Name"
+  website: "https://github.com/yourusername"
+  
+training:
+  batch_size: 64                 # Reduce if OOM errors
+  
+model:
+  first_conv_filters: 30         # Model size (20-30 for smaller models)
+```
+
+#### Step 3: Run Training
+
+```bash
+# Switch to TensorFlow environment
+mww-tf
+
+# Train with standard preset
 mww-train --config config/presets/standard.yaml
 
-# 3. Export to TFLite
-mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+# Or with custom override
+mww-train --config config/presets/standard.yaml --override my_config.yaml
+
+# Resume from checkpoint (if interrupted)
+mww-train --config config/presets/standard.yaml --resume checkpoints/last.ckpt
+
+# Dry run (validate config without training)
+mww-train --config config/presets/standard.yaml --dry-run
 ```
+
+**During Training:**
+- Checkpoints saved to `./checkpoints/`
+- Logs saved to `./logs/`
+- Profiles saved to `./profiles/` (if enabled)
+- Monitor with TensorBoard: `tensorboard --logdir ./logs`
+
+#### Step 4: Export to TFLite
+
+```bash
+# Export the best checkpoint
+mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+
+# Export with custom name
+mww-export \
+    --checkpoint checkpoints/best.ckpt \
+    --output models/exported/ \
+    --model-name "hey_computer"
+
+# Export without quantization (for debugging)
+mww-export \
+    --checkpoint checkpoints/best.ckpt \
+    --output models/exported/ \
+    --no-quantize
+```
+
+**Generated Files:**
+```
+models/exported/
+├── hey_computer.tflite      # The model file
+├── manifest.json            # ESPHome manifest
+└── streaming/               # Streaming SavedModel (for debugging)
+```
+
+#### Step 5: Verify ESPHome Compatibility
+
+```bash
+# Verify the exported model
+python scripts/verify_esphome.py models/exported/hey_computer.tflite
+
+# Verbose output
+python scripts/verify_esphome.py models/exported/hey_computer.tflite --verbose
+
+# JSON output for CI/CD
+python scripts/verify_esphome.py models/exported/hey_computer.tflite --json
+```
+
+Expected output:
+```
+✓ Subgraphs: 2 (correct)
+✓ Input shape: [1, 3, 40] (correct)
+✓ Input dtype: int8 (correct)
+✓ Output shape: [1, 1] (correct)
+✓ Output dtype: uint8 (correct)
+✓ Quantization: enabled (correct)
+✓ ESPHome compatible: YES
+```
+
+#### Step 6: Deploy to ESPHome
+
+Copy the model and manifest to your ESPHome configuration:
+
+```bash
+mkdir -p /config/esphome/models
+cp models/exported/hey_computer.tflite /config/esphome/models/
+cp models/exported/manifest.json /config/esphome/models/
+```
+
+Add to your ESPHome YAML:
+
+```yaml
+micro_wake_word:
+  models:
+    - model: models/hey_computer.tflite
+      probability_cutoff: 0.97
+
+# Optional: Use the wake word
+voice_assistant:
+  wake_word: "Hey Computer"
+```
+
+---
+
+## Quick Start (TL;DR)
+
+Train your first wake word model:
+
+```bash
+# 1. Prepare dataset in dataset/positive/, dataset/negative/, etc.
+
+# 2. Switch to TF environment
+mww-tf
+
+# 3. Train
+mww-train --config config/presets/standard.yaml
+
+# 4. Export
+mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+
+# 5. Verify
+python scripts/verify_esphome.py models/exported/wake_word.tflite
+```
+
+---
 
 ## GPU Setup
 
@@ -100,7 +330,7 @@ export TF_DETERMINISTIC_OPS=1
 
 ### Memory Configuration
 
-For GPUs with limited VRAM, configure memory limits in your training script:
+For GPUs with limited VRAM:
 
 ```python
 from src.utils.performance import configure_tensorflow_gpu, configure_mixed_precision
@@ -125,6 +355,8 @@ from src.utils.performance import set_threading_config
 # Use 16 threads for data loading
 set_threading_config(inter_op_parallelism=16, intra_op_parallelism=16)
 ```
+
+---
 
 ## Usage Examples
 
@@ -176,6 +408,8 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite --verbose
 python scripts/verify_esphome.py models/exported/wake_word.tflite --json
 ```
 
+---
+
 ## Dataset Preparation
 
 ### Directory Structure
@@ -216,6 +450,8 @@ For best results, record wake word samples from:
 - Various distances from microphone (1-3 meters)
 - Different rooms/environments
 - Various times of day (morning/evening voice)
+
+---
 
 ## Configuration
 
@@ -287,6 +523,8 @@ from config.loader import load_full_config
 config = load_full_config("standard", "my_config.yaml")
 ```
 
+---
+
 ## ESPHome Integration
 
 ### Generated Files
@@ -324,6 +562,8 @@ micro_wake_word:
       probability_cutoff: 0.97
 ```
 
+---
+
 ## Architecture
 
 ### MixedNet Model
@@ -348,6 +588,8 @@ The exported TFLite model uses:
 - **2 subgraphs**: Main inference + initialization
 - **6 state variables**: Ring buffers for streaming
 - **Internal state**: No external state management needed
+
+---
 
 ## Troubleshooting
 
@@ -392,6 +634,8 @@ python scripts/verify_esphome.py model.tflite --verbose
 # - Missing quantization
 ```
 
+---
+
 ## Performance Tips
 
 ### Training Speed
@@ -416,6 +660,8 @@ export:
   tensor_arena_size: 20000  # Smaller arena
 ```
 
+---
+
 ## Project Structure
 
 ```
@@ -432,16 +678,24 @@ export:
 ├── scripts/
 │   └── verify_esphome.py  # Compatibility checker
 ├── dataset/               # Audio data (user-provided)
+├── requirements.txt       # TensorFlow environment
+├── requirements-torch.txt # PyTorch environment
 └── models/                # Checkpoints and exports
 ```
+
+---
 
 ## Contributing
 
 This is a community training framework for ESPHome wake word detection. The export format matches the official ESPHome micro_wake_word component requirements.
 
+---
+
 ## License
 
 MIT License - See LICENSE file for details.
+
+---
 
 ## Resources
 

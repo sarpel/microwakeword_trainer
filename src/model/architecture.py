@@ -526,7 +526,10 @@ class MixedNet(tf.keras.Model):
         else:
             self.dropout = None
 
-        # Output layer
+        # Output layer - must be float32 for numerical stability with mixed precision
+        self.output_dense = tf.keras.layers.Dense(
+            1, activation="sigmoid", name="output", dtype=tf.float32
+        )
         self.output_dense = tf.keras.layers.Dense(
             1, activation="sigmoid", name="output"
         )

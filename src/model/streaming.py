@@ -728,14 +728,56 @@ class StreamingMixedNet:
         """Run inference on audio clip.
 
         Args:
-            audio_samples: Audio samples
-            sample_rate: Sample rate
-            step_ms: Step size in milliseconds
+            audio_samples: Audio samples as numpy array
+            sample_rate: Sample rate (default: 16000)
+            step_ms: Step size in milliseconds for streaming inference (default: 30)
 
         Returns:
-            List of probabilities
+            List of probabilities for each inference step
         """
-        # This would require feature extraction - placeholder
-        raise NotImplementedError(
-            "Feature extraction not implemented in streaming wrapper"
-        )
+        import numpy as np
+        from ..data.features import FeatureConfig, MicroFrontend
+
+        # Normalize audio to [-1, 1] if needed
+        if audio_samples.dtype == np.int16:
+            audio_samples = audio_samples.astype(np.float32) / 32767.0
+        elif audio_samples.max() > 1.0 or audio_samples.min() < -1.0:
+            # Normalize to [-1, 1]
+            max_val = max(abs(audio_samples.max()), abs(audio_samples.min()))
+            audio_samples = audio_samples.astype(np.float32) / max_val
+        else:
+            audio_samples = audio_samples.astype(np.float32)
+
+        # Resample if needed (simple resampling)
+        if sample_rate != 16000:
+            from scipy import signal
+            num_samples = int(len(audio_samples) * 16000 / sample_rate)
+            audio_samples = signal.resample(audio_samples, num_samples)
+
+        # Extract mel spectrogram
+        config = FeatureConfig(sample_rate=16000, window_step_ms=10)
+        frontend = MicroFrontend(config)
+        spectrogram = frontend.compute_mel_spectrogram(audio_samples)
+
+        # Get stride from model config (default 3 for 30ms)
+        stride = getattr(self, 'stride', 3)
+
+        # Run streaming inference
+        probabilities = []
+        for i in range(0, spectrogram.shape[0] - stride + 1, stride):
+            # Extract window
+            window = spectrogram[i:i + stride, :]
+
+            # Pad if needed
+            if window.shape[0] < stride:
+                pad_width = ((0, stride - window.shape[0]), (0, 0))
+                window = np.pad(window, pad_width, mode='constant')
+
+            # Add batch dimension: [1, stride, mel_bins]
+            features = np.expand_dims(window, axis=0).astype(np.float32)
+
+            # Run inference
+            prob = self.predict(features)
+            probabilities.append(float(prob[0, 0]))
+
+        return probabilities

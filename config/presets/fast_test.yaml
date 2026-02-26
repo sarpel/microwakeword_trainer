@@ -17,11 +17,11 @@ hardware:
 # PATHS
 # ─────────────────────────────────────────────────────────────────
 paths:
-  positive_dir: "./data/raw/positive"
-  negative_dir: "./data/raw/negative"
-  hard_negative_dir: "./data/raw/hard_negative"
-  background_dir: "./data/raw/background"
-  rir_dir: "./data/raw/rirs"
+  positive_dir: "./dataset/positive"
+  negative_dir: "./dataset/negative"
+  hard_negative_dir: "./dataset/hard_negative"
+  background_dir: "./dataset/background"
+  rir_dir: "./dataset/rirs"
   processed_dir: "./data/processed"
   checkpoint_dir: "./checkpoints"
   export_dir: "./models/exported"
@@ -39,6 +39,7 @@ training:
   # Class weights
   positive_class_weight: [1.0, 1.0]
   negative_class_weight: [20.0, 20.0]
+  hard_negative_class_weight: [40.0, 40.0]
 
   # SpecAugment disabled for fast test
   time_mask_max_size: [0, 0]
@@ -61,6 +62,7 @@ model:
   first_conv_filters: 30
   first_conv_kernel_size: 5
   stride: 3
+  spectrogram_length: 49
   pointwise_filters: "60,60,60,60"
   mixconv_kernel_sizes: "[5],[9],[13],[21]"
   repeat_in_block: "1,1,1,1"
@@ -69,24 +71,6 @@ model:
   # Common settings
   dropout_rate: 0.0
   l2_regularization: 0.0
-
-# ─────────────────────────────────────────────────────────────────
-# FEATURE SETS (Minimal for fast test)
-# ─────────────────────────────────────────────────────────────────
-features:
-  - features_dir: "generated_augmented_features"
-    sampling_weight: 2.0
-    penalty_weight: 1.0
-    truth: true
-    truncation_strategy: "truncate_start"
-    type: "mmap"
-
-  - features_dir: "negative_datasets/speech"
-    sampling_weight: 10.0
-    penalty_weight: 1.0
-    truth: false
-    truncation_strategy: "random"
-    type: "mmap"
 
 # ─────────────────────────────────────────────────────────────────
 # AUGMENTATION (Minimal - disabled for speed)
@@ -109,8 +93,8 @@ augmentation:
   max_jitter_s: 0.205
 
   # Background sources (not used)
-  impulse_paths: ['mit_rirs']
-  background_paths: ['fma_16k', 'audioset_16k']
+  impulse_paths: ["./dataset/rirs"]
+  background_paths: ["./dataset/background"]
   augmentation_duration_s: 3.2
 
 # ─────────────────────────────────────────────────────────────────
@@ -158,15 +142,15 @@ hard_negative_mining:
 # ─────────────────────────────────────────────────────────────────
 export:
   wake_word: "Hey Katya"
-  author: "Your Name"
-  website: "https://your-repo.com"
+  author: "Sarpel GURAY"
+  website: "https://github.com/sarpel/microwakeword-training-platform"
   trained_languages: ["en"]
 
   quantize: true
   inference_input_type: "int8"
   inference_output_type: "uint8"
 
-  probability_cutoff: 0.97
+  probability_cutoff: 0.52
   sliding_window_size: 5
-  tensor_arena_size: 26080
+  tensor_arena_size: 22860
   minimum_esphome_version: "2024.7.0"

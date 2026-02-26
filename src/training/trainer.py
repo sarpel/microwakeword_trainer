@@ -163,7 +163,29 @@ class Trainer:
         self.batch_size = training.get("batch_size", 128)
         self.eval_step_interval = training.get("eval_step_interval", 500)
 
-        # Class weights (positive=1.0, negative=20.0 typical for wake word)
+        # Class weights (positive=1.0, negative=20.0, hard_negative=40.0 typical for wake word)
+        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
+        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
+        self.hard_negative_weights = training.get("hard_negative_class_weight", [40.0, 40.0])
+
+        # Ensure all per-phase lists have the same length as training_steps_list
+        n_phases = len(self.training_steps_list)
+
+        def _pad_or_trim(lst, default):
+            """Pad (repeating last element) or trim lst to n_phases elements."""
+            if not lst:
+                return [default] * n_phases
+            if len(lst) >= n_phases:
+                return lst[:n_phases]
+            return lst + [lst[-1]] * (n_phases - len(lst))
+
+        self.learning_rates = _pad_or_trim(self.learning_rates, 0.0001)
+        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
+        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
+        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
+        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
+        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
+        self.hard_negative_weights = training.get("hard_negative_class_weight", [40.0, 40.0])
         self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
         self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
 
@@ -179,6 +201,9 @@ class Trainer:
             return lst + [lst[-1]] * (n_phases - len(lst))
 
         self.learning_rates = _pad_or_trim(self.learning_rates, 0.0001)
+        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
+        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
+        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
         self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
         self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
 
@@ -239,7 +264,9 @@ class Trainer:
             "learning_rate": self.learning_rates[current_phase],
             "positive_weight": self.positive_weights[current_phase],
             "negative_weight": self.negative_weights[current_phase],
+            "hard_negative_weight": self.hard_negative_weights[current_phase],
         }
+
 
     def _build_model(self, input_shape: Tuple[int, ...]) -> tf.keras.Model:
         """Build the model architecture.
@@ -282,19 +309,32 @@ class Trainer:
         sample_weights: np.ndarray,
         positive_weight: float,
         negative_weight: float,
+        hard_negative_weight: float,
+        is_hard_negative: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Apply class weights to sample weights.
 
         Args:
-            y_true: Ground truth labels
+            y_true: Ground truth labels (1=positive, 0=negative)
             sample_weights: Existing sample weights
             positive_weight: Weight for positive class
-            negative_weight: Weight for negative class
+            negative_weight: Weight for regular negative samples
+            hard_negative_weight: Weight for hard negative samples (false positives)
+            is_hard_negative: Optional boolean array indicating hard negative samples
 
         Returns:
             Combined weights
         """
-        class_weights = np.where(y_true == 1, positive_weight, negative_weight)
+        if is_hard_negative is not None:
+            # Three-class weighting: positive, hard_negative, regular_negative
+            class_weights = np.where(
+                y_true == 1,
+                positive_weight,
+                np.where(is_hard_negative, hard_negative_weight, negative_weight)
+            )
+        else:
+            # Binary weighting: positive vs negative (hard negatives get negative_weight)
+            class_weights = np.where(y_true == 1, positive_weight, negative_weight)
         return sample_weights * class_weights
 
     def _is_best_model(
@@ -380,6 +420,7 @@ class Trainer:
         train_fingerprints: np.ndarray,
         train_ground_truth: np.ndarray,
         train_sample_weights: np.ndarray,
+        is_hard_negative: Optional[np.ndarray] = None,
     ) -> Dict[str, float]:
         """Execute single training step.
 
@@ -387,6 +428,7 @@ class Trainer:
             train_fingerprints: Input features
             train_ground_truth: Ground truth labels
             train_sample_weights: Sample weights from data processor
+            is_hard_negative: Optional boolean array indicating hard negative samples
 
         Returns:
             Dictionary of training metrics
@@ -403,6 +445,8 @@ class Trainer:
             train_sample_weights,
             phase_settings["positive_weight"],
             phase_settings["negative_weight"],
+            phase_settings["hard_negative_weight"],
+            is_hard_negative,
         )
 
         # Train on batch
@@ -412,6 +456,9 @@ class Trainer:
             sample_weight=combined_weights,
             return_dict=True,
         )
+
+        # Build metrics dict
+        metrics_dict = {}
 
         # Build metrics dict
         metrics_dict = {}
