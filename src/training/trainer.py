@@ -183,29 +183,6 @@ class Trainer:
         self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
         self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
         self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
-        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
-        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
-        self.hard_negative_weights = training.get("hard_negative_class_weight", [40.0, 40.0])
-        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
-        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
-
-        # Ensure all per-phase lists have the same length as training_steps_list
-        n_phases = len(self.training_steps_list)
-
-        def _pad_or_trim(lst, default):
-            """Pad (repeating last element) or trim lst to n_phases elements."""
-            if not lst:
-                return [default] * n_phases
-            if len(lst) >= n_phases:
-                return lst[:n_phases]
-            return lst + [lst[-1]] * (n_phases - len(lst))
-
-        self.learning_rates = _pad_or_trim(self.learning_rates, 0.0001)
-        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
-        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
-        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
-        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
-        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
 
         # Checkpoint selection config
         self.minimization_metric = training.get(

@@ -68,21 +68,6 @@ class TrainingConfig:
     minimization_metric: str = "ambient_false_positives_per_hour"
     target_minimization: float = 0.5
     maximization_metric: str = "average_viable_recall"
-    negative_class_weight: List[float] = field(default_factory=lambda: [20.0, 20.0])
-    hard_negative_class_weight: List[float] = field(default_factory=lambda: [40.0, 40.0])  # Higher weight for false positives
-    learning_rates: List[float] = field(default_factory=lambda: [0.001, 0.0001])
-    batch_size: int = 128
-    eval_step_interval: int = 500
-    # SpecAugment parameters
-    time_mask_max_size: List[int] = field(default_factory=lambda: [0, 0])
-    time_mask_count: List[int] = field(default_factory=lambda: [0, 0])
-    freq_mask_max_size: List[int] = field(default_factory=lambda: [0, 0])
-    freq_mask_count: List[int] = field(default_factory=lambda: [0, 0])
-    # Checkpoint selection
-    minimization_metric: str = "ambient_false_positives_per_hour"
-    target_minimization: float = 0.5
-    maximization_metric: str = "average_viable_recall"
-
 
 
 @dataclass
@@ -94,15 +79,6 @@ class ModelConfig:
     first_conv_kernel_size: int = 5
     stride: int = 3
     spectrogram_length: int = 49  # Number of time frames in input spectrogram
-    pointwise_filters: str = "60,60,60,60"
-    mixconv_kernel_sizes: str = "[5],[9],[13],[21]"
-    repeat_in_block: str = "1,1,1,1"
-    residual_connection: str = "0,0,0,0"
-    dropout_rate: float = 0.0
-    l2_regularization: float = 0.0
-    first_conv_filters: int = 30
-    first_conv_kernel_size: int = 5
-    stride: int = 3
     pointwise_filters: str = "60,60,60,60"
     mixconv_kernel_sizes: str = "[5],[9],[13],[21]"
     repeat_in_block: str = "1,1,1,1"
