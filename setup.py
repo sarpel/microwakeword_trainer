@@ -1,6 +1,6 @@
 """microwakeword_trainer - GPU-Accelerated Wake Word Training Framework"""
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
     name="microwakeword_trainer",

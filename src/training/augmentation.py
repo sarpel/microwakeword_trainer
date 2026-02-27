@@ -1,9 +1,10 @@
 """Audio augmentation pipeline with configurable augmentation strategies."""
 
 import logging
-import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, List, Optional
+
+import numpy as np
 
 # Import audiomentations for audio augmentations
 try:
@@ -69,16 +70,12 @@ class AudioAugmentationPipeline:
         self.augmentation_duration_s = augmentation_duration_s
 
         if not HAS_AUDIOMENTATIONS:
-            raise ImportError(
-                "audiomentations is required. Install: pip install audiomentations"
-            )
+            raise ImportError("audiomentations is required. Install: pip install audiomentations")
 
         # Initialize augmentations based on config
         self._init_augmentations(impulse_paths or [], background_paths or [])
 
-    def _init_augmentations(
-        self, impulse_paths: List[str], background_paths: List[str]
-    ) -> None:
+    def _init_augmentations(self, impulse_paths: List[str], background_paths: List[str]) -> None:
         """Initialize audiomentations based on config probabilities."""
         self.augmentations = []
 
@@ -140,9 +137,7 @@ class AudioAugmentationPipeline:
             )
 
         # Check both old and new keys for background noise
-        bg_prob = self.probabilities.get(
-            "AddBackgroundNoiseFromFile", 0
-        ) or self.probabilities.get("AddBackgroundNoise", 0)
+        bg_prob = self.probabilities.get("AddBackgroundNoiseFromFile", 0) or self.probabilities.get("AddBackgroundNoise", 0)
         if bg_prob > 0 and background_paths:
             self.augmentations.append(
                 (
@@ -157,9 +152,7 @@ class AudioAugmentationPipeline:
             )
 
         # Check both old and new keys for impulse response
-        rir_prob = self.probabilities.get(
-            "ApplyImpulseResponse", 0
-        ) or self.probabilities.get("RIR", 0)
+        rir_prob = self.probabilities.get("ApplyImpulseResponse", 0) or self.probabilities.get("RIR", 0)
         if rir_prob > 0 and impulse_paths:
             self.augmentations.append(
                 (
@@ -209,9 +202,7 @@ class AudioAugmentationPipeline:
 class ParallelAugmenter:
     """Parallel audio augmentation using thread pool."""
 
-    def __init__(
-        self, num_threads: int = 32, augmentation_fn: Optional[Callable] = None
-    ):
+    def __init__(self, num_threads: int = 32, augmentation_fn: Optional[Callable] = None):
         """Initialize parallel augmenter.
 
         Args:
@@ -222,9 +213,7 @@ class ParallelAugmenter:
         self.augmentation_fn = augmentation_fn
         self.executor = ThreadPoolExecutor(max_workers=num_threads)
 
-    def augment_batch(
-        self, audio_samples: List[np.ndarray], num_augmentations: int = 4
-    ) -> List[np.ndarray]:
+    def augment_batch(self, audio_samples: List[np.ndarray], num_augmentations: int = 4) -> List[np.ndarray]:
         """Apply augmentation to batch in parallel.
 
         Args:
@@ -245,17 +234,13 @@ class ParallelAugmenter:
             return variants
 
         # Submit all tasks to the thread pool and collect in order
-        futures = [
-            self.executor.submit(augment_multi, audio) for audio in audio_samples
-        ]
+        futures = [self.executor.submit(augment_multi, audio) for audio in audio_samples]
         augmented: List[np.ndarray] = []
         for i, future in enumerate(futures):
             try:
                 augmented.extend(future.result())
             except Exception as exc:
-                logger.exception(
-                    "Parallel augmentation failed for sample %d: %s", i, exc
-                )
+                logger.exception("Parallel augmentation failed for sample %d: %s", i, exc)
                 # Preserve batch size by using original samples
                 augmented.extend([audio_samples[i].copy()] * num_augmentations)
         return augmented

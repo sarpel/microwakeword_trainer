@@ -1,7 +1,6 @@
 """Hard example mining module for training improved wake word detection."""
 
 import os
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -12,7 +11,7 @@ def mine_hard_examples(
     model,
     n_samples: int = 1000,
     threshold: float = 0.5,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Mine hard examples for training.
 
     Identifies negative samples that the model incorrectly predicts as positive
@@ -88,8 +87,8 @@ class HardExampleMiner:
         self.output_dir = output_dir
 
         # Storage for hard negatives
-        self.hard_negatives: List[Dict] = []
-        self.mining_history: List[Dict] = []
+        self.hard_negatives: list[dict] = []
+        self.mining_history: list[dict] = []
 
         # Create output directory
         os.makedirs(output_dir, exist_ok=True)
@@ -139,10 +138,7 @@ class HardExampleMiner:
             # Entropy-based: samples where model is most uncertain
             # Low entropy = high confidence (both positive and negative)
             epsilon = 1e-10
-            entropy = -(
-                predictions * np.log(predictions + epsilon)
-                + (1 - predictions) * np.log(1 - predictions + epsilon)
-            )
+            entropy = -(predictions * np.log(predictions + epsilon) + (1 - predictions) * np.log(1 - predictions + epsilon))
 
             # Get negative samples with highest entropy (most uncertain)
             negative_mask = labels == 0
@@ -167,7 +163,7 @@ class HardExampleMiner:
         model,
         data_generator,
         epoch: int,
-    ) -> Dict:
+    ) -> dict:
         """Mine hard negatives from a data generator.
 
         Args:
@@ -213,11 +209,7 @@ class HardExampleMiner:
             "epoch": epoch,
             "num_hard_negatives": len(unique_indices),
             "indices": selected_indices,
-            "avg_prediction": (
-                float(np.mean(all_predictions[unique_indices]))
-                if unique_indices
-                else 0.0
-            ),
+            "avg_prediction": (float(np.mean(all_predictions[unique_indices])) if unique_indices else 0.0),
         }
 
         self.mining_history.append(mining_result)
@@ -239,8 +231,8 @@ class HardExampleMiner:
         features: np.ndarray,
         labels: np.ndarray,
         predictions: np.ndarray,
-        filepath: Optional[str] = None,
-    ) -> Optional[str]:
+        filepath: str | None = None,
+    ) -> str | None:
         """Save hard negatives to disk for later use.
 
         Args:
@@ -259,9 +251,7 @@ class HardExampleMiner:
             return None
 
         if filepath is None:
-            filepath = os.path.join(
-                self.output_dir, f"hard_negatives_step_{len(self.mining_history)}.npz"
-            )
+            filepath = os.path.join(self.output_dir, f"hard_negatives_step_{len(self.mining_history)}.npz")
 
         np.savez(
             filepath,
@@ -276,7 +266,7 @@ class HardExampleMiner:
     def load_hard_negatives(
         self,
         filepath: str,
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """Load hard negatives from disk.
 
         Args:
@@ -296,7 +286,7 @@ class HardExampleMiner:
             "indices": data["indices"],
         }
 
-    def get_all_hard_negatives(self) -> List[Dict]:
+    def get_all_hard_negatives(self) -> list[dict]:
         """Get all collected hard negatives across mining iterations.
 
         Returns:

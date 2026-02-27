@@ -163,8 +163,86 @@ dataset/
 - Record at various distances (1-3 meters)
 - Record in different rooms/environments
 - Include variations in tone and speed
+- Include variations in tone and speed
 
-#### Step 2: Configure Your Training
+#### Step 2: Run Speaker Clustering (Optional but Recommended)
+
+To prevent train/test data leakage from the same speaker, use ML-based speaker clustering. This analyzes your audio samples and groups them by speaker voice characteristics.
+
+**Prerequisites:**
+- Requires PyTorch environment (`mww-torch`)
+- Hugging Face account (free) with accepted model terms
+- Run: `huggingface-cli login` after creating account
+
+**Analyze clusters (dry-run):**
+```bash
+mww-torch
+
+# Cluster positive dataset (default)
+python cluster-Test.py --config standard
+
+# Cluster all datasets at once
+python cluster-Test.py --config standard --dataset all
+
+# Cluster specific dataset
+python cluster-Test.py --config standard --dataset negative
+
+# If you know your speaker count (~200 speakers), use --n-clusters
+# (recommended for short wake word clips where threshold-based clustering over-fragments)
+python cluster-Test.py --config standard --n-clusters 200
+
+# Combine options
+python cluster-Test.py --config standard --dataset all --n-clusters 200 --threshold 0.65
+
+# Generates per dataset:
+#   - cluster_output/{dataset}_namelist.json (file → speaker mapping)
+#   - cluster_output/{dataset}_cluster_report.txt (human-readable report)
+```
+
+Review the report. Check if speakers are grouped correctly. Files stay in place—this is read-only.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--config` | string | **required** | Config preset name or path to YAML file |
+| `--override` | string | None | Override config file (optional) |
+| `--dataset` | string | `positive` | Which dataset(s) to cluster: `positive`, `negative`, `hard_negative`, `all` |
+| `--n-clusters` | int | None | Explicit cluster count (overrides threshold). Use when you know approximate speaker count. |
+| `--threshold` | float | from config | Override similarity threshold |
+| `--output-dir` | string | `./cluster_output` | Directory for output files |
+| `--max-files` | int | None | Limit number of files to process (for testing) |
+
+**Organize files by speaker (after reviewing clusters):**
+```bash
+# Organize a single dataset
+python Start-Clustering.py --namelist cluster_output/positive_namelist.json
+
+# Organize all datasets at once
+python Start-Clustering.py --namelist-dir cluster_output
+
+# Preview first (recommended)
+python Start-Clustering.py --namelist cluster_output/positive_namelist.json --dry-run
+
+# Undo if something looks wrong
+python Start-Clustering.py --undo cluster_output/positive_backup_manifest.json
+```
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--namelist` | string | None | Path to a single namelist JSON from cluster-Test.py |
+| `--namelist-dir` | string | None | Directory containing `*_namelist.json` files (processes all) |
+| `--undo` | string | None | Path to backup manifest JSON to reverse a previous organization |
+| `--output-dir` | string | `./cluster_output` | Directory for backup manifests |
+| `--dry-run` | flag | off | Preview changes without moving files |
+
+> **Note:** `--namelist`, `--namelist-dir`, and `--undo` are mutually exclusive (pick one).
+> A backup manifest is saved automatically before any files are moved.
+
+**Skip this step if:**
+- You already organized files by speaker into subdirectories
+- You don't have multiple speakers (single-user wake word)
+- You prefer to use directory-based speaker detection
+
+#### Step 3: Configure Your Training
 
 Choose a preset configuration:
 
@@ -192,7 +270,7 @@ model:
   first_conv_filters: 30         # Model size (20-30 for smaller models)
 ```
 
-#### Step 3: Run Training
+#### Step 4: Run Training
 
 ```bash
 # Switch to TensorFlow environment
@@ -294,6 +372,35 @@ voice_assistant:
 ---
 
 ## Quick Start (TL;DR)
+
+Train your first wake word model:
+
+```bash
+# 1. Prepare dataset in dataset/positive/, dataset/negative/, etc.
+
+# 2. (Optional but recommended) Run speaker clustering to prevent data leakage
+mww-torch
+python cluster-Test.py --config standard                    # Analyze positive clusters
+python cluster-Test.py --config standard --dataset all       # Or cluster all datasets
+python cluster-Test.py --config standard --n-clusters 200    # Or use explicit speaker count
+# Review cluster_output/positive_cluster_report.txt
+
+# 2b. Organize files into speaker directories
+python Start-Clustering.py --namelist-dir cluster_output --dry-run  # Preview first
+python Start-Clustering.py --namelist-dir cluster_output            # Execute
+
+# 3. Switch to TF environment
+mww-tf
+
+# 4. Train
+mww-train --config config/presets/standard.yaml
+
+# 5. Export
+mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+
+# 6. Verify
+python scripts/verify_esphome.py models/exported/wake_word.tflite
+```
 
 Train your first wake word model:
 

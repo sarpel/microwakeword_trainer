@@ -3,9 +3,10 @@ Performance utilities for microwakeword_trainer v2.0
 """
 
 import os
-import psutil
-import GPUtil
 from typing import Any, Dict, Optional
+
+import GPUtil
+import psutil
 
 # =============================================================================
 # SYSTEM INFORMATION
@@ -35,7 +36,8 @@ def get_system_info() -> Dict[str, Any]:
                 "memory_used_mb": gpus[0].memoryUsed,
                 "load_percent": gpus[0].load * 100,
             }
-    except Exception:
+    except Exception:  # noqa: S110
+        pass  # GPU info not available, continue without it
         pass
 
     return info
@@ -78,25 +80,17 @@ def configure_tensorflow_gpu(
     gpus = tf.config.experimental.list_physical_devices("GPU")
 
     if not gpus:
-        raise RuntimeError(
-            "No GPU available. This project requires a CUDA-capable GPU for training."
-        )
+        raise RuntimeError("No GPU available. This project requires a CUDA-capable GPU for training.")
 
     if memory_growth and memory_limit_mb:
-        raise ValueError(
-            "memory_growth and memory_limit_mb are mutually exclusive in TensorFlow GPU config. "
-            "Please provide only one."
-        )
+        raise ValueError("memory_growth and memory_limit_mb are mutually exclusive in TensorFlow GPU config. " "Please provide only one.")
 
     try:
         if device_id is not None and 0 <= device_id < len(gpus):
             target_gpu = gpus[device_id]
         else:
             if device_id is not None:
-                print(
-                    f"Warning: device_id={device_id} out of range for {len(gpus)} GPUs. "
-                    "Falling back to GPU 0."
-                )
+                print(f"Warning: device_id={device_id} out of range for {len(gpus)} GPUs. " "Falling back to GPU 0.")
             target_gpu = gpus[0]
 
         if memory_growth:
@@ -105,11 +99,7 @@ def configure_tensorflow_gpu(
         if memory_limit_mb:
             tf.config.experimental.set_virtual_device_configuration(
                 target_gpu,
-                [
-                    tf.config.experimental.VirtualDeviceConfiguration(
-                        memory_limit=memory_limit_mb
-                    )
-                ],
+                [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memory_limit_mb)],
             )
 
         # Log configuration
@@ -188,10 +178,7 @@ def set_threading_config(
         "intra_op_parallelism": tf.config.threading.get_intra_op_parallelism_threads(),
     }
 
-    print(
-        f"Threading configured: inter={config['inter_op_parallelism']}, "
-        f"intra={config['intra_op_parallelism']}"
-    )
+    print(f"Threading configured: inter={config['inter_op_parallelism']}, " f"intra={config['intra_op_parallelism']}")
 
     return config
 

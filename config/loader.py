@@ -13,10 +13,11 @@ import dataclasses
 import logging
 import os
 import re
-import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +62,7 @@ class TrainingConfig:
     # Class weights
     positive_class_weight: List[float] = field(default_factory=lambda: [1.0, 1.0])
     negative_class_weight: List[float] = field(default_factory=lambda: [20.0, 20.0])
-    hard_negative_class_weight: List[float] = field(
-        default_factory=lambda: [40.0, 40.0]
-    )  # Higher weight for false positives
+    hard_negative_class_weight: List[float] = field(default_factory=lambda: [40.0, 40.0])  # Higher weight for false positives
     # SpecAugment parameters
     time_mask_max_size: List[int] = field(default_factory=lambda: [0, 0])
     time_mask_count: List[int] = field(default_factory=lambda: [0, 0])
@@ -117,9 +116,7 @@ class AugmentationConfig:
     max_jitter_s: float = 0.205
     # Background sources
     impulse_paths: List[str] = field(default_factory=lambda: ["mit_rirs"])
-    background_paths: List[str] = field(
-        default_factory=lambda: ["fma_16k", "audioset_16k"]
-    )
+    background_paths: List[str] = field(default_factory=lambda: ["fma_16k", "audioset_16k"])
     augmentation_duration_s: float = 3.2
 
 
@@ -153,6 +150,7 @@ class SpeakerClusteringConfig:
     method: str = "wavlm_ecapa"
     embedding_model: str = "microsoft/wavlm-base-plus"
     similarity_threshold: float = 0.72
+    n_clusters: Optional[int] = None
     leakage_audit_enabled: bool = True
 
 
@@ -194,12 +192,8 @@ class FullConfig:
 
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
-    speaker_clustering: SpeakerClusteringConfig = field(
-        default_factory=SpeakerClusteringConfig
-    )
-    hard_negative_mining: HardNegativeMiningConfig = field(
-        default_factory=HardNegativeMiningConfig
-    )
+    speaker_clustering: SpeakerClusteringConfig = field(default_factory=SpeakerClusteringConfig)
+    hard_negative_mining: HardNegativeMiningConfig = field(default_factory=HardNegativeMiningConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
 
 
@@ -295,10 +289,7 @@ class ConfigLoader:
             FileNotFoundError: If preset file doesn't exist
         """
         if name not in self.VALID_PRESETS:
-            raise ValueError(
-                f"Invalid preset '{name}'. "
-                f"Valid presets: {', '.join(sorted(self.VALID_PRESETS))}"
-            )
+            raise ValueError(f"Invalid preset '{name}'. " f"Valid presets: {', '.join(sorted(self.VALID_PRESETS))}")
 
         preset_path = self.presets_dir / f"{name}.yaml"
         return self.load(preset_path)
@@ -320,11 +311,7 @@ class ConfigLoader:
         result = self._deep_copy_dict(base)
 
         for key, value in override.items():
-            if (
-                key in result
-                and isinstance(result[key], dict)
-                and isinstance(value, dict)
-            ):
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 # Recursively merge nested dicts
                 result[key] = self.merge(result[key], value)
             else:
@@ -333,9 +320,7 @@ class ConfigLoader:
 
         return result
 
-    def load_and_merge(
-        self, preset_name: str, override_path: Optional[Union[str, Path]] = None
-    ) -> Dict[str, Any]:
+    def load_and_merge(self, preset_name: str, override_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
         """
         Load preset and optionally merge with override config.
 
@@ -391,9 +376,7 @@ class ConfigLoader:
             if not isinstance(tr.get("learning_rates", []), list):
                 issues.append("training.learning_rates must be a list")
             if len(tr.get("training_steps", [])) != len(tr.get("learning_rates", [])):
-                issues.append(
-                    "training.training_steps and learning_rates must have same length"
-                )
+                issues.append("training.training_steps and learning_rates must have same length")
             if tr.get("batch_size", 0) <= 0:
                 issues.append("training.batch_size must be > 0")
 
@@ -402,9 +385,7 @@ class ConfigLoader:
             md = config["model"]
             valid_architectures = ["mixednet"]
             if md.get("architecture") not in valid_architectures:
-                issues.append(
-                    f"model.architecture must be one of: {valid_architectures}"
-                )
+                issues.append(f"model.architecture must be one of: {valid_architectures}")
 
         # Validate performance section
         if "performance" in config:
@@ -436,10 +417,7 @@ class ConfigLoader:
                 filtered = {k: v for k, v in section_data.items() if k in valid_fields}
                 if len(filtered) < len(section_data):
                     unknown = set(section_data) - valid_fields
-                    logger.warning(
-                        f"Config section '{section_name}' has unknown fields "
-                        f"(ignored): {unknown}"
-                    )
+                    logger.warning(f"Config section '{section_name}' has unknown fields " f"(ignored): {unknown}")
                 result[section_name] = section_class(**filtered)
         return FullConfig(**result)
 
@@ -450,7 +428,7 @@ class ConfigLoader:
     def _process_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Process configuration: env vars, path resolution, defaults."""
         if not isinstance(config, dict):
-            return config
+            return config  # type: ignore[unreachable]
 
         result = {}
         for key, value in config.items():
@@ -530,7 +508,7 @@ class ConfigLoader:
             Resolved path string
         """
         if not isinstance(value, str):
-            return value
+            return value  # type: ignore[unreachable]
 
         # Skip URLs and absolute paths
         if value.startswith(("http://", "https://", "file://", "/")):
@@ -621,9 +599,7 @@ def load_preset(name: str) -> Dict[str, Any]:
     return get_default_loader().load_preset(name)
 
 
-def load_full_config(
-    preset_name: str = "standard", override_path: Optional[Union[str, Path]] = None
-) -> FullConfig:
+def load_full_config(preset_name: str = "standard", override_path: Optional[Union[str, Path]] = None) -> FullConfig:
     """
     Load complete configuration as dataclass.
 

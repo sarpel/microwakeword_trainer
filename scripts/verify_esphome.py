@@ -22,6 +22,7 @@ Exit codes:
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,9 +31,7 @@ import numpy as np
 import tensorflow as tf
 
 
-def verify_esphome_compatibility(
-    tflite_path: str, verbose: bool = False
-) -> dict[str, Any]:
+def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dict[str, Any]:
     """
     Verify TFLite model is compatible with ESPHome micro_wake_word.
 
@@ -85,16 +84,10 @@ def verify_esphome_compatibility(
 
             if num_subgraphs != 2:
                 results["compatible"] = False
-                results["errors"].append(
-                    f"Expected 2 subgraphs, got {num_subgraphs}. "
-                    "ESPHome requires dual-subgraph architecture (inference + init)."
-                )
+                results["errors"].append(f"Expected 2 subgraphs, got {num_subgraphs}. " "ESPHome requires dual-subgraph architecture (inference + init).")
         except Exception as e:
             results["compatible"] = False
-            results["errors"].append(
-                "Could not verify subgraphs via interpreter.get_subgraphs(); "
-                f"failing compatibility check: {e}"
-            )
+            results["errors"].append("Could not verify subgraphs via interpreter.get_subgraphs(); " f"failing compatibility check: {e}")
 
         # Check 2: Input tensor shape and dtype
         try:
@@ -116,11 +109,7 @@ def verify_esphome_compatibility(
                 # First, try to get stride from TFLite metadata
                 try:
                     model = tf.lite.Interpreter(model_path=tflite_path)
-                    metadata = (
-                        model.get_tensor_metadata()
-                        if hasattr(model, "get_tensor_metadata")
-                        else None
-                    )
+                    metadata = model.get_tensor_metadata() if hasattr(model, "get_tensor_metadata") else None
                     if metadata and len(metadata) > 0:
                         # Try to extract stride from metadata description or name
                         meta = metadata[0]
@@ -129,13 +118,11 @@ def verify_esphome_compatibility(
                             if "stride" in desc.lower():
                                 import re
 
-                                match = re.search(
-                                    r"stride[=:]\s*(\d+)", desc, re.IGNORECASE
-                                )
+                                match = re.search(r"stride[=:]\s*(\d+)", desc, re.IGNORECASE)
                                 if match:
                                     expected_strides = [int(match.group(1))]
-                except Exception:
-                    pass  # Metadata not available, continue to other methods
+                except Exception:  # noqa: S110
+                    logging.debug("Metadata not available")  # noqa: S110, continue to other methods
 
                 # If not found in metadata, check for manifest.json in same directory
                 if expected_strides is None:
@@ -147,13 +134,11 @@ def verify_esphome_compatibility(
                             with open(manifest_path) as f:
                                 manifest = json.load(f)
                             # Check if stride is stored in manifest (custom field)
-                            stride_val = manifest.get("stride") or manifest.get(
-                                "model", {}
-                            ).get("stride")
+                            stride_val = manifest.get("stride") or manifest.get("model", {}).get("stride")
                             if stride_val:
                                 expected_strides = [int(stride_val)]
-                        except Exception:
-                            pass
+                        except Exception:  # noqa: S110
+                            logging.debug("Could not read manifest.json")  # noqa: S110
 
                 # Default: accept any valid stride (1, 2, or 3)
                 if expected_strides is None:
@@ -164,18 +149,12 @@ def verify_esphome_compatibility(
                 if input_shape not in expected_shapes:
                     results["compatible"] = False
                     expected_strides_str = ", ".join(map(str, expected_strides))
-                    results["errors"].append(
-                        f"Expected input shape [1, {{{expected_strides_str}}}, 40], got {input_shape}. "
-                        f"Valid shapes are: {expected_shapes}"
-                    )
+                    results["errors"].append(f"Expected input shape [1, {{{expected_strides_str}}}, 40], got {input_shape}. " f"Valid shapes are: {expected_shapes}")
 
                 # Must be int8
                 if input_dtype != np.int8:
                     results["compatible"] = False
-                    results["errors"].append(
-                        f"Expected input dtype int8, got {input_dtype}. "
-                        "ESPHome requires INT8 input quantization."
-                    )
+                    results["errors"].append(f"Expected input dtype int8, got {input_dtype}. " "ESPHome requires INT8 input quantization.")
 
                 # Check quantization parameters
                 quant_params = input_info.get("quantization_parameters", {})
@@ -208,17 +187,12 @@ def verify_esphome_compatibility(
 
                 # Expected: [1, 1] (batch=1, single probability)
                 if output_shape != [1, 1]:
-                    results["warnings"].append(
-                        f"Expected output shape [1, 1], got {output_shape}"
-                    )
+                    results["warnings"].append(f"Expected output shape [1, 1], got {output_shape}")
 
                 # CRITICAL: Must be uint8, NOT int8!
                 if output_dtype != np.uint8:
                     results["compatible"] = False
-                    results["errors"].append(
-                        f"Expected output dtype uint8, got {output_dtype}. "
-                        "CRITICAL: ESPHome requires UINT8 output, not int8!"
-                    )
+                    results["errors"].append(f"Expected output dtype uint8, got {output_dtype}. " "CRITICAL: ESPHome requires UINT8 output, not int8!")
 
                 # Check quantization parameters
                 quant_params = output_info.get("quantization_parameters", {})
@@ -252,10 +226,7 @@ def verify_esphome_compatibility(
             # Expected: 6 state variables for streaming
             if num_state_vars != 6:
                 results["compatible"] = False
-                results["errors"].append(
-                    f"Expected 6 TYPE_13 state variables, got {num_state_vars}. "
-                    "ESPHome streaming models require exactly 6 state tensors for ring buffer management."
-                )
+                results["errors"].append(f"Expected 6 TYPE_13 state variables, got {num_state_vars}. " "ESPHome streaming models require exactly 6 state tensors for ring buffer management.")
 
         except Exception as e:
             results["warnings"].append(f"Could not verify state variables: {e}")
@@ -342,13 +313,9 @@ def print_results(results: dict[str, Any], use_json: bool = False) -> None:
         if "num_subgraphs" in details:
             print(f"  Subgraphs: {details['num_subgraphs']}")
         if "input_shape" in details:
-            print(
-                f"  Input: {details['input_shape']} ({details.get('input_dtype', 'unknown')})"
-            )
+            print(f"  Input: {details['input_shape']} ({details.get('input_dtype', 'unknown')})")
         if "output_shape" in details:
-            print(
-                f"  Output: {details['output_shape']} ({details.get('output_dtype', 'unknown')})"
-            )
+            print(f"  Output: {details['output_shape']} ({details.get('output_dtype', 'unknown')})")
         if "num_state_variables" in details:
             print(f"  State variables: {details['num_state_variables']}")
         if "estimated_tensor_arena_size" in details:

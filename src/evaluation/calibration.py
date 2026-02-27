@@ -1,7 +1,5 @@
 """Calibration helpers for wake-word probability outputs."""
 
-from typing import Dict
-
 import numpy as np
 from scipy.special import expit
 
@@ -10,7 +8,7 @@ def compute_calibration_curve(
     y_true: np.ndarray,
     y_prob: np.ndarray,
     n_bins: int = 10,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """Compute a simple reliability diagram curve.
 
     Raises:
@@ -22,10 +20,7 @@ def compute_calibration_curve(
     if n_bins < 1:
         raise ValueError(f"n_bins must be >= 1, got {n_bins}")
     if len(y_true) != len(y_prob):
-        raise ValueError(
-            f"y_true and y_prob must have the same length, "
-            f"got {len(y_true)} vs {len(y_prob)}"
-        )
+        raise ValueError(f"y_true and y_prob must have the same length, " f"got {len(y_true)} vs {len(y_prob)}")
     if not np.all((y_prob >= 0) & (y_prob <= 1)):
         raise ValueError("y_prob values must be in [0, 1]")
     if not np.all(np.isin(y_true, [0, 1])):
@@ -63,10 +58,7 @@ def compute_brier_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
     y_prob = np.asarray(y_prob).ravel()
 
     if len(y_true) != len(y_prob):
-        raise ValueError(
-            f"y_true and y_prob must have the same length, "
-            f"got {len(y_true)} vs {len(y_prob)}"
-        )
+        raise ValueError(f"y_true and y_prob must have the same length, " f"got {len(y_true)} vs {len(y_prob)}")
     if not np.all((y_prob >= 0) & (y_prob <= 1)):
         raise ValueError("y_prob values must be in [0, 1]")
     if not np.all(np.isin(y_true, [0, 1])):

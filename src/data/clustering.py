@@ -39,8 +39,8 @@ try:
 
     HAS_SPEECHBRAIN = True
 except ImportError:
-    torch = None  # type: ignore
-    torchaudio = None  # type: ignore
+    torch = None
+    torchaudio = None
     EncoderClassifier = None  # type: ignore
     HAS_SPEECHBRAIN = False
 

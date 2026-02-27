@@ -5,8 +5,9 @@ Creates minimal synthetic WAV files for testing purposes.
 """
 
 import wave
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 
 # Module-level RNG for deterministic but unique noise generation
 _rng = np.random.default_rng(42)
@@ -23,9 +24,7 @@ POSITIVE_DIR = DATASET_DIR / "positive" / "speaker_001"
 NEGATIVE_DIR = DATASET_DIR / "negative" / "speech"
 
 
-def generate_sine_wave(
-    frequency: float, duration: float, sample_rate: int
-) -> np.ndarray:
+def generate_sine_wave(frequency: float, duration: float, sample_rate: int) -> np.ndarray:
     """Generate a sine wave."""
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
     # Apply fade in/out to avoid clicks
@@ -151,23 +150,15 @@ def main():
         print(f"  Positive: {pos_sample.name} - ERROR: {pos_info['error']}")
     else:
         print(f"  Positive: {pos_sample.name}")
-        print(
-            f"    Channels: {pos_info['channels']}, Rate: {pos_info['sample_rate']} Hz"
-        )
-        print(
-            f"    Duration: {pos_info['duration']:.2f}s, Frames: {pos_info['n_frames']}"
-        )
+        print(f"    Channels: {pos_info['channels']}, Rate: {pos_info['sample_rate']} Hz")
+        print(f"    Duration: {pos_info['duration']:.2f}s, Frames: {pos_info['n_frames']}")
 
     if "error" in neg_info:
         print(f"  Negative: {neg_sample.name} - ERROR: {neg_info['error']}")
     else:
         print(f"  Negative: {neg_sample.name}")
-        print(
-            f"    Channels: {neg_info['channels']}, Rate: {neg_info['sample_rate']} Hz"
-        )
-        print(
-            f"    Duration: {neg_info['duration']:.2f}s, Frames: {neg_info['n_frames']}"
-        )
+        print(f"    Channels: {neg_info['channels']}, Rate: {neg_info['sample_rate']} Hz")
+        print(f"    Duration: {neg_info['duration']:.2f}s, Frames: {neg_info['n_frames']}")
 
     # Count files
     pos_count = len(list(POSITIVE_DIR.glob("*.wav")))

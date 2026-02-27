@@ -3,18 +3,18 @@
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
-from ai_edge_litert.interpreter import Interpreter
 import tensorflow as tf
+from ai_edge_litert.interpreter import Interpreter
 
 # =============================================================================
 # MODEL ARCHITECTURE ANALYSIS
 # =============================================================================
 
 
-def analyze_model_architecture(model_path: str) -> Dict[str, Any]:
+def analyze_model_architecture(model_path: str) -> dict[str, Any]:
     """Analyze detailed architecture of a TFLite model using ai_edge_litert.
 
     Uses ai_edge_litert.Interpreter for model analysis.
@@ -51,7 +51,7 @@ def analyze_model_architecture(model_path: str) -> Dict[str, Any]:
     return result
 
 
-def _parse_analysis_output(analysis_text: str, model_content: bytes) -> Dict[str, Any]:
+def _parse_analysis_output(analysis_text: str, model_content: bytes) -> dict[str, Any]:
     """Parse the raw analysis output into structured data."""
     result = {
         "layer_count": 0,
@@ -64,9 +64,7 @@ def _parse_analysis_output(analysis_text: str, model_content: bytes) -> Dict[str
         "total_parameters": 0,
     }
 
-    result["has_quantization"] = (
-        "quantization" in analysis_text.lower() or "int8" in analysis_text.lower()
-    )
+    result["has_quantization"] = "quantization" in analysis_text.lower() or "int8" in analysis_text.lower()
 
     subgraph_matches = re.findall(r"Subgraph#(\d+)", analysis_text)
     if subgraph_matches:
@@ -110,15 +108,15 @@ def _parse_analysis_output(analysis_text: str, model_content: bytes) -> Dict[str
 
 def validate_model_quality(
     model_path: str,
-    expected_input_shape: Optional[Tuple[int, ...]] = None,
-    expected_output_shape: Optional[Tuple[int, ...]] = None,
-    expected_input_dtype: Optional[np.dtype] = None,
-    expected_output_dtype: Optional[np.dtype] = None,
+    expected_input_shape: tuple[int, ...] | None = None,
+    expected_output_shape: tuple[int, ...] | None = None,
+    expected_input_dtype: np.dtype | None = None,
+    expected_output_dtype: np.dtype | None = None,
     stride: int = 3,
     mel_bins: int = 40,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Validate TFLite model quality and health metrics."""
-    results: Dict[str, Any] = {
+    results: dict[str, Any] = {
         "valid": True,
         "errors": [],
         "warnings": [],
@@ -154,15 +152,11 @@ def validate_model_quality(
 
             valid_input_shapes = [expected_input_shape, (1, 1, mel_bins)]
             if inp_shape not in valid_input_shapes:
-                results["warnings"].append(
-                    f"Unexpected input shape: {inp_shape}. Expected one of {valid_input_shapes}"
-                )
+                results["warnings"].append(f"Unexpected input shape: {inp_shape}. Expected one of {valid_input_shapes}")
 
             if inp_dtype != expected_input_dtype:
                 results["valid"] = False
-                results["errors"].append(
-                    f"Invalid input dtype: {inp_dtype}. Expected {expected_input_dtype}"
-                )
+                results["errors"].append(f"Invalid input dtype: {inp_dtype}. Expected {expected_input_dtype}")
             else:
                 results["info"]["input_dtype_correct"] = True
 
@@ -179,16 +173,11 @@ def validate_model_quality(
             out_dtype = out["dtype"]
 
             if out_shape != expected_output_shape:
-                results["warnings"].append(
-                    f"Unexpected output shape: {out_shape}. Expected {expected_output_shape}"
-                )
+                results["warnings"].append(f"Unexpected output shape: {out_shape}. Expected {expected_output_shape}")
 
             if out_dtype != expected_output_dtype:
                 results["valid"] = False
-                results["errors"].append(
-                    f"Invalid output dtype: {out_dtype}. Expected {expected_output_dtype} "
-                    "(CRITICAL for ESPHome compatibility)"
-                )
+                results["errors"].append(f"Invalid output dtype: {out_dtype}. Expected {expected_output_dtype} " "(CRITICAL for ESPHome compatibility)")
             else:
                 results["info"]["output_dtype_correct"] = True
 
@@ -200,9 +189,7 @@ def validate_model_quality(
                     results["info"]["output_zero_point"] = int(qp["zero_points"][0])
 
         if num_subgraphs != 2:
-            results["warnings"].append(
-                f"Expected 2 subgraphs for streaming model, found {num_subgraphs}"
-            )
+            results["warnings"].append(f"Expected 2 subgraphs for streaming model, found {num_subgraphs}")
         else:
             results["info"]["subgraph_count_correct"] = True
             results["info"]["subgraph_count"] = num_subgraphs
@@ -218,9 +205,7 @@ def validate_model_quality(
         results["info"]["model_size_kb"] = round(model_size_kb, 2)
 
         if model_size_kb > 100:
-            results["warnings"].append(
-                f"Model size ({model_size_kb:.1f} KB) is larger than typical for wake word models"
-            )
+            results["warnings"].append(f"Model size ({model_size_kb:.1f} KB) is larger than typical for wake word models")
 
     except Exception as e:
         results["valid"] = False
@@ -239,17 +224,13 @@ def compare_models(
     model_path_b: str,
     stride: int = 3,
     mel_bins: int = 40,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compare two model versions to identify differences."""
     analysis_a = analyze_model_architecture(model_path_a)
     analysis_b = analyze_model_architecture(model_path_b)
 
-    validation_a = validate_model_quality(
-        model_path_a, stride=stride, mel_bins=mel_bins
-    )
-    validation_b = validate_model_quality(
-        model_path_b, stride=stride, mel_bins=mel_bins
-    )
+    validation_a = validate_model_quality(model_path_a, stride=stride, mel_bins=mel_bins)
+    validation_b = validate_model_quality(model_path_b, stride=stride, mel_bins=mel_bins)
 
     size_a = analysis_a.get("model_size_bytes", 0)
     size_b = analysis_b.get("model_size_bytes", 0)
@@ -268,12 +249,7 @@ def compare_models(
     out_a = validation_a.get("info", {}).get("output_dtype_correct", False)
     out_b = validation_b.get("info", {}).get("output_dtype_correct", False)
 
-    compatible = (
-        inp_a == inp_b
-        and out_a == out_b
-        and validation_a["valid"]
-        and validation_b["valid"]
-    )
+    compatible = inp_a == inp_b and out_a == out_b and validation_a["valid"] and validation_b["valid"]
 
     return {
         "model_a": {
@@ -319,9 +295,9 @@ def estimate_performance(
     model_path: str,
     stride: int = 3,
     mel_bins: int = 40,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Estimate performance metrics for the TFLite model."""
-    results: Dict[str, Any] = {
+    results: dict[str, Any] = {
         "model_size_kb": 0,
         "tensor_arena_estimate": 0,
         "estimated_latency_ms": 0,
@@ -388,29 +364,19 @@ def estimate_performance(
         recommendations = []
 
         if model_size_bytes > 50 * 1024:
-            recommendations.append(
-                "Consider reducing model complexity for smaller footprint"
-            )
+            recommendations.append("Consider reducing model complexity for smaller footprint")
 
         if not analysis.get("has_quantization", False):
-            recommendations.append(
-                "Enable INT8 quantization to reduce size and improve latency"
-            )
+            recommendations.append("Enable INT8 quantization to reduce size and improve latency")
 
         if layer_count > 20:
-            recommendations.append(
-                "Consider reducing number of layers for faster inference"
-            )
+            recommendations.append("Consider reducing number of layers for faster inference")
 
         if estimated_latency > 50:
-            recommendations.append(
-                f"Estimated latency ({estimated_latency:.1f}ms) may be high for real-time wake word"
-            )
+            recommendations.append(f"Estimated latency ({estimated_latency:.1f}ms) may be high for real-time wake word")
 
         if tensor_arena > 30 * 1024:
-            recommendations.append(
-                f"Consider reducing tensor arena size ({tensor_arena // 1024}KB) if memory constrained"
-            )
+            recommendations.append(f"Consider reducing tensor arena size ({tensor_arena // 1024}KB) if memory constrained")
 
         if not recommendations:
             recommendations.append("Model appears well-optimized for edge deployment")
@@ -436,7 +402,7 @@ def estimate_performance(
 # =============================================================================
 
 
-def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
+def check_gpu_compatibility(model_path: str) -> dict[str, Any]:
     """Check if model is compatible with GPU delegation."""
     if not os.path.exists(model_path):
         return {"error": f"Model not found: {model_path}"}
@@ -478,9 +444,7 @@ def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
             for neg_pattern in negative_patterns:
 
                 # Find all occurrences of the positive pattern
-                for match in re.finditer(
-                    re.escape(pattern), analysis_text, re.IGNORECASE
-                ):
+                for match in re.finditer(re.escape(pattern), analysis_text, re.IGNORECASE):
                     pos_start = match.start()
                     pos_end = match.end()
                     # Check surrounding context (before and after)
@@ -532,9 +496,7 @@ def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
 # =============================================================================
 
 
-def generate_model_report(
-    model_path: str, stride: int = 3, mel_bins: int = 40
-) -> Dict[str, Any]:
+def generate_model_report(model_path: str, stride: int = 3, mel_bins: int = 40) -> dict[str, Any]:
     """Generate a comprehensive model analysis report."""
     import logging as _logging
 

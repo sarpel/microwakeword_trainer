@@ -20,7 +20,7 @@ try:
 
     HAS_CUPY = True
 except ImportError:
-    cp = None  # type: ignore
+    cp = None
     HAS_CUPY = False
 
 logger = logging.getLogger(__name__)

@@ -4,7 +4,6 @@ import os
 from typing import Any, Callable, Dict, Generator, Optional
 
 import numpy as np
-
 import tensorflow as tf
 
 # =============================================================================
@@ -85,22 +84,16 @@ def _convert_to_streaming_savedmodel(
         net = tf.keras.layers.Activation("relu")(net)
 
     # Process through MixConv blocks with state management
-    pointwise_filters = _parse_list_config(
-        config.get("pointwise_filters", "60,60,60,60,60")
-    )
-    mixconv_kernel_sizes = _parse_nested_list_config(
-        config.get("mixconv_kernel_sizes", "[5],[9],[13],[17],[21]")
-    )
+    pointwise_filters = _parse_list_config(config.get("pointwise_filters", "60,60,60,60,60"))
+    mixconv_kernel_sizes = _parse_nested_list_config(config.get("mixconv_kernel_sizes", "[5],[9],[13],[17],[21]"))
     repeat_in_block = _parse_list_config(config.get("repeat_in_block", "1,1,1,1,1"))
-    residual_connection = _parse_list_config(
-        config.get("residual_connection", "0,0,0,0,0")
-    )
+    residual_connection = _parse_list_config(config.get("residual_connection", "0,0,0,0,0"))
 
     # Calculate state shapes dynamically based on model configuration
     # Format: (batch, time_frames, channel, features)
     # time_frames = max_kernel_size - 1 (needed for ring buffer)
     dynamic_state_shapes = []
-    for kernels, filters in zip(mixconv_kernel_sizes, pointwise_filters):
+    for kernels, filters in zip(mixconv_kernel_sizes, pointwise_filters, strict=False):
         max_kernel = max(kernels) if kernels else 3
         dynamic_state_shapes.append((1, max_kernel - 1, 1, filters))
 
@@ -114,25 +107,19 @@ def _convert_to_streaming_savedmodel(
             mixconv_kernel_sizes,
             repeat_in_block,
             residual_connection,
+            strict=False,
         )
-    ):
         state_shape = state_shapes[i] if i < len(state_shapes) else state_shapes[-1]
-        stream_state = _create_streaming_state(
-            shape=state_shape, name=f"stream_{i + 1}"
-        )
+        stream_state = _create_streaming_state(shape=state_shape, name=f"stream_{i + 1}")
 
-        net = _apply_mixconv_block(
-            net, stream_state, kernels, filters, repeat, use_res, stride
-        )
+        net = _apply_mixconv_block(net, stream_state, kernels, filters, repeat, use_res, stride)
 
     # Classification head (from trained model)
     net = tf.keras.layers.Flatten()(net)
     outputs = tf.keras.layers.Dense(1, activation="sigmoid", dtype=tf.float32)(net)
 
     # Create streaming model
-    streaming_model = tf.keras.Model(
-        inputs=inputs, outputs=outputs, name="streaming_model"
-    )
+    streaming_model = tf.keras.Model(inputs=inputs, outputs=outputs, name="streaming_model")
 
     # Copy trainable weights from trained model, skipping if shapes mismatch.
     # The streaming model adds state variables which are not present in the
@@ -141,20 +128,13 @@ def _convert_to_streaming_savedmodel(
     dst_vars = streaming_model.weights  # includes state vars
     trainable_dst = [w for w in dst_vars if w.trainable]
     if len(src_weights) == len(trainable_dst):
-        for var, val in zip(trainable_dst, src_weights):
+        for var, val in zip(trainable_dst, src_weights, strict=False):
             if var.shape == val.shape:
                 var.assign(val)
             else:
-                print(
-                    f"[WARNING] Skipping weight copy for '{var.name}': "
-                    f"shape {var.shape} != {val.shape}"
-                )
+                print(f"[WARNING] Skipping weight copy for '{var.name}': " f"shape {var.shape} != {val.shape}")
     else:
-        print(
-            f"[WARNING] Weight count mismatch (src={len(src_weights)}, "
-            f"dst trainable={len(trainable_dst)}). "
-            "Attempting name-based matching..."
-        )
+        print(f"[WARNING] Weight count mismatch (src={len(src_weights)}, " f"dst trainable={len(trainable_dst)}). " "Attempting name-based matching...")
         src_by_name = {w.name: w for w in model.weights if w.trainable}
         for var in trainable_dst:
             src = src_by_name.get(var.name)
@@ -271,9 +251,7 @@ def _parse_nested_list_config(config_str: str) -> list:
             try:
                 group.append(int(item))
             except ValueError as e:
-                raise ValueError(
-                    f"Invalid integer '{item}' in config '{config_str}'"
-                ) from e
+                raise ValueError(f"Invalid integer '{item}' in config '{config_str}'") from e
         if group:
             result.append(group)
     return result if result else [[3]]
@@ -288,9 +266,7 @@ def convert_saved_model_to_tflite(
     config: dict,
     path_to_model: str,
     output_path: str,
-    representative_dataset_gen: Optional[
-        Callable[[], Generator[np.ndarray, None, None]]
-    ] = None,
+    representative_dataset_gen: Optional[Callable[[], Generator[np.ndarray, None, None]]] = None,
     quantize: bool = True,
 ) -> bytes:
     """Convert SavedModel to TFLite format with quantization.
@@ -327,13 +303,9 @@ def convert_saved_model_to_tflite(
 
         # Add representative dataset for calibration
         if representative_dataset_gen is not None:
-            converter.representative_dataset = tf.lite.RepresentativeDataset(
-                representative_dataset_gen
-            )
+            converter.representative_dataset = tf.lite.RepresentativeDataset(representative_dataset_gen)
         else:
-            converter.representative_dataset = tf.lite.RepresentativeDataset(
-                create_default_representative_dataset(config)
-            )
+            converter.representative_dataset = tf.lite.RepresentativeDataset(create_default_representative_dataset(config))
 
     # Convert the model
     tflite_model = converter.convert()
@@ -359,9 +331,7 @@ def create_default_representative_dataset(
         np.random.seed(42)
         for _ in range(num_samples):
             # Shape must match the streaming model input: (1, stride, mel_bins)
-            sample = np.random.uniform(0.0, 26.0, (1, stride, mel_bins)).astype(
-                np.float32
-            )
+            sample = np.random.uniform(0.0, 26.0, (1, stride, mel_bins)).astype(np.float32)
             yield [sample]
 
     return representative_dataset_gen
@@ -407,9 +377,7 @@ def export_to_tflite(
     # Extract export config
     export_config = config.get("export")
     if not export_config:
-        raise ValueError(
-            "Missing 'export' section in config. Cannot export model without export configuration."
-        )
+        raise ValueError("Missing 'export' section in config. Cannot export model without export configuration.")
     model_config = config.get("model", {})
     hardware_config = config.get("hardware", {})
 
@@ -421,9 +389,7 @@ def export_to_tflite(
         "first_conv_filters": model_config.get("first_conv_filters", 30),
         "first_conv_kernel_size": model_config.get("first_conv_kernel_size", 5),
         "pointwise_filters": model_config.get("pointwise_filters", "60,60,60,60,60"),
-        "mixconv_kernel_sizes": model_config.get(
-            "mixconv_kernel_sizes", "[5],[9],[13],[17],[21]"
-        ),
+        "mixconv_kernel_sizes": model_config.get("mixconv_kernel_sizes", "[5],[9],[13],[17],[21]"),
         "repeat_in_block": model_config.get("repeat_in_block", "1,1,1,1,1"),
         "residual_connection": model_config.get("residual_connection", "0,0,0,0,0"),
     }
@@ -446,9 +412,7 @@ def export_to_tflite(
 
     # Create representative dataset generator
     if representative_data is not None:
-        rep_data_gen = create_representative_dataset_from_data(
-            representative_data, conversion_config
-        )
+        rep_data_gen = create_representative_dataset_from_data(representative_data, conversion_config)
     else:
         rep_data_gen = None
 
@@ -468,8 +432,8 @@ def export_to_tflite(
     try:
         from src.export.model_analyzer import (
             analyze_model_architecture,
-            validate_model_quality,
             estimate_performance,
+            validate_model_quality,
         )
 
         # Run analysis
@@ -558,9 +522,7 @@ def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
             results["compatible"] = False
             results["errors"].append(f"Expected 2 subgraphs, got {num_sg}")
     else:
-        results["warnings"].append(
-            "Cannot check subgraph count: interpreter lacks get_subgraphs/num_subgraphs"
-        )
+        results["warnings"].append("Cannot check subgraph count: interpreter lacks get_subgraphs/num_subgraphs")
 
     # Check 2: Input shape [1, stride, 40] and dtype int8
     input_details = interpreter.get_input_details()
@@ -569,13 +531,8 @@ def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
         input_dtype = input_details[0]["dtype"]
 
         expected_shape = [1, stride, 40]
-        if (
-            list(input_shape) not in ([1, 3, 40], [1, 1, 40])
-            and list(input_shape) != expected_shape
-        ):
-            results["warnings"].append(
-                f"Expected input shape {expected_shape}, got {list(input_shape)}"
-            )
+        if list(input_shape) not in ([1, 3, 40], [1, 1, 40]) and list(input_shape) != expected_shape:
+            results["warnings"].append(f"Expected input shape {expected_shape}, got {list(input_shape)}")
 
         if input_dtype != np.int8:
             results["compatible"] = False
@@ -588,9 +545,7 @@ def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
         output_dtype = output_details[0]["dtype"]
 
         if list(output_shape) != [1, 1]:
-            results["warnings"].append(
-                f"Expected output shape [1, 1], got {list(output_shape)}"
-            )
+            results["warnings"].append(f"Expected output shape [1, 1], got {list(output_shape)}")
 
         # CRITICAL: Must be uint8, NOT int8!
         if output_dtype != np.uint8:
@@ -617,9 +572,7 @@ def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
         state_var_count = sum(1 for t in all_details if t.get("is_variable", False))
         if state_var_count != 6:
             results["warnings"].append(
-                f"Expected 6 state variables for ESPHome compatibility, "
-                f"found {state_var_count}. "
-                "ESPHome micro_wake_word requires models with exactly 6 streaming state tensors."
+                f"Expected 6 state variables for ESPHome compatibility, " f"found {state_var_count}. " "ESPHome micro_wake_word requires models with exactly 6 streaming state tensors."
             )
     except Exception:
         results["warnings"].append("Could not verify state variable count")
@@ -698,9 +651,7 @@ def main():
     import argparse
     import sys
 
-    parser = argparse.ArgumentParser(
-        description="Export trained model to ESPHome-compatible TFLite"
-    )
+    parser = argparse.ArgumentParser(description="Export trained model to ESPHome-compatible TFLite")
     parser.add_argument(
         "--checkpoint",
         type=str,
@@ -737,7 +688,7 @@ def main():
 
     # Load configuration
     try:
-        from config.loader import load_preset, load_config
+        from config.loader import load_config, load_preset
 
         # Distinguish preset name from file path
         if os.path.isfile(args.config) or args.config.endswith((".yaml", ".yml")):

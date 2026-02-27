@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from src.data.features import MicroFrontend
 
 
-
 @dataclass
 class HardNegativeMiningConfig:
     """Configuration for hard negative mining.
@@ -40,11 +39,15 @@ class HardNegativeMiningConfig:
     def __post_init__(self):
         """Validate configuration after initialization."""
         if not 0.0 <= self.fp_threshold <= 1.0:
-            raise ValueError(f"fp_threshold must be between 0.0 and 1.0, got {self.fp_threshold}")
+            raise ValueError(
+                f"fp_threshold must be between 0.0 and 1.0, got {self.fp_threshold}"
+            )
         if self.max_samples <= 0:
             raise ValueError(f"max_samples must be positive, got {self.max_samples}")
         if self.mining_interval_epochs <= 0:
-            raise ValueError(f"mining_interval_epochs must be positive, got {self.mining_interval_epochs}")
+            raise ValueError(
+                f"mining_interval_epochs must be positive, got {self.mining_interval_epochs}"
+            )
 
 
 class HardNegativeMiner:

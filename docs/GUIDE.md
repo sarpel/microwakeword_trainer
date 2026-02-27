@@ -444,23 +444,37 @@ performance:
 
 ### speaker_clustering
 
-Speaker clustering configuration for data leakage detection.
+Speaker clustering configuration for grouping audio samples by speaker identity.
+Uses AgglomerativeClustering with cosine distance. Two modes:
+- **Threshold-based** (default): Cluster count determined automatically from similarity threshold.
+- **Explicit n_clusters**: Fixed cluster count — best for short audio clips (1-3s wake words) where ECAPA-TDNN embeddings have low cosine similarity and threshold-based clustering over-fragments.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | true | Enable speaker clustering. |
-| `method` | string | `agglomerative` | Clustering method. |
+| `method` | string | `agglomerative` | Clustering method (`agglomerative` or `threshold`). `agglomerative` uses average linkage; `threshold` uses complete linkage (stricter). |
 | `embedding_model` | string | `speechbrain/ecapa-tdnn-voxceleb` | SpeechBrain ECAPA-TDNN model for embeddings. |
-| `similarity_threshold` | float | 0.72 | Similarity threshold for clustering (0.0-1.0). |
+| `similarity_threshold` | float | 0.72 | Cosine similarity threshold (0.0-1.0). Only used when `n_clusters` is null. |
+| `n_clusters` | int | null | Explicit number of clusters. Overrides `similarity_threshold` when set. Use when you know approximate speaker count. |
 | `leakage_audit_enabled` | bool | true | Enable train/val leakage detection. |
 
-**Example:**
+**Example — threshold-based (auto cluster count):**
 ```yaml
 speaker_clustering:
   enabled: true
   method: "agglomerative"
   embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
   similarity_threshold: 0.72
+  leakage_audit_enabled: true
+```
+
+**Example — explicit cluster count (recommended for short clips):**
+```yaml
+speaker_clustering:
+  enabled: true
+  method: "agglomerative"
+  embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
+  n_clusters: 200  # Known speaker count; overrides threshold
   leakage_audit_enabled: true
 ```
 
@@ -690,6 +704,7 @@ speaker_clustering:
   method: "agglomerative"
   embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
   similarity_threshold: 0.72
+  # n_clusters: 200  # Uncomment to use explicit cluster count
   leakage_audit_enabled: true
 
 hard_negative_mining:

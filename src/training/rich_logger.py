@@ -3,22 +3,20 @@
 Provides progress bars, metric tables, confusion matrices, and formatted logging.
 """
 
-from typing import Optional, Tuple
-
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    BarColumn,
+    TaskID,
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
-    TaskID,
 )
-from rich.table import Table
 from rich.rule import Rule
+from rich.table import Table
 
 
 class RichTrainingLogger:
@@ -29,7 +27,7 @@ class RichTrainingLogger:
     module with no training logic or external dependencies.
     """
 
-    def __init__(self, console: Optional[Console] = None) -> None:
+    def __init__(self, console: Console | None = None) -> None:
         if console is None:
             self.console = Console(force_terminal=False)
         else:
@@ -46,7 +44,7 @@ class RichTrainingLogger:
         table.add_column("Value")
 
         # Training phases
-        for i, (s, lr) in enumerate(zip(steps, lrs)):
+        for i, (s, lr) in enumerate(zip(steps, lrs, strict=True)):
             table.add_row(
                 f"Phase {i + 1}",
                 f"{s:,} steps @ LR {lr:.6f}",
@@ -82,13 +80,7 @@ class RichTrainingLogger:
         time_mask_counts = training.get("time_mask_count", [0])
         freq_mask_sizes = training.get("freq_mask_max_size", [0])
         freq_mask_counts = training.get("freq_mask_count", [0])
-        has_spec_aug = any(
-            x > 0
-            for x in time_mask_sizes
-            + time_mask_counts
-            + freq_mask_sizes
-            + freq_mask_counts
-        )
+        has_spec_aug = any(x > 0 for x in time_mask_sizes + time_mask_counts + freq_mask_sizes + freq_mask_counts)
         if has_spec_aug:
             table.add_row(
                 "SpecAugment",
@@ -111,7 +103,7 @@ class RichTrainingLogger:
         )
         self.console.print(panel)
 
-    def create_progress(self, total_steps: int) -> Tuple[Progress, TaskID]:
+    def create_progress(self, total_steps: int) -> tuple[Progress, TaskID]:
         """Create a Rich Progress bar with custom columns.
 
         Returns (progress, task_id). The caller manages the context manager.
@@ -154,9 +146,7 @@ class RichTrainingLogger:
             metrics=f"loss={loss:.4f} acc={accuracy:.4f} lr={lr:.6f}",
         )
 
-    def log_validation_results(
-        self, metrics: dict, step: int, total_steps: int
-    ) -> None:
+    def log_validation_results(self, metrics: dict, step: int, total_steps: int) -> None:
         """Display a validation results table with all available metrics."""
         table = Table(
             title=f"📊 Validation Results — Step {step}/{total_steps}",
@@ -251,10 +241,7 @@ class RichTrainingLogger:
         neg_weight: float,
     ) -> None:
         """Display a phase transition rule."""
-        title = (
-            f"Phase {phase + 1}/{total_phases} — "
-            f"LR: {lr:.6f} | Weights: pos={pos_weight:.1f} neg={neg_weight:.1f}"
-        )
+        title = f"Phase {phase + 1}/{total_phases} — " f"LR: {lr:.6f} | Weights: pos={pos_weight:.1f} neg={neg_weight:.1f}"
         self.console.print(Rule(title=title, style="bold cyan"))
 
     def log_checkpoint(self, reason: str, is_best: bool, path: str = "") -> None:
@@ -296,7 +283,7 @@ class RichTrainingLogger:
         )
         self.console.print(panel)
 
-    def log_mining(self, message: str, count: Optional[int] = None) -> None:
+    def log_mining(self, message: str, count: int | None = None) -> None:
         """Log a hard negative mining event."""
         msg = f"[yellow]⛏️  Mining:[/] {message}"
         if count is not None:

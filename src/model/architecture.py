@@ -14,11 +14,11 @@ import tensorflow as tf
 
 # Import from our own streaming module
 from src.model.streaming import (
-    Stream,
+    ChannelSplit,
     Modes,
+    Stream,
     StridedDrop,
     StridedKeep,
-    ChannelSplit,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,10 +47,7 @@ def parse_model_param(text):
         elif isinstance(res, list):
             # Handle nested lists like [[5], [9]]
             if res and isinstance(res[0], list):
-                return [
-                    [item for item in lst] if isinstance(lst, list) else lst
-                    for lst in res
-                ]
+                return [[item for item in lst] if isinstance(lst, list) else lst for lst in res]
             return res
         return [res]
     except (ValueError, SyntaxError) as exc:
@@ -93,9 +90,7 @@ def spectrogram_slices_dropped(flags):
     if hasattr(flags, "mixconv_kernel_sizes"):
         mixconv_kernel_sizes = flags.mixconv_kernel_sizes
     else:
-        mixconv_kernel_sizes = parse_model_param(
-            flags.get("mixconv_kernel_sizes", "[5],[9],[13],[21]")
-        )
+        mixconv_kernel_sizes = parse_model_param(flags.get("mixconv_kernel_sizes", "[5],[9],[13],[21]"))
 
     if hasattr(flags, "stride"):
         stride = flags.stride
@@ -150,13 +145,9 @@ class MixConvBlock(tf.keras.layers.Layer):
         mode: Inference mode (TRAINING, NON_STREAM, STREAM_INTERNAL, STREAM_EXTERNAL)
     """
 
-    def __init__(
-        self, kernel_sizes, filters=None, mode=Modes.NON_STREAM_INFERENCE, **kwargs
-    ):
+    def __init__(self, kernel_sizes, filters=None, mode=Modes.NON_STREAM_INFERENCE, **kwargs):
         super().__init__(**kwargs)
-        self.kernel_sizes = (
-            kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
-        )
+        self.kernel_sizes = kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
         self.filters = filters
         self.mode = mode
         # Ring buffer length is max kernel size - 1
@@ -178,11 +169,7 @@ class MixConvBlock(tf.keras.layers.Layer):
         # Create depthwise conv layers for each kernel size
         self.depthwise_convs = []
         for i, ks in enumerate(self.kernel_sizes):
-            self.depthwise_convs.append(
-                tf.keras.layers.DepthwiseConv2D(
-                    (ks, 1), strides=1, padding="same", name=f"{self.name}_dw_{i}"
-                )
-            )
+            self.depthwise_convs.append(tf.keras.layers.DepthwiseConv2D((ks, 1), strides=1, padding="same", name=f"{self.name}_dw_{i}"))
 
         super().build(input_shape)
 
@@ -201,11 +188,7 @@ class MixConvBlock(tf.keras.layers.Layer):
         # Add causal padding to handle small time dimensions
         # This is needed because valid padding reduces time dimension
         if self.mode == Modes.NON_STREAM_INFERENCE or self.mode == Modes.TRAINING:
-            max_ksize = (
-                max(self.kernel_sizes)
-                if isinstance(self.kernel_sizes, list)
-                else self.kernel_sizes
-            )
+            max_ksize = max(self.kernel_sizes) if isinstance(self.kernel_sizes, list) else self.kernel_sizes
             pad_amount = max_ksize - 1
             if pad_amount > 0:
                 net = tf.pad(net, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
@@ -232,17 +215,10 @@ class MixConvBlock(tf.keras.layers.Layer):
                 x_outputs.append(x)
 
             # Align output time dimensions by dropping extra samples
-            min_time = min(
-                out.shape[1] for out in x_outputs if out.shape[1] is not None
-            )
+            min_time = min(out.shape[1] for out in x_outputs if out.shape[1] is not None)
             for i in range(len(x_outputs)):
-                if (
-                    x_outputs[i].shape[1] is not None
-                    and x_outputs[i].shape[1] > min_time
-                ):
-                    x_outputs[i] = StridedDrop(
-                        x_outputs[i].shape[1] - min_time, mode=self.mode
-                    )(x_outputs[i])
+                if x_outputs[i].shape[1] is not None and x_outputs[i].shape[1] > min_time:
+                    x_outputs[i] = StridedDrop(x_outputs[i].shape[1] - min_time, mode=self.mode)(x_outputs[i])
 
             # Concatenate along channel dimension
             net = tf.keras.layers.Concatenate(axis=-1)(x_outputs)
@@ -293,9 +269,7 @@ class ResidualBlock(tf.keras.layers.Layer):
     ):
         super().__init__(**kwargs)
         self.filters = filters
-        self.kernel_sizes = (
-            kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
-        )
+        self.kernel_sizes = kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
         self.repeat = repeat
         self.use_residual = use_residual
         self.mode = mode
@@ -325,9 +299,7 @@ class ResidualBlock(tf.keras.layers.Layer):
                 use_bias=False,
                 name=f"{self.name}_residual_proj",
             )
-            self.residual_bn = tf.keras.layers.BatchNormalization(
-                name=f"{self.name}_residual_bn"
-            )
+            self.residual_bn = tf.keras.layers.BatchNormalization(name=f"{self.name}_residual_bn")
 
         super().build(input_shape)
 
@@ -349,17 +321,10 @@ class ResidualBlock(tf.keras.layers.Layer):
         # Apply residual addition once after all mix-convs
         if self.use_residual:
             # Align time dimensions if needed
-            if (
-                residual.shape[1] is not None
-                and net.shape[1] is not None
-                and residual.shape[1] != net.shape[1]
-            ):
+            if residual.shape[1] is not None and net.shape[1] is not None and residual.shape[1] != net.shape[1]:
                 diff = residual.shape[1] - net.shape[1]
                 if diff < 0:
-                    raise ValueError(
-                        "Residual has fewer time steps than net before StridedDrop "
-                        f"(diff={diff}, residual={residual.shape[1]}, net={net.shape[1]})."
-                    )
+                    raise ValueError("Residual has fewer time steps than net before StridedDrop " f"(diff={diff}, residual={residual.shape[1]}, net={net.shape[1]}).")
                 residual = StridedDrop(diff, mode=self.mode)(residual)
             net = net + residual
 
@@ -454,15 +419,10 @@ class MixedNet(tf.keras.Model):
             ("residual_connections", residual_connections),
         ]:
             if len(param) != num_blocks:
-                raise ValueError(
-                    f"{name} length ({len(param)}) must match "
-                    f"pointwise_filters length ({num_blocks})"
-                )
+                raise ValueError(f"{name} length ({len(param)}) must match " f"pointwise_filters length ({num_blocks})")
 
         # Input specification - accept 3D input [batch, time, features]
-        self.input_spec = tf.keras.layers.InputSpec(
-            shape=(None, *input_shape), dtype=tf.float32  # Allow any batch size
-        )
+        self.input_spec = tf.keras.layers.InputSpec(shape=(None, *input_shape), dtype=tf.float32)  # Allow any batch size
 
     def build(self, input_shape):
         """Build the model layers."""
@@ -478,11 +438,7 @@ class MixedNet(tf.keras.Model):
                     strides=(self.stride, 1),
                     padding="valid",
                     use_bias=False,
-                    kernel_regularizer=(
-                        tf.keras.regularizers.l2(self.l2_regularization)
-                        if self.l2_regularization
-                        else None
-                    ),
+                    kernel_regularizer=(tf.keras.regularizers.l2(self.l2_regularization) if self.l2_regularization else None),
                     name="initial_conv",
                 ),
                 mode=self.mode,
@@ -518,9 +474,7 @@ class MixedNet(tf.keras.Model):
         # After stride 3 conv: time_dim = ceil(input_shape[0] / stride)
         # ring_buffer_size = time_dim - 1
         if input_shape and len(input_shape) >= 1 and input_shape[0]:
-            temporal_rb_size = max(
-                0, (input_shape[0] + self.stride - 1) // self.stride - 1
-            )
+            temporal_rb_size = max(0, (input_shape[0] + self.stride - 1) // self.stride - 1)
         else:
             temporal_rb_size = 0
         self.temporal_stream = Stream(
@@ -540,9 +494,7 @@ class MixedNet(tf.keras.Model):
             self.dropout = None
 
         # Output layer - must be float32 for numerical stability with mixed precision
-        self.output_dense = tf.keras.layers.Dense(
-            1, activation="sigmoid", name="output", dtype=tf.float32
-        )
+        self.output_dense = tf.keras.layers.Dense(1, activation="sigmoid", name="output", dtype=tf.float32)
 
         # Flatten layer for dense (created in build to avoid re-creation on each call)
         self.flatten = tf.keras.layers.Flatten(name="flatten")
@@ -663,8 +615,7 @@ def build_model(
     }
     if mode not in mode_map:
         logger.warning(
-            "build_model: unknown mode %r, defaulting to 'non_stream'. "
-            "Valid modes are: %r",
+            "build_model: unknown mode %r, defaulting to 'non_stream'. " "Valid modes are: %r",
             mode,
             list(mode_map.keys()),
         )

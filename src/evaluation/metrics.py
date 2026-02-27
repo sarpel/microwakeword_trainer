@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -51,7 +51,7 @@ def _manual_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
 def compute_precision_recall(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """Compute precision, recall, and F1 score."""
     tp = np.sum((y_true == 1) & (y_pred == 1))
     fp = np.sum((y_true == 0) & (y_pred == 1))
@@ -59,11 +59,7 @@ def compute_precision_recall(
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if (precision + recall) > 0
-        else 0.0
-    )
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
     return float(precision), float(recall), float(f1)
 
@@ -84,10 +80,10 @@ def _synchronize_output(output: Any) -> None:
 
 def compute_latency(
     model: Any,
-    input_shape: Tuple[int, ...],
+    input_shape: tuple[int, ...],
     n_runs: int = 100,
     warmup_runs: int = 10,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Compute inference latency statistics."""
     import tensorflow as tf
 
@@ -127,7 +123,7 @@ def compute_roc_pr_curves(
     y_true: np.ndarray,
     y_scores: np.ndarray,
     n_thresholds: int = 101,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """Compute ROC and PR curves at multiple thresholds."""
     thresholds = np.linspace(0, 1, n_thresholds)
 
@@ -166,7 +162,7 @@ def compute_roc_pr_curves(
 def compute_recall_at_no_faph(
     y_true: np.ndarray,
     y_scores: np.ndarray,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Compute recall at the lowest threshold yielding zero false positives."""
     thresholds = np.linspace(0, 1, 101)
 
@@ -233,9 +229,9 @@ class MetricsCalculator:
     def __init__(
         self,
         y_true: np.ndarray,
-        y_pred: Optional[np.ndarray] = None,
-        y_score: Optional[np.ndarray] = None,
-        sample_weight: Optional[np.ndarray] = None,
+        y_pred: np.ndarray | None = None,
+        y_score: np.ndarray | None = None,
+        sample_weight: np.ndarray | None = None,
         **opts: Any,
     ):
         self.y_true = y_true
@@ -243,15 +239,13 @@ class MetricsCalculator:
         self.y_score = y_score
         self.sample_weight = sample_weight
         self.opts = opts
-        self.fah_estimator = FAHEstimator(
-            ambient_duration_hours=opts.get("ambient_duration_hours")  # type: ignore
-        )
+        self.fah_estimator = FAHEstimator(ambient_duration_hours=opts.get("ambient_duration_hours"))
 
     def compute_fah_metrics(
         self,
         threshold: float = 0.5,
-        ambient_duration_hours: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        ambient_duration_hours: float | None = None,
+    ) -> dict[str, Any]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_fah_metrics requires y_score")
         return self.fah_estimator.compute_fah_metrics(
@@ -261,7 +255,7 @@ class MetricsCalculator:
             ambient_duration_hours=ambient_duration_hours,
         )
 
-    def compute_roc_pr_curves(self, n_thresholds: int = 101) -> Dict[str, np.ndarray]:
+    def compute_roc_pr_curves(self, n_thresholds: int = 101) -> dict[str, np.ndarray]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_roc_pr_curves requires y_score")
         return compute_roc_pr_curves(self.y_true, self.y_score, n_thresholds)
@@ -272,9 +266,7 @@ class MetricsCalculator:
         max_fah: float = 10.0,
     ) -> float:
         if self.y_score is None:
-            raise ValueError(
-                "MetricsCalculator.compute_average_viable_recall requires y_score"
-            )
+            raise ValueError("MetricsCalculator.compute_average_viable_recall requires y_score")
         return compute_average_viable_recall(
             self.y_true,
             self.y_score,
@@ -282,18 +274,16 @@ class MetricsCalculator:
             max_fah=max_fah,
         )
 
-    def compute_recall_at_no_faph(self) -> Tuple[float, float]:
+    def compute_recall_at_no_faph(self) -> tuple[float, float]:
         if self.y_score is None:
-            raise ValueError(
-                "MetricsCalculator.compute_recall_at_no_faph requires y_score"
-            )
+            raise ValueError("MetricsCalculator.compute_recall_at_no_faph requires y_score")
         return compute_recall_at_no_faph(self.y_true, self.y_score)
 
     def compute_all_metrics(
         self,
         ambient_duration_hours: float = 0.0,
         threshold: float = 0.5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_all_metrics requires y_score")
 
@@ -305,7 +295,7 @@ class MetricsCalculator:
         precision, recall, f1 = compute_precision_recall(self.y_true, y_pred)
         auc_roc = compute_roc_auc(self.y_true, self.y_score)
 
-        auc_pr: Optional[float] = None
+        auc_pr: float | None = None
         unique_classes = np.unique(self.y_true)
         if len(unique_classes) >= 2:
             try:
@@ -313,15 +303,11 @@ class MetricsCalculator:
 
                 auc_pr = float(average_precision_score(self.y_true, self.y_score))
             except ImportError:
-                logger.warning(
-                    "sklearn not available; setting auc_pr=None in compute_all_metrics"
-                )
+                logger.warning("sklearn not available; setting auc_pr=None in compute_all_metrics")
         else:
-            logger.warning(
-                "Only one class present in y_true; auc_pr is undefined and set to None"
-            )
+            logger.warning("Only one class present in y_true; auc_pr is undefined and set to None")
 
-        metrics: Dict[str, Any] = {
+        metrics: dict[str, Any] = {
             "accuracy": accuracy,
             "precision": precision,
             "recall": recall,
@@ -332,38 +318,28 @@ class MetricsCalculator:
 
         if ambient_duration_hours > 0:
             # Pass ambient_duration_hours explicitly instead of mutating estimator state
-            metrics.update(
-                self.compute_fah_metrics(
-                    threshold=threshold, ambient_duration_hours=ambient_duration_hours
-                )
-            )
+            metrics.update(self.compute_fah_metrics(threshold=threshold, ambient_duration_hours=ambient_duration_hours))
 
             recall_no_faph, thresh_no_faph = self.compute_recall_at_no_faph()
             metrics["recall_at_no_faph"] = recall_no_faph
             metrics["threshold_for_no_faph"] = thresh_no_faph
 
-            metrics["average_viable_recall"] = self.compute_average_viable_recall(
-                ambient_duration_hours=ambient_duration_hours
-            )
+            metrics["average_viable_recall"] = self.compute_average_viable_recall(ambient_duration_hours=ambient_duration_hours)
 
         return metrics
 
     def compute_latency(
         self,
         model: Any,
-        input_shape: Tuple[int, ...],
+        input_shape: tuple[int, ...],
         n_runs: int = 100,
         warmup_runs: int = 10,
-    ) -> Dict[str, float]:
-        return compute_latency(
-            model, input_shape, n_runs=n_runs, warmup_runs=warmup_runs
-        )
+    ) -> dict[str, float]:
+        return compute_latency(model, input_shape, n_runs=n_runs, warmup_runs=warmup_runs)
 
-    def compute_precision_recall(self) -> Tuple[float, float, float]:
+    def compute_precision_recall(self) -> tuple[float, float, float]:
         if self.y_pred is None:
-            raise ValueError(
-                "MetricsCalculator.compute_precision_recall requires y_pred"
-            )
+            raise ValueError("MetricsCalculator.compute_precision_recall requires y_pred")
         return compute_precision_recall(self.y_true, self.y_pred)
 
 
@@ -375,7 +351,7 @@ def compute_fah_metrics(
     y_scores: np.ndarray,
     ambient_duration_hours: float,
     threshold: float = 0.5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     calculator = MetricsCalculator(
         y_true=y_true,
         y_score=y_scores,
@@ -389,7 +365,7 @@ def compute_all_metrics(
     y_scores: np.ndarray,
     ambient_duration_hours: float = 0.0,
     threshold: float = 0.5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     calculator = MetricsCalculator(y_true=y_true, y_score=y_scores)
     return calculator.compute_all_metrics(
         ambient_duration_hours=ambient_duration_hours,

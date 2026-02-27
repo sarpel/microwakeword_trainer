@@ -1,0 +1,248 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "microwakeword_trainer"
+version = "2.0.0"
+description = "GPU-accelerated wake word model training pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "MWW Team", email = "team@mww.dev"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.scripts]
+mww-train = "src.training.trainer:main"
+mww-export = "src.export.tflite:main"
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.0.0",
+    "ruff>=0.6.0",
+    "mypy>=1.8.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.5.0",
+    "pre-commit>=3.6.0",
+]
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=2.0.0",
+]
+optional = [
+    "speechbrain>=1.0.0",
+    "transformers>=4.40.0",
+    "scikit-learn>=1.4.0",
+    "optuna>=3.6.0",
+    "matplotlib",
+    "seaborn",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "config*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml"]
+
+# =============================================================================
+# RUFF CONFIGURATION - FUNCTIONAL BUG-FINDING ONLY
+# =============================================================================
+[tool.ruff]
+target-version = "py310"
+line-length = 200  # Very permissive - focus on bugs not cosmetics
+indent-width = 4
+
+[tool.ruff.lint]
+select = [
+    # Pyflakes - catches real bugs (undefined names, unused imports, etc.)
+    "F",
+    # Pycodestyle - functional rules only
+    "E9",      # Syntax/runtime errors
+    "E71",     # Comparison errors  
+    "E72",     # Syntax errors
+    "W29",     # Whitespace warnings
+    # isort - import organization
+    "I",
+    # Flake8-bugbear - catches bugs
+    "B",
+    # Flake8-comprehensions - catches bugs, performance
+    "C4",
+    # Flake8-bandit (security) - security issues
+    "S",
+]
+ignore = [
+    # Allow assert (used in pytest)
+    "S101",
+    # Allow pickle (used in dataset storage)
+    "S301",
+    # Allow subprocess (used in export)
+    "S603", "S607",
+    # Allow OS calls (used in scripts)
+    "S605", "S606",
+    # Allow hardcoded passwords in test data
+    "S105", "S106", "S107",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "config"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+"scripts/**/*.py" = ["S603", "S607"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# =============================================================================
+# BLACK CONFIGURATION
+# =============================================================================
+[tool.black]
+line-length = 200
+target-version = ["py310", "py311"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | checkpoints
+  | models
+  | dataset
+  | data
+  | logs
+  | profiles
+  | notebooks
+)/
+'''
+
+# =============================================================================
+# PYTEST CONFIGURATION
+# =============================================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "--cov=src",
+    "--cov=config",
+    "--cov-report=term-missing",
+    "--cov-report=html:coverage_html",
+    "--cov-report=xml:coverage.xml",
+]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "gpu: marks tests that require GPU",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:tensorflow.*",
+    "ignore::FutureWarning:tensorflow.*",
+    "ignore::UserWarning:numpy.*",
+]
+
+# =============================================================================
+# COVERAGE CONFIGURATION
+# =============================================================================
+[tool.coverage.run]
+source = ["src", "config"]
+branch = true
+parallel = true
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "pass",
+]
+show_missing = true
+skip_covered = false
+fail_under = 0
+
+[tool.coverage.html]
+directory = "coverage_html"
+
+# =============================================================================
+# MYPY CONFIGURATION - FUNCTIONAL BUG-FINDING ONLY
+# =============================================================================
+[tool.mypy]
+python_version = "3.10"
+# Bug-finding checks (KEEP THESE)
+warn_return_any = true           # Catches returning wrong types
+warn_no_return = true            # Catches missing returns
+warn_unreachable = true          # Catches dead code
+strict_optional = true           # Catches None handling bugs
+# Relaxed checks (REMOVED strict typing requirements)
+disallow_untyped_defs = false    # Don't require type annotations everywhere
+check_untyped_defs = false       # Don't check untyped functions
+no_implicit_optional = false     # Allow optional to be implicit
+warn_unused_configs = false      # Not a bug
+ignore_missing_imports = true    # External libs often lack stubs
+explicit_package_bases = true
+warn_redundant_casts = false
+allow_untyped_calls = true
+allow_untyped_decorators = true
+implicit_reexport = true
+
+[[tool.mypy.overrides]]
+module = [
+    "yaml.*",
+    "tensorflow.*",
+    "cupy.*",
+    "pymicro_features.*",
+    "speechbrain.*",
+    "transformers.*",
+    "sklearn.*",
+    "datasets.*",
+    "soundfile.*",
+    "audiomentations.*",
+    "ai_edge_litert.*",
+    "GPUtil.*",
+    "numba.*",
+    "webrtcvad.*",
+    "audio_metadata.*",
+    "mmap_ninja.*",
+    "scipy.*",
+    "matplotlib.*",
+    "seaborn.*",
+    "optuna.*",
+    "rich.*",
+    "psutil.*",
+]
+ignore_missing_imports = true
