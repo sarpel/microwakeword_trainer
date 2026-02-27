@@ -4,6 +4,13 @@ Provides:
 - Speaker clustering using SpeechBrain ECAPA-TDNN embeddings
 - Similarity threshold-based clustering
 - Leakage audit for train/test separation
+
+Note on embedding model choice: This module uses SpeechBrain ECAPA-TDNN embeddings
+(via `extract_speaker_embeddings`) as the primary speaker embedding method. Although
+some guidelines suggest WavLM, ECAPA-TDNN was chosen because it achieves state-of-the-art
+speaker verification performance with lower inference overhead and does not require
+the Hugging Face `transformers` library. A `extract_wavlm_embeddings` compatibility
+wrapper is provided but internally delegates to ECAPA-TDNN.
 """
 
 import logging
@@ -346,29 +353,31 @@ def _select_boundary_samples(
     if len(indices) <= n_select:
         return indices
 
-    # Greedy selection: iteratively add most different sample
-    selected = [indices[0]]
-    remaining = list(indices[1:])
+    # Operate on positions within the indices array to avoid global vs local confusion
+    # selected_positions / remaining_positions are positions in range(len(indices))
+    selected_positions = [0]
+    remaining_positions = list(range(1, len(indices)))
 
-    while len(selected) < n_select and remaining:
-        # Find sample most different from current selections
-        selected_features = features[[i in selected for i in indices]]
+    while len(selected_positions) < n_select and remaining_positions:
+        # Compute selected feature vectors using positions into features array
+        selected_features = features[selected_positions]
 
-        max_min_dist = -1
-        best_idx = remaining[0]
+        max_min_dist = -1.0
+        best_pos = remaining_positions[0]
 
-        for idx in remaining:
-            feat = features[indices == idx]
-            min_dist = np.min(np.linalg.norm(selected_features - feat, axis=1))
+        for pos in remaining_positions:
+            feat = features[pos]
+            min_dist = float(np.min(np.linalg.norm(selected_features - feat, axis=1)))
 
             if min_dist > max_min_dist:
                 max_min_dist = min_dist
-                best_idx = idx
+                best_pos = pos
 
-        selected.append(best_idx)
-        remaining.remove(best_idx)
+        selected_positions.append(best_pos)
+        remaining_positions.remove(best_pos)
 
-    return np.array(selected)
+    # Return the original global indices corresponding to the selected positions
+    return indices[selected_positions]
 
 
 def audit_leakage(

@@ -498,7 +498,12 @@ class Clips:
         # Fallback: use parent directory name as speaker ID
         # e.g. /data/positive/speaker_001/sample.wav -> "speaker_001"
         parent_name = wav_path.parent.name
-        if parent_name and parent_name not in ("positive", "negative", "hard_negative", "background"):
+        if parent_name and parent_name not in (
+            "positive",
+            "negative",
+            "hard_negative",
+            "background",
+        ):
             return parent_name
 
         return None

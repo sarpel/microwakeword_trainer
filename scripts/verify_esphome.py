@@ -256,11 +256,6 @@ def verify_esphome_compatibility(
                     f"Expected 6 TYPE_13 state variables, got {num_state_vars}. "
                     "ESPHome streaming models require exactly 6 state tensors for ring buffer management."
                 )
-            if num_state_vars != 6:
-                results["warnings"].append(
-                    f"Expected 6 state variables, got {num_state_vars}. "
-                    "ESPHome streaming models typically have 6 state tensors."
-                )
 
         except Exception as e:
             results["warnings"].append(f"Could not verify state variables: {e}")
@@ -310,7 +305,6 @@ def verify_esphome_compatibility(
     except Exception as e:
         results["compatible"] = False
         results["errors"].append(f"Failed to load or analyze model: {e}")
-        raise
 
     return results
 

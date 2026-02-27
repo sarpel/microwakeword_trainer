@@ -108,7 +108,7 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 - Uses custom RaggedMmap storage for efficient audio data loading
 - Speaker clustering and hard negative mining fully implemented
 - Audio augmentation pipeline complete with 8 augmentation types
-## Anti-Patterns (This Project)
+
 ## Anti-Patterns (This Project)
 - **Don't install nvidia-driver inside WSL** - Install on Windows host only
 - **Don't mix TF and PyTorch in same venv** - Use separate environments

@@ -229,18 +229,18 @@ training:
   learning_rates: [0.001, 0.0001]          # Phase 1: 0.001 lr, Phase 2: 0.0001 lr
   batch_size: 128
   eval_step_interval: 500
-  
+
   # Class weights (higher negative weight = fewer false accepts)
   positive_class_weight: [1.0, 1.0]
   negative_class_weight: [20.0, 20.0]
   hard_negative_class_weight: [40.0, 40.0]
-  
+
   # SpecAugment (disabled by default, using audio augmentation instead)
   time_mask_max_size: [0, 0]
   time_mask_count: [0, 0]
   freq_mask_max_size: [0, 0]
   freq_mask_count: [0, 0]
-  
+
   # Checkpoint selection strategy
   minimization_metric: "ambient_false_positives_per_hour"
   target_minimization: 0.5
@@ -297,6 +297,18 @@ model:
   l2_regularization: 0.0
 ```
 
+#### ESPHome Compatibility Requirements
+
+When building custom models (MixedNet, DNN, CNN, or CRNN) for ESPHome deployment, the following constraints are **required**:
+
+- **Output layer**: `Dense(1)` with **sigmoid activation** — the final layer must be `Dense(1, activation='sigmoid')`. This ensures the model outputs a single probability in [0, 1] that ESPHome's `micro_wake_word` component can threshold.
+- **First conv stride**: `stride` must remain **3** (or 1) for the first convolution; `stride=3` means the streaming model consumes 3 mel frames per inference step (`input_shape = [1, stride, mel_bins]`).
+- **Input shape**: The non-streaming input spectrogram shape is `(spectrogram_length, mel_bins)`. During export the streaming model input becomes `(1, stride, mel_bins)` — e.g., `[1, 3, 40]` for the default config.
+- **Fields that control these constraints** (in `config.model`): `architecture`, `first_conv_filters`, `stride`, `spectrogram_length`.
+
+> **Output layer: Dense(1) with sigmoid activation**
+> Do not replace the final `Dense(1, sigmoid)` with a softmax, multi-class head, or any other activation — ESPHome reads a single `uint8` probability output.
+
 ### augmentation
 
 Audio augmentation parameters. Each value is the probability (0.0-1.0) of applying that augmentation.
@@ -307,7 +319,7 @@ Audio augmentation parameters. Each value is the probability (0.0-1.0) of applyi
 |--------|------|---------|-------------|
 | `SevenBandParametricEQ` | float | 0.1 | 7-band parametric equalization. |
 | `TanhDistortion` | float | 0.1 | Tanh-based distortion. |
-| `PitchShift` | float | 0.1 | Pitch shifting. |
+| `PitchShift` | float | 0.1 | Pitch shifting. **Warning: Internal speed perturbation is limited to max 1.3x to prevent distortion.** |
 | `BandStopFilter` | float | 0.1 | Band-stop (notch) filtering. |
 | `AddColorNoise` | float | 0.1 | Add colored noise. |
 | `AddBackgroundNoise` | float | 0.75 | Mix in background noise. |
@@ -315,6 +327,14 @@ Audio augmentation parameters. Each value is the probability (0.0-1.0) of applyi
 | `RIR` | float | 0.5 | Apply room impulse response (reverb). |
 | `AddBackgroundNoiseFromFile` | float | 0.0 | Load background noise from file (max quality only). |
 | `ApplyImpulseResponse` | float | 0.0 | Apply IR from file (max quality only). |
+
+#### Augmentation Safety Limits
+
+| Constraint | Limit | Notes |
+|-----------|-------|-------|
+| Speed/Pitch Perturbation | Never exceeds **1.3x** | Internal resampling for `PitchShift` is capped at 1.3x to prevent distortion artifacts |
+| SNR range | `-5 dB` to `10 dB` | Set via `background_min_snr_db` / `background_max_snr_db` |
+| Gain range | `-3 dB` to `+3 dB` | Applied uniformly before other augmentations |
 
 #### Noise Mixing Parameters
 
@@ -340,13 +360,13 @@ augmentation:
   AddBackgroundNoise: 0.75
   Gain: 1.0
   RIR: 0.5
-  
+
   # Noise mixing parameters
   background_min_snr_db: -5
   background_max_snr_db: 10
   min_jitter_s: 0.195
   max_jitter_s: 0.205
-  
+
   # Background sources
   impulse_paths: ["./dataset/rirs"]
   background_paths: ["./dataset/background"]
@@ -489,11 +509,11 @@ export:
   author: "Your Name"
   website: "https://github.com/yourusername/project"
   trained_languages: ["en"]
-  
+
   quantize: true
   inference_input_type: "int8"
   inference_output_type: "uint8"
-  
+
   # Detection threshold (0.70 for testing, 0.95-0.98 for production)
   probability_cutoff: 0.97
   sliding_window_size: 5

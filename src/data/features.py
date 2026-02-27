@@ -98,7 +98,8 @@ class FeatureConfig:
         if self.window_step_ms > self.window_size_ms:
             issues.append("window_step_ms must be <= window_size_ms")
 
-        if self.mel_bins < 1:
+        if self.mel_bins != 40:
+            issues.append("mel_bins must be exactly 40 for ESPHome compatibility [ARCHITECTURE.md: IMMUTABLE]")
             issues.append("mel_bins must be >= 1")
 
         if self.high_freq <= self.low_freq:
@@ -162,6 +163,17 @@ class MicroFrontend:
         """
         return self._compute_mel_spectrogram_pymicro(audio)
 
+    def extract(self, audio: np.ndarray) -> np.ndarray:
+        """Extract mel spectrogram from audio (alias for compute_mel_spectrogram).
+
+        Args:
+            audio: Audio samples as float32 array in range [-1, 1]
+
+        Returns:
+            Mel spectrogram of shape (num_frames, mel_bins)
+        """
+        return self.compute_mel_spectrogram(audio)
+
     def _compute_mel_spectrogram_pymicro(self, audio: np.ndarray) -> np.ndarray:
         """Compute mel spectrogram using pymicro-features.
 
@@ -216,7 +228,9 @@ class MicroFrontend:
         # Trim any incomplete frame
         all_features = all_features[: num_frames * mel_bins]
 
-        mel_spec = np.array(all_features, dtype=np.float32).reshape(num_frames, mel_bins)
+        mel_spec = np.array(all_features, dtype=np.float32).reshape(
+            num_frames, mel_bins
+        )
 
         return mel_spec
 
@@ -476,7 +490,7 @@ def extract_features(
         config.low_freq,
         config.high_freq,
     )
-    return frontend.extract(audio)
+    return frontend.compute_mel_spectrogram(audio)
 
 
 def compute_mel_spectrogram(

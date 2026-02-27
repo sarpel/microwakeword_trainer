@@ -54,9 +54,6 @@ training:
   maximization_metric: "average_viable_recall"
   # Hours of negative/background audio for FAH calculation
   ambient_duration_hours: 10.0
-  minimization_metric: "ambient_false_positives_per_hour"
-  target_minimization: 0.3
-  maximization_metric: "average_viable_recall"
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE

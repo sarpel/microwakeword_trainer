@@ -28,7 +28,6 @@ Heavyweight config system supporting:
 | paths | PathsConfig | positive_dir, negative_dir, checkpoint_dir |
 | training | TrainingConfig | learning_rates, batch_size, augmentation params |
 | model | ModelConfig | architecture, filters, dropout_rate |
-
 | augmentation | AugmentationConfig | EQ, distortion, pitch shift params |
 | performance | PerformanceConfig | gpu_only, mixed_precision, profiling |
 | speaker_clustering | SpeakerClusteringConfig | embedding model, similarity threshold |

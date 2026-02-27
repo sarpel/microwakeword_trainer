@@ -8,6 +8,9 @@ import wave
 import numpy as np
 from pathlib import Path
 
+# Module-level RNG for deterministic but unique noise generation
+_rng = np.random.default_rng(42)
+
 # Configuration
 SAMPLE_RATE = 16000  # 16 kHz
 DURATION = 1.0  # 1 second
@@ -35,8 +38,7 @@ def generate_sine_wave(
 
 def generate_noise(duration: float, sample_rate: int) -> np.ndarray:
     """Generate random noise (deterministic with seed)."""
-    rng = np.random.RandomState(42)
-    samples = rng.randn(int(duration * sample_rate))
+    samples = _rng.standard_normal(int(duration * sample_rate))
     # Apply fade in/out
     fade_len = int(sample_rate * 0.05)
     envelope = np.ones_like(samples)
@@ -145,13 +147,27 @@ def main():
     pos_info = verify_wav_file(pos_sample)
     neg_info = verify_wav_file(neg_sample)
 
-    print(f"  Positive: {pos_sample.name}")
-    print(f"    Channels: {pos_info['channels']}, Rate: {pos_info['sample_rate']} Hz")
-    print(f"    Duration: {pos_info['duration']:.2f}s, Frames: {pos_info['n_frames']}")
+    if "error" in pos_info:
+        print(f"  Positive: {pos_sample.name} - ERROR: {pos_info['error']}")
+    else:
+        print(f"  Positive: {pos_sample.name}")
+        print(
+            f"    Channels: {pos_info['channels']}, Rate: {pos_info['sample_rate']} Hz"
+        )
+        print(
+            f"    Duration: {pos_info['duration']:.2f}s, Frames: {pos_info['n_frames']}"
+        )
 
-    print(f"  Negative: {neg_sample.name}")
-    print(f"    Channels: {neg_info['channels']}, Rate: {neg_info['sample_rate']} Hz")
-    print(f"    Duration: {neg_info['duration']:.2f}s, Frames: {neg_info['n_frames']}")
+    if "error" in neg_info:
+        print(f"  Negative: {neg_sample.name} - ERROR: {neg_info['error']}")
+    else:
+        print(f"  Negative: {neg_sample.name}")
+        print(
+            f"    Channels: {neg_info['channels']}, Rate: {neg_info['sample_rate']} Hz"
+        )
+        print(
+            f"    Duration: {neg_info['duration']:.2f}s, Frames: {neg_info['n_frames']}"
+        )
 
     # Count files
     pos_count = len(list(POSITIVE_DIR.glob("*.wav")))

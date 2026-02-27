@@ -81,12 +81,14 @@ def calibrate_probabilities(
     bias: float = 0.0,
 ) -> np.ndarray:
     """Apply a lightweight logistic calibration transform."""
-    # Use consistent epsilon for both y_prob and its complement
-    eps = 1e-7
-    y_prob_clipped = np.clip(y_prob, eps, 1 - eps)
-    y_prob_complement_clipped = np.clip(1 - y_prob, eps, 1 - eps)
+    # Validate input range
+    if not np.all((y_prob >= 0) & (y_prob <= 1)):
+        raise ValueError("y_prob values must be in [0, 1]")
 
-    logits = np.log(y_prob_clipped / y_prob_complement_clipped)
+    # Single clip: avoid double-clipping the complement
+    eps = 1e-7
+    p_clipped = np.clip(y_prob, eps, 1 - eps)
+    logits = np.log(p_clipped / (1 - p_clipped))
     calibrated_logits = scale * logits + bias
 
     return expit(calibrated_logits)

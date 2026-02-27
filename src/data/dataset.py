@@ -9,6 +9,7 @@ Provides:
 import logging
 import os
 import struct
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -168,8 +169,6 @@ class RaggedMmap:
         arrays = [np.asarray(arr, dtype=self.dtype) for arr in arrays]
 
         # Get lengths (in bytes for offset calculation)
-        # Get lengths (in bytes for offset calculation)
-        lengths = [arr.nbytes for arr in arrays]
         lengths = [arr.nbytes for arr in arrays]
 
         # Calculate offsets
@@ -345,6 +344,11 @@ class FeatureStore:
             "expected_samples": num_samples,
             "feature_dim": feature_dim,
         }
+
+        # Open stores in write mode so append() works immediately
+        self.features.open("w")
+        self.labels.open("w")
+
     def add(self, feature: np.ndarray, label: int):
         """Add a single feature-label pair.
 
@@ -485,6 +489,7 @@ class WakeWordDataset:
         # Try to load from store
         self.feature_store: Optional[FeatureStore] = None
         self._load_store()
+
     def _load_store(self):
         """Load feature store if available."""
         store_path = self.data_path / self.split
@@ -583,10 +588,14 @@ class WakeWordDataset:
         train_samples = clips.get_split(Split.TRAIN)
         val_samples = clips.get_split(Split.VAL)
 
-        logger.info(f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples")
+        logger.info(
+            f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples"
+        )
 
         if not train_samples:
-            raise RuntimeError("No training samples found. Please check your dataset directories.")
+            raise RuntimeError(
+                "No training samples found. Please check your dataset directories."
+            )
 
         # Extract features and store for training
         logger.info(f"Extracting features for {len(train_samples)} training clips...")
@@ -596,17 +605,18 @@ class WakeWordDataset:
         for sample in train_samples:
             try:
                 # Load audio
-                import wave
-
-                with wave.open(str(sample.path), 'rb') as wf:
+                with wave.open(str(sample.path), "rb") as wf:
                     n_frames = wf.getnframes()
                     audio_data = wf.readframes(n_frames)
-                    audio = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32767.0
+                    audio = (
+                        np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
+                        / 32767.0
+                    )
 
                 # Extract features
                 features = frontend.compute_mel_spectrogram(audio)
 
-                # Determine label (0 for negative, 1 for positive/hard_negative)
+                # Determine label: 1 for positive only, 0 for negative/hard_negative
                 label = 1 if sample.label == Label.POSITIVE else 0
 
                 # Add to store
@@ -616,21 +626,28 @@ class WakeWordDataset:
                 logger.warning(f"Failed to process {sample.path}: {e}")
                 continue
 
+        # Capture sample count before closing the store
+        sample_count = len(train_store)
         train_store.close()
-        logger.info(f"Processed {len(train_store)} training samples")
+        logger.info(f"Processed {sample_count} training samples")
 
         # Extract features for validation
         if val_samples:
-            logger.info(f"Extracting features for {len(val_samples)} validation clips...")
+            logger.info(
+                f"Extracting features for {len(val_samples)} validation clips..."
+            )
             val_store = FeatureStore(dirs["val"])
             val_store.initialize(len(val_samples), feature_dim=mel_bins)
 
             for sample in val_samples:
                 try:
-                    with wave.open(str(sample.path), 'rb') as wf:
+                    with wave.open(str(sample.path), "rb") as wf:
                         n_frames = wf.getnframes()
                         audio_data = wf.readframes(n_frames)
-                        audio = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32767.0
+                        audio = (
+                            np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
+                            / 32767.0
+                        )
 
                     features = frontend.compute_mel_spectrogram(audio)
                     label = 1 if sample.label == Label.POSITIVE else 0
@@ -647,7 +664,10 @@ class WakeWordDataset:
         self._load_store()
 
         return self
-    def _pad_or_truncate(self, features: np.ndarray, max_time_frames: int) -> np.ndarray:
+
+    def _pad_or_truncate(
+        self, features: np.ndarray, max_time_frames: int
+    ) -> np.ndarray:
         """Pad or truncate features to fixed time length."""
         # Handle potentially flattened array from RaggedMmap
         if features.ndim == 1:
@@ -661,12 +681,16 @@ class WakeWordDataset:
         if current_length > max_time_frames:
             return features[:max_time_frames, :]
         elif current_length < max_time_frames:
-            padding = np.zeros((max_time_frames - current_length, self.feature_dim), dtype=features.dtype)
+            padding = np.zeros(
+                (max_time_frames - current_length, self.feature_dim),
+                dtype=features.dtype,
+            )
             return np.vstack([features, padding])
         return features
 
     def train_generator_factory(self, max_time_frames: int = 49):
         """Create a factory for infinite training data generator."""
+
         def factory():
             num_samples = len(self)
             if num_samples == 0:
@@ -697,10 +721,12 @@ class WakeWordDataset:
                     ground_truth = np.array(batch_labels, dtype=np.int32)
                     sample_weights = np.ones(len(batch_labels), dtype=np.float32)
                     yield (fingerprints, ground_truth, sample_weights)
+
         return factory
 
     def val_generator_factory(self, max_time_frames: int = 49):
         """Create a factory for finite validation data generator."""
+
         def factory():
             num_samples = len(self)
             if num_samples == 0:
@@ -728,8 +754,8 @@ class WakeWordDataset:
                 ground_truth = np.array(batch_labels, dtype=np.int32)
                 sample_weights = np.ones(len(batch_labels), dtype=np.float32)
                 yield (fingerprints, ground_truth, sample_weights)
-        return factory
 
+        return factory
 
 
 # =============================================================================

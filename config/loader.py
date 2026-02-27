@@ -9,12 +9,16 @@ Provides:
 - Configuration validation
 """
 
+import dataclasses
+import logging
 import os
 import re
 import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # DATACLASS CONFIGURATION STRUCTURES
@@ -428,8 +432,7 @@ class ConfigLoader:
             if section_name in config:
                 section_data = config[section_name]
                 # Filter to only fields the dataclass accepts
-                import dataclasses as _dc
-                valid_fields = {f.name for f in _dc.fields(section_class)}
+                valid_fields = {f.name for f in dataclasses.fields(section_class)}
                 filtered = {k: v for k, v in section_data.items() if k in valid_fields}
                 if len(filtered) < len(section_data):
                     unknown = set(section_data) - valid_fields
@@ -533,9 +536,19 @@ class ConfigLoader:
         if value.startswith(("http://", "https://", "file://", "/")):
             return value
 
-        # Skip HuggingFace-style model IDs (e.g. "microsoft/wavlm-base-plus")
-        import re
-        if re.match(r'^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$', value) and '.' not in value.split('/')[-1].rsplit('-', 1)[0]:
+        # Skip HuggingFace-style model IDs (e.g. "microsoft/wavlm-base-plus", "org/model.v2")
+        # Treat as HF ID if it contains '/' and the last segment doesn't end with a known file extension
+        _file_extensions = (
+            ".json",
+            ".yaml",
+            ".yml",
+            ".py",
+            ".txt",
+            ".cfg",
+            ".ini",
+            ".toml",
+        )
+        if "/" in value and not value.split("/")[-1].endswith(_file_extensions):
             return value
 
         # ./paths → resolve against CWD (project root)

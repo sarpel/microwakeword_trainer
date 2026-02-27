@@ -3,7 +3,7 @@
 Provides progress bars, metric tables, confusion matrices, and formatted logging.
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
@@ -19,7 +19,6 @@ from rich.progress import (
 )
 from rich.table import Table
 from rich.rule import Rule
-from rich.text import Text
 
 
 class RichTrainingLogger:
@@ -83,7 +82,13 @@ class RichTrainingLogger:
         time_mask_counts = training.get("time_mask_count", [0])
         freq_mask_sizes = training.get("freq_mask_max_size", [0])
         freq_mask_counts = training.get("freq_mask_count", [0])
-        has_spec_aug = any(x > 0 for x in time_mask_sizes + time_mask_counts + freq_mask_sizes + freq_mask_counts)
+        has_spec_aug = any(
+            x > 0
+            for x in time_mask_sizes
+            + time_mask_counts
+            + freq_mask_sizes
+            + freq_mask_counts
+        )
         if has_spec_aug:
             table.add_row(
                 "SpecAugment",

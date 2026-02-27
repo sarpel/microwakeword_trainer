@@ -8,7 +8,9 @@ from typing import Any, Dict, Optional
 import numpy as np
 import tensorflow as tf
 
-# Minimum tensor arena size in bytes (26 KB – the minimum for hey_jarvis models)
+logger = logging.getLogger(__name__)
+
+# Minimum tensor arena size in bytes (~22.3 KB – the minimum for hey_jarvis models)
 DEFAULT_TENSOR_ARENA_SIZE = 22860
 
 
@@ -135,8 +137,18 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
 
             num_elements = 1
             for dim in shape:
-                # Use abs(dim) to handle -1 dynamic dimensions gracefully
-                d = abs(dim) if dim != 0 else 1
+                if dim == -1:
+                    # Dynamic dimension: use a conservative estimate of 1 and warn
+                    logger.warning(
+                        "Tensor '%s' has a dynamic dimension (-1). "
+                        "Arena size estimate may be too small; using 1 for this dim.",
+                        tensor.get("name", "<unnamed>"),
+                    )
+                    d = 1
+                elif dim == 0:
+                    d = 1
+                else:
+                    d = abs(dim)
                 num_elements *= d
 
             total_memory += num_elements * elem_size
@@ -196,6 +208,12 @@ def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
 
     # Required micro section fields
     if "micro" in manifest:
+        micro_obj = manifest.get("micro")
+        if not isinstance(micro_obj, dict):
+            results["compatible"] = False
+            results["errors"].append("Field 'micro' must be an object")
+            return results
+
         micro_required = [
             "probability_cutoff",
             "feature_step_size",
@@ -204,7 +222,7 @@ def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
             "minimum_esphome_version",
         ]
         for field in micro_required:
-            if field not in manifest["micro"]:
+            if field not in micro_obj:
                 results["compatible"] = False
                 results["errors"].append(f"Missing required micro field: {field}")
 

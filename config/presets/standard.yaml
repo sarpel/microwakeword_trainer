@@ -17,14 +17,14 @@ hardware:
 # PATHS
 # ─────────────────────────────────────────────────────────────────
 paths:
-  positive_dir: "./dataset/positive"
-  negative_dir: "./dataset/negative"
-  hard_negative_dir: "./dataset/hard_negative"
-  background_dir: "./dataset/background"
-  rir_dir: "./dataset/rirs"
-  processed_dir: "./data/processed"
-  checkpoint_dir: "./checkpoints"
-  export_dir: "./models/exported"
+  positive_dir: "${DATASET_DIR:-./dataset}/positive"
+  negative_dir: "${DATASET_DIR:-./dataset}/negative"
+  hard_negative_dir: "${DATASET_DIR:-./dataset}/hard_negative"
+  background_dir: "${DATASET_DIR:-./dataset}/background"
+  rir_dir: "${DATASET_DIR:-./dataset}/rirs"
+  processed_dir: "${DATA_DIR:-./data}/processed"
+  checkpoint_dir: "${CHECKPOINT_DIR:-./checkpoints}"
+  export_dir: "${MODEL_EXPORT_DIR:-./models/exported}"
 
 # ─────────────────────────────────────────────────────────────────
 # TRAINING PARAMETERS

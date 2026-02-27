@@ -471,8 +471,6 @@ def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
     ]
 
     # Check for positive indicators
-    import re
-
     has_positive = False
     for pattern in positive_indicators:
         if re.search(re.escape(pattern), analysis_text, re.IGNORECASE):
@@ -538,7 +536,16 @@ def generate_model_report(
     model_path: str, stride: int = 3, mel_bins: int = 40
 ) -> Dict[str, Any]:
     """Generate a comprehensive model analysis report."""
-    architecture = analyze_model_architecture(model_path)
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+
+    try:
+        architecture = analyze_model_architecture(model_path)
+    except Exception as e:
+        _log.warning("analyze_model_architecture failed for '%s': %s", model_path, e)
+        architecture = {"error": str(e), "layer_count": 0, "has_quantization": False}
+
     validation = validate_model_quality(model_path, stride=stride, mel_bins=mel_bins)
     performance = estimate_performance(model_path, stride=stride, mel_bins=mel_bins)
     gpu_check = check_gpu_compatibility(model_path)

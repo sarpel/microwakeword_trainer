@@ -4,6 +4,7 @@ Provides:
 - AudioAugmentation: Complete augmentation pipeline
 - Individual augmentations: EQ, distortion, pitch shift, etc.
 - Config-driven augmentation from YAML
+- apply_spec_augment_gpu: GPU-accelerated spectrogram SpecAugment via CuPy
 """
 
 import logging
@@ -13,6 +14,14 @@ from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
+
+try:
+    import cupy as cp
+
+    HAS_CUPY = True
+except ImportError:
+    cp = None  # type: ignore
+    HAS_CUPY = False
 
 logger = logging.getLogger(__name__)
 
@@ -134,12 +143,20 @@ class AudioAugmentation:
             augmented = self.apply_color_noise(augmented)
 
         # Apply background noise (check both old and new keys)
-        bg_noise_prob = self.config.AddBackgroundNoiseFromFile or self.config.AddBackgroundNoise
+        bg_noise_prob = max(
+            float(getattr(self.config, "AddBackgroundNoiseFromFile", 0) or 0),
+            float(getattr(self.config, "AddBackgroundNoise", 0) or 0),
+        )
+        bg_noise_prob = min(max(bg_noise_prob, 0.0), 1.0)
         if apply_all or random.random() < bg_noise_prob:
             augmented = self.apply_background_noise(augmented)
 
         # Apply RIR (check both old and new keys)
-        rir_prob = self.config.ApplyImpulseResponse or self.config.RIR
+        rir_prob = max(
+            float(getattr(self.config, "ApplyImpulseResponse", 0) or 0),
+            float(getattr(self.config, "RIR", 0) or 0),
+        )
+        rir_prob = min(max(rir_prob, 0.0), 1.0)
         if apply_all or random.random() < rir_prob:
             augmented = self.apply_rir(augmented)
         return augmented
@@ -270,8 +287,13 @@ class AudioAugmentation:
                 self.config.background_min_snr_db, self.config.background_max_snr_db
             )
             signal_power = np.mean(audio**2)
-            noise_power = signal_power / (10 ** (snr_db / 10))
-            noise = np.random.randn(len(audio)) * np.sqrt(noise_power)
+            # Guard against silent input: use a small epsilon so noise is still audible
+            eps = 1e-10
+            safe_signal_power = max(float(signal_power), eps)
+            noise_power = safe_signal_power / (10 ** (snr_db / 10))
+            noise = np.random.randn(len(audio)).astype(np.float32)
+            noise *= np.sqrt(np.float32(noise_power))
+            return (audio + noise).astype(np.float32, copy=False)
             return audio + noise
 
     def apply_background_noise(self, audio: np.ndarray) -> np.ndarray:
@@ -347,7 +369,9 @@ class AudioAugmentation:
             rir = load_audio_wave(rir_file)
 
             # Convolve
+            # Convolve
             convolved = np.convolve(audio, rir, mode="full")[: len(audio)]
+            return convolved.astype(np.float32, copy=False)
 
             # Normalize to prevent clipping
             max_val = np.max(np.abs(convolved))
@@ -359,3 +383,55 @@ class AudioAugmentation:
         except Exception as e:
             logger.warning(f"Failed to apply RIR: {e}")
             return audio
+
+
+def apply_spec_augment_gpu(
+    spectrogram: np.ndarray,
+    time_mask_param: int = 40,
+    freq_mask_param: int = 27,
+    num_time_masks: int = 2,
+    num_freq_masks: int = 2,
+) -> np.ndarray:
+    """Apply SpecAugment on GPU using CuPy.
+
+    Applies time and frequency masking to a mel spectrogram on the GPU.
+    Called after feature extraction when GPU SpecAugment is enabled.
+
+    Args:
+        spectrogram: Input spectrogram array of shape (time_frames, mel_bins)
+        time_mask_param: Maximum width of time masks
+        freq_mask_param: Maximum width of frequency masks
+        num_time_masks: Number of time masks to apply
+        num_freq_masks: Number of frequency masks to apply
+
+    Returns:
+        Augmented spectrogram as numpy array
+
+    Raises:
+        ImportError: If CuPy is not installed (GPU required)
+    """
+    if not HAS_CUPY or cp is None:
+        raise ImportError(
+            "CuPy is required for GPU SpecAugment. Install: pip install cupy-cuda12x"
+        )
+
+    # Transfer to GPU
+    spec_gpu = cp.asarray(spectrogram)
+    time_frames, mel_bins = spec_gpu.shape
+
+    # Apply time masks
+    for _ in range(num_time_masks):
+        mask_width = int(cp.random.randint(0, time_mask_param + 1).item())
+        if mask_width > 0 and time_frames > mask_width:
+            start = int(cp.random.randint(0, time_frames - mask_width + 1).item())
+            spec_gpu[start : start + mask_width, :] = 0
+
+    # Apply frequency masks
+    for _ in range(num_freq_masks):
+        mask_width = int(cp.random.randint(0, freq_mask_param + 1).item())
+        if mask_width > 0 and mel_bins > mask_width:
+            start = int(cp.random.randint(0, mel_bins - mask_width + 1).item())
+            spec_gpu[:, start : start + mask_width] = 0
+
+    # Transfer back to CPU
+    return cp.asnumpy(spec_gpu)

@@ -233,20 +233,23 @@ class Trainer:
         self.intra_op_parallelism = performance.get("intra_op_parallelism", 16)
         self.tensorboard_enabled = performance.get("tensorboard_enabled", True)
         self.tensorboard_log_dir = performance.get("tensorboard_log_dir", "./logs")
-        
+
         # Rich terminal logger
         self.logger = RichTrainingLogger()
-        # FAH calculation - get ambient duration hours from training config
+        # FAH calculation - prefer evaluation config, fall back to training config.
+        # Only overwrite if evaluation block explicitly provides a non-zero value.
         self.ambient_duration_hours = training.get("ambient_duration_hours", 10.0)
         if self.ambient_duration_hours > 0:
             self.logger.log_info(
                 f"FAH calculation enabled with {self.ambient_duration_hours:.2f} hours of ambient audio"
             )
         evaluation = config.get("evaluation", {})
-        self.ambient_duration_hours = evaluation.get("ambient_duration_hours", 0.0)
-        if self.ambient_duration_hours > 0:
+        eval_ambient = evaluation.get("ambient_duration_hours")
+        if eval_ambient is not None and eval_ambient > 0:
+            self.ambient_duration_hours = eval_ambient
             self.logger.log_info(
-                f"FAH calculation enabled with {self.ambient_duration_hours:.2f} hours of ambient audio"
+                f"FAH calculation overridden by evaluation config: "
+                f"{self.ambient_duration_hours:.2f} hours of ambient audio"
             )
 
         # Apply threading config
@@ -295,6 +298,7 @@ class Trainer:
                 f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, "
                 f"max_samples={hn_config.get('max_samples', 5000)}"
             )
+
     def _get_current_phase_settings(self, step: int) -> Dict[str, Any]:
         """Get training settings for current step.
 
@@ -345,7 +349,9 @@ class Trainer:
             first_conv_kernel_size=model_cfg.get("first_conv_kernel_size", 5),
             stride=model_cfg.get("stride", 3),
             pointwise_filters=model_cfg.get("pointwise_filters", "60,60,60,60"),
-            mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[9],[13],[21]"),
+            mixconv_kernel_sizes=model_cfg.get(
+                "mixconv_kernel_sizes", "[5],[9],[13],[21]"
+            ),
             repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
             residual_connection=model_cfg.get("residual_connection", "0,0,0,0"),
             dropout_rate=model_cfg.get("dropout_rate", 0.0),
@@ -695,7 +701,9 @@ class Trainer:
 
             # Update progress bar and detect phase transitions
             phase_settings_display = self._get_current_phase_settings(step)
-            self.logger.update_step(progress, progress_task, step, train_metrics, phase_settings_display)
+            self.logger.update_step(
+                progress, progress_task, step, train_metrics, phase_settings_display
+            )
 
             # Detect and announce phase transitions
             current_phase = phase_settings_display["phase"]
@@ -712,7 +720,8 @@ class Trainer:
                     progress.start()
                 prev_phase = current_phase
 
-            # Evaluate every N steps
+            # Evaluate every N steps (regardless of phase transition)
+            if step % self.eval_step_interval == 0:
                 val_metrics = self.validate(val_data_factory)
 
                 # Log validation results with Rich table and confusion matrix
@@ -752,13 +761,17 @@ class Trainer:
                             )
                             self.logger.log_mining(
                                 f"Completed at epoch {approx_epoch}",
-                                count=mining_result['num_hard_negatives'],
+                                count=mining_result["num_hard_negatives"],
                             )
                             self._last_mined_epoch = approx_epoch
                         except IOError as e:
-                            self.logger.log_warning(f"Hard negative mining failed (IOError): {e}")
+                            self.logger.log_warning(
+                                f"Hard negative mining failed (IOError): {e}"
+                            )
                         except RuntimeError as e:
-                            self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
+                            self.logger.log_warning(
+                                f"Hard negative mining failed (RuntimeError): {e}"
+                            )
                         except Exception:
                             raise
 
@@ -766,10 +779,13 @@ class Trainer:
                 progress.start()
 
         # Training complete
+        total_time = time.time() - start_time
         progress.stop()
         self.logger.log_completion(
-            total_time, self.best_weights_path or "N/A",
-            self.best_fah, self.best_recall,
+            total_time,
+            self.best_weights_path or "N/A",
+            self.best_fah,
+            self.best_recall,
         )
 
         # Load best weights for return
@@ -843,6 +859,7 @@ def main():
 
     # Convert dataclass to dict since train() expects a dict
     import dataclasses
+
     config_dict = dataclasses.asdict(config)
 
     # Train model

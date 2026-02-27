@@ -73,6 +73,10 @@ def _synchronize_output(output: Any) -> None:
     if hasattr(output, "numpy"):
         _ = output.numpy()
         return
+    if isinstance(output, dict):
+        for item in output.values():
+            _synchronize_output(item)
+        return
     if isinstance(output, (list, tuple)):
         for item in output:
             _synchronize_output(item)
@@ -240,7 +244,7 @@ class MetricsCalculator:
         self.sample_weight = sample_weight
         self.opts = opts
         self.fah_estimator = FAHEstimator(
-            ambient_duration_hours=float(opts.get("ambient_duration_hours", 0.0))
+            ambient_duration_hours=opts.get("ambient_duration_hours")  # type: ignore
         )
 
     def compute_fah_metrics(
@@ -295,6 +299,8 @@ class MetricsCalculator:
 
         y_pred = (self.y_score >= threshold).astype(int)
 
+        # TODO: propagate self.sample_weight to compute_accuracy / compute_precision_recall
+        # when the underlying helpers support per-sample weights.
         accuracy = compute_accuracy(self.y_true, y_pred)
         precision, recall, f1 = compute_precision_recall(self.y_true, y_pred)
         auc_roc = compute_roc_auc(self.y_true, self.y_score)

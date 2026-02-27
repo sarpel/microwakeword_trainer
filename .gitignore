@@ -25,10 +25,12 @@ dist
 build
 *.egg
 .ruff_cache
-checkpoints/
-data/
+
 .pytest_cache
-docs/IMPLEMENTATION_PLAN.md
+.coverage
+htmlcov
+.coverage.*
+.cache
 
 
 

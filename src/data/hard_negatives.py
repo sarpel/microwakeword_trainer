@@ -3,18 +3,22 @@
 Provides:
 - HardNegativeMiningConfig: Configuration for mining
 - HardNegativeMiner: Mines false positives during training
-- integrate_into_training: Helper to add mining to training loop
+- integrate_hard_negative_mining: Helper to add mining to training loop
 """
 
 import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, TYPE_CHECKING
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from src.data.features import MicroFrontend
+
 
 
 @dataclass
@@ -32,6 +36,15 @@ class HardNegativeMiningConfig:
     fp_threshold: float = 0.8
     max_samples: int = 5000
     mining_interval_epochs: int = 5
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        if not 0.0 <= self.fp_threshold <= 1.0:
+            raise ValueError(f"fp_threshold must be between 0.0 and 1.0, got {self.fp_threshold}")
+        if self.max_samples <= 0:
+            raise ValueError(f"max_samples must be positive, got {self.max_samples}")
+        if self.mining_interval_epochs <= 0:
+            raise ValueError(f"mining_interval_epochs must be positive, got {self.mining_interval_epochs}")
 
 
 class HardNegativeMiner:
@@ -57,6 +70,9 @@ class HardNegativeMiner:
         self.hard_negative_dir = Path(hard_negative_dir)
         self.mined_count = 0
         self.epoch_counter = 0
+        self.feature_extractor: Optional[MicroFrontend] = (
+            None  # Lazy-initialized MicroFrontend
+        )
 
         # Ensure directory exists
         self.hard_negative_dir.mkdir(parents=True, exist_ok=True)
@@ -147,13 +163,22 @@ class HardNegativeMiner:
         # Load audio
         audio = load_audio_wave(audio_path)
 
-        # Extract features
-        # Note: This should match training feature extraction
-        extractor = MicroFrontend()
-        features = extractor.compute_mel_spectrogram(audio)
+        # Extract features — reuse the extractor to avoid re-instantiation per call
+        if self.feature_extractor is None:
+            self.feature_extractor = MicroFrontend()
+        features = self.feature_extractor.compute_mel_spectrogram(audio)
 
-        # Adjust temporal dimension to match model input shape
-        expected_time = model.input_shape[1]
+        # Adjust temporal dimension to match model input shape (safely)
+        input_shape = getattr(model, "input_shape", None)
+        if (
+            input_shape is not None
+            and len(input_shape) > 1
+            and input_shape[1] is not None
+        ):
+            expected_time = input_shape[1]
+        else:
+            # Fallback: leave features unchanged
+            expected_time = features.shape[0]
         if features.shape[0] > expected_time:
             features = features[:expected_time, :]
         elif features.shape[0] < expected_time:

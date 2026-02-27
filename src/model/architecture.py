@@ -544,6 +544,9 @@ class MixedNet(tf.keras.Model):
             1, activation="sigmoid", name="output", dtype=tf.float32
         )
 
+        # Flatten layer for dense (created in build to avoid re-creation on each call)
+        self.flatten = tf.keras.layers.Flatten(name="flatten")
+
         super().build(input_shape)
 
     def call(self, inputs, training=None, mask=None):
@@ -581,7 +584,7 @@ class MixedNet(tf.keras.Model):
         net = self.pooling(net)
 
         # Flatten for dense
-        net = tf.keras.layers.Flatten()(net)
+        net = self.flatten(net)
 
         # Dropout
         if self.dropout is not None:
@@ -660,9 +663,10 @@ def build_model(
     }
     if mode not in mode_map:
         logger.warning(
-            f"build_model: unknown mode %r, defaulting to 'non_stream'. "
-            f"Valid modes are: {list(mode_map.keys())}",
+            "build_model: unknown mode %r, defaulting to 'non_stream'. "
+            "Valid modes are: %r",
             mode,
+            list(mode_map.keys()),
         )
     mode_enum = mode_map.get(mode, Modes.NON_STREAM_INFERENCE)
 

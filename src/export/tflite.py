@@ -52,11 +52,12 @@ def _convert_to_streaming_savedmodel(
     """Convert to streaming SavedModel with internal state management."""
     # Get model parameters from config
     stride = config.get("stride", 3)
-    spectrogram_length = config.get("spectrogram_length", 49)
     mel_bins = config.get("mel_bins", 40)
 
-    # Input shape: [batch, time_frames, mel_bins]
-    input_shape = (spectrogram_length, mel_bins)
+    # Input shape for streaming: one stride chunk at a time — (batch, stride, mel_bins)
+    # NOT (spectrogram_length, mel_bins) because the streaming model processes
+    # incrementally, receiving `stride` frames per call.
+    input_shape = (stride, mel_bins)
 
     # Create input tensor
     inputs = tf.keras.Input(shape=input_shape, batch_size=1, dtype=tf.float32)
@@ -85,14 +86,14 @@ def _convert_to_streaming_savedmodel(
 
     # Process through MixConv blocks with state management
     pointwise_filters = _parse_list_config(
-        config.get("pointwise_filters", "60,60,60,60")
+        config.get("pointwise_filters", "60,60,60,60,60")
     )
     mixconv_kernel_sizes = _parse_nested_list_config(
-        config.get("mixconv_kernel_sizes", "[5],[9],[13],[21]")
+        config.get("mixconv_kernel_sizes", "[5],[9],[13],[17],[21]")
     )
-    repeat_in_block = _parse_list_config(config.get("repeat_in_block", "1,1,1,1"))
+    repeat_in_block = _parse_list_config(config.get("repeat_in_block", "1,1,1,1,1"))
     residual_connection = _parse_list_config(
-        config.get("residual_connection", "0,0,0,0")
+        config.get("residual_connection", "0,0,0,0,0")
     )
 
     # Calculate state shapes dynamically based on model configuration
@@ -133,55 +134,44 @@ def _convert_to_streaming_savedmodel(
         inputs=inputs, outputs=outputs, name="streaming_model"
     )
 
-    # Verify weight-structure compatibility between trained model and streaming model
-    model_weights = model.get_weights()
-    streaming_weights = streaming_model.get_weights()
-
-    if len(model_weights) != len(streaming_weights):
-        raise ValueError(
-            f"Weight count mismatch: trained model has {len(model_weights)} weight tensors, "
-            f"streaming model has {len(streaming_weights)} weight tensors. "
-            "Cannot copy weights - model architectures are incompatible."
-        )
-
-    # Verify each layer's weight shapes match
-    mismatches = []
-    for i, (m_layer, s_layer) in enumerate(zip(model.layers, streaming_model.layers)):
-        m_layer_weights = m_layer.get_weights()
-        s_layer_weights = s_layer.get_weights()
-
-        if len(m_layer_weights) != len(s_layer_weights):
-            mismatches.append(
-                f"Layer '{m_layer.name}' vs '{s_layer.name}': "
-                f"weight count {len(m_layer_weights)} vs {len(s_layer_weights)}"
-            )
-            continue
-
-        for j, (m_w, s_w) in enumerate(zip(m_layer_weights, s_layer_weights)):
-            if m_w.shape != s_w.shape:
-                mismatches.append(
-                    f"Layer '{m_layer.name}': weight[{j}] shape {m_w.shape} vs {s_w.shape}"
+    # Copy trainable weights from trained model, skipping if shapes mismatch.
+    # The streaming model adds state variables which are not present in the
+    # non-streaming model, so a direct set_weights call will fail on count mismatch.
+    src_weights = model.get_weights()
+    dst_vars = streaming_model.weights  # includes state vars
+    trainable_dst = [w for w in dst_vars if w.trainable]
+    if len(src_weights) == len(trainable_dst):
+        for var, val in zip(trainable_dst, src_weights):
+            if var.shape == val.shape:
+                var.assign(val)
+            else:
+                print(
+                    f"[WARNING] Skipping weight copy for '{var.name}': "
+                    f"shape {var.shape} != {val.shape}"
                 )
-
-    if mismatches:
-        # Try to map weights by matching layer names with compatible shapes
+    else:
         print(
-            "[WARNING] Weight shape mismatches detected, attempting to map by layer name..."
+            f"[WARNING] Weight count mismatch (src={len(src_weights)}, "
+            f"dst trainable={len(trainable_dst)}). "
+            "Attempting name-based matching..."
         )
-        print(f"[WARNING] Mismatches: {mismatches[:5]}...")  # Show first 5
+        src_by_name = {w.name: w for w in model.weights if w.trainable}
+        for var in trainable_dst:
+            src = src_by_name.get(var.name)
+            if src is not None and src.shape == var.shape:
+                var.assign(src.numpy())
 
-        # Use streaming model's weights as-is since architecture is designed to match
-        # This is expected for models with state variables that don't exist in non-streaming version
-        print(
-            "[INFO] Proceeding with weight copy - streaming model has additional state variables."
-        )
-
-    # Copy weights from trained model
-    streaming_model.set_weights(model.get_weights())
-
-    # Save the model
+    # Save using ai_edge_litert ExportArchive for proper streaming SavedModel export
     os.makedirs(folder, exist_ok=True)
-    streaming_model.save(folder)
+    try:
+        from ai_edge_litert.save import ExportArchive  # type: ignore
+
+        archive = ExportArchive()
+        archive.track(streaming_model)
+        archive.write_out(folder)
+    except (ImportError, AttributeError):
+        # Fallback to tf.saved_model if ExportArchive unavailable
+        tf.saved_model.save(streaming_model, folder)
 
     return streaming_model
 
@@ -200,7 +190,7 @@ def _streaming_concat(net: tf.Tensor, state: tf.Variable, stride: int) -> tf.Ten
     """
     combined = tf.concat([state, net], axis=1)
     # Advance: keep only the tail that the state needs for the next call
-    new_state = combined[:, -state.shape[1]:, :]
+    new_state = combined[:, -state.shape[1] :, :]
     state.assign(new_state)
     return combined
 
@@ -310,8 +300,14 @@ def convert_saved_model_to_tflite(
     - inference_output_type: tf.uint8 (MUST BE UINT8!)
     - _experimental_variable_quantization: True (REQUIRED for streaming state)
     """
-    # Load the SavedModel
-    converter = tf.lite.TFLiteConverter.from_saved_model(path_to_model)
+    # Load the SavedModel using ai-edge-litert converter
+    try:
+        from ai_edge_litert.convert import TFLiteConverter as _Converter  # type: ignore
+
+        converter = _Converter.from_saved_model(path_to_model)
+    except (ImportError, AttributeError):
+        # Fallback to TF Lite converter if ai-edge-litert converter not available
+        converter = tf.lite.TFLiteConverter.from_saved_model(path_to_model)
 
     # Configure optimizations
     converter.optimizations = {tf.lite.Optimize.DEFAULT}
@@ -357,19 +353,16 @@ def create_default_representative_dataset(
 ) -> Callable[[], Generator[np.ndarray, None, None]]:
     """Create default representative dataset generator for quantization."""
     stride = config.get("stride", 3)
-    spectrogram_length = config.get("spectrogram_length", 49)
     mel_bins = config.get("mel_bins", 40)
 
     def representative_dataset_gen():
         np.random.seed(42)
         for _ in range(num_samples):
-            sample = np.random.uniform(
-                0.0, 26.0, (spectrogram_length, mel_bins)
-            ).astype(np.float32)
-            sample[0, 0] = 0.0
-            sample[0, 1] = 26.0
-            # Yield full spectrogram matching model input shape
-            yield [sample.reshape(1, spectrogram_length, mel_bins)]
+            # Shape must match the streaming model input: (1, stride, mel_bins)
+            sample = np.random.uniform(0.0, 26.0, (1, stride, mel_bins)).astype(
+                np.float32
+            )
+            yield [sample]
 
     return representative_dataset_gen
 
@@ -384,9 +377,10 @@ def create_representative_dataset_from_data(
     def representative_dataset_gen():
         for spectrogram in spectrograms:
             spectrogram = spectrogram.astype(np.float32)
-            for i in range(0, spectrogram.shape[0] - stride, stride):
+            # Yield one stride-chunk at a time — shape (1, stride, mel_bins)
+            for i in range(0, spectrogram.shape[0] - stride + 1, stride):
                 sample = spectrogram[i : i + stride, :]
-                yield [sample]
+                yield [sample.reshape(1, stride, sample.shape[-1])]
 
     return representative_dataset_gen
 
@@ -426,12 +420,12 @@ def export_to_tflite(
         "mel_bins": hardware_config.get("mel_bins", 40),
         "first_conv_filters": model_config.get("first_conv_filters", 30),
         "first_conv_kernel_size": model_config.get("first_conv_kernel_size", 5),
-        "pointwise_filters": model_config.get("pointwise_filters", "60,60,60,60"),
+        "pointwise_filters": model_config.get("pointwise_filters", "60,60,60,60,60"),
         "mixconv_kernel_sizes": model_config.get(
-            "mixconv_kernel_sizes", "[5],[9],[13],[21]"
+            "mixconv_kernel_sizes", "[5],[9],[13],[17],[21]"
         ),
-        "repeat_in_block": model_config.get("repeat_in_block", "1,1,1,1"),
-        "residual_connection": model_config.get("residual_connection", "0,0,0,0"),
+        "repeat_in_block": model_config.get("repeat_in_block", "1,1,1,1,1"),
+        "residual_connection": model_config.get("residual_connection", "0,0,0,0,0"),
     }
 
     # Create output directories
@@ -613,6 +607,22 @@ def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
         quant_params = output_details[0].get("quantization_parameters", {})
         if not quant_params:
             results["warnings"].append("Output quantization parameters missing")
+
+    # Check 5: ESPHome requires exactly 6 state variables
+    # (ring buffers for the 4 MixConv blocks + 1 for first conv + 1 for output)
+    all_details = interpreter.get_tensor_details()
+    # State variables are non-input, non-output tensors with no associated op (variables)
+    try:
+        # Count variable tensors (is_variable flag)
+        state_var_count = sum(1 for t in all_details if t.get("is_variable", False))
+        if state_var_count != 6:
+            results["warnings"].append(
+                f"Expected 6 state variables for ESPHome compatibility, "
+                f"found {state_var_count}. "
+                "ESPHome micro_wake_word requires models with exactly 6 streaming state tensors."
+            )
+    except Exception:
+        results["warnings"].append("Could not verify state variable count")
 
     return results
 

@@ -103,7 +103,18 @@ class RingBuffer:
 
         Returns:
             Updated buffer [batch, size, ...]
+
+        Raises:
+            ValueError: If new_data time dimension is not 1.
         """
+        # Validate that exactly 1 time step is provided
+        time_dim = new_data.shape[1] if hasattr(new_data, "shape") else None
+        if time_dim is not None and time_dim != 1:
+            raise ValueError(
+                f"RingBuffer.update expects new_data with time dim=1, got {time_dim}. "
+                "Pass one step at a time."
+            )
+
         if self.buffer is None:
             self.buffer = new_data
             return self.buffer
@@ -251,8 +262,10 @@ class Stream(tf.keras.layers.Layer):
                     else kernel_size
                 )
                 stride_val = strides[0] if isinstance(strides, tuple) else strides
+                # Per IMPLEMENTATION_PLAN.md: kernel_size - stride = buffer_size
+                # With dilation: dilation * (kernel_size - 1) - (stride - 1)
                 self.ring_buffer_size_in_time_dim = max(
-                    0, dilation * (kern - 1) - (stride_val - 1)
+                    0, dilation * (kern - 1) - stride_val + 1
                 )
 
         # Build the wrapped cell if needed
@@ -338,7 +351,8 @@ class Stream(tf.keras.layers.Layer):
 
             # Shift buffer and add new input
             # Remove oldest: [batch, 1:buffer_size, ...]
-            memory = self.states[:, 1 : self.ring_buffer_size_in_time_dim, :]
+            # Use ellipsis (...) so this works for both 3D and 4D state tensors.
+            memory = self.states[:, 1 : self.ring_buffer_size_in_time_dim, ...]
             # Concatenate new input at end
             memory = tf.concat([memory, inputs], axis=1)
 
@@ -352,7 +366,7 @@ class Stream(tf.keras.layers.Layer):
             if self.ring_buffer_size_in_time_dim:
                 memory = tf.concat([self.states, inputs], axis=1)
                 # Keep only the last ring_buffer_size samples
-                state_update = memory[:, -self.ring_buffer_size_in_time_dim :, :]
+                state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
 
                 assign_op = self.states.assign(state_update)
                 with tf.control_dependencies([assign_op]):
@@ -376,7 +390,7 @@ class Stream(tf.keras.layers.Layer):
             )
 
             # Shift buffer and add new input
-            memory = input_state[:, 1 : self.ring_buffer_size_in_time_dim, :]
+            memory = input_state[:, 1 : self.ring_buffer_size_in_time_dim, ...]
             memory = tf.concat([memory, inputs], axis=1)
 
             output = self.cell(memory)
@@ -385,7 +399,7 @@ class Stream(tf.keras.layers.Layer):
         else:
             # Strided mode
             memory = tf.concat([input_state, inputs], axis=1)
-            state_update = memory[:, -self.ring_buffer_size_in_time_dim :, :]
+            state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
             output = self.cell(memory)
             self.output_state = state_update
             return output, state_update
@@ -400,7 +414,16 @@ class Stream(tf.keras.layers.Layer):
                 else self.ring_buffer_size_in_time_dim
             )
             if pad_total > 0:
-                pad = [[0, 0]] * inputs.shape.rank
+                # Build a dynamic padding spec that matches the actual input rank
+                rank = tf.rank(inputs)
+                # Padding: [[0,0]] for each dim, with [pad_total, 0] or [half, half]
+                # on the time dimension (axis 1).
+                # We use tf.pad with a statically-built list when rank is known, else dynamic.
+                static_rank = inputs.shape.rank
+                n_dims = (
+                    static_rank if static_rank is not None else 4
+                )  # conservative default
+                pad = [[0, 0]] * n_dims
                 if self.pad_time_dim == "causal":
                     pad[1] = [pad_total, 0]
                 elif self.pad_time_dim == "same":
@@ -438,6 +461,10 @@ class Stream(tf.keras.layers.Layer):
     def get_input_state(self):
         """Get input state for external streaming."""
         if self.mode == Modes.STREAM_EXTERNAL_STATE_INFERENCE:
+            if self.input_state is None:
+                raise ValueError(
+                    "input_state is None. Call build() before get_input_state()."
+                )
             return [self.input_state]
         raise ValueError(f"Expected external streaming mode, not {self.mode}")
 
@@ -749,10 +776,15 @@ class StreamingMixedNet:
         # Normalize audio to [-1, 1] if needed
         if audio_samples.dtype == np.int16:
             audio_samples = audio_samples.astype(np.float32) / 32767.0
+        elif audio_samples.size == 0:
+            return []
         elif audio_samples.max() > 1.0 or audio_samples.min() < -1.0:
-            # Normalize to [-1, 1]
+            # Normalize to [-1, 1] — guard against all-zero arrays (max_val == 0)
             max_val = max(abs(audio_samples.max()), abs(audio_samples.min()))
-            audio_samples = audio_samples.astype(np.float32) / max_val
+            if max_val > 0.0:
+                audio_samples = audio_samples.astype(np.float32) / max_val
+            else:
+                audio_samples = audio_samples.astype(np.float32)
         else:
             audio_samples = audio_samples.astype(np.float32)
 
@@ -779,7 +811,8 @@ class StreamingMixedNet:
 
         # Run streaming inference with configurable step size
         probabilities = []
-        for i in range(0, spectrogram.shape[0] - model_stride + 1, step_samples):
+        upper = max(1, spectrogram.shape[0] - model_stride + 1)
+        for i in range(0, upper, step_samples):
             # Extract window
             window = spectrogram[i : i + model_stride, :]
 

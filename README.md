@@ -653,7 +653,7 @@ python scripts/verify_esphome.py model.tflite --verbose
 |--------------|---------|-----------|
 | Mixed precision (FP16) | 2-3x | Minimal accuracy loss |
 | Larger batch size | 1.5x | More VRAM needed |
-TS|BK|| CuPy SpecAugment | 5-10x | Requires GPU |
+| CuPy SpecAugment | 5-10x | Requires GPU |
 
 ### Model Size
 
