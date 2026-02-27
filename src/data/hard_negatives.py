@@ -39,15 +39,11 @@ class HardNegativeMiningConfig:
     def __post_init__(self):
         """Validate configuration after initialization."""
         if not 0.0 <= self.fp_threshold <= 1.0:
-            raise ValueError(
-                f"fp_threshold must be between 0.0 and 1.0, got {self.fp_threshold}"
-            )
+            raise ValueError(f"fp_threshold must be between 0.0 and 1.0, got {self.fp_threshold}")
         if self.max_samples <= 0:
             raise ValueError(f"max_samples must be positive, got {self.max_samples}")
         if self.mining_interval_epochs <= 0:
-            raise ValueError(
-                f"mining_interval_epochs must be positive, got {self.mining_interval_epochs}"
-            )
+            raise ValueError(f"mining_interval_epochs must be positive, got {self.mining_interval_epochs}")
 
 
 class HardNegativeMiner:
@@ -72,10 +68,7 @@ class HardNegativeMiner:
         self.config = config
         self.hard_negative_dir = Path(hard_negative_dir)
         self.mined_count = 0
-        self.epoch_counter = 0
-        self.feature_extractor: Optional[MicroFrontend] = (
-            None  # Lazy-initialized MicroFrontend
-        )
+        self.feature_extractor: Optional[MicroFrontend] = None  # Lazy-initialized MicroFrontend
 
         # Ensure directory exists
         self.hard_negative_dir.mkdir(parents=True, exist_ok=True)
@@ -94,9 +87,7 @@ class HardNegativeMiner:
 
         return epoch > 0 and epoch % self.config.mining_interval_epochs == 0
 
-    def mine_hard_negatives(
-        self, model, audio_paths: List[Path], score_fn: Optional[Callable] = None
-    ) -> List[Path]:
+    def mine_hard_negatives(self, model, audio_paths: List[Path], score_fn: Optional[Callable] = None) -> List[Path]:
         """Mine hard negatives from audio files.
 
         Args:
@@ -144,9 +135,7 @@ class HardNegativeMiner:
                 logger.warning(f"Failed to copy {audio_path}: {e}")
 
         self.mined_count += len(mined_paths)
-        logger.info(
-            f"Mined {len(mined_paths)} hard negatives (total: {self.mined_count})"
-        )
+        logger.info(f"Mined {len(mined_paths)} hard negatives (total: {self.mined_count})")
 
         return mined_paths
 
@@ -173,11 +162,7 @@ class HardNegativeMiner:
 
         # Adjust temporal dimension to match model input shape (safely)
         input_shape = getattr(model, "input_shape", None)
-        if (
-            input_shape is not None
-            and len(input_shape) > 1
-            and input_shape[1] is not None
-        ):
+        if input_shape is not None and len(input_shape) > 1 and input_shape[1] is not None:
             expected_time = input_shape[1]
         else:
             # Fallback: leave features unchanged

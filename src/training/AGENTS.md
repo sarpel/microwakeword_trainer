@@ -11,7 +11,7 @@ Complete training loop with Rich logging, profiling, hard example mining, and wa
 | `miner.py` | 305 | Hard negative mining during training | `HardExampleMiner`, `mine_hard_examples()` |
 | `augmentation.py` | 266 | Waveform-level augmentation pipeline | `AudioAugmentationPipeline`, `ParallelAugmenter` |
 | `profiler.py` | 176 | Section-based training profiling | `TrainingProfiler` |
-| `__init__.py` | 16 | Package exports | Exports: `Trainer`, `TrainingMetrics`, `train()`, `main()` |
+| `__init__.py` | 16 | Package exports | Exports: `Trainer`, `TrainingMetrics` (alias for `EvaluationMetrics`), `train()`, `main()` |
 
 ## Entry Point
 ```python
@@ -116,7 +116,10 @@ Expects FullConfig from `config.loader` with:
 ## Notes
 - Integrates with `src/data/` for dataset loading
 - Uses `src/model/` for model architecture via `build_model()`
-- Uses `src/evaluation/` for validation metrics (MetricsCalculator)
+- Uses `src/evaluation/` for validation metrics via `MetricsCalculator`
+  - **`EvaluationMetrics`** (in `trainer.py`) wraps `MetricsCalculator` with a batch-accumulation interface and is the canonical class used inside the training loop.
+  - **`TrainingMetrics`** (exported from `__init__.py`) is a backward-compatibility alias: `TrainingMetrics = EvaluationMetrics`. Prefer `EvaluationMetrics` for new code; use `TrainingMetrics` only when you need the package-level import for backward compat.
+  - External callers that only need offline/post-training metrics should import `MetricsCalculator` directly from `src.evaluation.metrics`.
 - Supports TensorBoard logging (controlled via config)
 - Two-phase training: typically [20000, 10000] steps with [0.001, 0.0001] LR
 - Best model selection by FAH (false activations/hour) then recall

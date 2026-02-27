@@ -15,7 +15,7 @@ wrapper is provided but internally delegates to ECAPA-TDNN.
 
 import logging
 import os
-from collections import deque
+from typing import Any, Dict, List, Optional, Tuple
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
@@ -52,9 +52,7 @@ except ImportError:
     librosa = None  # type: ignore
     HAS_LIBROSA = False
 
-
 logger = logging.getLogger(__name__)
-MAX_DENSE_SIMILARITY_BYTES = 1_000_000_000  # ~1GB safety limit
 
 
 def extract_speaker_embeddings(
@@ -166,17 +164,22 @@ def extract_wavlm_embeddings(
 
 def cluster_samples(
     features: np.ndarray,
-    n_clusters: int = 2,
+    n_clusters: Optional[int] = None,
     similarity_threshold: float = 0.72,
-    method: str = "agglomerative",
 ) -> np.ndarray:
-    """Cluster feature samples for diversity.
+    """Cluster feature samples using hierarchical agglomerative clustering.
+
+    Two modes of operation:
+    1. Explicit n_clusters: Uses Ward linkage on L2-normalized features for
+       balanced cluster sizes. Best when you know the approximate speaker count.
+    2. Similarity threshold only: Uses complete linkage with distance threshold,
+       guaranteeing ALL pairs in a cluster meet the similarity threshold.
+       No transitive similarity chains (A~B, B~C forcing A~C).
 
     Args:
         features: Feature array [n_samples, feature_dim]
-        n_clusters: Target number of clusters (may differ based on threshold)
-        similarity_threshold: Cosine similarity threshold for clustering
-        method: Clustering method ("agglomerative" or "threshold")
+        n_clusters: Target number of clusters (overrides threshold if set)
+        similarity_threshold: Cosine similarity threshold (0-1). Higher = stricter.
 
     Returns:
         Cluster labels [n_samples]
@@ -188,104 +191,55 @@ def cluster_samples(
     if features.size == 0 or len(features) == 0:
         return np.array([], dtype=int)
 
-    # Bound n_clusters to number of samples
-    effective_n_clusters = min(n_clusters, len(features))
-    if effective_n_clusters < 1:
-        effective_n_clusters = 1
+    # Single sample: trivial clustering
+    if len(features) == 1:
+        return np.array([0])
 
-    if method == "agglomerative":
-        # Single sample: clustering is trivial
-        if len(features) == 1:
-            return np.array([0])
+    if n_clusters is not None:
+        # Mode 1: Explicit cluster count - use Ward linkage for balanced clusters
+        effective_n_clusters = min(n_clusters, len(features))
+        if effective_n_clusters < 1:
+            effective_n_clusters = 1
 
-        # Use AgglomerativeClustering with cosine affinity
+        # Ward linkage requires Euclidean metric, so we L2-normalize features first
+        # This makes Euclidean distance on normalized features equivalent to
+        # cosine distance on original features
+        norms = np.linalg.norm(features, axis=1, keepdims=True)
+        norms[norms == 0] = 1  # Avoid division by zero
+        normalized_features = features / norms
+
         clustering = AgglomerativeClustering(
             n_clusters=effective_n_clusters,
-            metric="cosine",
-            linkage="average",
+            metric="euclidean",
+            linkage="ward",
         )
-        labels = clustering.fit_predict(features)
-
-    elif method == "threshold":
-        # Similarity-based clustering with threshold
-        labels = _similarity_clustering(features, similarity_threshold)
+        labels = clustering.fit_predict(normalized_features)
 
     else:
-        raise ValueError(f"Unknown clustering method: {method}")
+        # Mode 2: Similarity threshold - use complete linkage with distance threshold
+        # Complete linkage guarantees: for ALL pairs (i,j) in cluster, distance <= threshold
+        # This prevents the transitive similarity bug (A~B, B~C forcing A~C)
+
+        # Convert similarity threshold to distance threshold
+        # cosine_distance = 1 - cosine_similarity
+        distance_threshold = 1.0 - similarity_threshold
+
+        # L2-normalize for cosine distance computation via Euclidean
+        norms = np.linalg.norm(features, axis=1, keepdims=True)
+        norms[norms == 0] = 1
+        normalized_features = features / norms
+
+        clustering = AgglomerativeClustering(
+            n_clusters=None,
+            distance_threshold=distance_threshold,
+            metric="euclidean",
+            linkage="complete",
+        )
+        labels = clustering.fit_predict(normalized_features)
 
     return labels
 
 
-def _similarity_clustering(
-    features: np.ndarray,
-    threshold: float = 0.72,
-) -> np.ndarray:
-    """Similarity-based clustering with threshold.
-
-    Clusters samples that have cosine similarity above threshold.
-
-    Args:
-        features: Feature array
-        threshold: Similarity threshold for same cluster
-
-    Returns:
-        Cluster labels
-    """
-    n_samples = len(features)
-
-    # Handle empty input
-    if n_samples == 0 or features.size == 0:
-        return np.array([], dtype=int)
-
-    labels = np.full(n_samples, -1, dtype=int)
-    current_label = 0
-
-    n = int(features.shape[0])
-    estimated_bytes = n * n * 8
-    use_dense_similarity = estimated_bytes <= MAX_DENSE_SIMILARITY_BYTES
-
-    if not use_dense_similarity:
-        logger.warning(
-            "Skipping dense cosine similarity matrix: n=%d would require ~%.2f GB. "
-            "Using memory-safe row-wise pairwise computation.",
-            n,
-            estimated_bytes / (1024**3),
-        )
-        similarity = None
-    else:
-        similarity = cosine_similarity(features)
-
-    # Find connected components based on threshold
-    visited = set()
-
-    for i in range(n_samples):
-        if i in visited:
-            continue
-
-        # BFS to find all connected samples
-        queue = deque([i])
-        labels[i] = current_label
-        visited.add(i)
-
-        while queue:
-            node = queue.popleft()
-
-            # Find all similar samples not yet visited
-            if similarity is not None:
-                neighbors = np.where(similarity[node] >= threshold)[0]
-            else:
-                # Compute one row at a time to avoid O(n^2) memory blow-up
-                sim_row = cosine_similarity(features[node : node + 1], features)[0]
-                neighbors = np.where(sim_row >= threshold)[0]
-            for neighbor in neighbors:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    labels[neighbor] = current_label
-                    queue.append(neighbor)
-
-        current_label += 1
-
-    return labels
 
 
 def select_diverse_samples(
@@ -455,8 +409,8 @@ def audit_leakage(
 def cluster_by_speaker(
     audio_paths: List[str],
     embedding_model: str = "speechbrain/ecapa-tdnn-voxceleb",
+    n_clusters: Optional[int] = None,
     similarity_threshold: float = 0.72,
-    method: Optional[str] = None,
     leakage_threshold: float = 0.9,
     leakage_audit_enabled: bool = True,
     train_test_split: Optional[Tuple[List[str], List[str]]] = None,
@@ -466,9 +420,8 @@ def cluster_by_speaker(
     Args:
         audio_paths: List of audio file paths
         embedding_model: SpeechBrain model to use (default: ecapa-tdnn-voxceleb)
-        similarity_threshold: Clustering threshold
-        method: Clustering method ("agglomerative" or "threshold").
-            If None, defaults to "threshold" when similarity_threshold is provided.
+        n_clusters: Explicit number of clusters (overrides threshold if set)
+        similarity_threshold: Cosine similarity threshold for clustering
         leakage_threshold: Similarity threshold for leakage audit.
         leakage_audit_enabled: Whether to audit for train/test leakage
         train_test_split: Optional (train_paths, test_paths) tuple
@@ -480,13 +433,18 @@ def cluster_by_speaker(
     embeddings = extract_speaker_embeddings(audio_paths, model_name=embedding_model)
 
     # Cluster
-    selected_method = method or "threshold"
     labels = cluster_samples(
         embeddings,
+        n_clusters=n_clusters,
         similarity_threshold=similarity_threshold,
-        method=selected_method,
     )
 
+    result = {
+        "audio_paths": audio_paths,
+        "embeddings": embeddings,
+        "cluster_labels": labels,
+        "n_clusters": len(np.unique(labels)),
+    }
     result = {
         "audio_paths": audio_paths,
         "embeddings": embeddings,
@@ -539,11 +497,11 @@ class SpeakerClusteringConfig:
     method: str = "agglomerative"
     embedding_model: str = "speechbrain/ecapa-tdnn-voxceleb"
     similarity_threshold: float = 0.72
+    n_clusters: Optional[int] = None  # Explicit cluster count (overrides threshold)
     leakage_audit_enabled: bool = True
     leakage_similarity_threshold: float = (
         0.9  # Stricter threshold for leakage detection
     )
-
 
 class SpeakerClustering:
     """Speaker clustering using SpeechBrain ECAPA-TDNN embeddings."""
@@ -560,16 +518,10 @@ class SpeakerClustering:
             audio_paths, model_name=self.config.embedding_model
         )
 
-        # Determine clustering method from config
-        cluster_method = self.config.method
-        # Map legacy method names if needed
-        if cluster_method in ("wavlm_ecapa", "ecapa"):
-            cluster_method = "agglomerative"  # Map to valid method
-
         labels = cluster_samples(
             embeddings,
+            n_clusters=self.config.n_clusters,
             similarity_threshold=self.config.similarity_threshold,
-            method=cluster_method,
         )
 
         return {p: int(label) for p, label in zip(audio_paths, labels)}

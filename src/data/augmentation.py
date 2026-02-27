@@ -101,10 +101,7 @@ class AudioAugmentation:
                     else:
                         self.rir_files.append(path)
 
-        logger.info(
-            f"Loaded {len(self.background_noise_files)} background noise files, "
-            f"{len(self.rir_files)} RIR files"
-        )
+        logger.info(f"Loaded {len(self.background_noise_files)} background noise files, " f"{len(self.rir_files)} RIR files")
 
     def __call__(self, audio: np.ndarray, apply_all: bool = False) -> np.ndarray:
         """Apply augmentations to audio.
@@ -161,9 +158,7 @@ class AudioAugmentation:
             augmented = self.apply_rir(augmented)
         return augmented
 
-    def apply_gain(
-        self, audio: np.ndarray, min_db: float = -3.0, max_db: float = 3.0
-    ) -> np.ndarray:
+    def apply_gain(self, audio: np.ndarray, min_db: float = -3.0, max_db: float = 3.0) -> np.ndarray:
         """Apply random gain adjustment.
 
         Args:
@@ -190,9 +185,7 @@ class AudioAugmentation:
         try:
             import audiomentations
 
-            augmenter = audiomentations.SevenBandParametricEQ(
-                min_gain_db=-6.0, max_gain_db=6.0, p=1.0
-            )
+            augmenter = audiomentations.SevenBandParametricEQ(min_gain_db=-6.0, max_gain_db=6.0, p=1.0)
             return augmenter(samples=audio, sample_rate=self.sample_rate)
         except ImportError:
             logger.debug("audiomentations not available, skipping EQ")
@@ -210,9 +203,7 @@ class AudioAugmentation:
         try:
             import audiomentations
 
-            augmenter = audiomentations.TanhDistortion(
-                min_distortion=0.1, max_distortion=0.5, p=1.0
-            )
+            augmenter = audiomentations.TanhDistortion(min_distortion=0.1, max_distortion=0.5, p=1.0)
             return augmenter(samples=audio, sample_rate=self.sample_rate)
         except ImportError:
             # Simple tanh fallback
@@ -232,9 +223,7 @@ class AudioAugmentation:
             import librosa
 
             n_steps = random.uniform(-2, 2)
-            return librosa.effects.pitch_shift(
-                audio, sr=self.sample_rate, n_steps=n_steps
-            )
+            return librosa.effects.pitch_shift(audio, sr=self.sample_rate, n_steps=n_steps)
         except ImportError:
             logger.debug("librosa not available, skipping pitch shift")
             return audio
@@ -283,9 +272,7 @@ class AudioAugmentation:
             return augmenter(samples=audio, sample_rate=self.sample_rate)
         except ImportError:
             # Simple white noise fallback
-            snr_db = random.uniform(
-                self.config.background_min_snr_db, self.config.background_max_snr_db
-            )
+            snr_db = random.uniform(self.config.background_min_snr_db, self.config.background_max_snr_db)
             signal_power = np.mean(audio**2)
             # Guard against silent input: use a small epsilon so noise is still audible
             eps = 1e-10
@@ -294,7 +281,6 @@ class AudioAugmentation:
             noise = np.random.randn(len(audio)).astype(np.float32)
             noise *= np.sqrt(np.float32(noise_power))
             return (audio + noise).astype(np.float32, copy=False)
-            return audio + noise
 
     def apply_background_noise(self, audio: np.ndarray) -> np.ndarray:
         """Apply background noise from files.
@@ -329,9 +315,7 @@ class AudioAugmentation:
                 bg_audio = bg_audio[start : start + target_len]
 
             # Mix with SNR
-            snr_db = random.uniform(
-                self.config.background_min_snr_db, self.config.background_max_snr_db
-            )
+            snr_db = random.uniform(self.config.background_min_snr_db, self.config.background_max_snr_db)
 
             signal_power = np.mean(audio**2)
             noise_power = np.mean(bg_audio**2)
@@ -369,16 +353,14 @@ class AudioAugmentation:
             rir = load_audio_wave(rir_file)
 
             # Convolve
-            # Convolve
             convolved = np.convolve(audio, rir, mode="full")[: len(audio)]
-            return convolved.astype(np.float32, copy=False)
 
             # Normalize to prevent clipping
             max_val = np.max(np.abs(convolved))
             if max_val > 0.99:
                 convolved = convolved * (0.99 / max_val)
 
-            return convolved
+            return convolved.astype(np.float32, copy=False)
 
         except Exception as e:
             logger.warning(f"Failed to apply RIR: {e}")
@@ -411,9 +393,7 @@ def apply_spec_augment_gpu(
         ImportError: If CuPy is not installed (GPU required)
     """
     if not HAS_CUPY or cp is None:
-        raise ImportError(
-            "CuPy is required for GPU SpecAugment. Install: pip install cupy-cuda12x"
-        )
+        raise ImportError("CuPy is required for GPU SpecAugment. Install: pip install cupy-cuda12x")
 
     # Transfer to GPU
     spec_gpu = cp.asarray(spectrogram)

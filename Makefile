@@ -1,7 +1,7 @@
 # Makefile for microwakeword_trainer
 # Run 'make help' to see available targets
 
-.PHONY: help install install-dev lint format test test-unit test-integration clean coverage check
+.PHONY: help install install-dev lint lint-fix format format-check type-check test test-unit test-integration test-parallel test-fast coverage clean check pre-commit build check-dist
 
 # Default target
 help:

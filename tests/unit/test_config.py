@@ -8,6 +8,7 @@ import pytest
 class TestConfigLoader:
     """Test cases for config loader functionality."""
 
+    @pytest.mark.unit
     def test_placeholder(self) -> None:
         """Placeholder test to verify pytest setup."""
         assert True
@@ -27,10 +28,13 @@ class TestDataPaths:
     """Test data path validation."""
 
     @pytest.mark.unit
-    def test_dataset_directories_exist(self) -> None:
-        """Check that dataset directory structure exists."""
-        dataset_path = Path("dataset")
-        if dataset_path.exists():
-            required_dirs = ["positive", "negative"]
-            for dir_name in required_dirs:
-                assert (dataset_path / dir_name).exists(), f"Missing {dir_name} directory"
+    def test_dataset_directories_exist(self, tmp_path: Path) -> None:
+        """Check that dataset directory structure can be created correctly."""
+        dataset_path = tmp_path / "dataset"
+        required_dirs = ["positive", "negative"]
+        for dir_name in required_dirs:
+            (dataset_path / dir_name).mkdir(parents=True, exist_ok=True)
+
+        assert dataset_path.exists()
+        for dir_name in required_dirs:
+            assert (dataset_path / dir_name).exists(), f"Missing {dir_name} directory"

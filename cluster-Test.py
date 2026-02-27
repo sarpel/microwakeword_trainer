@@ -120,9 +120,9 @@ def analyze_clusters(
         "total_files": total_files,
         "num_clusters": num_clusters,
         "samples_per_cluster": samples_per_cluster,
-        "min_cluster_size": min(samples_per_cluster),
-        "max_cluster_size": max(samples_per_cluster),
-        "avg_cluster_size": sum(samples_per_cluster) / len(samples_per_cluster),
+        "min_cluster_size": min(samples_per_cluster) if samples_per_cluster else 0,
+        "max_cluster_size": max(samples_per_cluster) if samples_per_cluster else 0,
+        "avg_cluster_size": sum(samples_per_cluster) / len(samples_per_cluster) if samples_per_cluster else 0.0,
         "threshold_used": config.similarity_threshold,
         "embedding_model": config.embedding_model,
         "method": config.method,
@@ -286,16 +286,9 @@ def main():
 Examples:
     python cluster-Test.py --config standard
     python cluster-Test.py --config standard --dataset all
-    #PR|    python cluster-Test.py --config standard --n-clusters 200
-#TK|    python cluster-Test.py --config standard --override my_config.yaml
-
-Output files (per dataset):
     python cluster-Test.py --config standard --n-clusters 200
-    #TK|    python cluster-Test.py --config standard --override my_config.yaml
+    python cluster-Test.py --config standard --override my_config.yaml
 
-#NN|Output files (per dataset):
-
-Output files (per dataset):
 Output files (per dataset):
     - {dataset}_namelist.json: Mapping of file paths to speaker IDs
     - {dataset}_cluster_report.txt: Human-readable report

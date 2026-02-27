@@ -53,7 +53,7 @@ def analyze_model_architecture(model_path: str) -> dict[str, Any]:
 
 def _parse_analysis_output(analysis_text: str, model_content: bytes) -> dict[str, Any]:
     """Parse the raw analysis output into structured data."""
-    result = {
+    result: dict[str, Any] = {
         "layer_count": 0,
         "operators": [],
         "operator_counts": {},
@@ -110,8 +110,8 @@ def validate_model_quality(
     model_path: str,
     expected_input_shape: tuple[int, ...] | None = None,
     expected_output_shape: tuple[int, ...] | None = None,
-    expected_input_dtype: np.dtype | None = None,
-    expected_output_dtype: np.dtype | None = None,
+    expected_input_dtype: np.dtype | type[np.integer] | None = None,
+    expected_output_dtype: np.dtype | type[np.integer] | None = None,
     stride: int = 3,
     mel_bins: int = 40,
 ) -> dict[str, Any]:

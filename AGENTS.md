@@ -28,13 +28,13 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 ├── config/                # YAML presets & loader
 │   ├── presets/           # standard.yaml, max_quality.yaml, fast_test.yaml
 │   └── loader.py          # Complex config system (666 lines)
-BJ├── scripts/               # Standalone tools
-VJ│   ├── verify_esphome.py  # TFLite ESPHome compatibility checker (406 lines)
-TS│   └── generate_test_dataset.py  # Synthetic dataset generator (190 lines)
-QY├── cluster-Test.py        # Speaker clustering dry-run analysis (458 lines)
-BZ├── cluster_output/       # Output from cluster-Test.py
-KM│   ├── {dataset}_namelist.json     # File → speaker mappings (per dataset)
-SZ│   └── {dataset}_cluster_report.txt # Human-readable report (per dataset)
+├── scripts/               # Standalone tools
+│   ├── verify_esphome.py  # TFLite ESPHome compatibility checker (406 lines)
+│   └── generate_test_dataset.py  # Synthetic dataset generator (190 lines)
+├── cluster-Test.py        # Speaker clustering dry-run analysis (458 lines)
+├── cluster_output/       # Output from cluster-Test.py
+│   ├── {dataset}_namelist.json     # File → speaker mappings (per dataset)
+│   └── {dataset}_cluster_report.txt # Human-readable report (per dataset)
 ├── dataset/               # Audio data
 │   ├── positive/          # Wake word samples (by speaker)
 │   ├── negative/          # Background speech
@@ -51,13 +51,13 @@ SZ│   └── {dataset}_cluster_report.txt # Human-readable report (per data
 └── ARCHITECTURAL_CONSTITUTION.md  # ⛔ IMMUTABLE SOURCE TRUTH (530 lines)
 ```
 
-BJ## Entry Points
-RT|| Command | Module | Purpose |
-ZH||---------|--------|---------|
-VR|| `mww-train` | `src.training.trainer:main` | Train wake word model |
-HP|| `mww-export` | `src.export.tflite:main` | Export to TFLite |
-QW|| `cluster-Test.py` | Speaker clustering analysis (dry-run, supports positive/negative/hard_negative/all) |
-|| `Start-Clustering.py` | Move files into speaker directories (uses cluster-Test.py output) |
+## Entry Points
+| Command | Module | Purpose |
+|---------|--------|----------|
+| `mww-train` | `src.training.trainer:main` | Train wake word model |
+| `mww-export` | `src.export.tflite:main` | Export to TFLite |
+| `cluster-Test.py` | Speaker clustering analysis (dry-run, supports positive/negative/hard_negative/all) | |
+| `Start-Clustering.py` | Move files into speaker directories (uses cluster-Test.py output) | |
 
 ## Key Dependencies
 - **tensorflow>=2.16** - Core ML framework

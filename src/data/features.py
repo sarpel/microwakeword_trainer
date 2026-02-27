@@ -51,10 +51,7 @@ class FeatureConfig:
         """Validate configuration after initialization."""
         # Reject non-16kHz sample rates - the pipeline only supports 16kHz
         if self.sample_rate != 16000:
-            raise ValueError(
-                f"Unsupported sample rate: {self.sample_rate} Hz. "
-                "Only 16000 Hz is supported. Resample your audio before processing."
-            )
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate} Hz. " "Only 16000 Hz is supported. Resample your audio before processing.")
 
         # Delegate all validation to validate() - single source of truth
         issues = self.validate()
@@ -74,9 +71,7 @@ class FeatureConfig:
         Returns:
             Number of frames
         """
-        return max(
-            1, 1 + (audio_length - self.window_size_samples) // self.window_step_samples
-        )
+        return max(1, 1 + (audio_length - self.window_size_samples) // self.window_step_samples)
 
     def validate(self) -> list:
         """Validate configuration and return list of issues.
@@ -100,6 +95,8 @@ class FeatureConfig:
 
         if self.mel_bins != 40:
             issues.append("mel_bins must be exactly 40 for ESPHome compatibility [ARCHITECTURE.md: IMMUTABLE]")
+
+        if self.mel_bins < 1:
             issues.append("mel_bins must be >= 1")
 
         if self.high_freq <= self.low_freq:
@@ -147,10 +144,7 @@ class MicroFrontend:
 
             logger.info("Using pymicro-features for feature extraction")
         except ImportError:
-            raise RuntimeError(
-                "pymicro-features is required for GPU training pipeline. "
-                "Install: pip install pymicro-features"
-            )
+            raise RuntimeError("pymicro-features is required for GPU training pipeline. " "Install: pip install pymicro-features")
 
     def compute_mel_spectrogram(self, audio: np.ndarray) -> np.ndarray:
         """Compute mel spectrogram from audio.
@@ -228,9 +222,7 @@ class MicroFrontend:
         # Trim any incomplete frame
         all_features = all_features[: num_frames * mel_bins]
 
-        mel_spec = np.array(all_features, dtype=np.float32).reshape(
-            num_frames, mel_bins
-        )
+        mel_spec = np.array(all_features, dtype=np.float32).reshape(num_frames, mel_bins)
 
         return mel_spec
 
@@ -395,9 +387,7 @@ class SpectrogramGeneration:
 
         # Use consistent dtype from results
         target_dtype = results[0].dtype
-        padded = np.zeros(
-            (batch_size, max_frames, self.config.mel_bins), dtype=target_dtype
-        )
+        padded = np.zeros((batch_size, max_frames, self.config.mel_bins), dtype=target_dtype)
         for i, spec in enumerate(results):
             padded[i, : spec.shape[0], :] = spec.astype(target_dtype)
 

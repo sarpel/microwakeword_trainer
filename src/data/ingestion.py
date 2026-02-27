@@ -87,10 +87,7 @@ class SampleRecord:
             self.split = Split(self.split)
 
         if self.sample_rate != VALIDATION_SAMPLE_RATE:
-            logger.warning(
-                f"Sample {self.path.name} has non-standard sample rate: "
-                f"{self.sample_rate} Hz (expected {VALIDATION_SAMPLE_RATE})"
-            )
+            logger.warning(f"Sample {self.path.name} has non-standard sample rate: " f"{self.sample_rate} Hz (expected {VALIDATION_SAMPLE_RATE})")
 
     @property
     def audio_length_samples(self) -> int:
@@ -143,26 +140,17 @@ def validate_audio_wave(file_path: Union[str, Path]) -> Tuple[bool, str]:
             # Check sample rate
             actual_rate = wf.getframerate()
             if actual_rate != VALIDATION_SAMPLE_RATE:
-                return False, (
-                    f"Invalid sample rate: {actual_rate} Hz "
-                    f"(expected {VALIDATION_SAMPLE_RATE} Hz)"
-                )
+                return False, (f"Invalid sample rate: {actual_rate} Hz " f"(expected {VALIDATION_SAMPLE_RATE} Hz)")
 
             # Check sample width (16-bit = 2 bytes)
             actual_width = wf.getsampwidth()
             if actual_width != VALIDATION_SAMPLE_WIDTH:
-                return False, (
-                    f"Invalid sample width: {actual_width} bytes "
-                    f"(expected {VALIDATION_SAMPLE_WIDTH} bytes for 16-bit PCM)"
-                )
+                return False, (f"Invalid sample width: {actual_width} bytes " f"(expected {VALIDATION_SAMPLE_WIDTH} bytes for 16-bit PCM)")
 
             # Check channels (mono)
             actual_channels = wf.getnchannels()
             if actual_channels != VALIDATION_CHANNELS:
-                return False, (
-                    f"Invalid channels: {actual_channels} "
-                    f"(expected {VALIDATION_CHANNELS} for mono)"
-                )
+                return False, (f"Invalid channels: {actual_channels} " f"(expected {VALIDATION_CHANNELS} for mono)")
 
             # Check that file has actual audio data
             nframes = wf.getnframes()
@@ -175,15 +163,9 @@ def validate_audio_wave(file_path: Union[str, Path]) -> Tuple[bool, str]:
             data_bytes = nframes * actual_width * actual_channels
             actual_header_size = file_size - data_bytes
             if actual_header_size < 0:
-                logger.warning(
-                    f"File size ({file_size}) is smaller than the raw audio data "
-                    f"({data_bytes} bytes) for {file_path.name}"
-                )
+                logger.warning(f"File size ({file_size}) is smaller than the raw audio data " f"({data_bytes} bytes) for {file_path.name}")
             elif actual_header_size > 65536:  # > 64 KB of metadata is suspicious
-                logger.warning(
-                    f"File {file_path.name} has an unusually large header/metadata "
-                    f"section ({actual_header_size} bytes), possible compression artifact"
-                )
+                logger.warning(f"File {file_path.name} has an unusually large header/metadata " f"section ({actual_header_size} bytes), possible compression artifact")
 
             return True, ""
 
@@ -239,14 +221,10 @@ def get_audio_info(file_path: Union[str, Path]) -> dict:
                 "duration_ms": (wf.getnframes() / wf.getframerate()) * 1000,
             }
     except (wave.Error, OSError, struct.error) as exc:
-        raise ValueError(
-            f"Could not read audio info from '{file_path}': {exc}"
-        ) from exc
+        raise ValueError(f"Could not read audio info from '{file_path}': {exc}") from exc
 
 
-def load_audio_wave(
-    file_path: Union[str, Path], target_sr: int = VALIDATION_SAMPLE_RATE
-) -> np.ndarray:
+def load_audio_wave(file_path: Union[str, Path], target_sr: int = VALIDATION_SAMPLE_RATE) -> np.ndarray:
     """Load audio file as numpy array.
 
     Args:
@@ -261,9 +239,7 @@ def load_audio_wave(
     """
     if target_sr != VALIDATION_SAMPLE_RATE:
         raise ValueError(
-            f"target_sr={target_sr} is not supported. "
-            f"Only VALIDATION_SAMPLE_RATE ({VALIDATION_SAMPLE_RATE} Hz) is accepted. "
-            "Please resample the audio before calling load_audio_wave."
+            f"target_sr={target_sr} is not supported. " f"Only VALIDATION_SAMPLE_RATE ({VALIDATION_SAMPLE_RATE} Hz) is accepted. " "Please resample the audio before calling load_audio_wave."
         )
 
     file_path = Path(file_path)
@@ -357,7 +333,9 @@ class Clips:
         self.samples: List[SampleRecord] = []
         self._speaker_cache: dict = {}
         self._namelist_cache: Optional[Dict[str, str]] = None  # Maps file_path -> speaker_id
-        
+        self._namelist_index: Dict[str, str] = {}  # Resolved absolute path -> speaker_id (O(1))
+        self._basename_index: Dict[str, List[str]] = {}  # basename -> list of full paths
+
         # Load namelist.json if present (speaker clustering results)
         self._load_namelist_if_present()
         # Validate split ratios
@@ -369,9 +347,7 @@ class Clips:
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be in [0.0, 1.0], got {value}")
 
-        total_split = (
-            self.config.train_split + self.config.val_split + self.config.test_split
-        )
+        total_split = self.config.train_split + self.config.val_split + self.config.test_split
         if abs(total_split - 1.0) > 0.001:
             raise ValueError(f"Split ratios must sum to 1.0, got {total_split}")
         # Load samples
@@ -418,9 +394,7 @@ class Clips:
                     # Validate audio
                     is_valid, error_msg = validate_audio_wave(wav_file)
                     if not is_valid:
-                        logger.warning(
-                            f"Skipping invalid audio {wav_file}: {error_msg}"
-                        )
+                        logger.warning(f"Skipping invalid audio {wav_file}: {error_msg}")
                         continue
 
                     # Get audio info
@@ -429,14 +403,10 @@ class Clips:
                     # Filter by duration
                     duration_ms = info["duration_ms"]
                     if duration_ms < self.config.min_duration_ms:
-                        logger.debug(
-                            f"Skipping too short audio {wav_file}: {duration_ms:.0f}ms"
-                        )
+                        logger.debug(f"Skipping too short audio {wav_file}: {duration_ms:.0f}ms")
                         continue
                     if duration_ms > self.config.max_duration_ms:
-                        logger.debug(
-                            f"Skipping too long audio {wav_file}: {duration_ms:.0f}ms"
-                        )
+                        logger.debug(f"Skipping too long audio {wav_file}: {duration_ms:.0f}ms")
                         continue
 
                     # Extract speaker ID from filename or parent directory
@@ -459,12 +429,7 @@ class Clips:
         # Assign splits
         self.samples = self._assign_splits(all_samples)
 
-        logger.info(
-            f"Loaded {len(self.samples)} samples: "
-            f"train={len(self.get_split(Split.TRAIN))}, "
-            f"val={len(self.get_split(Split.VAL))}, "
-            f"test={len(self.get_split(Split.TEST))}"
-        )
+        logger.info(f"Loaded {len(self.samples)} samples: " f"train={len(self.get_split(Split.TRAIN))}, " f"val={len(self.get_split(Split.VAL))}, " f"test={len(self.get_split(Split.TEST))}")
 
     def _extract_speaker_id(self, wav_path: Path) -> Optional[str]:
         """Extract speaker ID from filename, namelist.json, or parent directory.
@@ -488,12 +453,20 @@ class Clips:
             path_str = str(wav_path)
             if path_str in self._namelist_cache:
                 return self._namelist_cache[path_str]
-            
-            # Try relative path match (in case namelist was generated from different base)
-            # Check if the basename matches any entry
-            for namelist_path, speaker_id in self._namelist_cache.items():
-                if Path(namelist_path).name == wav_path.name:
-                    return speaker_id
+
+            # Try resolved absolute path via pre-built index (O(1))
+            resolved_str = str(wav_path.resolve())
+            if resolved_str in self._namelist_index:
+                return self._namelist_index[resolved_str]
+
+            # Try basename lookup — only if unambiguous
+            basename = wav_path.name
+            if basename in self._basename_index:
+                matching = self._basename_index[basename]
+                if len(matching) == 1:
+                    return self._namelist_cache[matching[0]]
+                else:
+                    logger.debug(f"Ambiguous basename {basename!r} matches {len(matching)} " "namelist entries; skipping namelist lookup")
 
         filename = wav_path.name
 
@@ -535,10 +508,11 @@ class Clips:
         """
         import json
 
-        # Search locations in priority order
+        # Search locations in priority order — use absolute paths for reliability
+        _project_root = Path(__file__).resolve().parent.parent.parent
         search_paths = [
-            Path("./cluster_output/namelist.json"),
-            Path("./namelist.json"),
+            _project_root / "cluster_output" / "namelist.json",
+            _project_root / "namelist.json",
         ]
 
         # Also check relative to positive_dir if configured
@@ -553,13 +527,19 @@ class Clips:
                         data = json.load(f)
 
                     if "mappings" in data:
-                        self._namelist_cache = data["mappings"]
+                        mappings: Dict[str, str] = data["mappings"]
+                        self._namelist_cache = mappings
+                        # Build O(1) reverse indexes
+                        self._namelist_index = {}
+                        self._basename_index = {}
+                        for fpath, sid in mappings.items():
+                            fpath_obj = Path(fpath)
+                            resolved = str(fpath_obj.resolve()) if fpath_obj.is_absolute() else fpath
+                            self._namelist_index[resolved] = sid
+                            bn = fpath_obj.name
+                            self._basename_index.setdefault(bn, []).append(fpath)
                         meta = data.get("_meta", {})
-                        logger.info(
-                            f"Loaded namelist.json from {namelist_path}: "
-                            f"{len(self._namelist_cache)} files mapped to "
-                            f"{meta.get('num_speakers', '?')} speakers"
-                        )
+                        logger.info(f"Loaded namelist.json from {namelist_path}: " f"{len(mappings)} files mapped to " f"{meta.get('num_speakers', '?')} speakers")
                         return
                     else:
                         logger.warning(f"Invalid namelist.json format: {namelist_path}")
@@ -654,9 +634,7 @@ class Clips:
         """
         return [s for s in self.samples if s.label == label]
 
-    def get_split_by_label(
-        self, split: Split, label: Optional[Label] = None
-    ) -> List[SampleRecord]:
+    def get_split_by_label(self, split: Split, label: Optional[Label] = None) -> List[SampleRecord]:
         """Get samples for a split, optionally filtered by label.
 
         Args:

@@ -47,7 +47,7 @@ def parse_model_param(text):
         elif isinstance(res, list):
             # Handle nested lists like [[5], [9]]
             if res and isinstance(res[0], list):
-                return [[item for item in lst] if isinstance(lst, list) else lst for lst in res]
+                return [list(lst) if isinstance(lst, list) else lst for lst in res]
             return res
         return [res]
     except (ValueError, SyntaxError) as exc:
@@ -104,7 +104,7 @@ def spectrogram_slices_dropped(flags):
 
     # Block contributions are NOT scaled by stride (causal padding per-block)
     block_contributions = 0
-    for repeat, ksize in zip(repeat_in_block, mixconv_kernel_sizes):
+    for repeat, ksize in zip(repeat_in_block, mixconv_kernel_sizes, strict=False):
         # ksize can be a list like [5] or [9, 11]
         max_ksize = max(ksize) if isinstance(ksize, list) else ksize
         block_contributions += repeat * (max_ksize - 1)
@@ -169,7 +169,7 @@ class MixConvBlock(tf.keras.layers.Layer):
         # Create depthwise conv layers for each kernel size
         self.depthwise_convs = []
         for i, ks in enumerate(self.kernel_sizes):
-            self.depthwise_convs.append(tf.keras.layers.DepthwiseConv2D((ks, 1), strides=1, padding="same", name=f"{self.name}_dw_{i}"))
+            self.depthwise_convs.append(tf.keras.layers.DepthwiseConv2D((ks, 1), strides=1, padding="valid", name=f"{self.name}_dw_{i}"))
 
         super().build(input_shape)
 
@@ -205,7 +205,7 @@ class MixConvBlock(tf.keras.layers.Layer):
             x_splits = ChannelSplit(splits, axis=-1)(net)
 
             x_outputs = []
-            for i, (x, ks) in enumerate(zip(x_splits, self.kernel_sizes)):
+            for i, (x, ks) in enumerate(zip(x_splits, self.kernel_sizes, strict=False)):
                 # StridedKeep for streaming - keep only the needed samples
                 if self.mode not in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
                     x = StridedKeep(ks, mode=self.mode)(x)
@@ -215,10 +215,12 @@ class MixConvBlock(tf.keras.layers.Layer):
                 x_outputs.append(x)
 
             # Align output time dimensions by dropping extra samples
-            min_time = min(out.shape[1] for out in x_outputs if out.shape[1] is not None)
-            for i in range(len(x_outputs)):
-                if x_outputs[i].shape[1] is not None and x_outputs[i].shape[1] > min_time:
-                    x_outputs[i] = StridedDrop(x_outputs[i].shape[1] - min_time, mode=self.mode)(x_outputs[i])
+            valid_times = [out.shape[1] for out in x_outputs if out.shape[1] is not None]
+            min_time = min(valid_times) if valid_times else None
+            if min_time is not None:
+                for i in range(len(x_outputs)):
+                    if x_outputs[i].shape[1] is not None and x_outputs[i].shape[1] > min_time:
+                        x_outputs[i] = StridedDrop(x_outputs[i].shape[1] - min_time, mode=self.mode)(x_outputs[i])
 
             # Concatenate along channel dimension
             net = tf.keras.layers.Concatenate(axis=-1)(x_outputs)
@@ -314,7 +316,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         else:
             residual = None
 
-        for mixconv, activation in zip(self.mixconvs, self.activations):
+        for mixconv, activation in zip(self.mixconvs, self.activations, strict=False):
             net = mixconv(net, training=training)
             net = activation(net)
 
@@ -457,7 +459,8 @@ class MixedNet(tf.keras.Model):
                 self.repeat_in_block,
                 self.mixconv_kernel_sizes,
                 self.residual_connections,
-            )
+                strict=False,
+            ),
         ):
             block = ResidualBlock(
                 filters=filters,

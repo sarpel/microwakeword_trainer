@@ -108,7 +108,8 @@ def _convert_to_streaming_savedmodel(
             repeat_in_block,
             residual_connection,
             strict=False,
-        )
+        ),
+    ):
         state_shape = state_shapes[i] if i < len(state_shapes) else state_shapes[-1]
         stream_state = _create_streaming_state(shape=state_shape, name=f"stream_{i + 1}")
 

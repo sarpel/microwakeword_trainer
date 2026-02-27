@@ -29,7 +29,6 @@ def mine_hard_examples(
     """
     predictions = model.predict(features, verbose=0)
     labels = np.asarray(labels).reshape(-1)
-    predictions = model.predict(features, verbose=0)
 
     # Handle both single and batch prediction formats
     if len(predictions.shape) > 1:
@@ -115,8 +114,6 @@ class HardExampleMiner:
         """
         # Flatten labels and predictions if needed
         labels = np.asarray(labels).reshape(-1)
-        if len(predictions.shape) > 1:
-            predictions = predictions.flatten()
         if len(predictions.shape) > 1:
             predictions = predictions.flatten()
 

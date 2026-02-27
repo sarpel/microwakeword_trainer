@@ -50,7 +50,7 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
             "details": dict with detailed model info
         }
     """
-    results = {
+    results: dict[str, Any] = {
         "compatible": True,
         "errors": [],
         "warnings": [],

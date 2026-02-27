@@ -136,7 +136,7 @@ speaker_clustering:
   enabled: true
   method: "agglomerative"
   embedding_model: "speechbrain/spkrec-ecapa-voxceleb"
-  similarity_threshold: 0.60
+  similarity_threshold: 0.72
   leakage_audit_enabled: true
 
 # ─────────────────────────────────────────────────────────────────

@@ -134,6 +134,7 @@ class RaggedMmap:
         """
         if mode == "r":
             self._load_index()
+            assert self._data_file is not None, "data_file not initialized"
             if os.path.exists(self._data_file):
                 self._data = np.memmap(
                     self._data_file,
@@ -143,6 +144,7 @@ class RaggedMmap:
         elif mode == "w":
             # Truncate existing files before writing to prevent data corruption
             for f in [self._data_file, self._offsets_file, self._lengths_file]:
+                assert f is not None, "file path not initialized"
                 if os.path.exists(f):
                     os.truncate(f, 0)
 
@@ -150,6 +152,7 @@ class RaggedMmap:
             self._offsets = []
             self._lengths = []
         else:
+            raise ValueError(f"Invalid mode: {mode}")
             raise ValueError(f"Invalid mode: {mode}")
 
     def close(self):
@@ -172,7 +175,11 @@ class RaggedMmap:
         lengths = [arr.nbytes for arr in arrays]
 
         # Calculate offsets
+        # Calculate offsets
         if self._num_arrays > 0:
+            assert self._offsets is not None, "offsets not loaded"
+            assert self._lengths is not None, "lengths not loaded"
+            last_offset = int(self._offsets[-1]) + int(self._lengths[-1])
             last_offset = int(self._offsets[-1]) + int(self._lengths[-1])
         else:
             last_offset = 0
@@ -180,15 +187,20 @@ class RaggedMmap:
         offsets = [last_offset + sum(lengths[:i]) for i in range(len(arrays))]
 
         # Append to data file
+        # Append to data file
+        assert self._data_file is not None, "data_file not initialized"
         with open(self._data_file, "ab") as f:
             for arr in arrays:
                 f.write(arr.tobytes())
 
         # Append to index files
+        # Append to index files
+        assert self._offsets_file is not None, "offsets_file not initialized"
         with open(self._offsets_file, "ab") as f:
             for offset in offsets:
                 f.write(struct.pack("q", offset))
 
+        assert self._lengths_file is not None, "lengths_file not initialized"
         with open(self._lengths_file, "ab") as f:
             for length in lengths:
                 f.write(struct.pack("q", length))
@@ -227,6 +239,13 @@ class RaggedMmap:
         if self._data is None or self._offsets is None or self._lengths is None:
             self.open("r")
 
+        if self._data is None or self._offsets is None or self._lengths is None:
+            self.open("r")
+
+        assert self._offsets is not None, "offsets not loaded"
+        assert self._lengths is not None, "lengths not loaded"
+        assert self._data is not None, "data not loaded"
+
         offset = int(self._offsets[idx])
         length = int(self._lengths[idx])
 
@@ -235,6 +254,20 @@ class RaggedMmap:
         elem_offset = offset // itemsize
         elem_length = length // itemsize
 
+        return np.array(self._data[elem_offset : elem_offset + elem_length])
+        assert self._lengths is not None, "lengths not loaded"
+        assert self._data is not None, "data not loaded"
+
+        offset = int(self._offsets[idx])
+        length = int(self._lengths[idx])
+
+        # Convert byte offsets/lengths to element counts
+        # Convert byte offsets/lengths to element counts
+        itemsize = self._data.itemsize
+        elem_offset = offset // itemsize
+        elem_length = length // itemsize
+
+        return np.array(self._data[elem_offset : elem_offset + elem_length])
         return np.array(self._data[elem_offset : elem_offset + elem_length])
 
     def __len__(self) -> int:
@@ -357,6 +390,9 @@ class FeatureStore:
             label: Label (0 or 1)
         """
         if self.features is None:
+            raise RuntimeError("Feature store not initialized")
+        if self.labels is None:
+            raise RuntimeError("Labels store not initialized")
             raise RuntimeError("Feature store not initialized")
 
         self.features.append([feature])
@@ -657,8 +693,9 @@ class WakeWordDataset:
                     logger.warning(f"Failed to process {sample.path}: {e}")
                     continue
 
+            val_count = len(val_store)
             val_store.close()
-            logger.info(f"Processed {len(val_store)} validation samples")
+            logger.info(f"Processed {val_count} validation samples")
 
         # Reload the train store for training
         self._load_store()

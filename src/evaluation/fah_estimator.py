@@ -18,6 +18,8 @@ class FAHEstimator:
             ambient_duration_hours: Hours of ambient audio used for FAH calculation.
                 If None, callers must pass ambient_duration_hours to compute_fah_metrics.
         """
+        if ambient_duration_hours is not None and float(ambient_duration_hours) < 0:
+            raise ValueError(f"ambient_duration_hours must be >= 0, got {ambient_duration_hours}")
         self.ambient_duration_hours: float | None = float(ambient_duration_hours) if ambient_duration_hours is not None else None
 
     def compute_fah_metrics(
