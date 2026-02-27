@@ -10,6 +10,7 @@ Step-based training loop with:
 
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,7 @@ from src.model.architecture import build_model
 from src.training.miner import HardExampleMiner
 from src.training.profiler import TrainingProfiler
 from src.training.rich_logger import RichTrainingLogger
+from src.utils.terminal_logger import TerminalLogger
 
 
 class EvaluationMetrics:
@@ -581,6 +583,8 @@ class Trainer:
 
         self.logger.log_info("Building model...")
         self.model = self._build_model(input_shape)
+        # Build model weights before summary so params are visible
+        self.model.build((None, *input_shape))
         self.model.summary(print_fn=self.logger.console.print)
 
         # Setup profiler
@@ -737,6 +741,7 @@ def train(config: dict) -> tf.keras.Model:
     window_step_ms = hardware_cfg.get("window_step_ms", 10)
     mel_bins = hardware_cfg.get("mel_bins", 40)
     input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
+    max_time_frames = input_shape[0]
 
     # Input shape already calculated above from hardware config
     # No need to check for spectrogram_length in model_cfg - it's deprecated
@@ -746,8 +751,8 @@ def train(config: dict) -> tf.keras.Model:
 
     trainer = Trainer(config)
     model = trainer.train(
-        train_data_factory=dataset.train_generator_factory(),
-        val_data_factory=dataset.val_generator_factory(),
+        train_data_factory=dataset.train_generator_factory(max_time_frames=max_time_frames),
+        val_data_factory=dataset.val_generator_factory(max_time_frames=max_time_frames),
         input_shape=input_shape,
     )
     return model
@@ -767,22 +772,53 @@ def main():
         help="Config preset name or path to config file",
     )
     parser.add_argument("--override", type=str, default=None, help="Override config file path")
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Custom log filename (default: auto-generated timestamp)",
+    )
     args = parser.parse_args()
 
-    # Load config
-    config = load_full_config(args.config, args.override)
+    # Get log directory from config or use default
+    paths_cfg = getattr(args, "paths", {}) if hasattr(args, "paths") else {}
+    log_dir = paths_cfg.get("logs", "./logs") if isinstance(paths_cfg, dict) else "./logs"
 
-    # Convert dataclass to dict since train() expects a dict
-    import dataclasses
+    # Start terminal logging - captures ALL output to file
+    terminal_logger = TerminalLogger(
+        log_dir=log_dir,
+        log_filename=args.log_file,
+    )
 
-    config_dict = dataclasses.asdict(config)
+    try:
+        with terminal_logger:
+            # Load config
+            config = load_full_config(args.config, args.override)
 
-    # Train model
-    train(config_dict)
+            # Convert dataclass to dict since train() expects a dict
+            import dataclasses
 
-    # Final message
-    logger = RichTrainingLogger()
-    logger.log_info("Training completed successfully!")
+            config_dict = dataclasses.asdict(config)
+
+            # Update log directory from loaded config
+            paths_dict = config_dict.get("paths", {})
+            if paths_dict and paths_dict.get("logs"):
+                terminal_logger.log_dir = Path(paths_dict["logs"])
+                terminal_logger.log_dir.mkdir(parents=True, exist_ok=True)
+
+            # Train model
+            train(config_dict)
+
+            # Final message
+            logger = RichTrainingLogger()
+            logger.log_info("Training completed successfully!")
+
+    except KeyboardInterrupt:
+        print("\n[TerminalLogger] Training interrupted by user")
+        raise
+    except Exception as e:
+        print(f"\n[TerminalLogger] Training failed with error: {e}")
+        raise
 
 
 if __name__ == "__main__":

@@ -21,6 +21,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+dependencies = [
+    "requests>=2.32.5",
+]
 
 [project.scripts]
 mww-train = "src.training.trainer:main"

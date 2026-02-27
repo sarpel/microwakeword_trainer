@@ -185,16 +185,13 @@ class MixConvBlock(tf.keras.layers.Layer):
         """
         net = inputs
 
-        # Add causal padding to handle small time dimensions
-        # This is needed because valid padding reduces time dimension
-        if self.mode == Modes.NON_STREAM_INFERENCE or self.mode == Modes.TRAINING:
-            max_ksize = max(self.kernel_sizes) if isinstance(self.kernel_sizes, list) else self.kernel_sizes
-            pad_amount = max_ksize - 1
-            if pad_amount > 0:
-                net = tf.pad(net, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
-
         # Single kernel size - simple depthwise conv
         if len(self.kernel_sizes) == 1:
+            # Causal padding for non-streaming modes
+            if self.mode in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
+                pad_amount = self.kernel_sizes[0] - 1
+                if pad_amount > 0:
+                    net = tf.pad(net, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
             net = self.depthwise_convs[0](net)
         else:
             # Multiple kernel sizes - split channels and apply different convs
@@ -206,23 +203,22 @@ class MixConvBlock(tf.keras.layers.Layer):
 
             x_outputs = []
             for i, (x, ks) in enumerate(zip(x_splits, self.kernel_sizes, strict=False)):
-                # StridedKeep for streaming - keep only the needed samples
-                if self.mode not in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
+                if self.mode in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
+                    # Per-kernel causal padding ensures all outputs have
+                    # the same time dimension (= input time dimension)
+                    pad_amount = ks - 1
+                    if pad_amount > 0:
+                        x = tf.pad(x, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
+                else:
+                    # Streaming: StridedKeep trims ring buffer for this kernel
                     x = StridedKeep(ks, mode=self.mode)(x)
 
                 # Depthwise conv with this kernel size
                 x = self.depthwise_convs[i](x)
                 x_outputs.append(x)
 
-            # Align output time dimensions by dropping extra samples
-            valid_times = [out.shape[1] for out in x_outputs if out.shape[1] is not None]
-            min_time = min(valid_times) if valid_times else None
-            if min_time is not None:
-                for i in range(len(x_outputs)):
-                    if x_outputs[i].shape[1] is not None and x_outputs[i].shape[1] > min_time:
-                        x_outputs[i] = StridedDrop(x_outputs[i].shape[1] - min_time, mode=self.mode)(x_outputs[i])
-
             # Concatenate along channel dimension
+            # Per-kernel padding ensures all outputs have matching time dimensions
             net = tf.keras.layers.Concatenate(axis=-1)(x_outputs)
 
         # Apply pointwise projection and BN

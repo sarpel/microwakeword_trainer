@@ -56,6 +56,7 @@ setup(
         "console_scripts": [
             "mww-train=src.training.trainer:main",
             "mww-export=src.export.tflite:main",
+            "mww-autotune=src.tuning.cli:main",
         ],
     },
 )

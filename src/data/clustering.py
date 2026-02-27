@@ -673,7 +673,7 @@ if HAS_SPEECHBRAIN and Dataset is not None:
             return torch.tensor(audio, dtype=torch.float32), len(audio)
 else:
     # Dummy class for when torch is not available
-    class AudioDataset:
+    class _AudioDatasetPlaceholder:
         def __init__(self, *args, **kwargs):
             raise ImportError("PyTorch is required for AudioDataset")
 
@@ -913,7 +913,7 @@ def _cluster_samples_two_stage(
         n_coarse = min(n_coarse, n_clusters)
     
     logger.info(f"Stage 1: Coarse k-means with {n_coarse} clusters")
-    kmeans = KMeans(n_clusters=n_coarse, random_state=42, n_init=10)
+    kmeans = KMeans(n_clusters=n_coarse, random_state=42, n_init="auto")
     coarse_labels = kmeans.fit_predict(features)
     
     # Stage 2: Agglomerative clustering within each coarse cluster

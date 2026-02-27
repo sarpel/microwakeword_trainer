@@ -493,6 +493,11 @@ class WakeWordDataset:
             self.feature_dim = hardware_cfg.get("mel_bins", feature_dim)
             self.split = split
             self._is_built = False
+
+            # Derive max_time_frames from hardware config
+            clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
+            window_step_ms = hardware_cfg.get("window_step_ms", 10)
+            self.max_time_frames = int(clip_duration_ms / window_step_ms)
         else:
             # Legacy initialization
             self._config = None
@@ -501,6 +506,7 @@ class WakeWordDataset:
             self.batch_size = batch_size
             self.feature_dim = feature_dim
             self._is_built = False
+            self.max_time_frames = 100  # Default: 1000ms / 10ms
 
         # Try to load from store
         self.feature_store: Optional[FeatureStore] = None
@@ -693,7 +699,10 @@ class WakeWordDataset:
             return np.vstack([features, padding])
         return features
 
-    def train_generator_factory(self, max_time_frames: int = 49):
+    def train_generator_factory(self, max_time_frames: Optional[int] = None):
+        """Create a factory for infinite training data generator."""
+        if max_time_frames is None:
+            max_time_frames = self.max_time_frames
         """Create a factory for infinite training data generator."""
 
         def factory():
@@ -729,7 +738,10 @@ class WakeWordDataset:
 
         return factory
 
-    def val_generator_factory(self, max_time_frames: int = 49):
+    def val_generator_factory(self, max_time_frames: Optional[int] = None):
+        """Create a factory for finite validation data generator."""
+        if max_time_frames is None:
+            max_time_frames = self.max_time_frames
         """Create a factory for finite validation data generator."""
 
         def factory():

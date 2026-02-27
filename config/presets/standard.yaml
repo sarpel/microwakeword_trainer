@@ -50,7 +50,7 @@ training:
 
   # Checkpoint selection
   minimization_metric: "ambient_false_positives_per_hour"
-  target_minimization: 0.5
+  target_minimization: 0.2
   maximization_metric: "average_viable_recall"
 
   # Hours of negative/background audio for FAH calculation
@@ -62,18 +62,18 @@ training:
 model:
   architecture: "mixednet"
 
-  # Variant A (hey_jarvis - simpler)
-  first_conv_filters: 30
+  # okay_nabu architecture (official ESPHome MWW)
+  first_conv_filters: 32
   first_conv_kernel_size: 5
   stride: 3
-  pointwise_filters: "60,60,60,60"
-  mixconv_kernel_sizes: "[5],[9],[13],[21]"
+  pointwise_filters: "64,64,64,64"
+  mixconv_kernel_sizes: "[5],[7,11],[9,15],[23]"
   repeat_in_block: "1,1,1,1"
   residual_connection: "0,0,0,0"
 
   # Regularization
   dropout_rate: 0.2
-  l2_regularization: 0.001
+  l2_regularization: 0.0001
 
 # ─────────────────────────────────────────────────────────────────
 # AUGMENTATION
@@ -162,5 +162,5 @@ export:
 
   probability_cutoff: 0.97
   sliding_window_size: 5
-  tensor_arena_size: 22860
+  tensor_arena_size: 30000
   minimum_esphome_version: "2024.7.0"

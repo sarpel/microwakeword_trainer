@@ -61,13 +61,12 @@ training:
 model:
   architecture: "mixednet"
 
-  # Variant A (hey_jarvis - simpler)
-  first_conv_filters: 30
+  # okay_nabu architecture (official ESPHome MWW)
+  first_conv_filters: 32
   first_conv_kernel_size: 5
   stride: 3
-  pointwise_filters: "60,60,60,60"
-  pointwise_filters: "60,60,60,60"
-  mixconv_kernel_sizes: "[5],[9],[13],[21]"
+  pointwise_filters: "64,64,64,64"
+  mixconv_kernel_sizes: "[5],[7,11],[9,15],[23]"
   repeat_in_block: "1,1,1,1"
   residual_connection: "0,0,0,0"
 
@@ -157,5 +156,5 @@ export:
   # For production use, set to 0.95-0.98 for high-confidence detection
   probability_cutoff: 0.70
   sliding_window_size: 5
-  tensor_arena_size: 22860
+  tensor_arena_size: 30000
   minimum_esphome_version: "2024.7.0"

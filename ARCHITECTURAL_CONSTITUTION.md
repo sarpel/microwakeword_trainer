@@ -74,6 +74,27 @@
 | `enable_pcan` | **True** | Per-Channel Amplitude Normalization; deactivating changes the feature distribution entirely |
 JB|| `clip_duration_ms` | **Configurable** | Determines training input length. Common: 1000ms (1s), 1500ms, 3000ms. Does NOT affect streaming inference.
 
+### Audio Frontend Processing Parameters (pymicro-features v2.0.2)
+
+> **IMMUTABLE. COMPILED INTO C++ EXTENSION. NOT CONFIGURABLE AT RUNTIME.**
+>
+> These values are hardcoded in `pymicro-features` C++ source (`micro_features_cpp`).
+> The library wraps the TFLite Micro audio frontend with identical defaults to ESPHome.
+> `pymicro_features.MicroFrontend()` accepts NO constructor arguments.
+
+| Parameter | Value | Category |
+|---|---|---|
+| `pcan_strength` | **0.95** | PCAN Gain Control |
+| `pcan_offset` | **80.0** | PCAN Gain Control |
+| `pcan_gain_bits` | **21** | PCAN Gain Control |
+| `noise_even_smoothing` | **0.025** | Noise Reduction |
+| `noise_odd_smoothing` | **0.06** | Noise Reduction |
+| `noise_min_signal_remaining` | **0.05** | Noise Reduction |
+| `log_scale_shift` | **6** | Log Scale |
+
+> Verified against `rhasspy/pymicro-features` source: `src/micro_features.cpp::init_cfg()`.
+> Last verified: 2025-02-27.
+
 YX|### Derived Constants
 PX|
 KP|```
@@ -400,7 +421,7 @@ first_conv_filters    = 32
 first_conv_kernel_size = 5
 stride                = 3           # GLOBAL IMMUTABLE CONSTANT
 pointwise_filters     = [64, 64, 64, 64]
-mixconv_kernel_sizes  = [[5], [9], [13], [21]]
+mixconv_kernel_sizes  = [[5], [7, 11], [9, 15], [23]]
 repeat_in_block       = [1, 1, 1, 1]
 residual_connection   = [0, 0, 0, 0]
 ```

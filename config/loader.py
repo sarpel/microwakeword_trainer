@@ -143,14 +143,28 @@ class PerformanceConfig:
 
 @dataclass
 class SpeakerClusteringConfig:
-    """Speaker clustering configuration."""
+    """Speaker clustering configuration with performance optimizations."""
 
     enabled: bool = True
-    method: str = "wavlm_ecapa"
-    embedding_model: str = "microsoft/wavlm-base-plus"
+    method: str = "adaptive"  # agglomerative, hdbscan, or adaptive
+    embedding_model: str = "speechbrain/ecapa-tdnn-voxceleb"
     similarity_threshold: float = 0.72
     n_clusters: Optional[int] = None
     leakage_audit_enabled: bool = True
+    leakage_similarity_threshold: float = 0.9
+
+    # Performance optimizations (Phase 2)
+    use_embedding_cache: bool = True
+    cache_dir: Optional[str] = None  # Custom cache directory
+    batch_size: Optional[int] = None  # None = auto-detect from GPU
+    num_io_workers: int = 8
+    use_mixed_precision: bool = True
+    use_dataloader: bool = False
+
+    # Adaptive clustering (Phase 3)
+    use_adaptive_clustering: bool = True
+    hdbscan_min_cluster_size: int = 5
+    hdbscan_min_samples: int = 3
 
 
 @dataclass

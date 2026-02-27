@@ -50,7 +50,7 @@ training:
 
   # Checkpoint selection - stricter target for max quality
   minimization_metric: "ambient_false_positives_per_hour"
-  target_minimization: 0.3
+  target_minimization: 0.2
   maximization_metric: "average_viable_recall"
   # Hours of negative/background audio for FAH calculation
   ambient_duration_hours: 10.0
@@ -61,19 +61,18 @@ training:
 model:
   architecture: "mixednet"
 
-  # Variant A (hey_jarvis - simpler)
-  first_conv_filters: 30
+  # okay_nabu architecture (official ESPHome MWW)
+  first_conv_filters: 32
   first_conv_kernel_size: 5
   stride: 3
-  pointwise_filters: "60,60,60,60"
-  pointwise_filters: "60,60,60,60"
-  mixconv_kernel_sizes: "[5],[9],[13],[21]"
+  pointwise_filters: "64,64,64,64"
+  mixconv_kernel_sizes: "[5],[7,11],[9,15],[23]"
   repeat_in_block: "1,1,1,1"
   residual_connection: "0,0,0,0"
 
   # Common settings
   dropout_rate: 0.2
-  l2_regularization: 0.001
+  l2_regularization: 0.0001
 
 # ─────────────────────────────────────────────────────────────────
 # AUGMENTATION (Full + extra for max quality)
@@ -124,7 +123,7 @@ performance:
   intra_op_parallelism: 16
 
   # Profiling enabled with detailed output
-  enable_profiling: true
+  enable_profiling: false
   profile_every_n_steps: 100
   profile_output_dir: "./profiles"
 
@@ -168,5 +167,5 @@ export:
   # Validated optimal cutoff from model validation
   probability_cutoff: 0.97
   sliding_window_size: 5
-  tensor_arena_size: 22860
+  tensor_arena_size: 30000
   minimum_esphome_version: "2024.7.0"
