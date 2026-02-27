@@ -177,7 +177,14 @@ class HardExampleMiner:
 
         # Collect predictions across dataset, tracking global index offset
         global_offset = 0
-        for features, labels, _ in data_generator:
+        
+        # Handle both generator factories and direct generators
+        if callable(data_generator):
+            gen = data_generator()
+        else:
+            gen = data_generator
+        
+        for features, labels, _ in gen:  # type: ignore[var-annotated]
             predictions = model.predict(features, verbose=0)
             all_features.append(features)
             all_predictions.append(predictions)
