@@ -162,7 +162,7 @@ def validate_model_quality(
 
             if "quantization_parameters" in inp:
                 qp = inp["quantization_parameters"]
-                if qp.get("scales") and qp.get("zero_points"):
+                if qp.get("scales") is not None and qp.get("zero_points") is not None and len(qp["scales"]) > 0 and len(qp["zero_points"]) > 0:
                     results["info"]["input_quantized"] = True
                     results["info"]["input_scale"] = float(qp["scales"][0])
                     results["info"]["input_zero_point"] = int(qp["zero_points"][0])
@@ -183,7 +183,7 @@ def validate_model_quality(
 
             if "quantization_parameters" in out:
                 qp = out["quantization_parameters"]
-                if qp.get("scales") and qp.get("zero_points"):
+                if qp.get("scales") is not None and qp.get("zero_points") is not None and len(qp["scales"]) > 0 and len(qp["zero_points"]) > 0:
                     results["info"]["output_quantized"] = True
                     results["info"]["output_scale"] = float(qp["scales"][0])
                     results["info"]["output_zero_point"] = int(qp["zero_points"][0])

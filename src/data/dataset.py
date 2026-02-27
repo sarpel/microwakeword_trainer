@@ -9,10 +9,10 @@ Provides:
 import logging
 import os
 import struct
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from src.data.ingestion import load_audio_wave
 
 import numpy as np
 
@@ -153,7 +153,6 @@ class RaggedMmap:
             self._lengths = []
         else:
             raise ValueError(f"Invalid mode: {mode}")
-            raise ValueError(f"Invalid mode: {mode}")
 
     def close(self):
         """Close the storage and flush any pending writes."""
@@ -175,11 +174,9 @@ class RaggedMmap:
         lengths = [arr.nbytes for arr in arrays]
 
         # Calculate offsets
-        # Calculate offsets
         if self._num_arrays > 0:
             assert self._offsets is not None, "offsets not loaded"
             assert self._lengths is not None, "lengths not loaded"
-            last_offset = int(self._offsets[-1]) + int(self._lengths[-1])
             last_offset = int(self._offsets[-1]) + int(self._lengths[-1])
         else:
             last_offset = 0
@@ -187,13 +184,11 @@ class RaggedMmap:
         offsets = [last_offset + sum(lengths[:i]) for i in range(len(arrays))]
 
         # Append to data file
-        # Append to data file
         assert self._data_file is not None, "data_file not initialized"
         with open(self._data_file, "ab") as f:
             for arr in arrays:
                 f.write(arr.tobytes())
 
-        # Append to index files
         # Append to index files
         assert self._offsets_file is not None, "offsets_file not initialized"
         with open(self._offsets_file, "ab") as f:
@@ -254,20 +249,6 @@ class RaggedMmap:
         elem_offset = offset // itemsize
         elem_length = length // itemsize
 
-        return np.array(self._data[elem_offset : elem_offset + elem_length])
-        assert self._lengths is not None, "lengths not loaded"
-        assert self._data is not None, "data not loaded"
-
-        offset = int(self._offsets[idx])
-        length = int(self._lengths[idx])
-
-        # Convert byte offsets/lengths to element counts
-        # Convert byte offsets/lengths to element counts
-        itemsize = self._data.itemsize
-        elem_offset = offset // itemsize
-        elem_length = length // itemsize
-
-        return np.array(self._data[elem_offset : elem_offset + elem_length])
         return np.array(self._data[elem_offset : elem_offset + elem_length])
 
     def __len__(self) -> int:
@@ -393,7 +374,6 @@ class FeatureStore:
             raise RuntimeError("Feature store not initialized")
         if self.labels is None:
             raise RuntimeError("Labels store not initialized")
-            raise RuntimeError("Feature store not initialized")
 
         self.features.append([feature])
         self.labels.append([np.array([label], dtype=np.int32)])
@@ -641,13 +621,7 @@ class WakeWordDataset:
         for sample in train_samples:
             try:
                 # Load audio
-                with wave.open(str(sample.path), "rb") as wf:
-                    n_frames = wf.getnframes()
-                    audio_data = wf.readframes(n_frames)
-                    audio = (
-                        np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
-                        / 32767.0
-                    )
+                audio = load_audio_wave(sample.path, target_sr=sample_rate)
 
                 # Extract features
                 features = frontend.compute_mel_spectrogram(audio)
@@ -677,13 +651,7 @@ class WakeWordDataset:
 
             for sample in val_samples:
                 try:
-                    with wave.open(str(sample.path), "rb") as wf:
-                        n_frames = wf.getnframes()
-                        audio_data = wf.readframes(n_frames)
-                        audio = (
-                            np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
-                            / 32767.0
-                        )
+                    audio = load_audio_wave(sample.path, target_sr=sample_rate)
 
                     features = frontend.compute_mel_spectrogram(audio)
                     label = 1 if sample.label == Label.POSITIVE else 0

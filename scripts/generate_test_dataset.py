@@ -8,7 +8,6 @@ import wave
 from pathlib import Path
 
 import numpy as np
-from typing import cast
 
 # Module-level RNG for deterministic but unique noise generation
 _rng = np.random.default_rng(42)
@@ -33,7 +32,7 @@ def generate_sine_wave(frequency: float, duration: float, sample_rate: int) -> n
     envelope = np.ones_like(t)
     envelope[:fade_len] = np.linspace(0, 1, fade_len)
     envelope[-fade_len:] = np.linspace(1, 0, fade_len)
-    return cast("np.ndarray[Any, Any]", np.sin(2 * np.pi * frequency * t) * envelope * 0.7)
+    return (np.sin(2 * np.pi * frequency * t) * envelope * 0.7).astype(np.float32)
 
 
 def generate_noise(duration: float, sample_rate: int) -> np.ndarray:
@@ -44,7 +43,7 @@ def generate_noise(duration: float, sample_rate: int) -> np.ndarray:
     envelope = np.ones_like(samples)
     envelope[:fade_len] = np.linspace(0, 1, fade_len)
     envelope[-fade_len:] = np.linspace(1, 0, fade_len)
-    return cast("np.ndarray[Any, Any]", envelope * samples * 0.3)
+    return (envelope * samples * 0.3).astype(np.float32)
 
 
 def save_wav_file(filepath: Path, samples: np.ndarray, sample_rate: int):

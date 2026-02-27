@@ -686,7 +686,7 @@ def ensure_data_directory(base_dir: Union[str, Path], create: bool = True) -> di
     }
 
     if create:
-        for name, path in dirs.items():
+        for _, path in dirs.items():
             path.mkdir(parents=True, exist_ok=True)
             logger.debug(f"Ensured directory: {path}")
 

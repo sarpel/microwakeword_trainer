@@ -72,9 +72,25 @@
 | `upper_band_limit_hz` | **7 500 Hz** | Nyquist constraint for 16 kHz + margin |
 | `lower_band_limit_hz` | **125 Hz** | DC rejection floor |
 | `enable_pcan` | **True** | Per-Channel Amplitude Normalization; deactivating changes the feature distribution entirely |
-| `clip_duration_ms` | **1 000 ms** | 1-second spectrogram window for classification |
+JB|| `clip_duration_ms` | **Configurable** | Determines training input length. Common: 1000ms (1s), 1500ms, 3000ms. Does NOT affect streaming inference.
 
-### Derived Constants (also immutable)
+YX|### Derived Constants
+PX|
+KP|```
+KR|samples_per_hop    = sample_rate_hz × (window_step_ms / 1000) = 160
+VK|spectrogram_frames = clip_duration_ms / window_step_ms         = varies (100 for 1000ms)
+QZ|input_feature_shape = [spectrogram_frames, mel_bins]           = e.g., [100, 40] for 1000ms clip
+WQ|```
+WR|
+VQ|> **Training vs Streaming Input Shapes:**
+BT|>
+HM|> Training input shape depends on `clip_duration_ms`: `(clip_duration_ms / window_step_ms, 40)`
+NW|> - 1000ms clip → `(100, 40)`
+QJ|> - 1500ms clip → `(150, 40)`
+XM|> - 3000ms clip → `(300, 40)`
+XP|>
+MK|> Streaming inference shape is ALWAYS `[1, 3, 40]` regardless of clip duration. The model
+ZR|> processes 3 new frames (30ms of audio) per inference call on device.
 
 ```
 samples_per_hop    = sample_rate_hz × (window_step_ms / 1000) = 160

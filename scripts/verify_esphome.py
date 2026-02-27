@@ -140,9 +140,9 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
                         except Exception:  # noqa: S110
                             logging.debug("Could not read manifest.json")  # noqa: S110
 
-                # Default: accept any valid stride (1, 2, or 3)
+                # Default: only accept stride 3 per ARCHITECTURAL_CONSTITUTION
                 if expected_strides is None:
-                    expected_strides = [1, 2, 3]
+                    expected_strides = [3]
 
                 # Validate input shape against expected stride(s)
                 expected_shapes = [[1, s, 40] for s in expected_strides]
@@ -159,11 +159,11 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
                 # Check quantization parameters
                 quant_params = input_info.get("quantization_parameters", {})
                 if quant_params:
-                    scales = quant_params.get("scales", [])
-                    zero_points = quant_params.get("zero_points", [])
-                    if scales:
+                    scales = np.asarray(quant_params.get("scales", []))
+                    zero_points = np.asarray(quant_params.get("zero_points", []))
+                    if scales.size > 0:
                         results["details"]["input_scale"] = float(scales[0])
-                    if zero_points:
+                    if zero_points.size > 0:
                         results["details"]["input_zero_point"] = int(zero_points[0])
             else:
                 results["compatible"] = False
@@ -187,7 +187,8 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
 
                 # Expected: [1, 1] (batch=1, single probability)
                 if output_shape != [1, 1]:
-                    results["warnings"].append(f"Expected output shape [1, 1], got {output_shape}")
+                    results["compatible"] = False
+                    results["errors"].append(f"Expected output shape [1, 1], got {output_shape}. " "ESPHome requires single probability output.")
 
                 # CRITICAL: Must be uint8, NOT int8!
                 if output_dtype != np.uint8:
@@ -197,11 +198,11 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
                 # Check quantization parameters
                 quant_params = output_info.get("quantization_parameters", {})
                 if quant_params:
-                    scales = quant_params.get("scales", [])
-                    zero_points = quant_params.get("zero_points", [])
-                    if scales:
+                    scales = np.asarray(quant_params.get("scales", []))
+                    zero_points = np.asarray(quant_params.get("zero_points", []))
+                    if scales.size > 0:
                         results["details"]["output_scale"] = float(scales[0])
-                    if zero_points:
+                    if zero_points.size > 0:
                         results["details"]["output_zero_point"] = int(zero_points[0])
             else:
                 results["compatible"] = False
@@ -210,12 +211,12 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
         except Exception as e:
             results["warnings"].append(f"Could not verify output: {e}")
 
-        # Check 4: State variables (6 TYPE_13 tensors for streaming)
+        # Check 4: State variables (6 streaming state tensors)
         try:
             tensor_details = interpreter.get_tensor_details()
 
-            # Count state variable tensors (type 13 = resource type for variables)
-            state_vars = [t for t in tensor_details if t.get("type") == 13]
+            # Count state variable tensors (is_variable flag or 'state' in name)
+            state_vars = [t for t in tensor_details if t.get("is_variable") or "state" in t.get("name", "").lower()]
             num_state_vars = len(state_vars)
             results["details"]["num_state_variables"] = num_state_vars
 
@@ -226,7 +227,7 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
             # Expected: 6 state variables for streaming
             if num_state_vars != 6:
                 results["compatible"] = False
-                results["errors"].append(f"Expected 6 TYPE_13 state variables, got {num_state_vars}. " "ESPHome streaming models require exactly 6 state tensors for ring buffer management.")
+                results["errors"].append(f"Expected 6 state variables, got {num_state_vars}. " "ESPHome streaming models require exactly 6 state tensors for ring buffer management.")
 
         except Exception as e:
             results["warnings"].append(f"Could not verify state variables: {e}")
@@ -237,10 +238,14 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
                 input_quant = input_details[0].get("quantization_parameters", {})
                 output_quant = output_details[0].get("quantization_parameters", {})
 
-                if not input_quant or not input_quant.get("scales"):
-                    results["warnings"].append("Input quantization parameters missing")
-                if not output_quant or not output_quant.get("scales"):
-                    results["warnings"].append("Output quantization parameters missing")
+                input_scales = np.asarray(input_quant.get("scales", [])) if input_quant else np.array([])
+                if input_scales.size == 0:
+                    results["compatible"] = False
+                    results["errors"].append("Input quantization parameters missing. ESPHome requires INT8 quantization.")
+                output_scales = np.asarray(output_quant.get("scales", [])) if output_quant else np.array([])
+                if output_scales.size == 0:
+                    results["compatible"] = False
+                    results["errors"].append("Output quantization parameters missing. ESPHome requires UINT8 quantization.")
 
         except Exception as e:
             results["warnings"].append(f"Could not verify quantization: {e}")

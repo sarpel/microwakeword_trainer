@@ -217,6 +217,16 @@ class Trainer:
 
         # Rich terminal logger
         self.logger = RichTrainingLogger()
+
+        # Calculate input shape from hardware config
+        hardware = config.get("hardware", {})
+        clip_duration_ms = hardware.get("clip_duration_ms", 1000)
+        window_step_ms = hardware.get("window_step_ms", 10)
+        mel_bins = hardware.get("mel_bins", 40)
+        self.input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
+
+        # FAH calculation - prefer evaluation config, fall back to training config.
+        self.logger = RichTrainingLogger()
         # FAH calculation - prefer evaluation config, fall back to training config.
         # Only overwrite if evaluation block explicitly provides a non-zero value.
         self.ambient_duration_hours = training.get("ambient_duration_hours", 10.0)
@@ -550,7 +560,7 @@ class Trainer:
         self,
         train_data_factory,
         val_data_factory,
-        input_shape: tuple[int, ...] = (49, 40),
+        input_shape: tuple[int, ...] | None = None,
     ) -> tf.keras.Model:
         """Execute full step-based training loop.
 
@@ -559,12 +569,16 @@ class Trainer:
                 (features, labels, weights) tuples.  Passed as a factory so the
                 generator can be restarted when exhausted.
             val_data_factory: Same pattern for validation data.
-            input_shape: Input feature shape
+            input_shape: Input feature shape. If None, uses shape calculated from
+                hardware.clip_duration_ms and hardware.window_step_ms in config.
 
         Returns:
             Trained model
         """
-        # Build and compile model
+        # Use calculated input shape from config if not provided
+        if input_shape is None:
+            input_shape = self.input_shape
+
         self.logger.log_info("Building model...")
         self.model = self._build_model(input_shape)
         self.model.summary(print_fn=self.logger.console.print)
@@ -581,7 +595,6 @@ class Trainer:
         progress.start()
         prev_phase = -1
 
-        # Training loop
         # Training loop
         start_time = time.time()
         # Create initial generator from factory so we can restart it if exhausted
@@ -718,19 +731,15 @@ def train(config: dict) -> tf.keras.Model:
     """
     from src.data.dataset import WakeWordDataset
 
-    model_cfg = config.get("model", {})
-    if "spectrogram_length" not in model_cfg:
-        raise ValueError("Model config must define 'spectrogram_length' under config['model'].")
+    # Calculate input shape from hardware config (not from model.spectrogram_length)
+    hardware_cfg = config.get("hardware", {})
+    clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
+    window_step_ms = hardware_cfg.get("window_step_ms", 10)
+    mel_bins = hardware_cfg.get("mel_bins", 40)
+    input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
 
-    # mel_bins: prefer hardware config (the canonical location)
-    mel_bins = config.get("hardware", {}).get("mel_bins")
-    if mel_bins is None:
-        mel_bins = model_cfg.get("mel_bins", 40)
-
-    input_shape = (
-        model_cfg.get("spectrogram_length", 49),
-        mel_bins,
-    )
+    # Input shape already calculated above from hardware config
+    # No need to check for spectrogram_length in model_cfg - it's deprecated
 
     dataset = WakeWordDataset(config)
     dataset.build()

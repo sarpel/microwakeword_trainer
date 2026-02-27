@@ -180,7 +180,8 @@ class HardNegativeMiner:
         features = np.expand_dims(features, axis=0)
 
         # Get model prediction
-        score = model.predict(features, verbose=0)[0][0]
+        prediction = np.asarray(model.predict(features, verbose=0)).ravel()
+        score = float(prediction[0])
 
         return float(score)
 
@@ -287,7 +288,7 @@ def integrate_hard_negative_mining(
             logger.info(f"Step {current_step}: Mining hard negatives...")
 
             # Get negative audio files
-            negative_files = list(negative_audio_dir.glob("*.wav"))
+            negative_files = list(negative_audio_dir.rglob("*.wav"))
 
             if negative_files:
                 # Cleanup old samples first

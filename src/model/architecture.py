@@ -98,16 +98,16 @@ def spectrogram_slices_dropped(flags):
         stride = flags.get("stride", 1)
 
     if first_conv_filters > 0:
-        # Only the first conv contribution is scaled by stride
-        first_conv_contribution = (first_conv_kernel_size - 1) * stride
+        # First conv contribution (NO stride scaling per upstream formula)
+        first_conv_contribution = first_conv_kernel_size - 1
         spectrogram_slices_dropped += first_conv_contribution
 
-    # Block contributions are NOT scaled by stride (causal padding per-block)
+    # Block contributions ARE scaled by stride (per upstream formula)
     block_contributions = 0
     for repeat, ksize in zip(repeat_in_block, mixconv_kernel_sizes, strict=False):
         # ksize can be a list like [5] or [9, 11]
         max_ksize = max(ksize) if isinstance(ksize, list) else ksize
-        block_contributions += repeat * (max_ksize - 1)
+        block_contributions += repeat * (max_ksize - 1) * stride
 
     spectrogram_slices_dropped += block_contributions
     return spectrogram_slices_dropped
@@ -372,7 +372,7 @@ class MixedNet(tf.keras.Model):
 
     def __init__(
         self,
-        input_shape=(98, 40),
+        input_shape=(100, 40),
         first_conv_filters=30,
         first_conv_kernel_size=5,
         stride=3,
@@ -576,7 +576,7 @@ class MixedNet(tf.keras.Model):
 
 
 def build_model(
-    input_shape=(98, 40),
+    input_shape=(100, 40),
     num_classes=2,
     first_conv_filters=30,
     first_conv_kernel_size=5,
@@ -652,7 +652,7 @@ def build_model(
 # =============================================================================
 
 
-def create_hey_jarvis_model(input_shape=(98, 40), mode=Modes.NON_STREAM_INFERENCE):
+def create_hey_jarvis_model(input_shape=(100, 40), mode=Modes.NON_STREAM_INFERENCE):
     """Create MixedNet model for 'hey_jarvis' wake word.
 
     Variant A configuration:
@@ -685,7 +685,7 @@ def create_hey_jarvis_model(input_shape=(98, 40), mode=Modes.NON_STREAM_INFERENC
 # =============================================================================
 
 
-def create_okay_nabu_model(input_shape=(98, 40), mode=Modes.NON_STREAM_INFERENCE):
+def create_okay_nabu_model(input_shape=(100, 40), mode=Modes.NON_STREAM_INFERENCE):
     """Create MixedNet model for 'okay_nabu' wake word.
 
     Variant B configuration with strided_keep and SPLIT_V operations.

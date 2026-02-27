@@ -7,7 +7,6 @@ if GPU is not available. No CPU fallback is provided.
 
 import numpy as np
 from typing import cast, Any
-from typing import cast
 
 # Try to import CuPy and set up GPU availability flag
 try:
@@ -15,7 +14,7 @@ try:
 
     HAS_GPU = cp.cuda.is_available()
 except ImportError:
-    HAS_GPU = False
+    cp = None
     HAS_GPU = False
 
 

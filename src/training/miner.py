@@ -94,7 +94,6 @@ class HardExampleMiner:
 
     def get_hard_samples(
         self,
-        features: np.ndarray,
         labels: np.ndarray,
         predictions: np.ndarray,
     ) -> np.ndarray:
@@ -105,7 +104,6 @@ class HardExampleMiner:
         - Hard negatives: negative samples with high prediction scores
 
         Args:
-            features: Feature array [n_samples, feature_dim]
             labels: Label array [n_samples]
             predictions: Model predictions [n_samples]
 
@@ -186,7 +184,7 @@ class HardExampleMiner:
             all_labels.append(labels)
 
             # Get hard indices local to this batch, then convert to global
-            local_hard_indices = self.get_hard_samples(features, labels, predictions)
+            local_hard_indices = self.get_hard_samples(labels, predictions)
             global_hard_indices = local_hard_indices + global_offset
             all_hard_global_indices.extend(global_hard_indices.tolist())
 
@@ -242,7 +240,7 @@ class HardExampleMiner:
             Path to saved file, or None if no hard samples were found.
         """
         # Get hard sample indices
-        hard_indices = self.get_hard_samples(features, labels, predictions)
+        hard_indices = self.get_hard_samples(labels, predictions)
 
         if len(hard_indices) == 0:
             return None

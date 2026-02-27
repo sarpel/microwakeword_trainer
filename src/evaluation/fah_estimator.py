@@ -32,6 +32,8 @@ class FAHEstimator:
         """Compute FAH metrics at a threshold."""
         if ambient_duration_hours is not None:
             duration_hours = float(ambient_duration_hours)
+            if duration_hours < 0:
+                raise ValueError(f"ambient_duration_hours must be >= 0, got {duration_hours}")
         elif self.ambient_duration_hours is not None:
             duration_hours = self.ambient_duration_hours
         else:
@@ -40,6 +42,10 @@ class FAHEstimator:
         if duration_hours == 0.0:
             logger.warning("ambient_duration_hours is 0.0 \u2014 FAH will be reported as 0. " "Provide a non-zero duration for meaningful false-activation-per-hour estimates.")
 
+        y_true = np.asarray(y_true).ravel()
+        y_scores = np.asarray(y_scores).ravel()
+        if len(y_true) != len(y_scores):
+            raise ValueError(f"y_true and y_scores must have the same length, got {len(y_true)} vs {len(y_scores)}")
         y_pred = (y_scores >= threshold).astype(int)
         fp = int(np.sum((y_true == 0) & (y_pred == 1)))
         fah = fp / duration_hours if duration_hours > 0 else 0.0

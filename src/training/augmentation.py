@@ -2,8 +2,7 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
-from typing import Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
 import numpy as np
 
@@ -241,12 +240,12 @@ class ParallelAugmenter:
         def augment_multi(audio: np.ndarray) -> List[np.ndarray]:
             """Create independent augmented variants for one input sample."""
             variants: List[np.ndarray] = []
-    for _ in range(num_augmentations):
-        if self.augmentation_fn is not None:
-            variants.append(self.augmentation_fn(audio.copy()))
-        else:
-            variants.append(audio.copy())
-    return variants
+            for _ in range(num_augmentations):
+                if self.augmentation_fn is not None:
+                    variants.append(self.augmentation_fn(audio.copy()))
+                else:
+                    variants.append(audio.copy())
+            return variants
 
         # Submit all tasks to the thread pool and collect in order
         futures = [self.executor.submit(augment_multi, audio) for audio in audio_samples]

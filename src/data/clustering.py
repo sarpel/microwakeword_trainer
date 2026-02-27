@@ -16,7 +16,6 @@ wrapper is provided but internally delegates to ECAPA-TDNN.
 import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
-from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 import numpy as np
@@ -114,7 +113,7 @@ def extract_speaker_embeddings(
 
         for audio_path in batch_paths:
             # Load audio using librosa (resample to 16kHz if needed)
-            audio, sr = librosa.load(audio_path, sr=16000)
+            audio, _ = librosa.load(audio_path, sr=16000)
 
             # SpeechBrain expects (batch, waveform) or (waveform,)
             # The encoder expects torch tensor with shape [1, samples]
@@ -445,12 +444,6 @@ def cluster_by_speaker(
         "cluster_labels": labels,
         "n_clusters": len(np.unique(labels)),
     }
-    result = {
-        "audio_paths": audio_paths,
-        "embeddings": embeddings,
-        "cluster_labels": labels,
-        "n_clusters": len(np.unique(labels)),
-    }
 
     # Leakage audit if requested
     if leakage_audit_enabled and train_test_split is not None:
@@ -524,7 +517,7 @@ class SpeakerClustering:
             similarity_threshold=self.config.similarity_threshold,
         )
 
-        return {p: int(label) for p, label in zip(audio_paths, labels)}
+        return {p: int(label) for p, label in zip(audio_paths, labels, strict=True)}
 
     def audit_leakage(self, train_paths, test_paths):
         """Audit for speaker leakage between train and test."""

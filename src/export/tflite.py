@@ -383,9 +383,12 @@ def export_to_tflite(
     hardware_config = config.get("hardware", {})
 
     # Build model config for conversion
+    clip_duration_ms = hardware_config.get("clip_duration_ms", 1000)
+    window_step_ms = hardware_config.get("window_step_ms", 10)
+    spectrogram_length = int(clip_duration_ms / window_step_ms)
     conversion_config = {
         "stride": model_config.get("stride", 3),
-        "spectrogram_length": model_config.get("spectrogram_length", 49),
+        "spectrogram_length": spectrogram_length,
         "mel_bins": hardware_config.get("mel_bins", 40),
         "first_conv_filters": model_config.get("first_conv_filters", 30),
         "first_conv_kernel_size": model_config.get("first_conv_kernel_size", 5),

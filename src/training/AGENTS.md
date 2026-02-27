@@ -23,7 +23,7 @@ mww-train = src.training.trainer:main
 ```python
 class Trainer:
     def __init__(self, config: FullConfig)
-    def train(self, train_data_factory, val_data_factory, input_shape=(49, 40))
+    def train(self, train_data_factory, val_data_factory, input_shape=None)
     def train_step(self, fingerprints, ground_truth, sample_weights)
     def validate(self, data_factory)   # Accepts callable factory or generator
     # Internal:

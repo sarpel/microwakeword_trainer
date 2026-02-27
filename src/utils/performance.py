@@ -52,6 +52,30 @@ def check_gpu_available() -> bool:
         return False
 
 
+def check_gpu_and_cupy_available() -> tuple[bool, str]:
+    """Check if both GPU and CuPy are available and working.
+
+    Returns:
+        tuple (available: bool, message: str)
+    """
+    if not check_gpu_available():
+        return False, "No NVIDIA GPU detected by GPUtil. Training requires a GPU."
+
+    try:
+        import cupy as cp
+
+        if not cp.cuda.is_available():
+            return False, "CuPy is installed but cannot access the GPU. Check CUDA installation."
+
+        # Try a small allocation to be sure
+        cp.array([1, 2, 3])
+        return True, f"GPU and CuPy available: {GPUtil.getGPUs()[0].name}"
+    except ImportError:
+        return False, "CuPy not found. Install cupy (e.g., pip install cupy-cuda12x)."
+    except Exception as e:
+        return False, f"Error initializing CuPy/GPU: {e}"
+
+
 # =============================================================================
 # TENSORFLOW GPU CONFIGURATION
 # =============================================================================

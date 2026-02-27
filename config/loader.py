@@ -84,7 +84,6 @@ class ModelConfig:
     first_conv_filters: int = 30
     first_conv_kernel_size: int = 5
     stride: int = 3
-    spectrogram_length: int = 49  # Number of time frames in input spectrogram
     pointwise_filters: str = "60,60,60,60"
     mixconv_kernel_sizes: str = "[5],[9],[13],[21]"
     repeat_in_block: str = "1,1,1,1"

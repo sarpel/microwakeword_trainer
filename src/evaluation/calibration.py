@@ -1,10 +1,9 @@
 """Calibration helpers for wake-word probability outputs."""
 
+from typing import Any, cast
+
 import numpy as np
 from scipy.special import expit
-from typing import cast, Any
-from typing import cast, Any
-from typing import cast
 
 
 def compute_calibration_curve(
@@ -77,6 +76,7 @@ def calibrate_probabilities(
 ) -> np.ndarray:
     """Apply a lightweight logistic calibration transform."""
     # Validate input range
+    y_prob = np.asarray(y_prob, dtype=float)
     if not np.all((y_prob >= 0) & (y_prob <= 1)):
         raise ValueError("y_prob values must be in [0, 1]")
 

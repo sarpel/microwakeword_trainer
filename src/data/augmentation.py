@@ -327,7 +327,7 @@ class AudioAugmentation:
 
             return audio + bg_audio
 
-        except Exception as e:
+        except (FileNotFoundError, ValueError, OSError) as e:
             logger.warning(f"Failed to apply background noise: {e}")
             return self.apply_color_noise(audio)
 
