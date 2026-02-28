@@ -18,11 +18,12 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    # Python 3.12 is NOT supported (ai-edge-litert 2.x requires 3.10/3.11)
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "requests>=2.32.5",
+    # Minimal hard deps for the package itself (heavy deps in requirements.txt)
+    "requests>=2.32",
 ]
 
 [project.scripts]
@@ -31,23 +32,23 @@ mww-export = "src.export.tflite:main"
 
 [project.optional-dependencies]
 dev = [
-    "black>=24.0.0",
-    "ruff>=0.6.0",
-    "mypy>=1.8.0",
-    "pytest>=8.0.0",
-    "pytest-cov>=4.1.0",
-    "pytest-xdist>=3.5.0",
-    "pre-commit>=3.6.0",
+    "black>=26.0",
+    "ruff>=0.15",
+    "mypy>=1.19",
+    "pytest>=9.0",
+    "pytest-cov>=6.0",
+    "pytest-xdist>=3.6",
+    "pre-commit>=4.0",
 ]
 docs = [
     "sphinx>=7.0.0",
     "sphinx-rtd-theme>=2.0.0",
 ]
 optional = [
-    "speechbrain>=1.0.0",
-    "transformers>=4.40.0",
-    "scikit-learn>=1.4.0",
-    "optuna>=3.6.0",
+    "speechbrain>=1.0.3",
+    "transformers>=5.0",
+    "scikit-learn>=1.5",
+    "optuna>=4.0",
     "matplotlib",
     "seaborn",
 ]
@@ -66,6 +67,24 @@ include = ["src*", "config*"]
 target-version = "py310"
 line-length = 200  # Very permissive - focus on bugs not cosmetics
 indent-width = 4
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "checkpoints",
+    "models",
+    "dataset",
+    "data",
+    "logs",
+    "profiles",
+    "notebooks",
+    # Protect uv-managed Python stdlib from accidental ruff --fix
+    ".local",
+    "**/cpython-*/**",
+    "**/site-packages/**",
+]
 
 [tool.ruff.lint]
 select = [
@@ -239,7 +258,7 @@ module = [
     "numba.*",
     "webrtcvad.*",
     "audio_metadata.*",
-    "mmap_ninja.*",
+    "mmap_ninja.*",  # PyPI name is mmap-ninja; import is mmap_ninja
     "scipy.*",
     "matplotlib.*",
     "seaborn.*",

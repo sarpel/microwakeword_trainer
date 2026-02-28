@@ -2,33 +2,33 @@
 # Install with: pip install -r requirements-dev.txt
 
 # Code Formatting
-black>=24.0.0
+black>=26.0
 
 # Linting
-ruff>=0.6.0
+ruff>=0.15
 
 # Type Checking
-mypy>=1.8.0
+mypy>=1.19
 
 # Testing
-pytest>=8.0.0
-pytest-cov>=4.1.0
-pytest-xdist>=3.5.0
+pytest>=9.0
+pytest-cov>=6.0
+pytest-xdist>=3.6
 
 # Pre-commit hooks
-pre-commit>=3.6.0
+pre-commit>=4.0
 
 # Documentation
-sphinx>=7.0.0
-sphinx-rtd-theme>=2.0.0
+sphinx>=8.0
+sphinx-rtd-theme>=3.0
 
 # Jupyter for notebooks
-jupyter>=1.0.0
-ipython>=8.20.0
+jupyter>=1.1
+ipython>=8.31
 
 # Profiling
 py-spy>=0.3.14
 
 # Build tools
-build>=1.0.0
-twine>=5.0.0
+build>=1.2
+twine>=6.0
