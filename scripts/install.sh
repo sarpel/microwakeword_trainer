@@ -57,7 +57,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo ""
 echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}${CYAN}║       microwakeword_trainer — Full Environment Setup      ║${NC}"
+echo -e "${BOLD}${CYAN}║       microwakeword_trainer — Full Environment Setup     ║${NC}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo -e "  Log file: ${LOG_FILE}"
 echo ""
@@ -407,13 +407,13 @@ PYEOF
 echo ""
 if [[ $VERIFY_FAILED -eq 0 ]]; then
     echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}${GREEN}║   ✓  Setup complete — all verifications passed!           ║${NC}"
+    echo -e "${BOLD}${GREEN}║   ✓  Setup complete — all verifications passed!  ✓      ║${NC}"
     echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
 else
-    echo -e "${BOLD}${YELLOW}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}${YELLOW}║   ⚠  Setup complete — some verifications had warnings.    ║${NC}"
+    echo -e "${BOLD}${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${YELLOW}║   ⚠  Setup complete — some verifications had warnings. ⚠ ║${NC}"
     echo -e "${BOLD}${YELLOW}║      Check the output above and the log file below.       ║${NC}"
-    echo -e "${BOLD}${YELLOW}╚══════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${BOLD}${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
 fi
 echo ""
 echo -e "  Full install log: ${CYAN}${LOG_FILE}${NC}"
