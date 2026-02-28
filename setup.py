@@ -16,7 +16,6 @@ setup(
     install_requires=[
         # Core
         "tensorflow[and-cuda]>=2.16,<2.17",
-        "ai-edge-litert>=2.1,<3.0",
         "pymicro-features>=2.0,<3.0",
         "numpy>=1.26",
         "scipy",

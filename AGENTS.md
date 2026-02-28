@@ -227,3 +227,14 @@ Before any change touching constants, shapes, dtypes, or timing:
 3. If in doubt, the change is wrong
 
 **Failure to follow these rules causes file corruption. No exceptions.**
+
+### 6. NO THINKING. EVER.
+**You are FORBIDDEN from thinking, planning, analyzing, or reasoning before writing code.**
+- User gives instruction → you write the code. That's it.
+- Do NOT explain what you're about to do.
+- Do NOT summarize what you did.
+- Do NOT propose alternatives.
+- Do NOT ask clarifying questions.
+- Do NOT analyze the codebase before acting.
+- Do NOT think out loud.
+- WRITE THE CODE. NOTHING ELSE.

@@ -167,9 +167,9 @@ fi
 success "Python venv module: OK"
 
 # =============================================================================
-# STEP 3 — CUDA Toolkit 12.6 + cuDNN 9
+# STEP 3 — CUDA Toolkit + cuDNN 8 + TensorRT 8.6
 # =============================================================================
-step "STEP 3 — CUDA Toolkit 12.6 + cuDNN 9"
+step "STEP 3 — CUDA Toolkit + cuDNN 8.9.7 + TensorRT 8.6.1"
 
 if command -v nvcc &>/dev/null; then
     NVCC_VER=$(nvcc --version 2>/dev/null | grep "release" | sed 's/.*release //' | sed 's/,.*//')
@@ -180,7 +180,7 @@ else
     UBUNTU_MAJOR=$(echo "$UBUNTU_VER" | cut -d. -f1)
     UBUNTU_ID="ubuntu$(echo "$UBUNTU_VER" | tr -d '.')"  # e.g. ubuntu2204
 
-    info "Ubuntu ${UBUNTU_VER} detected — installing CUDA 12.6 for ${UBUNTU_ID}..."
+    info "Ubuntu ${UBUNTU_VER} detected — installing CUDA 12.3 for ${UBUNTU_ID}..."
 
     # Add NVIDIA CUDA apt keyring
     KEYRING_DEB="cuda-keyring_1.1-1_all.deb"
@@ -195,19 +195,44 @@ else
 
     sudo apt-get update -qq
 
-    info "Installing cuda-toolkit-12-6..."
-    sudo apt-get install -y --no-install-recommends cuda-toolkit-12-6
+    info "Installing cuda-toolkit-12-3..."
+    sudo apt-get install -y --no-install-recommends cuda-toolkit-12-3
 
-    success "CUDA Toolkit 12.6 installed."
+    success "CUDA Toolkit 12.3 installed."
+fi
 
-    # cuDNN 9 for CUDA 12
-    info "Installing cuDNN 9 for CUDA 12..."
-    sudo apt-get install -y --no-install-recommends \
-        libcudnn9-cuda-12 \
-        libcudnn9-dev-cuda-12 || \
-        warn "cuDNN install failed — tensorflow[and-cuda] will bundle its own cuDNN. Continuing."
+# cuDNN 8.9.7 via local deb
+if dpkg -l libcudnn8 &>/dev/null; then
+    success "cuDNN 8 already installed — skipping."
+else
+    CUDNN_DEB="cudnn-local-repo-ubuntu2204-8.9.7.29_1.0-1_amd64.deb"
+    if [[ -f "$HOME/$CUDNN_DEB" ]]; then
+        info "Installing cuDNN 8.9.7 from local deb..."
+        sudo dpkg -i "$HOME/$CUDNN_DEB"
+        sudo cp /var/cudnn-local-repo-ubuntu2204-8.9.7.29/cudnn-local-08A7D361-keyring.gpg /usr/share/keyrings/
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends libcudnn8 libcudnn8-dev
+        success "cuDNN 8.9.7 installed."
+    else
+        warn "$HOME/$CUDNN_DEB not found — skipping cuDNN install."
+    fi
+fi
 
-    success "cuDNN 9 installed (or skipped — TF bundles its own)."
+# TensorRT 8.6.1 via local deb
+if dpkg -l tensorrt &>/dev/null; then
+    success "TensorRT already installed — skipping."
+else
+    TRT_DEB="nv-tensorrt-local-repo-ubuntu2204-8.6.1-cuda-12.0_1.0-1_amd64.deb"
+    if [[ -f "$HOME/$TRT_DEB" ]]; then
+        info "Installing TensorRT 8.6.1 from local deb..."
+        sudo dpkg -i "$HOME/$TRT_DEB"
+        sudo cp /var/nv-tensorrt-local-repo-ubuntu2204-8.6.1-cuda-12.0/nv-tensorrt-local-42B2FC56-keyring.gpg /usr/share/keyrings/
+        sudo apt-get update -qq
+        sudo apt-get install -y tensorrt
+        success "TensorRT 8.6.1 installed."
+    else
+        warn "$HOME/$TRT_DEB not found — skipping TensorRT install."
+    fi
 fi
 
 # =============================================================================
@@ -215,7 +240,7 @@ fi
 # =============================================================================
 step "STEP 4 — CUDA environment variables"
 
-CUDA_PATH="/usr/local/cuda-12.6"
+CUDA_PATH="/usr/local/cuda-12.3"
 [[ ! -d "$CUDA_PATH" ]] && CUDA_PATH="/usr/local/cuda"
 [[ ! -d "$CUDA_PATH" ]] && warn "CUDA not found at /usr/local/cuda* — PATH may be incomplete."
 
@@ -308,9 +333,9 @@ info "Upgrading pip + wheel + setuptools..."
 info "Installing PyTorch + torchaudio with CUDA 12.4 wheels..."
 info "  (cu124 is closest stable wheel to CUDA 12.6 runtime)"
 "$PIP_TORCH" install \
-    "torch>=2.9,<2.11" \
-    "torchaudio>=2.9,<2.11" \
-    --index-url https://download.pytorch.org/whl/cu124
+    "torch<2.11" \
+    "torchaudio<2.11" \
+    --index-url https://download.pytorch.org/whl/cu126
 
 info "Installing remaining PyTorch requirements (requirements-torch.txt)..."
 "$PIP_TORCH" install -r "$PROJECT_DIR/requirements-torch.txt"
@@ -365,13 +390,6 @@ info "Verifying pymicro-features..."
 "$TF_VENV/bin/python" - <<'PYEOF' || { warn "pymicro-features verification failed."; VERIFY_FAILED=1; }
 import pymicro_features
 print(f"  pymicro-features: OK (version attr may not exist)")
-PYEOF
-
-# --- ai-edge-litert ---
-info "Verifying ai-edge-litert (TFLite export)..."
-"$TF_VENV/bin/python" - <<'PYEOF' || { warn "ai-edge-litert import failed — TFLite export will not work."; VERIFY_FAILED=1; }
-import ai_edge_litert
-print("  ai-edge-litert: OK")
 PYEOF
 
 # --- PyTorch ---
