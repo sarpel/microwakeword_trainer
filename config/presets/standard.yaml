@@ -175,7 +175,7 @@ export:
   inference_input_type: "int8"
   inference_output_type: "uint8"
 
-  probability_cutoff: 0.52
+  probability_cutoff: 0.97
   sliding_window_size: 5
   tensor_arena_size: 30000
   minimum_esphome_version: "2024.7.0"

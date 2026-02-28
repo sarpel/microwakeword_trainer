@@ -4,7 +4,6 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Callable, List, Optional
 
-import logging
 import numpy as np
 
 # Import audiomentations for audio augmentations
