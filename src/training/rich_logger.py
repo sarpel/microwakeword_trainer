@@ -24,12 +24,12 @@ class RichTrainingLogger:
 
     Handles all terminal display: progress bars, metric tables, confusion matrices,
     phase transitions, checkpoint logging, and completion summaries. Pure display
-    module with no training logic or external dependencies.
+    module with no training logic.
     """
 
     def __init__(self, console: Console | None = None) -> None:
         if console is None:
-            self.console = Console(force_terminal=False)
+            self.console = Console()
         else:
             self.console = console
 

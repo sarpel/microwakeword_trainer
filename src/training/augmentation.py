@@ -262,4 +262,4 @@ class ParallelAugmenter:
     def __del__(self):
         """Cleanup thread pool."""
         if hasattr(self, "executor"):
-            self.executor.shutdown(wait=True)
+            self.executor.shutdown(wait=False)

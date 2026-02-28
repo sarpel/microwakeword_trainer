@@ -197,7 +197,16 @@ class HardExampleMiner:
 
             global_offset += len(features)
 
-        # Combine all predictions
+        # Combine all predictions — guard against empty generator
+        if not all_features:
+            mining_result = {
+                "epoch": epoch,
+                "num_hard_negatives": 0,
+                "indices": [],
+                "avg_prediction": 0.0,
+            }
+            self.mining_history.append(mining_result)
+            return mining_result
         all_features = np.concatenate(all_features)
         all_predictions = np.concatenate(all_predictions)
         all_labels = np.concatenate(all_labels)

@@ -242,7 +242,7 @@ class MixConvBlock(tf.keras.layers.Layer):
             {
                 "kernel_sizes": self.kernel_sizes,
                 "filters": self.filters,
-                "mode": self.mode,
+                "mode": getattr(self.mode, "value", self.mode),
             }
         )
         return config
@@ -346,7 +346,7 @@ class ResidualBlock(tf.keras.layers.Layer):
                 "kernel_sizes": self.kernel_sizes,
                 "repeat": self.repeat,
                 "use_residual": self.use_residual,
-                "mode": self.mode,
+                "mode": getattr(self.mode, "value", self.mode),
             }
         )
         return config
@@ -575,7 +575,7 @@ class MixedNet(tf.keras.Model):
                 "residual_connections": self.residual_connections,
                 "dropout_rate": self.dropout_rate,
                 "l2_regularization": self.l2_regularization,
-                "mode": self.mode,
+                "mode": getattr(self.mode, "value", self.mode),
             }
         )
         return config

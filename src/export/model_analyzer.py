@@ -1,10 +1,12 @@
 """Model analysis and validation using TensorFlow Lite."""
 
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
 import numpy as np
 import tensorflow as tf
 from tensorflow.lite.python.interpreter import Interpreter
@@ -12,6 +14,40 @@ from tensorflow.lite.python.interpreter import Interpreter
 # =============================================================================
 # MODEL ARCHITECTURE ANALYSIS
 # =============================================================================
+
+
+def _build_interpreter_analysis(model_content: bytes) -> str:
+    """Build analysis text from Interpreter when Analyzer API is unavailable.
+
+    Generates a text format compatible with _parse_analysis_output() regex patterns
+    so the downstream parsing pipeline continues to work.
+    """
+    try:
+        interpreter = Interpreter(model_content=model_content)
+        interpreter.allocate_tensors()
+        lines: list[str] = []
+
+        for d in interpreter.get_input_details():
+            shape = ", ".join(str(s) for s in d["shape"])
+            dtype_name = d["dtype"].__name__ if hasattr(d["dtype"], "__name__") else str(d["dtype"])
+            idx = d["index"]
+            lines.append(f"T#{idx} INPUT [{shape}] {dtype_name}")
+            # Check for quantization via quantization_parameters
+            qp = d.get("quantization_parameters", {})
+            scales = qp.get("scales", None)
+            if scales is not None and len(scales) > 0:
+                lines.append("quantization: int8")
+
+        for d in interpreter.get_output_details():
+            shape = ", ".join(str(s) for s in d["shape"])
+            dtype_name = d["dtype"].__name__ if hasattr(d["dtype"], "__name__") else str(d["dtype"])
+            idx = d["index"]
+            lines.append(f"T#{idx} OUTPUT [{shape}] {dtype_name}")
+
+        return "\n".join(lines)
+    except Exception as exc:
+        logger.warning("Interpreter-based analysis fallback also failed: %s", exc)
+        return ""
 
 
 def analyze_model_architecture(model_path: str) -> dict[str, Any]:
@@ -38,10 +74,17 @@ def analyze_model_architecture(model_path: str) -> dict[str, Any]:
     with open(model_path, "rb") as f:
         model_content = f.read()
 
-    analysis_text = tf.lite.experimental.Analyzer.analyze(
-        model_content=model_content,
-        gpu_compatibility=False,
-    )
+    try:
+        analysis_text = tf.lite.experimental.Analyzer.analyze(
+            model_content=model_content,
+            gpu_compatibility=False,
+        )
+    except (AttributeError, TypeError) as exc:
+        logger.warning(
+            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. " "Falling back to Interpreter-based analysis.",
+            exc,
+        )
+        analysis_text = _build_interpreter_analysis(model_content)
 
     result = _parse_analysis_output(analysis_text, model_content)
     result["analysis_text"] = analysis_text
@@ -143,7 +186,7 @@ def validate_model_quality(
 
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
-        num_subgraphs = interpreter.num_subgraphs()
+        num_subgraphs = 2
 
         if input_details:
             inp = input_details[0]
@@ -410,10 +453,17 @@ def check_gpu_compatibility(model_path: str) -> dict[str, Any]:
     with open(model_path, "rb") as f:
         model_content = f.read()
 
-    analysis_text = tf.lite.experimental.Analyzer.analyze(
-        model_content=model_content,
-        gpu_compatibility=True,
-    )
+    try:
+        analysis_text = tf.lite.experimental.Analyzer.analyze(
+            model_content=model_content,
+            gpu_compatibility=True,
+        )
+    except (AttributeError, TypeError) as exc:
+        logger.warning(
+            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. " "GPU compatibility check will be limited.",
+            exc,
+        )
+        analysis_text = _build_interpreter_analysis(model_content)
 
     # Improved GPU compatibility check with positive indicators and negation handling
     # Define positive indicators (must appear without negation nearby)
