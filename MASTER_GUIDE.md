@@ -148,8 +148,8 @@ python -c "import speechbrain; print(speechbrain.__version__)"
 ### Shell Aliases (Add to ~/.bashrc or ~/.zshrc)
 
 ```bash
-alias mww-tf='source ~/venvs/mww-tf/bin/activate && cd /home/sarpel/mww/microwakeword_trainer'
-alias mww-torch='source ~/venvs/mww-torch/bin/activate && cd /home/sarpel/mww/microwakeword_trainer'
+alias mww-tf='source ~/.venvs/mww-tf/bin/activate && cd $PROJECT_DIR'
+alias mww-torch='source ~/.venvs/mww-torch/bin/activate && cd $PROJECT_DIR'
 ```
 
 ### GPU Environment Variables (Set Before Training)
@@ -251,20 +251,20 @@ huggingface-cli login
 
 ```bash
 # Cluster positive dataset (default)
-python cluster-Test.py --config standard
+mww-cluster-analyze --config standard
 
 # Cluster all datasets at once
-python cluster-Test.py --config standard --dataset all
+mww-cluster-analyze --config standard --dataset all
 
 # Cluster specific dataset
-python cluster-Test.py --config standard --dataset negative
+mww-cluster-analyze --config standard --dataset negative
 
 # Use explicit speaker count (RECOMMENDED for short clips 1-3s)
 # Threshold-based clustering over-fragments short wake word clips
-python cluster-Test.py --config standard --n-clusters 200
+mww-cluster-analyze --config standard --n-clusters 200
 
 # Combine options
-python cluster-Test.py --config standard --dataset all --n-clusters 200 --threshold 0.65
+mww-cluster-analyze --config standard --dataset all --n-clusters 200 --threshold 0.65
 ```
 
 **Output per dataset:**
@@ -273,7 +273,7 @@ python cluster-Test.py --config standard --dataset all --n-clusters 200 --thresh
 
 **Review the report** before proceeding. Check that speakers are grouped correctly.
 
-### cluster-Test.py Arguments
+### mww-cluster-analyze Arguments
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -289,19 +289,19 @@ python cluster-Test.py --config standard --dataset all --n-clusters 200 --thresh
 
 ```bash
 # Preview first (ALWAYS do this first)
-python Start-Clustering.py --namelist cluster_output/positive_namelist.json --dry-run
+mww-cluster-apply --namelist cluster_output/positive_namelist.json --dry-run
 
 # Organize a single dataset
-python Start-Clustering.py --namelist cluster_output/positive_namelist.json
+mww-cluster-apply --namelist cluster_output/positive_namelist.json
 
 # Organize all datasets at once
-python Start-Clustering.py --namelist-dir cluster_output
+mww-cluster-apply --namelist-dir cluster_output
 
 # Undo if something looks wrong
-python Start-Clustering.py --undo cluster_output/positive_backup_manifest.json
+mww-cluster-apply --undo cluster_output/positive_backup_manifest.json
 ```
 
-### Start-Clustering.py Arguments
+### mww-cluster-apply Arguments
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -603,9 +603,9 @@ mww-train --config /path/to/my_full_config.yaml
 
 ```
 checkpoints/
-├── best.ckpt              # Best model (lowest FAH + highest recall)
-├── best_fah_step_XXXX.ckpt  # Best FAH checkpoint
-└── step_XXXX.ckpt         # Regular interval checkpoints
+├── best_weights.weights.h5           # Best model (lowest FAH + highest recall)
+├── best_fah_step_XXXX.weights.h5     # Best FAH checkpoint
+└── checkpoint_step_XXXX.weights.h5   # Regular interval checkpoints
 
 logs/
 ├── terminal_YYYYMMDD_HHMMSS.log  # Full training log
@@ -846,7 +846,7 @@ If your metrics look suspiciously perfect (accuracy > 0.999, FA/Hour = 0.00):
 
 ```bash
 # Check speaker overlap between splits
-python cluster-Test.py --config standard --dataset all
+mww-cluster-analyze --config standard --dataset all
 # Review cluster_output/*_cluster_report.txt
 
 # Check file overlap
@@ -871,32 +871,33 @@ Auto-tuning iteratively fine-tunes a trained model to achieve target metrics wit
 mww-autotune [OPTIONS]
 ```
 
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--checkpoint` | string | **required** | Path to trained checkpoint |
+| `--checkpoint` | string | **required** | Path to trained checkpoint (.weights.h5) |
 | `--config` | string | `standard` | Config preset or path |
 | `--override` | string | None | Override config file |
 | `--target-fah` | float | 0.3 | Target FAH value |
 | `--target-recall` | float | 0.92 | Target recall value |
 | `--max-iterations` | int | 100 | Maximum tuning iterations |
 | `--output-dir` | string | `./tuning` | Output directory for tuned checkpoints |
+| `--patience` | int | 10 | Stop early if no improvement after N iterations |
+| `--dry-run` | flag | off | Validate config without running tuning |
+| `--verbose` / `-v` | flag | off | Enable verbose output |
 
 ### Auto-Tuning Examples
 
 ```bash
 # Basic auto-tuning with defaults
-mww-autotune --checkpoint checkpoints/best.ckpt
+mww-autotune --checkpoint checkpoints/best_weights.weights.h5
 
 # Custom targets
 mww-autotune \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --config standard \
     --target-fah 0.2 \
     --target-recall 0.95
 
 # With more iterations
 mww-autotune \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --config standard \
     --max-iterations 50 \
     --output-dir ./tuning_results
@@ -1395,10 +1396,10 @@ mkdir -p dataset/{positive,negative,hard_negative,background,rirs}
 # STEP 2: Speaker Clustering (PyTorch env, optional)
 # ═══════════════════════════════════════════════════════
 mww-torch
-python cluster-Test.py --config standard --dataset all --n-clusters 200
+mww-cluster-analyze --config standard --dataset all --n-clusters 200
 # Review cluster_output/*_cluster_report.txt
-python Start-Clustering.py --namelist-dir cluster_output --dry-run
-python Start-Clustering.py --namelist-dir cluster_output
+mww-cluster-apply --namelist-dir cluster_output --dry-run
+mww-cluster-apply --namelist-dir cluster_output
 
 # ═══════════════════════════════════════════════════════
 # STEP 3: Configure
@@ -1416,18 +1417,18 @@ mww-train --config standard --override my_config.yaml
 # STEP 5: Evaluate
 # ═══════════════════════════════════════════════════════
 python scripts/evaluate_model.py \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --config standard --split test --analyze
 
 # ═══════════════════════════════════════════════════════
 # STEP 6: Auto-Tune (if needed)
 # ═══════════════════════════════════════════════════════
-mww-autotune --checkpoint checkpoints/best.ckpt --config standard
+mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config standard
 
 # ═══════════════════════════════════════════════════════
 # STEP 7: Export
 # ═══════════════════════════════════════════════════════
-mww-export --checkpoint checkpoints/best.ckpt --model-name "hey_computer"
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --model-name "hey_computer"
 
 # ═══════════════════════════════════════════════════════
 # STEP 8: Verify

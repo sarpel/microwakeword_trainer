@@ -68,7 +68,7 @@ mww-export [OPTIONS]
 
 | Argument | Type | Default | Required | Description |
 |----------|------|---------|----------|-------------|
-| `--checkpoint` | string | None | **Yes** | Path to model checkpoint (.h5 or .ckpt) |
+| `--checkpoint` | string | None | **Yes** | Path to model checkpoint (.weights.h5) |
 | `--config` | string | `config/presets/standard.yaml` | No | Path to configuration file |
 | `--output` | string | `./models/exported` | No | Output directory for exported files |
 | `--model-name` | string | `wake_word` | No | Name for exported model (used in filename) |
@@ -78,20 +78,20 @@ mww-export [OPTIONS]
 
 ```bash
 # Basic export
-mww-export --checkpoint checkpoints/best.ckpt
+mww-export --checkpoint checkpoints/best_weights.weights.h5
 
 # Export with custom name
-mww-export --checkpoint checkpoints/best.ckpt --model-name "hey_computer"
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --model-name "hey_computer"
 
 # Export to custom directory
-mww-export --checkpoint checkpoints/best.ckpt --output /path/to/output
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --output /path/to/output
 
 # Export without quantization (for debugging)
-mww-export --checkpoint checkpoints/best.ckpt --no-quantize
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --no-quantize
 
 # Full custom export
 mww-export \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --config config/presets/max_quality.yaml \
     --output ./exports \
     --model-name "okay_nabu"
@@ -105,32 +105,33 @@ Auto-tune a trained model to achieve target FAH and recall metrics without full 
 mww-autotune [OPTIONS]
 ```
 
-| Argument | Type | Default | Required | Description |
-|----------|------|---------|----------|-------------|
-| `--checkpoint` | string | None | **Yes** | Path to trained checkpoint to fine-tune |
+| `--checkpoint` | string | None | **Yes** | Path to trained checkpoint to fine-tune (.weights.h5) |
 | `--config` | string | `standard` | No | Config preset name or path to config file |
 | `--override` | string | None | No | Override config file path |
 | `--target-fah` | float | 0.3 | No | Target FAH value (False Activations per Hour) |
 | `--target-recall` | float | 0.92 | No | Target recall value |
 | `--max-iterations` | int | 100 | No | Maximum tuning iterations |
 | `--output-dir` | string | `./tuning` | No | Output directory for tuned checkpoints |
+| `--patience` | int | 10 | No | Stop early if no improvement after N iterations |
+| `--dry-run` | flag | False | No | Validate config without running tuning |
+| `--verbose` / `-v` | flag | False | No | Enable verbose output |
 
 **Examples:**
 
 ```bash
 # Basic auto-tuning with defaults
-mww-autotune --checkpoint checkpoints/best.ckpt
+mww-autotune --checkpoint checkpoints/best_weights.weights.h5
 
 # Custom targets
 mww-autotune \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --config standard \
     --target-fah 0.2 \
     --target-recall 0.95
 
 # With more iterations and custom output
 mww-autotune \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --config standard \
     --max-iterations 50 \
     --output-dir ./tuning_results
@@ -879,7 +880,7 @@ mww-train --config standard --override my_config.yaml
 
 **Export model:**
 ```bash
-mww-export --checkpoint checkpoints/best.ckpt --model-name "hey_computer"
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --model-name "hey_computer"
 ```
 
 **Monitor training:**

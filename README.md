@@ -179,20 +179,20 @@ To prevent train/test data leakage from the same speaker, use ML-based speaker c
 mww-torch
 
 # Cluster positive dataset (default)
-python cluster-Test.py --config standard
+mww-cluster-analyze --config standard
 
 # Cluster all datasets at once
-python cluster-Test.py --config standard --dataset all
+mww-cluster-analyze --config standard --dataset all
 
 # Cluster specific dataset
-python cluster-Test.py --config standard --dataset negative
+mww-cluster-analyze --config standard --dataset negative
 
 # If you know your speaker count (~200 speakers), use --n-clusters
 # (recommended for short wake word clips where threshold-based clustering over-fragments)
-python cluster-Test.py --config standard --n-clusters 200
+mww-cluster-analyze --config standard --n-clusters 200
 
 # Combine options
-python cluster-Test.py --config standard --dataset all --n-clusters 200 --threshold 0.65
+mww-cluster-analyze --config standard --dataset all --n-clusters 200 --threshold 0.65
 
 # Generates per dataset:
 #   - cluster_output/{dataset}_namelist.json (file → speaker mapping)
@@ -214,21 +214,21 @@ Review the report. Check if speakers are grouped correctly. Files stay in place�
 **Organize files by speaker (after reviewing clusters):**
 ```bash
 # Organize a single dataset
-python Start-Clustering.py --namelist cluster_output/positive_namelist.json
+mww-cluster-apply --namelist cluster_output/positive_namelist.json
 
 # Organize all datasets at once
-python Start-Clustering.py --namelist-dir cluster_output
+mww-cluster-apply --namelist-dir cluster_output
 
 # Preview first (recommended)
-python Start-Clustering.py --namelist cluster_output/positive_namelist.json --dry-run
+mww-cluster-apply --namelist cluster_output/positive_namelist.json --dry-run
 
 # Undo if something looks wrong
-python Start-Clustering.py --undo cluster_output/positive_backup_manifest.json
+mww-cluster-apply --undo cluster_output/positive_backup_manifest.json
 ```
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--namelist` | string | None | Path to a single namelist JSON from cluster-Test.py |
+| `--namelist` | string | None | Path to a single namelist JSON from mww-cluster-analyze |
 | `--namelist-dir` | string | None | Directory containing `*_namelist.json` files (processes all) |
 | `--undo` | string | None | Path to backup manifest JSON to reverse a previous organization |
 | `--output-dir` | string | `./cluster_output` | Directory for backup manifests |
@@ -283,10 +283,8 @@ mww-train --config config/presets/standard.yaml
 mww-train --config config/presets/standard.yaml --override my_config.yaml
 
 # Resume from checkpoint (if interrupted)
-mww-train --config config/presets/standard.yaml --resume checkpoints/last.ckpt
-
-# Dry run (validate config without training)
-mww-train --config config/presets/standard.yaml --dry-run
+# (No --resume flag — restart training from scratch or use latest checkpoint)
+# Note: --resume and --dry-run are not supported flags in mww-train
 ```
 
 **During Training:**
@@ -299,17 +297,17 @@ mww-train --config config/presets/standard.yaml --dry-run
 
 ```bash
 # Export the best checkpoint
-mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/
 
 # Export with custom name
 mww-export \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
     --model-name "hey_computer"
 
 # Export without quantization (for debugging)
 mww-export \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
     --no-quantize
 ```
@@ -334,20 +332,19 @@ If your model's FAH > 0.5 or recall < 0.90, use auto-tuning to improve metrics w
 
 ```bash
 # Auto-tune with default targets (FAH < 0.3, recall > 0.92)
-mww-autotune --checkpoint checkpoints/best.ckpt --config standard
+mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config standard
 
 # Custom targets
 mww-autotune \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --config standard \
     --target-fah 0.2 \
     --target-recall 0.95
 
-# Specify output directory for tuned checkpoint
 mww-autotune \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --config standard \
-    --output checkpoints/tuned/
+    --output-dir checkpoints/tuned/
 ```
 
 The tool will:
@@ -415,10 +412,10 @@ Train your first wake word model:
 
 # 2. (Optional but recommended) Run speaker clustering to prevent data leakage
 mww-torch
-python cluster-Test.py --config standard --dataset all --n-clusters 200
+mww-cluster-analyze --config standard --dataset all --n-clusters 200
 # Review cluster_output/*_cluster_report.txt
-python Start-Clustering.py --namelist-dir cluster_output --dry-run  # Preview first
-python Start-Clustering.py --namelist-dir cluster_output            # Execute
+mww-cluster-apply --namelist-dir cluster_output --dry-run  # Preview first
+mww-cluster-apply --namelist-dir cluster_output            # Execute
 
 # 3. Switch to TF environment
 mww-tf
@@ -429,10 +426,10 @@ mww-train --config config/presets/standard.yaml
 
 # 5. (Optional) Auto-tune if FAH > 0.5 or recall < 0.90
 # Note: You can use either the preset name (e.g., "standard") or full path (e.g., "config/presets/standard.yaml")
-mww-autotune --checkpoint checkpoints/best.ckpt --config config/presets/standard.yaml
+mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config config/presets/standard.yaml
 
 # 6. Export
-mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/
 
 # 7. Verify
 python scripts/verify_esphome.py models/exported/wake_word.tflite
@@ -506,27 +503,26 @@ mww-train --config standard
 mww-train --config standard --override my_settings.yaml
 
 # Resume from checkpoint
-mww-train --config standard --resume checkpoints/last.ckpt
+# (No --resume flag)
 
-# Dry run (validate config without training)
-mww-train --config standard --dry-run
+# (No --dry-run flag in mww-train)
 ```
 
 ### Export
 
 ```bash
 # Export trained model to TFLite
-mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/
 
 # Export with custom name
 mww-export \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
     --model-name "hey_computer"
 
 # Export without quantization (for debugging)
 mww-export \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
     --no-quantize
 ```
@@ -748,7 +744,7 @@ nvcc --version  # Should show 12.x
 
 # Reinstall cupy for your CUDA version
 pip uninstall cupy-cuda12x
-pip install cupy-cuda12x>=13.0
+pip install cupy-cuda12x>=14.0
 ```
 
 ### Model Not Detecting Wake Word

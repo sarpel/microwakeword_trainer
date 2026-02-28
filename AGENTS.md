@@ -25,7 +25,7 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 │   ├── export/            # TFLite export, model analysis, manifests (mww-export)
 │   ├── utils/             # GPU config, performance helpers
 │   ├── evaluation/        # Metrics, FAH estimation, calibration
-│   └── config/            # Package init (loader lives in config/)
+│   ├── tools/             # CLI entry points (mww-cluster-analyze, mww-cluster-apply)
 ├── config/                # YAML presets & loader
 │   ├── presets/           # standard.yaml, max_quality.yaml, fast_test.yaml
 │   └── loader.py          # Complex config system (666 lines)
@@ -34,8 +34,8 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 │   ├── verify_esphome.py  # TFLite ESPHome compatibility checker (406 lines)
 │   ├── generate_test_dataset.py  # Synthetic dataset generator (190 lines)
 │   └── evaluate_model.py    # Post-training model evaluation
-├── cluster-Test.py        # Speaker clustering dry-run analysis (458 lines)
-├── cluster_output/       # Output from cluster-Test.py
+├── cluster_output/       # Output from mww-cluster-analyze
+│   ├── {dataset}_namelist.json     # File → speaker mappings (per dataset)
 │   ├── {dataset}_namelist.json     # File → speaker mappings (per dataset)
 │   └── {dataset}_cluster_report.txt # Human-readable report (per dataset)
 ├── dataset/               # Audio data
@@ -60,12 +60,12 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 | `mww-train` | `src.training.trainer:main` | Train wake word model |
 | `mww-export` | `src.export.tflite:main` | Export to TFLite |
 | `mww-autotune` | `src.tuning.cli:main` | Fine-tune trained model for better FAH/recall |
-| `cluster-Test.py` | Speaker clustering analysis (dry-run, supports positive/negative/hard_negative/all) | |
-| `Start-Clustering.py` | Move files into speaker directories (uses cluster-Test.py output) | |
+| `mww-cluster-analyze` | `src.tools.cluster_analyze:main` | Speaker cluster analysis (dry-run) |
+| `mww-cluster-apply` | `src.tools.cluster_apply:main` | Organize files into speaker directories |
 
 ## Key Dependencies
 - **tensorflow>=2.16** - Core ML framework
-- **cupy-cuda12x>=13.0** - GPU SpecAugment (no CPU fallback)
+- **cupy-cuda12x>=14.0** - GPU SpecAugment (no CPU fallback)
 - **ai-edge-litert** - TFLite export (formerly TF Lite)
 - **pymicro-features** - Audio feature extraction (40 mel bins, ESPHome-compatible)
 - **rich** - Training progress display (RichTrainingLogger)
@@ -90,20 +90,20 @@ Loader (666 lines) supports:
 - **Python 3.10-3.11**: ai-edge-litert 2.x does not support Python 3.12 (use 3.10 or 3.11)
 - **Separate venvs for TF/PyTorch**: If using speechbrain, use different environments
 - **ARCHITECTURAL_CONSTITUTION.md is immutable**: No exceptions, no overrides, no "quick tweaks"
-- **Strict typing**: mypy.ini enforces `disallow_untyped_defs=True`, `no_implicit_optional=True`
+- **Relaxed typing**: mypy configured with `disallow_untyped_defs=false` (see pyproject.toml)
 
 ## Commands
 ```bash
 # Install
-uv venv --python 3.10 ~/venvs/mww-tf
+python3.11 -m venv ~/venvs/mww-tf
 source ~/venvs/mww-tf/bin/activate
-uv pip install -r requirements.txt
+pip install -r requirements.txt
 
 # Train
 mww-train --config config/presets/standard.yaml
 
 # Export
-mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/
 
 # Verify ESPHome compatibility
 python scripts/verify_esphome.py models/exported/wake_word.tflite
@@ -185,17 +185,17 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 
 ## Aliases (User Configured)
 ```bash
-alias mww-tf='source ~/venvs/mww-tf/bin/activate && cd /home/sarpel/mww/microwakeword_trainer'
-alias mww-torch='source ~/venvs/mww-torch/bin/activate && cd /home/sarpel/mww/microwakeword_trainer'
+alias mww-tf='source ~/.venvs/mww-tf/bin/activate && cd $PROJECT_DIR'
+alias mww-torch='source ~/.venvs/mww-torch/bin/activate && cd $PROJECT_DIR'
 ```
 
 ## Development Notes
 - Project is in active development (v2.0.0, Beta status)
-- Branch: `v1.3.0` — setuptools packaging via `setup.py` (no pyproject.toml)
+- Project is in active development (v2.0.0, Beta status) — uses `pyproject.toml` for packaging
 - Config loader (666 lines) - complex validation and merging
 - Uses custom RaggedMmap storage for efficient audio data loading
 - Supports speaker clustering (ECAPA-TDNN) and hard negative mining
-- Strict mypy typing enforced (mypy.ini: `disallow_untyped_defs=True`)
+- Relaxed mypy typing (pyproject.toml: `disallow_untyped_defs=false`)
 - **When in doubt, re-read ARCHITECTURAL_CONSTITUTION.md from the top**
 
 ---
