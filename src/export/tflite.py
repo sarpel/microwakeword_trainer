@@ -130,7 +130,7 @@ class StreamingExportModel(tf.keras.Model):
             strides=(stride, 1),
             padding="valid",
             use_bias=False,
-            name="initial_conv/cell",
+            name="initial_conv_cell",
         )
         self.initial_relu = tf.keras.layers.ReLU(name="initial_activation")
 
@@ -138,7 +138,7 @@ class StreamingExportModel(tf.keras.Model):
         self._build_mixconv_blocks()
 
         # Output dense layer
-        self.dense = tf.keras.layers.Dense(1, activation="sigmoid", name="layers/dense", dtype=tf.float32)
+        self.dense = tf.keras.layers.Dense(1, activation="sigmoid", name="layers_dense", dtype=tf.float32)
 
         # State variables will be created in build()
         self.state_vars: list[tf.Variable] = []
@@ -148,7 +148,7 @@ class StreamingExportModel(tf.keras.Model):
         self.mixconv_layers = []
 
         for i, (filters, kernels) in enumerate(zip(self.pointwise_filters, self.mixconv_kernel_sizes, strict=True)):
-            block_name = f"blocks/residual_block{'_' + str(i) if i > 0 else ''}/mixconvs/mix_conv_block"
+            block_name = f"blocks_residual_block{'_' + str(i) if i > 0 else ''}_mixconvs_mix_conv_block"
 
             block_layers = {
                 "depthwise_convs": [],
@@ -165,7 +165,7 @@ class StreamingExportModel(tf.keras.Model):
                     strides=(1, 1),
                     padding="valid",
                     use_bias=False,
-                    name=f"{block_name}/depthwise_convs/depthwise_conv2d{suffix}",
+                    name=f"{block_name}_depthwise_convs_depthwise_conv2d{suffix}",
                 )
                 block_layers["depthwise_convs"].append((ks, dw))
 
@@ -174,14 +174,14 @@ class StreamingExportModel(tf.keras.Model):
                 filters,
                 (1, 1),
                 use_bias=False,
-                name=f"{block_name}/pointwise",
+                name=f"{block_name}_pointwise",
             )
 
             # Batch normalization
-            block_layers["bn"] = tf.keras.layers.BatchNormalization(name=f"{block_name}/bn")
+            block_layers["bn"] = tf.keras.layers.BatchNormalization(name=f"{block_name}_bn")
 
             # ReLU activation
-            block_layers["relu"] = tf.keras.layers.ReLU(name=f"{block_name}/activations/re_lu")
+            block_layers["relu"] = tf.keras.layers.ReLU(name=f"{block_name}_activations_re_lu")
 
             self.mixconv_layers.append(block_layers)
 
@@ -227,7 +227,7 @@ class StreamingExportModel(tf.keras.Model):
         # Create state variables
         for name, shape in state_configs:
             state_var = self.add_weight(
-                name=f"{name}/ring_buffer",
+                name=f"{name}_ring_buffer",
                 shape=shape,
                 dtype=tf.float32,
                 initializer=tf.keras.initializers.Zeros(),

@@ -281,7 +281,7 @@ class Stream(tf.keras.layers.Layer):
                 self.input_state = tf.keras.layers.Input(
                     shape=self.state_shape[1:],
                     batch_size=self.inference_batch_size,
-                    name=f"{self.name}/{self.state_name_tag}",
+                    name=f"{self.name}_{self.state_name_tag}",
                     dtype=tf.float32,
                 )
 

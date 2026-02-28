@@ -175,7 +175,7 @@ class MixConvBlock(tf.keras.layers.Layer):
                     (ks, 1),
                     strides=1,
                     padding="valid",
-                    name=f"depthwise_convs/depthwise_conv2d{suffix}",
+                    name=f"depthwise_convs_depthwise_conv2d{suffix}",
                 )
             )
 
@@ -285,7 +285,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         self.activations = []
 
         for i in range(self.repeat):
-            mixconv_name = "mixconvs/mix_conv_block" if i == 0 else f"mixconvs/mix_conv_block_{i}"
+            mixconv_name = "mixconvs_mix_conv_block" if i == 0 else f"mixconvs_mix_conv_block_{i}"
             self.mixconvs.append(
                 MixConvBlock(
                     kernel_sizes=self.kernel_sizes,
@@ -453,7 +453,7 @@ class MixedNet(tf.keras.Model):
                 use_one_step=False,
                 pad_time_dim=None,
                 pad_freq_dim="valid",
-                name="initial_conv/cell",
+                name="initial_conv_cell",
             )
             self.initial_activation = tf.keras.layers.ReLU(name="initial_relu")
 
@@ -475,7 +475,7 @@ class MixedNet(tf.keras.Model):
                 repeat=repeat,
                 use_residual=bool(res),
                 mode=self.mode,
-                name=f"blocks/{block_name}",
+                name=f"blocks_{block_name}",
             )
             self.blocks.append(block)
 
@@ -505,7 +505,7 @@ class MixedNet(tf.keras.Model):
             self.dropout = None
 
         # Output layer - must be float32 for numerical stability with mixed precision
-        self.output_dense = tf.keras.layers.Dense(1, activation="sigmoid", name="layers/dense", dtype=tf.float32)
+        self.output_dense = tf.keras.layers.Dense(1, activation="sigmoid", name="layers_dense", dtype=tf.float32)
 
         # Flatten layer for dense (created in build to avoid re-creation on each call)
         self.flatten = tf.keras.layers.Flatten(name="flatten")
