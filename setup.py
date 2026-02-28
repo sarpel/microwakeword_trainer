@@ -33,6 +33,8 @@ setup(
         "numba>=0.58",
     ],
     extras_require={
+        "vad": ["webrtcvad-wheels"],
+        "quality-full": ["torch>=2.0", "onnxruntime>=1.16"],
         "optional": [
             "speechbrain>=1.0.0",
             "transformers>=4.40.0",
@@ -57,6 +59,8 @@ setup(
             "mww-train=src.training.trainer:main",
             "mww-export=src.export.tflite:main",
             "mww-autotune=src.tuning.cli:main",
+            "mww-cluster-analyze=src.tools.cluster_analyze:main",
+            "mww-cluster-apply=src.tools.cluster_apply:main",
         ],
     },
 )

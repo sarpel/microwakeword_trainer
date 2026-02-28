@@ -51,13 +51,27 @@ class AudioAugmentationPipeline:
         self,
         sample_rate: int = 16000,
         augmentation_probabilities: Optional[dict] = None,
-        background_min_snr_db: int = -5,
-        background_max_snr_db: int = 10,
+        background_min_snr_db: float = -5.0,
+        background_max_snr_db: float = 10.0,
         min_jitter_s: float = 0.195,
         max_jitter_s: float = 0.205,
         impulse_paths: Optional[List[str]] = None,
         background_paths: Optional[List[str]] = None,
         augmentation_duration_s: float = 3.2,
+        eq_min_gain_db: float = -6.0,
+        eq_max_gain_db: float = 6.0,
+        distortion_min: float = 0.1,
+        distortion_max: float = 0.5,
+        pitch_shift_min_semitones: float = -2.0,
+        pitch_shift_max_semitones: float = 2.0,
+        band_stop_min_center_freq: float = 100.0,
+        band_stop_max_center_freq: float = 5000.0,
+        band_stop_min_bandwidth_fraction: float = 0.5,
+        band_stop_max_bandwidth_fraction: float = 1.99,
+        gain_min_db: float = -3.0,
+        gain_max_db: float = 3.0,
+        color_noise_min_snr_db: float = -5.0,
+        color_noise_max_snr_db: float = 10.0,
     ):
         """Initialize augmentation pipeline.
 
@@ -71,6 +85,20 @@ class AudioAugmentationPipeline:
             impulse_paths: Paths to impulse response files
             background_paths: Paths to background noise files
             augmentation_duration_s: Target duration for augmentation
+            eq_min_gain_db: Minimum gain (dB) for SevenBandParametricEQ
+            eq_max_gain_db: Maximum gain (dB) for SevenBandParametricEQ
+            distortion_min: Minimum distortion amount for TanhDistortion
+            distortion_max: Maximum distortion amount for TanhDistortion
+            pitch_shift_min_semitones: Minimum pitch shift in semitones
+            pitch_shift_max_semitones: Maximum pitch shift in semitones
+            band_stop_min_center_freq: Minimum center frequency (Hz) for BandStopFilter
+            band_stop_max_center_freq: Maximum center frequency (Hz) for BandStopFilter
+            band_stop_min_bandwidth_fraction: Minimum bandwidth fraction for BandStopFilter
+            band_stop_max_bandwidth_fraction: Maximum bandwidth fraction for BandStopFilter
+            gain_min_db: Minimum gain (dB) for Gain augmentation
+            gain_max_db: Maximum gain (dB) for Gain augmentation
+            color_noise_min_snr_db: Minimum SNR (dB) for AddColorNoise
+            color_noise_max_snr_db: Maximum SNR (dB) for AddColorNoise
         """
         self.sample_rate = sample_rate
         self.probabilities = augmentation_probabilities or {}
@@ -79,6 +107,20 @@ class AudioAugmentationPipeline:
         self.min_jitter_s = min_jitter_s
         self.max_jitter_s = max_jitter_s
         self.augmentation_duration_s = augmentation_duration_s
+        self.eq_min_gain_db = eq_min_gain_db
+        self.eq_max_gain_db = eq_max_gain_db
+        self.distortion_min = distortion_min
+        self.distortion_max = distortion_max
+        self.pitch_shift_min_semitones = pitch_shift_min_semitones
+        self.pitch_shift_max_semitones = pitch_shift_max_semitones
+        self.band_stop_min_center_freq = band_stop_min_center_freq
+        self.band_stop_max_center_freq = band_stop_max_center_freq
+        self.band_stop_min_bandwidth_fraction = band_stop_min_bandwidth_fraction
+        self.band_stop_max_bandwidth_fraction = band_stop_max_bandwidth_fraction
+        self.gain_min_db = gain_min_db
+        self.gain_max_db = gain_max_db
+        self.color_noise_min_snr_db = color_noise_min_snr_db
+        self.color_noise_max_snr_db = color_noise_max_snr_db
 
         if not HAS_AUDIOMENTATIONS:
             raise ImportError("audiomentations is required. Install: pip install audiomentations")
@@ -97,6 +139,8 @@ class AudioAugmentationPipeline:
                     "SevenBandParametricEQ",
                     SevenBandParametricEQ(
                         p=self.probabilities["SevenBandParametricEQ"],
+                        min_gain_db=self.eq_min_gain_db,
+                        max_gain_db=self.eq_max_gain_db,
                     ),
                 )
             )
@@ -107,6 +151,8 @@ class AudioAugmentationPipeline:
                     "TanhDistortion",
                     TanhDistortion(
                         p=self.probabilities["TanhDistortion"],
+                        min_distortion=self.distortion_min,
+                        max_distortion=self.distortion_max,
                     ),
                 )
             )
@@ -117,8 +163,8 @@ class AudioAugmentationPipeline:
                     "PitchShift",
                     PitchShift(
                         p=self.probabilities["PitchShift"],
-                        min_semitones=-2,
-                        max_semitones=2,
+                        min_semitones=self.pitch_shift_min_semitones,
+                        max_semitones=self.pitch_shift_max_semitones,
                     ),
                 )
             )
@@ -129,8 +175,8 @@ class AudioAugmentationPipeline:
                     "BandStopFilter",
                     BandStopFilter(
                         p=self.probabilities["BandStopFilter"],
-                        min_center_freq=100,
-                        max_center_freq=5000,
+                        min_center_freq=self.band_stop_min_center_freq,
+                        max_center_freq=self.band_stop_max_center_freq,
                     ),
                 )
             )
@@ -141,8 +187,8 @@ class AudioAugmentationPipeline:
                     "AddColorNoise",
                     AddColorNoise(
                         p=self.probabilities["AddColorNoise"],
-                        min_snr_db=self.background_min_snr_db,
-                        max_snr_db=self.background_max_snr_db,
+                        min_snr_db=self.color_noise_min_snr_db,
+                        max_snr_db=self.color_noise_max_snr_db,
                     ),
                 )
             )
@@ -179,7 +225,7 @@ class AudioAugmentationPipeline:
         self.augmentations.append(
             (
                 "Gain",
-                Gain(p=gain_prob, min_gain_db=-3.0, max_gain_db=3.0),
+                Gain(p=gain_prob, min_gain_db=self.gain_min_db, max_gain_db=self.gain_max_db),
             )
         )
 
@@ -262,4 +308,4 @@ class ParallelAugmenter:
     def __del__(self):
         """Cleanup thread pool."""
         if hasattr(self, "executor"):
-            self.executor.shutdown(wait=False)
+            self.executor.shutdown(wait=True, cancel_futures=True)

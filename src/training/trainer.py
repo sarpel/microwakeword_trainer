@@ -228,7 +228,6 @@ class Trainer:
         self.input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
 
         # FAH calculation - prefer evaluation config, fall back to training config.
-        self.logger = RichTrainingLogger()
         # FAH calculation - prefer evaluation config, fall back to training config.
         # Only overwrite if evaluation block explicitly provides a non-zero value.
         self.ambient_duration_hours = training.get("ambient_duration_hours", 10.0)
@@ -612,12 +611,12 @@ class Trainer:
 
             # Get training batch
             try:
-                train_fingerprints, train_ground_truth, train_sample_weights = next(train_data_generator)
+                train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
             except StopIteration:
                 # Restart by calling the factory again
                 train_data_generator = train_data_factory()
                 try:
-                    train_fingerprints, train_ground_truth, train_sample_weights = next(train_data_generator)
+                    train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
                 except StopIteration as exc:
                     raise RuntimeError("train_data_factory() returned an empty generator after restart. " "Cannot continue training without batches.") from exc
 
@@ -642,9 +641,9 @@ class Trainer:
             # Profile data loading if enabled
             if self.profiler and step % self.profile_every_n == 0:
                 with self.profiler.profile_section(f"step_{step}"):
-                    train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights)
+                    train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg)
             else:
-                train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights)
+                train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg)
 
             # Update progress bar and detect phase transitions
             phase_settings_display = self._get_current_phase_settings(step)
@@ -783,13 +782,9 @@ def main():
     )
     args = parser.parse_args()
 
-    # Get log directory from config or use default
-    paths_cfg = getattr(args, "paths", {}) if hasattr(args, "paths") else {}
-    log_dir = paths_cfg.get("logs", "./logs") if isinstance(paths_cfg, dict) else "./logs"
-
-    # Start terminal logging - captures ALL output to file
+    # Start terminal logging with default directory first (update after loading config)
     terminal_logger = TerminalLogger(
-        log_dir=log_dir,
+        log_dir="./logs",
         log_filename=args.log_file,
     )
 
@@ -806,7 +801,8 @@ def main():
             # Update log directory from loaded config
             paths_dict = config_dict.get("paths", {})
             if paths_dict and paths_dict.get("logs"):
-                terminal_logger.log_dir = Path(paths_dict["logs"])
+                log_dir = paths_dict.get("logs", "./logs")
+                terminal_logger.log_dir = Path(log_dir)
                 terminal_logger.log_dir.mkdir(parents=True, exist_ok=True)
 
             # Train model

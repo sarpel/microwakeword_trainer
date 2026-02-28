@@ -354,7 +354,7 @@ class FeatureStore:
 
         Args:
             feature: Feature array
-            label: Label (0 or 1)
+            label: Label (0=negative, 1=positive, 2=hard_negative)
         """
         if self.features is None:
             raise RuntimeError("Feature store not initialized")
@@ -612,9 +612,14 @@ class WakeWordDataset:
                 # Extract features
                 features = frontend.compute_mel_spectrogram(audio)
 
-                # Determine label: 1 for positive only, 0 for negative/hard_negative
-                label = 1 if sample.label == Label.POSITIVE else 0
-
+                # Determine label: 1 for positive, 2 for hard_negative, 0 for regular negative
+                # Determine label: 1 for positive, 2 for hard_negative, 0 for regular negative
+                if sample.label == Label.POSITIVE:
+                    label = 1
+                elif sample.label == Label.HARD_NEGATIVE:
+                    label = 2
+                else:
+                    label = 0
                 # Add to store
                 train_store.add(features, label)
 
@@ -638,7 +643,12 @@ class WakeWordDataset:
                     audio = load_audio_wave(sample.path, target_sr=sample_rate)
 
                     features = frontend.compute_mel_spectrogram(audio)
-                    label = 1 if sample.label == Label.POSITIVE else 0
+                    if sample.label == Label.POSITIVE:
+                        label = 1
+                    elif sample.label == Label.HARD_NEGATIVE:
+                        label = 2
+                    else:
+                        label = 0
                     val_store.add(features, label)
 
                 except Exception as e:
@@ -689,6 +699,7 @@ class WakeWordDataset:
                 epoch_indices = rng.permutation(indices).tolist()
                 batch_features = []
                 batch_labels = []
+                batch_is_hard_neg = []
                 for idx in epoch_indices:
                     try:
                         feature, label = self[idx]
@@ -696,19 +707,23 @@ class WakeWordDataset:
                         continue
                     fixed_feature = self._pad_or_truncate(feature, max_time_frames)
                     batch_features.append(fixed_feature)
-                    batch_labels.append(label)
+                    batch_labels.append(label & 1)  # ground_truth: 1=positive, 0=negative/hard_neg
+                    batch_is_hard_neg.append(label == 2)
                     if len(batch_features) >= self.batch_size:
                         fingerprints = np.array(batch_features, dtype=np.float32)
                         ground_truth = np.array(batch_labels, dtype=np.int32)
                         sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                        yield (fingerprints, ground_truth, sample_weights)
+                        is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
+                        yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
                         batch_features = []
                         batch_labels = []
+                        batch_is_hard_neg = []
                 if batch_features:
                     fingerprints = np.array(batch_features, dtype=np.float32)
                     ground_truth = np.array(batch_labels, dtype=np.int32)
                     sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                    yield (fingerprints, ground_truth, sample_weights)
+                    is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
+                    yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
 
         return factory
 
@@ -730,7 +745,7 @@ class WakeWordDataset:
                     continue
                 fixed_feature = self._pad_or_truncate(feature, max_time_frames)
                 batch_features.append(fixed_feature)
-                batch_labels.append(label)
+                batch_labels.append(label & 1)  # ground_truth: binary (hard_neg maps to 0)
                 if len(batch_features) >= self.batch_size:
                     fingerprints = np.array(batch_features, dtype=np.float32)
                     ground_truth = np.array(batch_labels, dtype=np.int32)

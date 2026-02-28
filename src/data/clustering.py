@@ -1188,7 +1188,11 @@ class SpeakerClustering:
             try:
                 # Inspect stored metadata to filter by embedding_model
                 data = np.load(cache_file, allow_pickle=True)
-                cached_model = str(data.get("model_name", ""))
+                # Check if "model_name" is in the file, then read it
+                if "model_name" in data.files:
+                    cached_model = str(data["model_name"].item() if data["model_name"].ndim == 0 else data["model_name"])
+                else:
+                    cached_model = ""
                 if cached_model == self.config.embedding_model:
                     cache_file.unlink()
                     logger.info(f"Removed cache file: {cache_file}")

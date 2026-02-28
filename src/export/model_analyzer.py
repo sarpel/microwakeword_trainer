@@ -186,7 +186,14 @@ def validate_model_quality(
 
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
-        num_subgraphs = 2
+        # Get actual subgraph count from interpreter, handle different TF versions
+        if hasattr(interpreter, "num_subgraphs"):
+            num_subgraphs = interpreter.num_subgraphs()
+        elif hasattr(interpreter, "_interpreter") and hasattr(interpreter._interpreter, "GetSubgraphCount"):
+            num_subgraphs = interpreter._interpreter.GetSubgraphCount()
+        else:
+            # Fallback - check via tensor details or another method
+            num_subgraphs = 1  # conservative default
 
         if input_details:
             inp = input_details[0]
@@ -453,6 +460,8 @@ def check_gpu_compatibility(model_path: str) -> dict[str, Any]:
     with open(model_path, "rb") as f:
         model_content = f.read()
 
+    # Try to use tf.lite.experimental.Analyzer for GPU compatibility check
+    gpu_compatibility_checked = True
     try:
         analysis_text = tf.lite.experimental.Analyzer.analyze(
             model_content=model_content,
@@ -460,10 +469,20 @@ def check_gpu_compatibility(model_path: str) -> dict[str, Any]:
         )
     except (AttributeError, TypeError) as exc:
         logger.warning(
-            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. " "GPU compatibility check will be limited.",
+            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. " "GPU compatibility cannot be determined.",
             exc,
         )
-        analysis_text = _build_interpreter_analysis(model_content)
+        gpu_compatibility_checked = False
+        analysis_text = ""
+
+    # If we couldn't perform the GPU compatibility check, return indeterminate
+    if not gpu_compatibility_checked:
+        return {
+            "gpu_compatible": None,
+            "gpu_compatibility_checked": False,
+            "issues": ["GPU compatibility cannot be determined (tf.lite.experimental.Analyzer unavailable)"],
+            "analysis": "GPU compatibility check skipped",
+        }
 
     # Improved GPU compatibility check with positive indicators and negation handling
     # Define positive indicators (must appear without negation nearby)
@@ -536,6 +555,7 @@ def check_gpu_compatibility(model_path: str) -> dict[str, Any]:
 
     return {
         "gpu_compatible": gpu_compatible,
+        "gpu_compatibility_checked": True,
         "issues": issues,
         "analysis": analysis_text,
     }

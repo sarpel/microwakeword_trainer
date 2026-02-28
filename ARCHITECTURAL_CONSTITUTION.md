@@ -72,7 +72,17 @@
 | `upper_band_limit_hz` | **7 500 Hz** | Nyquist constraint for 16 kHz + margin |
 | `lower_band_limit_hz` | **125 Hz** | DC rejection floor |
 | `enable_pcan` | **True** | Per-Channel Amplitude Normalization; deactivating changes the feature distribution entirely |
-JB|| `clip_duration_ms` | **Configurable** | Determines training input length. Common: 1000ms (1s), 1500ms, 3000ms. Does NOT affect streaming inference.
+
+### Training-Specific Configuration Parameters
+
+> **TRAINING-TIME VALUES — DO NOT AFFECT INFERENCE.**
+>
+> These parameters control training data preparation and model input shapes.
+> They DO NOT require runtime changes to ESPHome firmware or streaming inference.
+
+| Parameter | Value | Description |
+|---|---|---|
+| `clip_duration_ms` | **Configurable** | Determines training input length. Common: 1000ms (1s), 1500ms, 3000ms. Does NOT affect streaming inference. |
 
 ### Audio Frontend Processing Parameters (pymicro-features v2.0.2)
 

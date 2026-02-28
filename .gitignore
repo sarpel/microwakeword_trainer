@@ -173,4 +173,4 @@ yarn.lock
 !src/data/
 !src/config/
 docs/IMPLEMENTATION_PLAN.md
-.gitignore
+

@@ -96,7 +96,7 @@ class ModelConfig:
 class AugmentationConfig:
     """Audio augmentation parameters."""
 
-    # Time-domain augmentations
+    # Time-domain augmentations — probabilities
     SevenBandParametricEQ: float = 0.1
     TanhDistortion: float = 0.1
     PitchShift: float = 0.1
@@ -109,10 +109,25 @@ class AugmentationConfig:
     AddBackgroundNoiseFromFile: float = 0.0
     ApplyImpulseResponse: float = 0.0
     # Noise mixing parameters
-    background_min_snr_db: int = -5
-    background_max_snr_db: int = 10
+    background_min_snr_db: float = -5.0
+    background_max_snr_db: float = 10.0
     min_jitter_s: float = 0.195
     max_jitter_s: float = 0.205
+    # Augmentation magnitude ranges
+    eq_min_gain_db: float = -6.0
+    eq_max_gain_db: float = 6.0
+    distortion_min: float = 0.1
+    distortion_max: float = 0.5
+    pitch_shift_min_semitones: float = -2.0
+    pitch_shift_max_semitones: float = 2.0
+    band_stop_min_center_freq: float = 100.0
+    band_stop_max_center_freq: float = 5000.0
+    band_stop_min_bandwidth_fraction: float = 0.5
+    band_stop_max_bandwidth_fraction: float = 1.99
+    gain_min_db: float = -3.0
+    gain_max_db: float = 3.0
+    color_noise_min_snr_db: float = -5.0
+    color_noise_max_snr_db: float = 10.0
     # Background sources
     impulse_paths: List[str] = field(default_factory=lambda: ["mit_rirs"])
     background_paths: List[str] = field(default_factory=lambda: ["fma_16k", "audioset_16k"])
@@ -195,6 +210,53 @@ class ExportConfig:
 
 
 @dataclass
+class PreprocessingConfig:
+    """Preprocessing pipeline parameters (VAD, splitting, duration filtering)."""
+
+    # Duration filtering applied by vad_trim_audio.py
+    min_duration_ms: float = 300.0
+    max_duration_ms: float = 2000.0
+    discarded_dir: str = "./discarded"
+
+    # VAD trim parameters
+    vad_aggressiveness: int = 2  # webrtcvad aggressiveness (0-3)
+    vad_pad_ms: int = 200  # silence padding to keep around speech (ms)
+    vad_frame_ms: int = 30  # VAD frame size (must be 10, 20, or 30 ms)
+
+    # Background audio splitting (split_long_audio.py)
+    split_max_chunk_ms: float = 2000.0
+    split_min_chunk_ms: float = 500.0
+    split_target_chunk_ms: float = 2000.0
+
+
+@dataclass
+class QualityConfig:
+    """Audio quality scoring thresholds for dataset curation."""
+
+    # Clipping detection
+    clip_threshold: float = 0.001  # fraction of samples at or beyond clip level
+    max_clip_ratio: float = 0.01  # maximum allowed clipping ratio (0.0-1.0)
+
+    # Score-based filtering
+    discard_bottom_pct: float = 5.0  # discard lowest N% of files by WQI score
+    min_wqi: float = 0.0  # absolute minimum WQI threshold (0.0-1.0)
+    discarded_quality_dir: str = "./discarded/quality"
+
+    # WADA-SNR threshold
+    min_snr_db: float = -10.0  # minimum acceptable SNR in dB
+
+    # Silero VAD speech threshold (used by score_audio_quality_full.py)
+    vad_speech_threshold: float = 0.3  # minimum fraction of frames containing speech
+
+    # DNSMOS thresholds (score_audio_quality_full.py)
+    dnsmos_min_ovrl: float = 0.0  # minimum DNSMOS OVRL score (0.0-5.0)
+    dnsmos_min_sig: float = 0.0  # minimum DNSMOS SIG score (0.0-5.0)
+
+    # DNSMOS model cache directory
+    dnsmos_cache_dir: str = "~/.cache/dnsmos"
+
+
+@dataclass
 class FullConfig:
     """Complete configuration container."""
 
@@ -208,6 +270,8 @@ class FullConfig:
     speaker_clustering: SpeakerClusteringConfig = field(default_factory=SpeakerClusteringConfig)
     hard_negative_mining: HardNegativeMiningConfig = field(default_factory=HardNegativeMiningConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
+    preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
+    quality: QualityConfig = field(default_factory=QualityConfig)
 
 
 # =============================================================================
@@ -240,6 +304,8 @@ class ConfigLoader:
         "speaker_clustering": SpeakerClusteringConfig,
         "hard_negative_mining": HardNegativeMiningConfig,
         "export": ExportConfig,
+        "preprocessing": PreprocessingConfig,
+        "quality": QualityConfig,
     }
 
     def __init__(self, base_dir: Optional[Path] = None):

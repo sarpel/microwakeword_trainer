@@ -279,8 +279,8 @@ class ClipsLoaderConfig:
     val_split: float = 0.1
     test_split: float = 0.1
     seed: int = 42
-    min_duration_ms: float = 500.0
-    max_duration_ms: float = 3000.0
+    min_duration_ms: float = 300.0
+    max_duration_ms: float = 2000.0
     speaker_based_split: bool = True
 
     def __post_init__(self):

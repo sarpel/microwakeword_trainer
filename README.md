@@ -324,7 +324,13 @@ models/exported/
 
 #### Step 4b: Auto-Tune (Optional — Improve FAH/Recall)
 
-If your model's FAH > 0.5 or recall < 0.90, use auto-tuning to improve metrics without full retraining:
+If your model's FAH > 0.5 or recall < 0.90, use auto-tuning to improve metrics without full retraining.
+
+**What it does:** The `mww-autotune` tool adjusts probability thresholds and hyperparameters through iterative fine-tuning. It does **not** perform full model retraining — instead, it optimizes your existing checkpoint to achieve target FAH and recall metrics.
+
+**Duration:** Typically 5–10 minutes depending on dataset size.
+
+**Output:** Writes a new tuned checkpoint (does NOT overwrite the original) and saves results to the specified output directory.
 
 ```bash
 # Auto-tune with default targets (FAH < 0.3, recall > 0.92)
@@ -336,6 +342,19 @@ mww-autotune \
     --config standard \
     --target-fah 0.2 \
     --target-recall 0.95
+
+# Specify output directory for tuned checkpoint
+mww-autotune \
+    --checkpoint checkpoints/best.ckpt \
+    --config standard \
+    --output checkpoints/tuned/
+```
+
+The tool will:
+- Iterate through hyperparameters to find optimal thresholds
+- Use hard negative mining to improve model discrimination
+- Save the tuned checkpoint to your output directory
+- Log metrics and final configuration
 ```
 
 #### Step 5: Verify ESPHome Compatibility
@@ -405,10 +424,12 @@ python Start-Clustering.py --namelist-dir cluster_output            # Execute
 mww-tf
 
 # 4. Train
-mww-train --config standard
+# Note: You can use either the preset name (e.g., "standard") or full path (e.g., "config/presets/standard.yaml")
+mww-train --config config/presets/standard.yaml
 
 # 5. (Optional) Auto-tune if FAH > 0.5 or recall < 0.90
-mww-autotune --checkpoint checkpoints/best.ckpt --config standard
+# Note: You can use either the preset name (e.g., "standard") or full path (e.g., "config/presets/standard.yaml")
+mww-autotune --checkpoint checkpoints/best.ckpt --config config/presets/standard.yaml
 
 # 6. Export
 mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
@@ -477,16 +498,18 @@ set_threading_config(inter_op_parallelism=16, intra_op_parallelism=16)
 
 ```bash
 # Basic training with standard preset
-mww-train --config config/presets/standard.yaml
+# Note: You can use either the preset name (e.g., "standard") or full path (e.g., "config/presets/standard.yaml")
+mww-train --config standard
+# Or: mww-train --config config/presets/standard.yaml
 
 # Training with custom config override
-mww-train --config config/presets/standard.yaml --override my_settings.yaml
+mww-train --config standard --override my_settings.yaml
 
 # Resume from checkpoint
-mww-train --config config/presets/standard.yaml --resume checkpoints/last.ckpt
+mww-train --config standard --resume checkpoints/last.ckpt
 
 # Dry run (validate config without training)
-mww-train --config config/presets/standard.yaml --dry-run
+mww-train --config standard --dry-run
 ```
 
 ### Export

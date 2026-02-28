@@ -95,6 +95,21 @@ augmentation:
   min_jitter_s: 0.195
   max_jitter_s: 0.205
 
+  # Augmentation magnitude ranges
+  eq_min_gain_db: -6.0
+  eq_max_gain_db: 6.0
+  distortion_min: 0.1
+  distortion_max: 0.5
+  pitch_shift_min_semitones: -2.0
+  pitch_shift_max_semitones: 2.0
+  band_stop_min_center_freq: 100.0
+  band_stop_max_center_freq: 5000.0
+  band_stop_min_bandwidth_fraction: 0.5
+  band_stop_max_bandwidth_fraction: 1.99
+  gain_min_db: -3.0
+  gain_max_db: 3.0
+  color_noise_min_snr_db: -5.0
+  color_noise_max_snr_db: 10.0
   # Background sources - use your own dataset paths
   impulse_paths: ["./dataset/rirs"]
   background_paths: ["./dataset/background"]
@@ -164,3 +179,46 @@ export:
   sliding_window_size: 5
   tensor_arena_size: 30000
   minimum_esphome_version: "2024.7.0"
+
+# ─────────────────────────────────────────────────────────────────
+# PREPROCESSING (VAD, splitting, duration filtering)
+# ─────────────────────────────────────────────────────────────────
+preprocessing:
+  # Duration filtering
+  min_duration_ms: 300.0
+  max_duration_ms: 2000.0
+  discarded_dir: "./discarded"
+
+  # VAD trim settings (vad_trim_audio.py)
+  vad_aggressiveness: 2       # 0=lenient, 3=aggressive
+  vad_pad_ms: 200             # ms of silence padding to keep around speech
+  vad_frame_ms: 30            # VAD frame size (10, 20, or 30 ms)
+
+  # Background audio splitting (split_long_audio.py)
+  split_max_chunk_ms: 2000.0
+  split_min_chunk_ms: 500.0
+  split_target_chunk_ms: 2000.0
+
+# ─────────────────────────────────────────────────────────────────
+# QUALITY SCORING THRESHOLDS
+# ─────────────────────────────────────────────────────────────────
+quality:
+  # Clipping detection
+  clip_threshold: 0.001
+  max_clip_ratio: 0.01
+
+  # Score-based filtering
+  discard_bottom_pct: 5.0     # discard lowest 5% of files by WQI
+  min_wqi: 0.0
+  discarded_quality_dir: "./discarded/quality"
+
+  # WADA-SNR threshold
+  min_snr_db: -10.0
+
+  # Silero VAD (full scorer)
+  vad_speech_threshold: 0.3
+
+  # DNSMOS thresholds (full scorer)
+  dnsmos_min_ovrl: 0.0
+  dnsmos_min_sig: 0.0
+  dnsmos_cache_dir: "~/.cache/dnsmos"
