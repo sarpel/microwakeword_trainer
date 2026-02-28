@@ -29,13 +29,14 @@ from typing import Any
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.lite.python import schema_py_generated as schema
 
 
 def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dict[str, Any]:
     """
     Verify TFLite model is compatible with ESPHome micro_wake_word.
 
-    Based on analysis of hey_jarvis.tflite and okay_nabu.tflite official models.
+    Based on analysis of official ESPHome microWakeWord TFLite models (okay_nabu.tflite).
 
     Args:
         tflite_path: Path to TFLite model file
@@ -66,18 +67,17 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
 
     try:
         # Load model
-        interpreter = tf.lite.Interpreter(model_path=tflite_path)
-        interpreter.allocate_tensors()
+        with open(tflite_path, "rb") as f:
+            tflite_bytes = f.read()
 
+        interpreter = tf.lite.Interpreter(model_content=tflite_bytes)
+        interpreter.allocate_tensors()
         vprint(f"Loaded: {tflite_path}")
 
         # Check 1: Number of subgraphs (must be 2)
         try:
-            if not hasattr(interpreter, "get_subgraphs"):
-                raise AttributeError("Interpreter has no public get_subgraphs() API")
-
-            subgraphs = interpreter.get_subgraphs()
-            num_subgraphs = len(subgraphs)
+            model_obj = schema.ModelT.InitFromPackedBuf(tflite_bytes, 0)
+            num_subgraphs = len(model_obj.subgraphs)
             results["details"]["num_subgraphs"] = num_subgraphs
 
             vprint(f"  Subgraphs: {num_subgraphs}")
@@ -87,8 +87,7 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
                 results["errors"].append(f"Expected 2 subgraphs, got {num_subgraphs}. " "ESPHome requires dual-subgraph architecture (inference + init).")
         except Exception as e:
             results["compatible"] = False
-            results["errors"].append("Could not verify subgraphs via interpreter.get_subgraphs(); " f"failing compatibility check: {e}")
-
+            results["errors"].append(f"Could not verify subgraphs via flatbuffers schema: {e}")
         # Check 2: Input tensor shape and dtype
         try:
             input_details = interpreter.get_input_details()
@@ -213,25 +212,26 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
 
         # Check 4: State variables (6 streaming state tensors)
         try:
-            tensor_details = interpreter.get_tensor_details()
-
-            # Count state variable tensors (is_variable flag or 'state' in name)
-            state_vars = [t for t in tensor_details if t.get("is_variable") or "state" in t.get("name", "").lower()]
-            num_state_vars = len(state_vars)
+            ops = interpreter._get_ops_details()
+            var_handle_count = sum(1 for op in ops if op.get("op_name") == "VAR_HANDLE")
+            num_state_vars = var_handle_count
             results["details"]["num_state_variables"] = num_state_vars
 
             vprint(f"  State variables: {num_state_vars}")
-            for var in state_vars:
-                vprint(f"    - {var.get('name', 'unnamed')}: {var.get('shape', [])}")
+            if verbose:
+                all_tensors = interpreter.get_tensor_details()
+                for op in ops:
+                    if op.get("op_name") == "READ_VARIABLE":
+                        out_idx = op["outputs"][0]
+                        t = all_tensors[out_idx]
+                        vprint(f"    - {t.get('name', 'unnamed')}: {t.get('shape', [])}")
 
             # Expected: 6 state variables for streaming
             if num_state_vars != 6:
                 results["compatible"] = False
                 results["errors"].append(f"Expected 6 state variables, got {num_state_vars}. " "ESPHome streaming models require exactly 6 state tensors for ring buffer management.")
-
         except Exception as e:
             results["warnings"].append(f"Could not verify state variables: {e}")
-
         # Check 5: Verify quantization is present
         try:
             if input_details and output_details:

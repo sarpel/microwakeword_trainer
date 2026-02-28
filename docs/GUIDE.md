@@ -94,9 +94,52 @@ mww-export \
     --checkpoint checkpoints/best.ckpt \
     --config config/presets/max_quality.yaml \
     --output ./exports \
-    --model-name "hey_jarvis"
+    --model-name "okay_nabu"
 ```
 
+### mww-autotune
+
+Auto-tune a trained model to achieve target FAH and recall metrics without full retraining.
+
+```bash
+mww-autotune [OPTIONS]
+```
+
+| Argument | Type | Default | Required | Description |
+|----------|------|---------|----------|-------------|
+| `--checkpoint` | string | None | **Yes** | Path to trained checkpoint to fine-tune |
+| `--config` | string | `standard` | No | Config preset name or path to config file |
+| `--override` | string | None | No | Override config file path |
+| `--target-fah` | float | 0.3 | No | Target FAH value (False Activations per Hour) |
+| `--target-recall` | float | 0.92 | No | Target recall value |
+| `--max-iterations` | int | 100 | No | Maximum tuning iterations |
+| `--output-dir` | string | `./tuning` | No | Output directory for tuned checkpoints |
+
+**Examples:**
+
+```bash
+# Basic auto-tuning with defaults
+mww-autotune --checkpoint checkpoints/best.ckpt
+
+# Custom targets
+mww-autotune \
+    --checkpoint checkpoints/best.ckpt \
+    --config standard \
+    --target-fah 0.2 \
+    --target-recall 0.95
+
+# With more iterations and custom output
+mww-autotune \
+    --checkpoint checkpoints/best.ckpt \
+    --config standard \
+    --max-iterations 50 \
+    --output-dir ./tuning_results
+```
+
+**When to use auto-tuning:**
+- After initial training, if FAH > 0.5 or recall < 0.90
+- As a final polish step before deployment
+- When you want to improve metrics without full retraining
 ---
 
 ## Configuration File Structure

@@ -5,8 +5,9 @@ GPU-mandatory: This module requires GPU availability and will raise RuntimeError
 if GPU is not available. No CPU fallback is provided.
 """
 
+from typing import Any, cast
+
 import numpy as np
-from typing import cast, Any
 
 # Try to import CuPy and set up GPU availability flag
 try:

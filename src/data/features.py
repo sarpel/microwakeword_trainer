@@ -144,7 +144,7 @@ class MicroFrontend:
 
             logger.info("Using pymicro-features for feature extraction")
         except ImportError:
-            raise RuntimeError("pymicro-features is required for GPU training pipeline. " "Install: pip install pymicro-features")
+            raise RuntimeError("pymicro-features is required for GPU training pipeline. " "Install: pip install pymicro-features") from None  # noqa: B904
 
     def compute_mel_spectrogram(self, audio: np.ndarray) -> np.ndarray:
         """Compute mel spectrogram from audio.
@@ -352,7 +352,7 @@ class SpectrogramGeneration:
         if target_length is not None:
             if len(audio) > target_length:
                 # Truncate or random crop
-                start = random.randint(0, len(audio) - target_length)
+                start = random.randint(0, len(audio) - target_length)  # noqa: S311
                 audio = audio[start : start + target_length]
             elif len(audio) < target_length:
                 # Pad

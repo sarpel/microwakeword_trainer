@@ -166,12 +166,12 @@ class TerminalLogger:
         stderr_stream = self._original_stderr if self._original_stderr is not None else sys.__stderr__
 
         if self.capture_stdout and stdout_stream is not None:
-            self._tee_stdout = TeeOutput(stdout_stream, self._file_handle)  # type: ignore[arg-type]
-            sys.stdout = self._tee_stdout  # type: ignore[assignment]
+            self._tee_stdout = TeeOutput(stdout_stream, self._file_handle)
+            sys.stdout = self._tee_stdout
 
         if self.capture_stderr and stderr_stream is not None:
-            self._tee_stderr = TeeOutput(stderr_stream, self._file_handle)  # type: ignore[arg-type]
-            sys.stderr = self._tee_stderr  # type: ignore[assignment]
+            self._tee_stderr = TeeOutput(stderr_stream, self._file_handle)
+            sys.stderr = self._tee_stderr
 
         # Create Rich console that writes to file
         # We create two consoles: one for terminal (with colors) and one for file (plain)

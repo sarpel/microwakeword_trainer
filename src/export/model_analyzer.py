@@ -1,4 +1,4 @@
-"""Model analysis and validation using ai_edge_litert (formerly TF Lite)."""
+"""Model analysis and validation using TensorFlow Lite."""
 
 import os
 import re
@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 import tensorflow as tf
-from ai_edge_litert.interpreter import Interpreter
+from tensorflow.lite.python.interpreter import Interpreter
 
 # =============================================================================
 # MODEL ARCHITECTURE ANALYSIS
@@ -15,9 +15,9 @@ from ai_edge_litert.interpreter import Interpreter
 
 
 def analyze_model_architecture(model_path: str) -> dict[str, Any]:
-    """Analyze detailed architecture of a TFLite model using ai_edge_litert.
+    """Analyze detailed architecture of a TFLite model.
 
-    Uses ai_edge_litert.Interpreter for model analysis.
+    Uses tf.lite.Interpreter for model analysis.
 
     Args:
         model_path: Path to the TFLite model file

@@ -10,13 +10,9 @@ Uses iterative micro-adjustments and hard negative mining.
 from __future__ import annotations
 
 import copy
-import dataclasses
-import json
-import os
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import tensorflow as tf
@@ -73,7 +69,7 @@ class MicroConfigAdjuster:
     """Micro-adjusts configuration values for fine-tuning."""
 
     # Config parameter ranges for recall improvement
-    RECALL_PARAMS = {
+    RECALL_PARAMS: dict[str, dict[str, Any]] = {
         "positive_class_weight": {
             "current": 1.0,
             "min": 0.5,
@@ -237,14 +233,14 @@ class FAHReductionStrategy:
         """Mine hard negative examples from dataset."""
         # Get validation generator factory and create generator
         val_gen_factory = dataset.val_generator_factory()
-        
+
         features = []
         labels = []
-        
+
         # Collect negative samples from validation data
         try:
             val_gen = val_gen_factory()
-            for batch_features, batch_labels in val_gen:  # type: ignore[misc]
+            for batch_features, batch_labels in val_gen:
                 neg_mask = batch_labels == 0
                 if np.any(neg_mask):
                     features.append(batch_features[neg_mask])
@@ -253,19 +249,18 @@ class FAHReductionStrategy:
             # If generator fails, return empty
             print(f"Warning: Could not mine hard negatives: {e}")
             return np.array([]), np.array([])
-        
+
         if not features:
             return np.array([]), np.array([])
-        
+
         all_features = np.concatenate(features, axis=0)
         all_labels = np.concatenate(labels, axis=0)
-        
+
         # Use standalone mine_hard_examples function
         from src.training.miner import mine_hard_examples
-        hard_features, hard_labels = mine_hard_examples(
-            all_features, all_labels, model, threshold=threshold
-        )
-        
+
+        hard_features, hard_labels = mine_hard_examples(all_features, all_labels, model, threshold=threshold)
+
         return hard_features, hard_labels
 
     def prepare_hard_negative_dataset(
@@ -404,24 +399,24 @@ class AutoTuner:
         # Collect predictions from validation data
         y_true = []
         y_scores = []
-        
+
         # Get validation generator
         val_gen_factory = dataset.val_generator_factory()
-        
+
         try:
             val_gen = val_gen_factory()
-            for batch_features, batch_labels in val_gen:  # type: ignore[misc]
+            for batch_features, batch_labels in val_gen:
                 predictions = model.predict(batch_features, verbose=0)
                 y_true.extend(batch_labels.flatten().tolist())
                 y_scores.extend(predictions.flatten().tolist())
         except Exception as e:
             print(f"Warning: Could not evaluate model: {e}")
             return {"fah": float("inf"), "recall": 0.0, "precision": 0.0, "f1": 0.0, "accuracy": 0.0}
-        y_true = np.array(y_true)
-        y_scores = np.array(y_scores)
+        y_true_arr = np.array(y_true)
+        y_scores_arr = np.array(y_scores)
 
         # Calculate metrics
-        calc = MetricsCalculator(y_true=y_true, y_score=y_scores)
+        calc = MetricsCalculator(y_true=y_true_arr, y_score=y_scores_arr)
 
         # Get ambient duration from config
         ambient_hours = self.base_config.get("training", {}).get("ambient_duration_hours", 10.0)

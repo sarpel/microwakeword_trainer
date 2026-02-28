@@ -534,7 +534,11 @@ class Clips:
                         self._basename_index = {}
                         for fpath, sid in mappings.items():
                             fpath_obj = Path(fpath)
-                            resolved = str(fpath_obj.resolve()) if fpath_obj.is_absolute() else fpath
+                            # Always try to resolve for consistent lookups
+                            try:
+                                resolved = str(fpath_obj.resolve())
+                            except (OSError, ValueError):
+                                resolved = fpath
                             self._namelist_index[resolved] = sid
                             bn = fpath_obj.name
                             self._basename_index.setdefault(bn, []).append(fpath)
@@ -558,7 +562,7 @@ class Clips:
         Returns:
             Samples with split assigned
         """
-        rng = random.Random(self.config.seed)
+        rng = random.Random(self.config.seed)  # noqa: S311
 
         if self.config.speaker_based_split and any(s.speaker_id for s in samples):
             # Group by speaker

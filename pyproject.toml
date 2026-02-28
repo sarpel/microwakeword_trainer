@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "MWW Team", email = "team@mww.dev"}
+    {name = "Sarpel GURY", email = "tsarpel15@gmail.com"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -73,7 +73,7 @@ select = [
     "F",
     # Pycodestyle - functional rules only
     "E9",      # Syntax/runtime errors
-    "E71",     # Comparison errors  
+    "E71",     # Comparison errors
     "E72",     # Syntax errors
     "W29",     # Whitespace warnings
     # isort - import organization
@@ -235,7 +235,6 @@ module = [
     "datasets.*",
     "soundfile.*",
     "audiomentations.*",
-    "ai_edge_litert.*",
     "GPUtil.*",
     "numba.*",
     "webrtcvad.*",

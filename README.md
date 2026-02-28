@@ -322,6 +322,22 @@ models/exported/
 └── streaming/               # Streaming SavedModel (for debugging)
 ```
 
+#### Step 4b: Auto-Tune (Optional — Improve FAH/Recall)
+
+If your model's FAH > 0.5 or recall < 0.90, use auto-tuning to improve metrics without full retraining:
+
+```bash
+# Auto-tune with default targets (FAH < 0.3, recall > 0.92)
+mww-autotune --checkpoint checkpoints/best.ckpt --config standard
+
+# Custom targets
+mww-autotune \
+    --checkpoint checkpoints/best.ckpt \
+    --config standard \
+    --target-fah 0.2 \
+    --target-recall 0.95
+```
+
 #### Step 5: Verify ESPHome Compatibility
 
 ```bash
@@ -380,12 +396,8 @@ Train your first wake word model:
 
 # 2. (Optional but recommended) Run speaker clustering to prevent data leakage
 mww-torch
-python cluster-Test.py --config standard                    # Analyze positive clusters
-python cluster-Test.py --config standard --dataset all       # Or cluster all datasets
-python cluster-Test.py --config standard --n-clusters 200    # Or use explicit speaker count
-# Review cluster_output/positive_cluster_report.txt
-
-# 2b. Organize files into speaker directories
+python cluster-Test.py --config standard --dataset all --n-clusters 200
+# Review cluster_output/*_cluster_report.txt
 python Start-Clustering.py --namelist-dir cluster_output --dry-run  # Preview first
 python Start-Clustering.py --namelist-dir cluster_output            # Execute
 
@@ -393,30 +405,15 @@ python Start-Clustering.py --namelist-dir cluster_output            # Execute
 mww-tf
 
 # 4. Train
-mww-train --config config/presets/standard.yaml
+mww-train --config standard
 
-# 5. Export
+# 5. (Optional) Auto-tune if FAH > 0.5 or recall < 0.90
+mww-autotune --checkpoint checkpoints/best.ckpt --config standard
+
+# 6. Export
 mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
 
-# 6. Verify
-python scripts/verify_esphome.py models/exported/wake_word.tflite
-```
-
-Train your first wake word model:
-
-```bash
-# 1. Prepare dataset in dataset/positive/, dataset/negative/, etc.
-
-# 2. Switch to TF environment
-mww-tf
-
-# 3. Train
-mww-train --config config/presets/standard.yaml
-
-# 4. Export
-mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
-
-# 5. Verify
+# 7. Verify
 python scripts/verify_esphome.py models/exported/wake_word.tflite
 ```
 

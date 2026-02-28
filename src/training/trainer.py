@@ -445,6 +445,7 @@ class Trainer:
             is_best: Whether this is the best model
             reason: Reason for saving/not saving
         """
+        assert self.model is not None, "_save_checkpoint called before model was built"
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         if is_best:
@@ -483,6 +484,7 @@ class Trainer:
         Returns:
             Dictionary of training metrics
         """
+        assert self.model is not None, "train_step called before model was built"
         # Get current phase settings
         phase_settings = self._get_current_phase_settings(self.current_step)
 
@@ -534,9 +536,10 @@ class Trainer:
         Returns:
             Dictionary of validation metrics
         """
+        assert self.model is not None, "validate called before model was built"
+        # Accept both a callable factory and a plain generator
         self.val_metrics.reset()
 
-        # Accept both a callable factory and a plain generator
         iterator = data_generator() if callable(data_generator) else data_generator
 
         for batch in iterator:

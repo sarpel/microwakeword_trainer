@@ -18,7 +18,7 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 
 **Streaming**: Stream wrapper manages ring buffers. Modes enum: TRAINING, NON_STREAM_INFERENCE, STREAM_INTERNAL_STATE_INFERENCE, STREAM_EXTERNAL_STATE_INFERENCE. Internal state uses tf.Variable, external uses Input layers.
 
-**Factory Functions**: `build_model()` parses string params (pointwise_filters, mixconv_kernel_sizes). Preset creators: `create_hey_jarvis_model()` (30/60 filters), `create_okay_nabu_model()` (32/64 filters).
+**Factory Functions**: `build_model()` parses string params (pointwise_filters, mixconv_kernel_sizes). Preset creator: `create_okay_nabu_model()` (32/64 filters, [[5],[7,11],[9,15],[23]] kernels).
 
 ## architecture.py Symbols
 
@@ -28,8 +28,7 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 | `ResidualBlock` | Class | Wraps MixConvBlock with optional skip connection |
 | `MixedNet` | Class | Full model: Conv2D → N×MixConvBlock → Dense(1, sigmoid) |
 | `build_model()` | Function | Factory: parses string config → builds MixedNet |
-| `create_hey_jarvis_model()` | Function | Preset: 30 filters, [5],[9],[13],[21] kernels |
-| `create_okay_nabu_model()` | Function | Preset: 32 filters, [5],[9],[13],[21] kernels |
+| `create_okay_nabu_model()` | Function | Preset: 32 filters, [[5],[7,11],[9,15],[23]] kernels |
 | `parse_model_param()` | Function | Parse comma-separated string to list |
 | `spectrogram_slices_dropped()` | Function | Calculate frames lost to striding |
 | `_split_channels()` | Function | Split tensor along channel dimension for MixConv |

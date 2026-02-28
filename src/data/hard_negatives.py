@@ -10,7 +10,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, List, Optional
 
 import numpy as np
 
@@ -149,8 +149,8 @@ class HardNegativeMiner:
         Returns:
             Model score (0-1)
         """
-        from src.data.ingestion import load_audio_wave
         from src.data.features import MicroFrontend
+        from src.data.ingestion import load_audio_wave
 
         # Load audio
         audio = load_audio_wave(audio_path)
@@ -181,6 +181,9 @@ class HardNegativeMiner:
 
         # Get model prediction
         prediction = np.asarray(model.predict(features, verbose=0)).ravel()
+        if prediction.size == 0:
+            logger.warning(f"Model returned empty prediction for {audio_path}")
+            return 0.0
         score = float(prediction[0])
 
         return float(score)

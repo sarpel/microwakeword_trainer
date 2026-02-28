@@ -14,34 +14,15 @@ wrapper is provided but internally delegates to ECAPA-TDNN.
 """
 
 import hashlib
-import json
 import logging
 import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
-import json
-import logging
-import os
-import tempfile
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
-
-import numpy as np
-import json
-import logging
-import os
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 # Optional dependencies for embeddings and clustering
@@ -63,18 +44,18 @@ except ImportError:
 try:
     import torch
     import torchaudio
-    from torch.utils.data import Dataset, DataLoader
 
     # SpeechBrain for speaker embeddings (ECAPA-TDNN)
     from speechbrain.pretrained import EncoderClassifier
+    from torch.utils.data import DataLoader, Dataset
 
     HAS_SPEECHBRAIN = True
 except ImportError:
     torch = None
     torchaudio = None
-    Dataset = None  # type: ignore
-    DataLoader = None  # type: ignore
-    EncoderClassifier = None  # type: ignore
+    Dataset = None
+    DataLoader = None
+    EncoderClassifier = None
     HAS_SPEECHBRAIN = False
 
 try:
@@ -115,15 +96,9 @@ def extract_speaker_embeddings(
     if batch_size is not None and batch_size < 1:
         raise ValueError(f"batch_size must be >= 1, got {batch_size}")
     if not HAS_SPEECHBRAIN or not HAS_SKLEARN:
-        raise ImportError(
-            "speechbrain and sklearn are required for speaker clustering. "
-            "Install: pip install speechbrain torch scikit-learn"
-        )
+        raise ImportError("speechbrain and sklearn are required for speaker clustering. " "Install: pip install speechbrain torch scikit-learn")
     if not HAS_LIBROSA:
-        raise ImportError(
-            "librosa is required to load audio for speaker clustering. "
-            "Install: pip install librosa"
-        )
+        raise ImportError("librosa is required to load audio for speaker clustering. " "Install: pip install librosa")
 
     import tempfile
 
@@ -143,9 +118,7 @@ def extract_speaker_embeddings(
 
     # Sanitize model name for use in path
     sanitized_name = model_name.replace("/", "_")
-    savedir = os.path.join(
-        tempfile.gettempdir(), f"speechbrain_embeddings_{sanitized_name}"
-    )
+    savedir = os.path.join(tempfile.gettempdir(), f"speechbrain_embeddings_{sanitized_name}")
 
     # Load SpeechBrain encoder classifier for speaker embeddings
     classifier = EncoderClassifier.from_hparams(
@@ -312,8 +285,6 @@ def cluster_samples(
     return labels
 
 
-
-
 def select_diverse_samples(
     features: np.ndarray,
     labels: np.ndarray,
@@ -358,9 +329,7 @@ def select_diverse_samples(
 
         elif selection_strategy == "boundary":
             # Select samples most different from each other
-            chosen = _select_boundary_samples(
-                cluster_indices, cluster_features, n_select
-            )
+            chosen = _select_boundary_samples(cluster_indices, cluster_features, n_select)
 
         else:
             raise ValueError(f"Unknown selection strategy: {selection_strategy}")
@@ -467,11 +436,7 @@ def audit_leakage(
         "has_leakage": n_leaked > 0,
         "num_leaked_samples": int(n_leaked),
         "total_test_samples": len(test_features),
-        "leakage_percentage": (
-            float(n_leaked / len(test_features) * 100)
-            if len(test_features) > 0
-            else 0.0
-        ),
+        "leakage_percentage": (float(n_leaked / len(test_features) * 100) if len(test_features) > 0 else 0.0),
         "leaked_test_indices": leaked_test_indices.tolist(),
         "matched_train_indices": matched_train_indices.tolist(),
         "max_similarities": max_sim_per_test.tolist(),
@@ -528,10 +493,7 @@ def cluster_by_speaker(
         all_split_paths = set(train_paths) | set(test_paths)
         missing_paths = all_split_paths - set(path_to_idx.keys())
         if missing_paths:
-            raise ValueError(
-                f"Found {len(missing_paths)} paths in train/test split that are missing "
-                f"from audio_paths. First few missing: {list(missing_paths)[:5]}"
-            )
+            raise ValueError(f"Found {len(missing_paths)} paths in train/test split that are missing " f"from audio_paths. First few missing: {list(missing_paths)[:5]}")
 
         train_indices = [path_to_idx[p] for p in train_paths]
         test_indices = [path_to_idx[p] for p in test_paths]
@@ -549,9 +511,11 @@ def cluster_by_speaker(
 
     return result
 
+
 # =============================================================================
 # EMBEDDING CACHE FUNCTIONS
 # =============================================================================
+
 
 def _get_cache_dir() -> Path:
     """Get the cache directory for embeddings."""
@@ -562,19 +526,19 @@ def _get_cache_dir() -> Path:
 
 def _compute_files_hash(audio_paths: List[str], model_name: str) -> str:
     """Compute a hash based on file paths, sizes, and modification times.
-    
+
     This is faster than hashing file contents but still detects changes.
     """
     hash_input = model_name.encode()
-    
+
     for path in sorted(audio_paths):
         path_obj = Path(path)
         if path_obj.exists():
             stat = path_obj.stat()
             # Include path, size, and modification time
             hash_input += f"{path}:{stat.st_size}:{stat.st_mtime}".encode()
-    
-    return hashlib.md5(hash_input).hexdigest()
+
+    return hashlib.md5(hash_input).hexdigest()  # noqa: S324
 
 
 def _get_cache_path(audio_paths: List[str], model_name: str) -> Path:
@@ -606,40 +570,40 @@ def load_embeddings_cache(
     model_name: str,
 ) -> Optional[np.ndarray]:
     """Load embeddings from cache if valid.
-    
+
     Returns None if cache is invalid or corrupted.
     """
     try:
         if not cache_path.exists():
             return None
-        
+
         data = np.load(cache_path, allow_pickle=True)
-        
+
         # Validate cache contents
         cached_paths = list(data["audio_paths"])
         cached_model = str(data["model_name"])
-        
+
         if cached_model != model_name:
             logger.debug("Cache miss: model name mismatch")
             return None
-        
+
         if set(cached_paths) != set(audio_paths):
             logger.debug("Cache miss: audio paths mismatch")
             return None
-        
+
         # Check if any files have been modified since caching
         for path in audio_paths:
             path_obj = Path(path)
             if path_obj.exists():
-                stat = path_obj.stat()
-                # Re-compute hash for this file to check if modified
-                file_hash = f"{path}:{stat.st_size}:{stat.st_mtime}"
-                # This is a simplified check - in production you might want
-                # to store and compare individual file hashes
-        
+                path_obj.stat()  # Verify file is accessible
+                # For now, we just verify the file still exists and can be accessed
+            else:
+                logger.debug(f"Cache invalid: file {path} no longer exists")
+                return None
+
         logger.info(f"Loaded embeddings from cache: {cache_path}")
         return data["embeddings"]
-    
+
     except Exception as e:
         logger.warning(f"Failed to load cache: {e}")
         return None
@@ -650,49 +614,61 @@ def load_embeddings_cache(
 # =============================================================================
 
 if HAS_SPEECHBRAIN and Dataset is not None:
+
     class AudioDataset(Dataset):
         """PyTorch Dataset for loading audio files."""
-        
+
         def __init__(self, audio_paths: List[str], target_sr: int = 16000):
             self.audio_paths = audio_paths
             self.target_sr = target_sr
-        
+
         def __len__(self) -> int:
             return len(self.audio_paths)
-        
+
         def __getitem__(self, idx: int):
             """Load and return audio file.
-            
+
             Returns:
                 Tuple of (audio_tensor, original_length)
             """
             if not HAS_LIBROSA:
                 raise ImportError("librosa is required")
-            
+
             audio, sr = librosa.load(self.audio_paths[idx], sr=self.target_sr)
             return torch.tensor(audio, dtype=torch.float32), len(audio)
+
 else:
     # Dummy class for when torch is not available
     class _AudioDatasetPlaceholder:
         def __init__(self, *args, **kwargs):
             raise ImportError("PyTorch is required for AudioDataset")
 
+
 def collate_audio_batch(batch: List[tuple]) -> torch.Tensor:
     """Collate variable-length audio into padded batch.
-    
+
     Args:
         batch: List of (audio_tensor, length) tuples
-    
+
     Returns:
         Padded tensor [batch_size, max_length]
+
+    Raises:
+        RuntimeError: If PyTorch is not available or batch is empty
     """
-    audios, lengths = zip(*batch)
+    if not HAS_SPEECHBRAIN:
+        raise RuntimeError("PyTorch is required for collate_audio_batch. " "Please install PyTorch or disable features that use this function.")
+
+    if not batch:
+        return torch.empty((0, 0))
+
+    audios, lengths = zip(*batch, strict=False)
     max_len = max(lengths)
-    
+
     padded = torch.zeros(len(batch), max_len)
-    for i, (audio, length) in enumerate(zip(audios, lengths)):
+    for i, (audio, length) in enumerate(zip(audios, lengths, strict=False)):
         padded[i, :length] = audio
-    
+
     return padded
 
 
@@ -705,10 +681,10 @@ def extract_speaker_embeddings_dataloader(
     use_mixed_precision: bool = True,
 ) -> np.ndarray:
     """Extract embeddings using PyTorch DataLoader for parallel I/O.
-    
+
     This is an alternative to extract_speaker_embeddings that uses
     PyTorch DataLoader for more efficient parallel data loading.
-    
+
     Args:
         audio_paths: List of paths to audio files
         model_name: SpeechBrain model name
@@ -716,16 +692,16 @@ def extract_speaker_embeddings_dataloader(
         batch_size: Batch size (auto-detect if None)
         num_workers: Number of DataLoader workers for I/O
         use_mixed_precision: Use FP16 on GPU
-    
+
     Returns:
         Array of embeddings [n_samples, embedding_dim]
     """
     if not HAS_SPEECHBRAIN or not HAS_SKLEARN:
         raise ImportError("speechbrain and sklearn required")
-    
+
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+
     # Auto-detect batch size
     if batch_size is None:
         if device == "cuda" and torch.cuda.is_available():
@@ -733,25 +709,25 @@ def extract_speaker_embeddings_dataloader(
             batch_size = max(32, min(128, int(vram_gb * 2)))
         else:
             batch_size = 32
-    
+
     # Load model
     sanitized_name = model_name.replace("/", "_")
     savedir = os.path.join(tempfile.gettempdir(), f"speechbrain_{sanitized_name}")
-    
+
     classifier = EncoderClassifier.from_hparams(
         source=model_name,
         savedir=savedir,
         run_opts={"device": device},
     )
     classifier.eval()
-    
+
     # Warm-up
     if device == "cuda":
         dummy = torch.zeros(1, 16000, device=device)
         with torch.no_grad():
             _ = classifier.encode_batch(dummy)
         torch.cuda.synchronize()
-    
+
     # Create DataLoader
     dataset = AudioDataset(audio_paths)
     loader = DataLoader(
@@ -762,26 +738,27 @@ def extract_speaker_embeddings_dataloader(
         pin_memory=(device == "cuda"),
         prefetch_factor=2 if num_workers > 0 else None,
     )
-    
+
     # Extract embeddings
     embeddings = []
     amp_context = torch.cuda.amp.autocast if (use_mixed_precision and device == "cuda") else nullcontext
-    
+
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(device, non_blocking=True)
-            
+
             with amp_context():
                 emb = classifier.encode_batch(batch)
-            
+
             embeddings.append(emb.squeeze(1).cpu().numpy())
-    
+
     return np.concatenate(embeddings, axis=0)
 
 
 # =============================================================================
 # ADVANCED CLUSTERING ALGORITHMS (PHASE 3)
 # =============================================================================
+
 
 def cluster_samples_hdbscan(
     features: np.ndarray,
@@ -790,56 +767,53 @@ def cluster_samples_hdbscan(
     metric: str = "euclidean",
 ) -> np.ndarray:
     """Cluster samples using HDBSCAN.
-    
+
     HDBSCAN is O(n log n) with approximate nearest neighbors,
     making it suitable for larger datasets (10K-100K samples).
-    
+
     Args:
         features: Feature array [n_samples, feature_dim]
         min_cluster_size: Minimum cluster size
         min_samples: Minimum samples for core points
         metric: Distance metric
-    
+
     Returns:
         Cluster labels [n_samples]. Noise points labeled as -1.
     """
     if not HAS_HDBSCAN:
-        raise ImportError(
-            "hdbscan is required for large dataset clustering. "
-            "Install: pip install hdbscan"
-        )
-    
+        raise ImportError("hdbscan is required for large dataset clustering. " "Install: pip install hdbscan")
+
     if features.size == 0 or len(features) == 0:
         return np.array([], dtype=int)
-    
+
     if len(features) == 1:
         return np.array([0])
-    
+
     # Normalize features for cosine-like behavior
     norms = np.linalg.norm(features, axis=1, keepdims=True)
     norms[norms == 0] = 1
     normalized_features = features / norms
-    
+
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=min_cluster_size,
         min_samples=min_samples,
         metric=metric,
         cluster_selection_method="eom",
     )
-    
+
     labels = clusterer.fit_predict(normalized_features)
-    
+
     # Relabel noise points (-1) to unique cluster IDs
     # This ensures all samples are assigned to some cluster
     max_label = labels.max()
     noise_mask = labels == -1
     n_noise = noise_mask.sum()
-    
+
     if n_noise > 0:
         # Assign each noise point to its own cluster
         noise_labels = np.arange(max_label + 1, max_label + 1 + n_noise)
         labels[noise_mask] = noise_labels
-    
+
     return labels
 
 
@@ -850,33 +824,33 @@ def cluster_samples_adaptive(
     min_cluster_size: int = 5,
 ) -> np.ndarray:
     """Adaptive clustering based on dataset size.
-    
+
     Automatically selects the appropriate clustering algorithm:
     - n <= 5000: AgglomerativeClustering (exact, high quality)
     - 5000 < n <= 50000: HDBSCAN (fast, scalable)
     - n > 50000: Agglomerative with kNN connectivity (memory efficient)
-    
+
     Args:
         features: Feature array [n_samples, feature_dim]
         n_clusters: Target number of clusters (for agglomerative)
         similarity_threshold: Similarity threshold (for agglomerative)
         min_cluster_size: Minimum cluster size (for HDBSCAN)
-    
+
     Returns:
         Cluster labels [n_samples]
     """
     n_samples = len(features)
-    
+
     if n_samples <= 5000:
         # Use exact AgglomerativeClustering for small datasets
         logger.info(f"Using AgglomerativeClustering for {n_samples} samples")
         return cluster_samples(features, n_clusters, similarity_threshold)
-    
+
     elif n_samples <= 50000 and HAS_HDBSCAN:
         # Use HDBSCAN for medium datasets
         logger.info(f"Using HDBSCAN for {n_samples} samples")
         return cluster_samples_hdbscan(features, min_cluster_size=min_cluster_size)
-    
+
     else:
         # For large datasets, use k-means as coarse clustering
         # then agglomerative within each coarse cluster
@@ -890,47 +864,47 @@ def _cluster_samples_two_stage(
     similarity_threshold: float = 0.72,
 ) -> np.ndarray:
     """Two-stage clustering: k-means coarse + agglomerative fine.
-    
+
     This reduces memory from O(n^2) to O((n/k)^2 * k) where k is
     the number of coarse clusters.
-    
+
     Args:
         features: Feature array [n_samples, feature_dim]
         n_clusters: Target number of final clusters
         similarity_threshold: Similarity threshold for fine clustering
-    
+
     Returns:
         Cluster labels [n_samples]
     """
     from sklearn.cluster import KMeans
-    
+
     n_samples = len(features)
-    
+
     # Stage 1: Coarse clustering with k-means
     # Aim for ~1000 samples per coarse cluster
     n_coarse = max(10, n_samples // 1000)
     if n_clusters is not None:
         n_coarse = min(n_coarse, n_clusters)
-    
+
     logger.info(f"Stage 1: Coarse k-means with {n_coarse} clusters")
     kmeans = KMeans(n_clusters=n_coarse, random_state=42, n_init="auto")
     coarse_labels = kmeans.fit_predict(features)
-    
+
     # Stage 2: Agglomerative clustering within each coarse cluster
     logger.info("Stage 2: Fine agglomerative clustering per coarse cluster")
     final_labels = np.zeros(n_samples, dtype=int)
     label_offset = 0
-    
+
     for coarse_id in range(n_coarse):
         mask = coarse_labels == coarse_id
         cluster_features = features[mask]
         cluster_indices = np.where(mask)[0]
-        
+
         if len(cluster_features) <= 1:
             final_labels[cluster_indices] = label_offset
             label_offset += 1
             continue
-        
+
         # Calculate target clusters for this coarse cluster
         if n_clusters is not None:
             # Proportional allocation
@@ -938,24 +912,25 @@ def _cluster_samples_two_stage(
             target = max(1, int(n_clusters * proportion))
         else:
             target = None
-        
+
         # Run agglomerative on this subset
         sub_labels = cluster_samples(
             cluster_features,
             n_clusters=target,
             similarity_threshold=similarity_threshold,
         )
-        
+
         # Offset labels to be globally unique
         final_labels[cluster_indices] = sub_labels + label_offset
         label_offset += sub_labels.max() + 1
-    
+
     return final_labels
 
 
 # =============================================================================
 # SPEAKER CLUSTERING CLASS (CONFIG-DRIVEN)
 # =============================================================================
+
 
 @dataclass
 class SpeakerClusteringConfig:
@@ -967,20 +942,18 @@ class SpeakerClusteringConfig:
     similarity_threshold: float = 0.72
     n_clusters: Optional[int] = None  # Explicit cluster count (overrides threshold)
     leakage_audit_enabled: bool = True
-    leakage_similarity_threshold: float = (
-        0.9  # Stricter threshold for leakage detection
-    )
-    
+    leakage_similarity_threshold: float = 0.9  # Stricter threshold for leakage detection
+
     # Caching options (Phase 2)
     use_embedding_cache: bool = True  # Cache embeddings to disk
     cache_dir: Optional[str] = None  # Custom cache directory
-    
+
     # Performance options (Phase 2)
     batch_size: Optional[int] = None  # Auto-detect if None
     num_io_workers: int = 8  # Parallel I/O workers
     use_mixed_precision: bool = True  # Use FP16 on GPU
     use_dataloader: bool = False  # Use PyTorch DataLoader (slower for small datasets)
-    
+
     # Adaptive clustering options (Phase 3)
     use_adaptive_clustering: bool = True  # Auto-select algorithm based on dataset size
     hdbscan_min_cluster_size: int = 5
@@ -1000,36 +973,24 @@ class SpeakerClustering:
 
     def _get_classifier(self, device: Optional[str] = None) -> Any:
         """Lazy-load and cache the SpeechBrain classifier.
-        
+
         The model is loaded once and reused across multiple calls to
         cluster_samples() or audit_leakage().
         """
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
         # Check if we need to reload the model
-        model_changed = (
-            self._model_name is not None and 
-            self._model_name != self.config.embedding_model
-        )
-        device_changed = (
-            self._model_device is not None and 
-            self._model_device != device
-        )
-        
+        model_changed = self._model_name is not None and self._model_name != self.config.embedding_model
+        device_changed = self._model_device is not None and self._model_device != device
+
         if self._classifier is None or model_changed or device_changed:
             if not HAS_SPEECHBRAIN:
-                raise ImportError(
-                    "speechbrain is required for speaker clustering. "
-                    "Install: pip install speechbrain torch"
-                )
-            
+                raise ImportError("speechbrain is required for speaker clustering. " "Install: pip install speechbrain torch")
+
             sanitized_name = self.config.embedding_model.replace("/", "_")
-            savedir = os.path.join(
-                tempfile.gettempdir(),
-                f"speechbrain_embeddings_{sanitized_name}"
-            )
-            
+            savedir = os.path.join(tempfile.gettempdir(), f"speechbrain_embeddings_{sanitized_name}")
+
             logger.info(f"Loading SpeechBrain model: {self.config.embedding_model}")
             self._classifier = EncoderClassifier.from_hparams(
                 source=self.config.embedding_model,
@@ -1039,7 +1000,7 @@ class SpeakerClustering:
             self._classifier.eval()
             self._model_device = device
             self._model_name = self.config.embedding_model
-            
+
             # Warm-up with dummy inference
             if device == "cuda":
                 dummy = torch.zeros(1, 16000, device=device)
@@ -1047,7 +1008,7 @@ class SpeakerClustering:
                     _ = self._classifier.encode_batch(dummy)
                 torch.cuda.synchronize()
                 logger.info("Model warm-up complete")
-        
+
         return self._classifier
 
     def _extract_embeddings_cached(
@@ -1058,19 +1019,17 @@ class SpeakerClustering:
         """Extract embeddings with disk caching support."""
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
         # Check cache if enabled
         if self.config.use_embedding_cache:
             cache_path = _get_cache_path(audio_paths, self.config.embedding_model)
             if self.config.cache_dir:
                 cache_path = Path(self.config.cache_dir) / cache_path.name
-            
-            cached = load_embeddings_cache(
-                cache_path, audio_paths, self.config.embedding_model
-            )
+
+            cached = load_embeddings_cache(cache_path, audio_paths, self.config.embedding_model)
             if cached is not None:
                 return cached
-        
+
         # Extract embeddings
         if self.config.use_dataloader and HAS_SPEECHBRAIN:
             # Use DataLoader for parallel I/O
@@ -1085,18 +1044,16 @@ class SpeakerClustering:
         else:
             # Use standard extraction with cached model
             embeddings = self._extract_with_cached_model(audio_paths, device)
-        
+
         # Save to cache if enabled
         if self.config.use_embedding_cache:
             cache_path = _get_cache_path(audio_paths, self.config.embedding_model)
             if self.config.cache_dir:
                 cache_path = Path(self.config.cache_dir) / cache_path.name
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            save_embeddings_cache(
-                cache_path, embeddings, audio_paths, self.config.embedding_model
-            )
-        
+
+            save_embeddings_cache(cache_path, embeddings, audio_paths, self.config.embedding_model)
+
         return embeddings
 
     def _extract_with_cached_model(
@@ -1106,22 +1063,17 @@ class SpeakerClustering:
     ) -> np.ndarray:
         """Extract embeddings using the cached model."""
         if not HAS_SPEECHBRAIN or not HAS_SKLEARN:
-            raise ImportError(
-                "speechbrain and sklearn are required. "
-                "Install: pip install speechbrain torch scikit-learn"
-            )
-        
+            raise ImportError("speechbrain and sklearn are required. " "Install: pip install speechbrain torch scikit-learn")
+
         if not HAS_LIBROSA:
-            raise ImportError(
-                "librosa is required. Install: pip install librosa"
-            )
-        
+            raise ImportError("librosa is required. Install: pip install librosa")
+
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
         # Get cached classifier
         classifier = self._get_classifier(device)
-        
+
         # Determine batch size
         batch_size = self.config.batch_size
         if batch_size is None:
@@ -1131,62 +1083,62 @@ class SpeakerClustering:
                 logger.info(f"Auto-detected batch_size={batch_size} for {vram_gb:.1f}GB VRAM")
             else:
                 batch_size = 32
-        
+
         embeddings: List[np.ndarray] = []
-        
+
         # Helper function for parallel audio loading
         def load_audio_worker(path: str) -> np.ndarray:
             audio, _ = librosa.load(path, sr=16000)
             return audio
-        
+
         # Setup mixed precision context
         amp_context = torch.cuda.amp.autocast if (self.config.use_mixed_precision and device == "cuda") else nullcontext
-        
+
         for i in range(0, len(audio_paths), batch_size):
-            batch_paths = audio_paths[i:i + batch_size]
-            
+            batch_paths = audio_paths[i : i + batch_size]
+
             # Parallel I/O
             with ThreadPoolExecutor(max_workers=self.config.num_io_workers) as executor:
                 audio_batch = list(executor.map(load_audio_worker, batch_paths))
-            
+
             # Pad and stack
             max_len = max(len(a) for a in audio_batch)
             padded_batch = np.zeros((len(audio_batch), max_len), dtype=np.float32)
             for j, audio in enumerate(audio_batch):
-                padded_batch[j, :len(audio)] = audio
-            
+                padded_batch[j, : len(audio)] = audio
+
             # GPU transfer with optimizations
             audio_tensor = torch.from_numpy(padded_batch)
             if device == "cuda":
                 audio_tensor = audio_tensor.pin_memory().to(device, non_blocking=True)
             else:
                 audio_tensor = audio_tensor.to(device)
-            
+
             # Extract embeddings
             with torch.no_grad():
                 with amp_context():
                     embedding = classifier.encode_batch(audio_tensor)
                 embedding = embedding.squeeze(1).cpu().numpy()
                 embeddings.append(embedding)
-            
+
             # Periodic cleanup
             if device == "cuda" and i > 0 and (i // batch_size) % 50 == 0:
                 torch.cuda.empty_cache()
-        
+
         return np.concatenate(embeddings, axis=0)
 
     def cluster_samples(self, audio_paths: List[str]) -> Dict[str, int]:
         """Cluster audio samples by speaker.
-        
+
         Uses adaptive clustering by default for optimal performance
         across different dataset sizes.
         """
         if not self.config.enabled:
-            return {p: 0 for p in audio_paths}
-        
+            return dict.fromkeys(audio_paths, 0)
+
         # Extract embeddings (with caching)
         embeddings = self._extract_embeddings_cached(audio_paths)
-        
+
         # Select clustering method
         if self.config.use_adaptive_clustering:
             labels = cluster_samples_adaptive(
@@ -1207,38 +1159,42 @@ class SpeakerClustering:
                 n_clusters=self.config.n_clusters,
                 similarity_threshold=self.config.similarity_threshold,
             )
-        
-        return {p: int(label) for p, label in zip(audio_paths, labels)}
+
+        return {p: int(label) for p, label in zip(audio_paths, labels, strict=True)}
 
     def audit_leakage(self, train_paths: List[str], test_paths: List[str]) -> Dict[str, Any]:
         """Audit for speaker leakage between train and test."""
         if not self.config.leakage_audit_enabled:
             return {"audited": False}
-        
+
         all_paths = train_paths + test_paths
         embeddings = self._extract_embeddings_cached(all_paths)
-        
-        train_emb = embeddings[:len(train_paths)]
-        test_emb = embeddings[len(train_paths):]
-        
-        leakage_threshold = getattr(
-            self.config, "leakage_similarity_threshold", 0.9
-        )
-        
-        return audit_leakage(
-            train_emb, test_emb, similarity_threshold=leakage_threshold
-        )
+
+        train_emb = embeddings[: len(train_paths)]
+        test_emb = embeddings[len(train_paths) :]
+
+        leakage_threshold = getattr(self.config, "leakage_similarity_threshold", 0.9)
+
+        return audit_leakage(train_emb, test_emb, similarity_threshold=leakage_threshold)
 
     def clear_cache(self) -> None:
         """Clear the embedding cache for this model."""
         cache_dir = _get_cache_dir()
         if self.config.cache_dir:
             cache_dir = Path(self.config.cache_dir)
-        
-        pattern = f"emb_*_{self.config.embedding_model.replace('/', '_')}.npz"
-        for cache_file in cache_dir.glob(pattern):
-            cache_file.unlink()
-            logger.info(f"Removed cache file: {cache_file}")
+
+        # First glob for all emb_*.npz files
+        for cache_file in cache_dir.glob("emb_*.npz"):
+            try:
+                # Inspect stored metadata to filter by embedding_model
+                data = np.load(cache_file, allow_pickle=True)
+                cached_model = str(data.get("model_name", ""))
+                if cached_model == self.config.embedding_model:
+                    cache_file.unlink()
+                    logger.info(f"Removed cache file: {cache_file}")
+                data.close()
+            except Exception as e:
+                logger.warning(f"Failed to inspect cache file {cache_file}: {e}")
 
     def clear_model_cache(self) -> None:
         """Clear the cached model from memory."""
@@ -1250,4 +1206,3 @@ class SpeakerClustering:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             logger.info("Model cache cleared")
-

@@ -15,10 +15,11 @@
 TensorFlow-based wake word detection model training pipeline with GPU-accelerated SpecAugment and TFLite export for edge deployment. Trains MixedNet models that run on ESP32 via ESPHome's micro_wake_word component.
 
 ## Project Structure
+
 ```
 ./
-├── src/                    # Source code (~11,000 lines Python)
-│   ├── training/          # Training loop, logging, mining, augmentation (mww-train)
+├── src/                    # Source code (~11,919 lines Python)
+│   ├── tuning/            # Auto-tuning for post-training fine-tuning (mww-autotune)
 │   ├── data/              # Dataset, ingestion, features, augmentation, clustering
 │   ├── model/             # MixedNet architecture + streaming layers
 │   ├── export/            # TFLite export, model analysis, manifests (mww-export)
@@ -28,9 +29,11 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 ├── config/                # YAML presets & loader
 │   ├── presets/           # standard.yaml, max_quality.yaml, fast_test.yaml
 │   └── loader.py          # Complex config system (666 lines)
+├── tests/                 # Test suite (unit/ and integration/ subdirectories)
 ├── scripts/               # Standalone tools
 │   ├── verify_esphome.py  # TFLite ESPHome compatibility checker (406 lines)
-│   └── generate_test_dataset.py  # Synthetic dataset generator (190 lines)
+│   ├── generate_test_dataset.py  # Synthetic dataset generator (190 lines)
+│   └── evaluate_model.py    # Post-training model evaluation
 ├── cluster-Test.py        # Speaker clustering dry-run analysis (458 lines)
 ├── cluster_output/       # Output from cluster-Test.py
 │   ├── {dataset}_namelist.json     # File → speaker mappings (per dataset)
@@ -56,6 +59,7 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 |---------|--------|----------|
 | `mww-train` | `src.training.trainer:main` | Train wake word model |
 | `mww-export` | `src.export.tflite:main` | Export to TFLite |
+| `mww-autotune` | `src.tuning.cli:main` | Fine-tune trained model for better FAH/recall |
 | `cluster-Test.py` | Speaker clustering analysis (dry-run, supports positive/negative/hard_negative/all) | |
 | `Start-Clustering.py` | Move files into speaker directories (uses cluster-Test.py output) | |
 
@@ -86,7 +90,6 @@ Loader (666 lines) supports:
 - **Python 3.10-3.11**: ai-edge-litert 2.x does not support Python 3.12 (use 3.10 or 3.11)
 - **Separate venvs for TF/PyTorch**: If using speechbrain, use different environments
 - **ARCHITECTURAL_CONSTITUTION.md is immutable**: No exceptions, no overrides, no "quick tweaks"
-- **No test infrastructure**: No pytest/unittest; use `scripts/verify_esphome.py` for export validation
 - **Strict typing**: mypy.ini enforces `disallow_untyped_defs=True`, `no_implicit_optional=True`
 
 ## Commands
@@ -116,32 +119,36 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Training loop | `src/training/trainer.py` (874 lines) | Trainer class, EvaluationMetrics, train(), main() |
-| Training logging | `src/training/rich_logger.py` (312 lines) | RichTrainingLogger — Rich-based progress display |
-| Hard example mining | `src/training/miner.py` (305 lines) | HardExampleMiner — negative sample selection |
-| Waveform augmentation | `src/training/augmentation.py` (266 lines) | AudioAugmentationPipeline, ParallelAugmenter |
-| Training profiling | `src/training/profiler.py` (176 lines) | TrainingProfiler — section-based timing |
+| Training loop | `src/training/trainer.py` (825 lines) | Trainer class, EvaluationMetrics, train(), main() |
+| Training logging | `src/training/rich_logger.py` (299 lines) | RichTrainingLogger — Rich-based progress display |
+| Hard example mining | `src/training/miner.py` (297 lines) | HardExampleMiner — negative sample selection |
+| Waveform augmentation | `src/training/augmentation.py` (265 lines) | AudioAugmentationPipeline, ParallelAugmenter |
+| Training profiling | `src/training/profiler.py` (175 lines) | TrainingProfiler — section-based timing |
 | Audio ingestion | `src/data/ingestion.py` (734 lines) | SampleRecord, Clips, ClipsLoaderConfig, audio validation |
 | Feature extraction | `src/data/features.py` (525 lines) | FeatureConfig, MicroFrontend, SpectrogramGeneration |
 | Dataset storage | `src/data/dataset.py` (831 lines) | RaggedMmap, FeatureStore, WakeWordDataset |
-| Speaker clustering | `src/data/clustering.py` (595 lines) | SpeechBrain ECAPA-TDNN embeddings, leakage audit |
+| Speaker clustering | `src/data/clustering.py` (589 lines) | SpeechBrain ECAPA-TDNN embeddings, leakage audit |
 | Audio augmentation | `src/data/augmentation.py` (437 lines) | AudioAugmentation — 8 augmentation types (EQ, pitch, RIR, etc.) |
 | Hard negative mining | `src/data/hard_negatives.py` (328 lines) | FP detection, auto-mining pipeline |
 | GPU SpecAugment | `src/data/spec_augment_gpu.py` (148 lines) | CuPy GPU-only time/freq masking |
-| Model architecture | `src/model/architecture.py` (757 lines) | MixedNet, MixConvBlock, ResidualBlock, build_model() |
-| Streaming layers | `src/model/streaming.py` (831 lines) | Stream, RingBuffer, Modes, StridedDrop/Keep, StreamingMixedNet |
-| TFLite export | `src/export/tflite.py` (817 lines) | convert_model_saved(), INT8 quantization, main() |
-| Model analysis | `src/export/model_analyzer.py` (568 lines) | analyze_model_architecture(), validate_model_quality() |
-| ESPHome manifest | `src/export/manifest.py` (327 lines) | generate_manifest(), calculate_tensor_arena_size() |
+| Model architecture | `src/model/architecture.py` (689 lines) | MixedNet, MixConvBlock, ResidualBlock, build_model() |
+| Streaming layers | `src/model/streaming.py` (787 lines) | Stream, RingBuffer, Modes, StridedDrop/Keep, StreamingMixedNet |
+| TFLite export | `src/export/tflite.py` (768 lines) | convert_model_saved(), INT8 quantization, main() |
+| Model analysis | `src/export/model_analyzer.py` (530 lines) | analyze_model_architecture(), validate_model_quality() |
+| ESPHome manifest | `src/export/manifest.py` (318 lines) | generate_manifest(), calculate_tensor_arena_size() |
 | Evaluation metrics | `src/evaluation/metrics.py` (397 lines) | MetricsCalculator — FAH, ROC/PR, recall |
 | FAH estimation | `src/evaluation/fah_estimator.py` (74 lines) | FAHEstimator class |
 | Calibration | `src/evaluation/calibration.py` (94 lines) | calibration curves, Brier score |
 | Config loading | `config/loader.py` (666 lines) | ConfigLoader, 9 dataclasses, FullConfig |
-| GPU/performance | `src/utils/performance.py` (246 lines) | TF GPU config, mixed precision, threading |
+| GPU/performance | `src/utils/performance.py` (257 lines) | TF GPU config, mixed precision, threading |
 | ESPHome verification | `scripts/verify_esphome.py` (406 lines) | TFLite compatibility checker |
+| Auto-tuning | `src/tuning/autotuner.py` (690 lines) | AutoTuner, TuningTarget, TuningState |
+| Auto-tune CLI | `src/tuning/cli.py` (250 lines) | mww-autotune entry point |
+| TF data pipeline | `src/data/tfdata_pipeline.py` (364 lines) | OptimizedDataPipeline, benchmark_pipeline, create_optimized_dataset |
+| Performance optimizer | `src/training/performance_optimizer.py` (288 lines) | PerformanceOptimizer |
+| Terminal logger | `src/utils/terminal_logger.py` (246 lines) | TeeOutput, TerminalLogger |
 
 ## Implemented Configurations
-
 | Config | Status | Implementation |
 |--------|--------|----------------|
 | PathsConfig | ✅ Complete | `src/data/ingestion.py` - Individual dirs |
@@ -155,7 +162,7 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 
 ## Notes
 - ✅ **ALL PHASES COMPLETE** - All config variables implemented and connected
-- ~11,053 lines of Python across ~30 files
+- ~11,919 lines of Python across ~35 files
 - Config loader (666 lines) - complex validation and merging with 9 dataclass sections
 - Uses custom RaggedMmap storage for efficient variable-length audio data loading
 - Speaker clustering and hard negative mining fully implemented
@@ -165,7 +172,6 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 - Model analyzer for architecture verification and quality validation
 - **ARCHITECTURAL_CONSTITUTION.md is the supreme source of truth** - all constants verified from TFLite flatbuffers
 - **No CI/CD pipeline** - no .github/workflows, Makefile, or Dockerfile
-- **No test suite** - no pytest/unittest infrastructure; validation via scripts/
 
 ## Anti-Patterns (This Project)
 - **Don't install nvidia-driver inside WSL** - Install on Windows host only

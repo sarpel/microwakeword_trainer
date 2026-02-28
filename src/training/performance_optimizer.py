@@ -6,7 +6,6 @@ Integrates mixed precision and tf.data.Dataset pipeline for maximum performance.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import tensorflow as tf
 from rich.console import Console
@@ -100,7 +99,7 @@ class PerformanceOptimizer:
             val_factory = dataset.val_generator_factory(max_time_frames)
             val_gen = val_factory()
 
-            return train_gen, val_gen  # type: ignore[return-value]
+            return train_gen, val_gen
 
         # Use optimized tf.data pipeline
         pipeline = OptimizedDataPipeline(

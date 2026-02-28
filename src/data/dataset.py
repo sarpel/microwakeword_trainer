@@ -12,9 +12,10 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
-from src.data.ingestion import load_audio_wave
 
 import numpy as np
+
+from src.data.ingestion import load_audio_wave
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class RaggedMmap:
         self,
         base_dir: Union[str, Path],
         name: str = "ragged",
-        dtype: "np.dtype[Any]" = np.dtype(np.float32),
+        dtype: "np.dtype[Any]" = None,  # noqa: B008
         create: bool = True,
     ):
         """Initialize RaggedMmap storage.
@@ -69,7 +70,7 @@ class RaggedMmap:
         """
         self.base_dir = Path(base_dir)
         self.name = name
-        self.dtype = np.dtype(dtype)
+        self.dtype = np.dtype(dtype) if dtype is not None else np.dtype(np.float32)
         self._data_file: Optional[str] = None
         self._offsets_file: Optional[str] = None
         self._lengths_file: Optional[str] = None
@@ -107,9 +108,7 @@ class RaggedMmap:
             with open(self._offsets_file, "rb") as f:
                 offset_data = f.read()
             num_offsets = len(offset_data) // 8  # 8 bytes per int64
-            self._offsets = np.frombuffer(
-                offset_data, dtype=np.int64, count=num_offsets
-            )
+            self._offsets = np.frombuffer(offset_data, dtype=np.int64, count=num_offsets)
 
             # Read binary lengths data
             with open(self._lengths_file, "rb") as f:
@@ -121,9 +120,7 @@ class RaggedMmap:
 
             # Validate offsets and lengths have the same length
             if len(self._offsets) != len(self._lengths):
-                raise ValueError(
-                    f"Offsets ({len(self._offsets)}) and lengths ({len(self._lengths)}) mismatch"
-                )
+                raise ValueError(f"Offsets ({len(self._offsets)}) and lengths ({len(self._lengths)}) mismatch")
             self._total_bytes = int(self._lengths.sum())
 
     def open(self, mode: str = "r"):
@@ -204,19 +201,11 @@ class RaggedMmap:
         if isinstance(self._offsets, list):
             self._offsets.extend(offsets)
         else:
-            self._offsets = (
-                list(self._offsets) + list(offsets)
-                if self._offsets is not None
-                else list(offsets)
-            )
+            self._offsets = list(self._offsets) + list(offsets) if self._offsets is not None else list(offsets)
         if isinstance(self._lengths, list):
             self._lengths.extend(lengths)
         else:
-            self._lengths = (
-                list(self._lengths) + list(lengths)
-                if self._lengths is not None
-                else list(lengths)
-            )
+            self._lengths = list(self._lengths) + list(lengths) if self._lengths is not None else list(lengths)
 
         # Update metadata
         self._num_arrays += len(arrays)
@@ -231,9 +220,6 @@ class RaggedMmap:
         Returns:
             Array data
         """
-        if self._data is None or self._offsets is None or self._lengths is None:
-            self.open("r")
-
         if self._data is None or self._offsets is None or self._lengths is None:
             self.open("r")
 
@@ -260,7 +246,7 @@ class RaggedMmap:
         arrays: List[np.ndarray],
         base_dir: Union[str, Path],
         name: str = "ragged",
-        dtype: "np.dtype[Any]" = np.dtype(np.float32),
+        dtype: "np.dtype[Any]" = None,  # noqa: B008
     ) -> "RaggedMmap":
         """Create RaggedMmap from list of arrays.
 
@@ -392,15 +378,14 @@ class FeatureStore:
         if not features:
             raise ValueError("features must be non-empty")
         if len(features) != len(labels):
-            raise ValueError(
-                f"features and labels must have the same length, "
-                f"got {len(features)} vs {len(labels)}"
-            )
+            raise ValueError(f"features and labels must have the same length, " f"got {len(features)} vs {len(labels)}")
 
         if self.features is None:
             # Initialize with first sample to get feature dim
             self.initialize(len(features), features[0].shape[-1])
 
+        assert self.features is not None, "initialize() must set self.features"
+        assert self.labels is not None, "initialize() must set self.labels"
         self.features.append(features)
         self.labels.append([np.array([label], dtype=np.int32) for label in labels])
         self.metadata["num_samples"] += len(features)
@@ -482,6 +467,7 @@ class WakeWordDataset:
             feature_dim: Dimension of feature vectors
         """
         # Handle config-based initialization
+        self._config: Optional[Dict[str, Any]] = None
         if config is not None:
             self._config = config
             paths_cfg = config.get("paths", {})
@@ -500,7 +486,7 @@ class WakeWordDataset:
             self.max_time_frames = int(clip_duration_ms / window_step_ms)
         else:
             # Legacy initialization
-            self._config = None
+            # Legacy initialization
             self.data_path = Path(data_path) if data_path else Path("./data/processed")
             self.split = split
             self.batch_size = batch_size
@@ -556,9 +542,7 @@ class WakeWordDataset:
         # Use provided config or fall back to stored config
         cfg = config if config is not None else self._config
         if cfg is None:
-            raise ValueError(
-                "No config provided. Pass config to __init__ or build(config)"
-            )
+            raise ValueError("No config provided. Pass config to __init__ or build(config)")
 
         # Extract paths from config
         paths_cfg = cfg.get("paths", {})
@@ -576,7 +560,7 @@ class WakeWordDataset:
 
         # Create feature config
         from src.data.features import FeatureConfig, MicroFrontend
-        from src.data.ingestion import Clips, ClipsLoaderConfig, Split, Label
+        from src.data.ingestion import Clips, ClipsLoaderConfig, Label, Split
 
         feature_config = FeatureConfig(
             sample_rate=sample_rate,
@@ -599,8 +583,8 @@ class WakeWordDataset:
             negative_dir=Path(negative_dir) if negative_dir else None,
             hard_negative_dir=Path(hard_negative_dir) if hard_negative_dir else None,
             train_split=0.8,
-            val_split=0.2,
-            test_split=0.0,
+            val_split=0.1,
+            test_split=0.1,
             seed=42,
         )
 
@@ -610,14 +594,10 @@ class WakeWordDataset:
         train_samples = clips.get_split(Split.TRAIN)
         val_samples = clips.get_split(Split.VAL)
 
-        logger.info(
-            f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples"
-        )
+        logger.info(f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples")
 
         if not train_samples:
-            raise RuntimeError(
-                "No training samples found. Please check your dataset directories."
-            )
+            raise RuntimeError("No training samples found. Please check your dataset directories.")
 
         # Extract features and store for training
         logger.info(f"Extracting features for {len(train_samples)} training clips...")
@@ -649,9 +629,7 @@ class WakeWordDataset:
 
         # Extract features for validation
         if val_samples:
-            logger.info(
-                f"Extracting features for {len(val_samples)} validation clips..."
-            )
+            logger.info(f"Extracting features for {len(val_samples)} validation clips...")
             val_store = FeatureStore(dirs["val"])
             val_store.initialize(len(val_samples), feature_dim=mel_bins)
 
@@ -676,16 +654,14 @@ class WakeWordDataset:
 
         return self
 
-    def _pad_or_truncate(
-        self, features: np.ndarray, max_time_frames: int
-    ) -> np.ndarray:
+    def _pad_or_truncate(self, features: np.ndarray, max_time_frames: int) -> np.ndarray:
         """Pad or truncate features to fixed time length."""
         # Handle potentially flattened array from RaggedMmap
         if features.ndim == 1:
             total_elements = features.shape[0]
             time_frames = total_elements // self.feature_dim
             if time_frames * self.feature_dim != total_elements:
-                raise ValueError(f"Cannot reshape flattened array")
+                raise ValueError("Cannot reshape flattened array")
             features = features.reshape(time_frames, self.feature_dim)
 
         current_length = features.shape[0]
@@ -700,10 +676,8 @@ class WakeWordDataset:
         return features
 
     def train_generator_factory(self, max_time_frames: Optional[int] = None):
-        """Create a factory for infinite training data generator."""
         if max_time_frames is None:
             max_time_frames = self.max_time_frames
-        """Create a factory for infinite training data generator."""
 
         def factory():
             num_samples = len(self)
@@ -739,10 +713,8 @@ class WakeWordDataset:
         return factory
 
     def val_generator_factory(self, max_time_frames: Optional[int] = None):
-        """Create a factory for finite validation data generator."""
         if max_time_frames is None:
             max_time_frames = self.max_time_frames
-        """Create a factory for finite validation data generator."""
 
         def factory():
             num_samples = len(self)
@@ -802,7 +774,7 @@ def ensure_processed_directory(
     }
 
     if create:
-        for name, path in dirs.items():
+        for _name, path in dirs.items():
             path.mkdir(parents=True, exist_ok=True)
             logger.debug(f"Ensured directory: {path}")
 

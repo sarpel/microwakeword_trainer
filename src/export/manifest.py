@@ -10,9 +10,8 @@ import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
-# Minimum tensor arena size in bytes (~22.3 KB – the minimum for hey_jarvis models)
-# Minimum tensor arena size in bytes (26.0 KB - the reference size for hey_jarvis models per Article X)
-DEFAULT_TENSOR_ARENA_SIZE = 26080  # Per ARCHITECTURAL_CONSTITUTION.md Article X
+# Default tensor arena size in bytes (~30 KB - the reference size for okay_nabu models per Article X)
+DEFAULT_TENSOR_ARENA_SIZE = 30000  # Per ARCHITECTURAL_CONSTITUTION.md Article X
 
 
 def generate_manifest(
@@ -152,7 +151,7 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
         # Add 30% safety margin
         arena_size = int(total_memory * 1.3)
 
-        # Ensure minimum size (26KB is the minimum for hey_jarvis models)
+        # Ensure minimum size (26KB is the minimum for okay_nabu models)
         arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)
 
         return arena_size
@@ -257,7 +256,7 @@ def create_esphome_package(
         output_dir: Output directory for package files
         model_name: Name for the model (used in filenames)
         tflite_path: Optional path to TFLite model
-        analysis_results: Optional ai_edge_litert analysis results to include
+        analysis_results: Optional TFLite analysis results to include
 
     Returns:
         Dictionary with paths and metadata:
@@ -279,7 +278,7 @@ def create_esphome_package(
         tflite_path=tflite_path,
     )
 
-    # Add ai_edge_litert analysis results to manifest if provided
+    # Add TFLite analysis results to manifest if provided
     if analysis_results is not None:
         # Include key validation metrics in manifest metadata
         validation = analysis_results.get("validation_results", {})

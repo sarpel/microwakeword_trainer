@@ -116,27 +116,27 @@ class AudioAugmentation:
         augmented = audio.copy()
 
         # Always apply gain
-        if apply_all or random.random() < self.config.Gain:
+        if apply_all or random.random() < self.config.Gain:  # noqa: S311
             augmented = self.apply_gain(augmented)
 
         # Apply EQ
-        if apply_all or random.random() < self.config.SevenBandParametricEQ:
+        if apply_all or random.random() < self.config.SevenBandParametricEQ:  # noqa: S311
             augmented = self.apply_eq(augmented)
 
         # Apply distortion
-        if apply_all or random.random() < self.config.TanhDistortion:
+        if apply_all or random.random() < self.config.TanhDistortion:  # noqa: S311
             augmented = self.apply_distortion(augmented)
 
         # Apply pitch shift
-        if apply_all or random.random() < self.config.PitchShift:
+        if apply_all or random.random() < self.config.PitchShift:  # noqa: S311
             augmented = self.apply_pitch_shift(augmented)
 
         # Apply band stop filter
-        if apply_all or random.random() < self.config.BandStopFilter:
+        if apply_all or random.random() < self.config.BandStopFilter:  # noqa: S311
             augmented = self.apply_band_stop(augmented)
 
         # Apply color noise
-        if apply_all or random.random() < self.config.AddColorNoise:
+        if apply_all or random.random() < self.config.AddColorNoise:  # noqa: S311
             augmented = self.apply_color_noise(augmented)
 
         # Apply background noise (check both old and new keys)
@@ -145,7 +145,7 @@ class AudioAugmentation:
             float(getattr(self.config, "AddBackgroundNoise", 0) or 0),
         )
         bg_noise_prob = min(max(bg_noise_prob, 0.0), 1.0)
-        if apply_all or random.random() < bg_noise_prob:
+        if apply_all or random.random() < bg_noise_prob:  # noqa: S311
             augmented = self.apply_background_noise(augmented)
 
         # Apply RIR (check both old and new keys)
@@ -154,7 +154,7 @@ class AudioAugmentation:
             float(getattr(self.config, "RIR", 0) or 0),
         )
         rir_prob = min(max(rir_prob, 0.0), 1.0)
-        if apply_all or random.random() < rir_prob:
+        if apply_all or random.random() < rir_prob:  # noqa: S311
             augmented = self.apply_rir(augmented)
         return augmented
 
@@ -169,7 +169,7 @@ class AudioAugmentation:
         Returns:
             Gain-adjusted audio
         """
-        gain_db = random.uniform(min_db, max_db)
+        gain_db = random.uniform(min_db, max_db)  # noqa: S311
         gain_linear = 10 ** (gain_db / 20)
         return audio * gain_linear
 
@@ -207,7 +207,7 @@ class AudioAugmentation:
             return augmenter(samples=audio, sample_rate=self.sample_rate)
         except ImportError:
             # Simple tanh fallback
-            drive = random.uniform(0.5, 2.0)
+            drive = random.uniform(0.5, 2.0)  # noqa: S311
             return np.tanh(audio * drive)
 
     def apply_pitch_shift(self, audio: np.ndarray) -> np.ndarray:
@@ -222,7 +222,7 @@ class AudioAugmentation:
         try:
             import librosa
 
-            n_steps = random.uniform(-2, 2)
+            n_steps = random.uniform(-2, 2)  # noqa: S311
             return librosa.effects.pitch_shift(audio, sr=self.sample_rate, n_steps=n_steps)
         except ImportError:
             logger.debug("librosa not available, skipping pitch shift")
@@ -272,7 +272,7 @@ class AudioAugmentation:
             return augmenter(samples=audio, sample_rate=self.sample_rate)
         except ImportError:
             # Simple white noise fallback
-            snr_db = random.uniform(self.config.background_min_snr_db, self.config.background_max_snr_db)
+            snr_db = random.uniform(self.config.background_min_snr_db, self.config.background_max_snr_db)  # noqa: S311
             signal_power = np.mean(audio**2)
             # Guard against silent input: use a small epsilon so noise is still audible
             eps = 1e-10
@@ -295,7 +295,7 @@ class AudioAugmentation:
             return self.apply_color_noise(audio)
 
         # Select random background file
-        bg_file = random.choice(self.background_noise_files)
+        bg_file = random.choice(self.background_noise_files)  # noqa: S311
 
         try:
             from src.data.ingestion import load_audio_wave
@@ -311,11 +311,11 @@ class AudioAugmentation:
                 bg_audio = np.tile(bg_audio, repeats)[:target_len]
             else:
                 # Random crop
-                start = random.randint(0, len(bg_audio) - target_len)
+                start = random.randint(0, len(bg_audio) - target_len)  # noqa: S311
                 bg_audio = bg_audio[start : start + target_len]
 
             # Mix with SNR
-            snr_db = random.uniform(self.config.background_min_snr_db, self.config.background_max_snr_db)
+            snr_db = random.uniform(self.config.background_min_snr_db, self.config.background_max_snr_db)  # noqa: S311
 
             signal_power = np.mean(audio**2)
             noise_power = np.mean(bg_audio**2)
@@ -344,7 +344,7 @@ class AudioAugmentation:
             return audio
 
         # Select random RIR file
-        rir_file = random.choice(self.rir_files)
+        rir_file = random.choice(self.rir_files)  # noqa: S311
 
         try:
             from src.data.ingestion import load_audio_wave

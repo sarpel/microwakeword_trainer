@@ -8,7 +8,7 @@
 > This file is the **single, immutable source of architectural truth** for this
 > project. Every constant, shape, dtype, op name, and timing value written here
 > was physically extracted from the official ESPHome microWakeWord v2 TFLite
-> flatbuffers (`hey_jarvis.tflite`, `okay_nabu.tflite`) and cross-verified
+> flatbuffers (`okay_nabu.tflite`) and cross-verified
 > against the ESPHome C++ runtime source (`micro_wake_word.cpp`).
 >
 > ### THE RULE IS SIMPLE:
@@ -31,7 +31,7 @@
 ---
 
 **Verification sources:**
-- TFLite flatbuffer analysis: `hey_jarvis.tflite` (51.05 KB, 45 ops), `okay_nabu.tflite` (58.85 KB, 55 ops)
+- TFLite flatbuffer analysis: `okay_nabu.tflite` (58.85 KB, 55 ops)
 - ESPHome C++ runtime: `micro_wake_word.cpp` — op registration list
 - Official microWakeWord training notebook (Google Colab)
 - Last verified: 2025-02-25
@@ -241,23 +241,23 @@ resolver.AddQuantize();
 
 ### Op Count Verification (from TFLite flatbuffers)
 
-| Op Name | hey_jarvis count | okay_nabu count | Purpose |
-|---|---|---|---|
-| `CALL_ONCE` | 1 | 1 | Invoke Subgraph 1 initialization once at startup |
-| `VAR_HANDLE` | 6 | 6 | Create handles to the 6 streaming state variables |
-| `READ_VARIABLE` | 6 | 6 | Read state from previous inference step |
-| `ASSIGN_VARIABLE` | 6 | 6 | Write updated state for next inference step |
-| `CONCATENATION` | 6 | 8 | Concatenate old buffer frames with new input frames |
-| `STRIDED_SLICE` | 6 | 10 | Slice off oldest frames to update ring buffers |
-| `CONV_2D` | 5 | 5 | Pointwise 1×1 convolutions |
-| `DEPTHWISE_CONV_2D` | 4 | 6 | Depthwise spatial convolutions in MixConv blocks |
-| `RESHAPE` | 2 | 2 | Flatten for Dense layer |
-| `SPLIT_V` | 0 | 2 | Split tensor for StridedKeep (okay_nabu variant only) |
-| `FULLY_CONNECTED` | 1 | 1 | Classification head |
-| `LOGISTIC` | 1 | 1 | Sigmoid activation on output |
-| `QUANTIZE` | 1 | 1 | Cast float32 output to uint8 |
-| `MUL` | varies | varies | BatchNormalization fold or residuals |
-| `ADD` | varies | varies | Residual connections / biases |
+| Op Name | okay_nabu count | Purpose |
+|---|---|---|
+| `CALL_ONCE` | 1 | Invoke Subgraph 1 initialization once at startup |
+| `VAR_HANDLE` | 6 | Create handles to the 6 streaming state variables |
+| `READ_VARIABLE` | 6 | Read state from previous inference step |
+| `ASSIGN_VARIABLE` | 6 | Write updated state for next inference step |
+| `CONCATENATION` | 8 | Concatenate old buffer frames with new input frames |
+| `STRIDED_SLICE` | 10 | Slice off oldest frames to update ring buffers |
+| `CONV_2D` | 5 | Pointwise 1×1 convolutions |
+| `DEPTHWISE_CONV_2D` | 6 | Depthwise spatial convolutions in MixConv blocks |
+| `RESHAPE` | 2 | Flatten for Dense layer |
+| `SPLIT_V` | 2 | Split tensor for StridedKeep |
+| `FULLY_CONNECTED` | 1 | Classification head |
+| `LOGISTIC` | 1 | Sigmoid activation on output |
+| `QUANTIZE` | 1 | Cast float32 output to uint8 |
+| `MUL` | varies | BatchNormalization fold or residuals |
+| `ADD` | varies | Residual connections / biases |
 
 > ⛔ **ALL OPS SHOW `CustomCode: N/A` IN FLATBUFFER ANALYSIS.**
 >
@@ -298,19 +298,19 @@ Subgraph [0]: Main Inference Graph
 └── Output: [1, 1]  UINT8
 
 Subgraph [1]: Initialization Graph (invoked once, then dormant)
-├── 12 ops total (hey_jarvis) / 12 ops total (okay_nabu)
+├── 12 ops total
 ├── 12 tensors
 └── Zeros all 6 state variables (pseudoconst zero tensors)
 ```
 
 ### Subgraph Op/Tensor Counts (verified)
 
-| | hey_jarvis | okay_nabu |
-|---|---|---|
-| Subgraph 0 ops | 45 | 55 |
-| Subgraph 0 tensors | 71 | 95 |
-| Subgraph 1 ops | 12 | 12 |
-| Subgraph 1 tensors | 12 | 12 |
+| | okay_nabu |
+|---|---|
+| Subgraph 0 ops | 55 |
+| Subgraph 0 tensors | 95 |
+| Subgraph 1 ops | 12 |
+| Subgraph 1 tensors | 12 |
 
 ---
 
@@ -329,20 +329,19 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 
 ### State Variable Shapes
 
-| Variable | hey_jarvis shape | okay_nabu shape | Ring buffer holds |
-|---|---|---|---|
-| `stream` | `[1, 2, 1, 40]` | `[1, 2, 1, 40]` | 2 frames before first `Conv2D` |
-| `stream_1` | `[1, 4, 1, 30]` | `[1, 4, 1, 32]` | MixConv block 0 context |
-| `stream_2` | `[1, 8, 1, 60]` | `[1, 10, 1, 64]` | MixConv block 1 context |
-| `stream_3` | `[1, 12, 1, 60]` | `[1, 14, 1, 64]` | MixConv block 2 context |
-| `stream_4` | `[1, 20, 1, 60]` | `[1, 22, 1, 64]` | MixConv block 3 context |
-| `stream_5` | `[1, 4, 1, 60]` | `[1, 5, 1, 64]` | Temporal mean pooling buffer |
+| Variable | okay_nabu shape | Ring buffer holds |
+|---|---|---|
+| `stream` | `[1, 2, 1, 40]` | 2 frames before first `Conv2D` |
+| `stream_1` | `[1, 4, 1, 32]` | MixConv block 0 context |
+| `stream_2` | `[1, 10, 1, 64]` | MixConv block 1 context |
+| `stream_3` | `[1, 14, 1, 64]` | MixConv block 2 context |
+| `stream_4` | `[1, 22, 1, 64]` | MixConv block 3 context |
+| `stream_5` | `[1, 5, 1, 64]` | Temporal mean pooling buffer |
 
 ### Total State Memory
 
 | Model | State bytes |
 |---|---|
-| hey_jarvis | **2 840 bytes** |
 | okay_nabu | **3 520 bytes** |
 
 ### Ring Buffer Law
@@ -392,33 +391,20 @@ silently produces a misaligned model.
 
 ---
 
-## Article VIII — MixedNet Architecture Variants
+## Article VIII — MixedNet Architecture
 
-> **IMMUTABLE WITHIN EACH VARIANT. PARAMETERIZABLE ACROSS VARIANTS.**
+> **IMMUTABLE. PARAMETERIZABLE WITHIN STRUCTURAL RULES.**
 >
-> Two architecture variants exist, both verified from official models.
-> These are the only two proven-compatible configurations. A custom
-> configuration is permitted **only if** it follows the MixedNet structural
+> One architecture variant is used, verified from the official okay_nabu model.
+> A custom configuration is permitted **only if** it follows the MixedNet structural
 > rules defined here and the streaming conversion produces state variables
 > whose shapes satisfy the ring buffer law in Article VII.
 
-### Variant A — `hey_jarvis` (45 ops, simpler)
-
-```python
-first_conv_filters    = 30
-first_conv_kernel_size = 5          # → stream shape [1, 2, 1, 40]  (5-3=2)
-stride                = 3           # GLOBAL IMMUTABLE CONSTANT
-pointwise_filters     = [60, 60, 60, 60]
-mixconv_kernel_sizes  = [[5], [9], [13], [21]]
-repeat_in_block       = [1, 1, 1, 1]
-residual_connection   = [0, 0, 0, 0]
-```
-
-### Variant B — `okay_nabu` (55 ops, uses SPLIT_V / StridedKeep)
+### `okay_nabu` Configuration (55 ops, uses SPLIT_V / StridedKeep)
 
 ```python
 first_conv_filters    = 32
-first_conv_kernel_size = 5
+first_conv_kernel_size = 5          # → stream shape [1, 2, 1, 40]  (5-3=2)
 stride                = 3           # GLOBAL IMMUTABLE CONSTANT
 pointwise_filters     = [64, 64, 64, 64]
 mixconv_kernel_sizes  = [[5], [7, 11], [9, 15], [23]]
@@ -513,7 +499,7 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
   "micro": {
     "feature_step_size": 10,
     "sliding_window_size": 5,
-    "tensor_arena_size": 26080,
+    "tensor_arena_size": 30000,
     "minimum_esphome_version": "2024.7.0"
   }
 }
@@ -530,7 +516,6 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
 
 ### Tensor Arena Sizing Rules
 
-- `hey_jarvis` reference: **26 080 bytes**
 - `okay_nabu` reference: ~28 000–30 000 bytes
 - **Measure empirically** using `tflite_micro_arena_size` tool
 - **Add 10% margin** to the measured value
