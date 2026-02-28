@@ -70,7 +70,11 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
         with open(tflite_path, "rb") as f:
             tflite_bytes = f.read()
 
-        interpreter = tf.lite.Interpreter(model_content=tflite_bytes)
+        resolver_type = tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
+        interpreter = tf.lite.Interpreter(
+            model_content=tflite_bytes,
+            experimental_op_resolver_type=resolver_type,
+        )
         interpreter.allocate_tensors()
         vprint(f"Loaded: {tflite_path}")
 
@@ -84,7 +88,7 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
 
             if num_subgraphs != 2:
                 results["compatible"] = False
-                results["errors"].append(f"Expected 2 subgraphs, got {num_subgraphs}. " "ESPHome requires dual-subgraph architecture (inference + init).")
+                results["errors"].append(f"Expected 2 subgraphs, got {num_subgraphs}. ESPHome requires dual-subgraph architecture (inference + init).")
         except Exception as e:
             results["compatible"] = False
             results["errors"].append(f"Could not verify subgraphs via flatbuffers schema: {e}")
@@ -148,12 +152,12 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
                 if input_shape not in expected_shapes:
                     results["compatible"] = False
                     expected_strides_str = ", ".join(map(str, expected_strides))
-                    results["errors"].append(f"Expected input shape [1, {{{expected_strides_str}}}, 40], got {input_shape}. " f"Valid shapes are: {expected_shapes}")
+                    results["errors"].append(f"Expected input shape [1, {{{expected_strides_str}}}, 40], got {input_shape}. Valid shapes are: {expected_shapes}")
 
                 # Must be int8
                 if input_dtype != np.int8:
                     results["compatible"] = False
-                    results["errors"].append(f"Expected input dtype int8, got {input_dtype}. " "ESPHome requires INT8 input quantization.")
+                    results["errors"].append(f"Expected input dtype int8, got {input_dtype}. ESPHome requires INT8 input quantization.")
 
                 # Check quantization parameters
                 quant_params = input_info.get("quantization_parameters", {})
@@ -164,6 +168,12 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
                         results["details"]["input_scale"] = float(scales[0])
                     if zero_points.size > 0:
                         results["details"]["input_zero_point"] = int(zero_points[0])
+                    if scales.size > 0 and zero_points.size > 0:
+                        input_scale = float(scales[0])
+                        input_zero = int(zero_points[0])
+                        if abs(input_scale - 0.101961) > 1e-4 or input_zero != -128:
+                            results["compatible"] = False
+                            results["errors"].append(f"Input quantization mismatch: expected scale≈0.101961 and zero_point=-128, got scale={input_scale}, zero_point={input_zero}")
             else:
                 results["compatible"] = False
                 results["errors"].append("No input tensors found")
@@ -187,12 +197,12 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
                 # Expected: [1, 1] (batch=1, single probability)
                 if output_shape != [1, 1]:
                     results["compatible"] = False
-                    results["errors"].append(f"Expected output shape [1, 1], got {output_shape}. " "ESPHome requires single probability output.")
+                    results["errors"].append(f"Expected output shape [1, 1], got {output_shape}. ESPHome requires single probability output.")
 
                 # CRITICAL: Must be uint8, NOT int8!
                 if output_dtype != np.uint8:
                     results["compatible"] = False
-                    results["errors"].append(f"Expected output dtype uint8, got {output_dtype}. " "CRITICAL: ESPHome requires UINT8 output, not int8!")
+                    results["errors"].append(f"Expected output dtype uint8, got {output_dtype}. CRITICAL: ESPHome requires UINT8 output, not int8!")
 
                 # Check quantization parameters
                 quant_params = output_info.get("quantization_parameters", {})
@@ -203,6 +213,12 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
                         results["details"]["output_scale"] = float(scales[0])
                     if zero_points.size > 0:
                         results["details"]["output_zero_point"] = int(zero_points[0])
+                    if scales.size > 0 and zero_points.size > 0:
+                        output_scale = float(scales[0])
+                        output_zero = int(zero_points[0])
+                        if abs(output_scale - 0.00390625) > 1e-6 or output_zero != 0:
+                            results["compatible"] = False
+                            results["errors"].append(f"Output quantization mismatch: expected scale=0.00390625 and zero_point=0, got scale={output_scale}, zero_point={output_zero}")
             else:
                 results["compatible"] = False
                 results["errors"].append("No output tensors found")
@@ -217,19 +233,71 @@ def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dic
             num_state_vars = var_handle_count
             results["details"]["num_state_variables"] = num_state_vars
 
+            allowed_ops = {
+                "CALL_ONCE",
+                "VAR_HANDLE",
+                "READ_VARIABLE",
+                "STRIDED_SLICE",
+                "CONCATENATION",
+                "ASSIGN_VARIABLE",
+                "CONV_2D",
+                "DEPTHWISE_CONV_2D",
+                "MUL",
+                "ADD",
+                "MEAN",
+                "FULLY_CONNECTED",
+                "LOGISTIC",
+                "QUANTIZE",
+                "RESHAPE",
+                "SPLIT_V",
+            }
+            op_counts: dict[str, int] = {}
+            for op in ops:
+                op_name = op.get("op_name", "")
+                op_counts[op_name] = op_counts.get(op_name, 0) + 1
+
+            unpermitted_ops = sorted(op for op in op_counts if op and op not in allowed_ops)
+            if unpermitted_ops:
+                results["compatible"] = False
+                results["errors"].append(f"Unpermitted ops detected: {unpermitted_ops}")
+            results["details"]["op_counts"] = op_counts
+
             vprint(f"  State variables: {num_state_vars}")
+            all_tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
+            observed_state_shapes: set[tuple[int, ...]] = set()
             if verbose:
-                all_tensors = interpreter.get_tensor_details()
                 for op in ops:
                     if op.get("op_name") == "READ_VARIABLE":
                         out_idx = op["outputs"][0]
-                        t = all_tensors[out_idx]
+                        t = all_tensors.get(out_idx)
+                        if t is None:
+                            continue
                         vprint(f"    - {t.get('name', 'unnamed')}: {t.get('shape', [])}")
+
+            for op in ops:
+                if op.get("op_name") == "READ_VARIABLE":
+                    out_idx = op["outputs"][0]
+                    t = all_tensors.get(out_idx)
+                    if t is not None:
+                        observed_state_shapes.add(tuple(int(v) for v in t.get("shape", [])))
+
+            expected_state_shapes = {
+                (1, 2, 1, 40),
+                (1, 4, 1, 32),
+                (1, 10, 1, 64),
+                (1, 14, 1, 64),
+                (1, 22, 1, 64),
+                (1, 5, 1, 64),
+            }
+            results["details"]["observed_state_shapes"] = sorted(observed_state_shapes)
 
             # Expected: 6 state variables for streaming
             if num_state_vars != 6:
                 results["compatible"] = False
-                results["errors"].append(f"Expected 6 state variables, got {num_state_vars}. " "ESPHome streaming models require exactly 6 state tensors for ring buffer management.")
+                results["errors"].append(f"Expected 6 state variables, got {num_state_vars}. ESPHome streaming models require exactly 6 state tensors for ring buffer management.")
+            if observed_state_shapes != expected_state_shapes:
+                results["compatible"] = False
+                results["errors"].append(f"State tensor shape mismatch. Expected {sorted(expected_state_shapes)}, got {sorted(observed_state_shapes)}")
         except Exception as e:
             results["warnings"].append(f"Could not verify state variables: {e}")
         # Check 5: Verify quantization is present

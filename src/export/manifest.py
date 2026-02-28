@@ -136,7 +136,7 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
                 if dim == -1:
                     # Dynamic dimension: use a conservative estimate of 1 and warn
                     logger.warning(
-                        "Tensor '%s' has a dynamic dimension (-1). " "Arena size estimate may be too small; using 1 for this dim.",
+                        "Tensor '%s' has a dynamic dimension (-1). Arena size estimate may be too small; using 1 for this dim.",
                         tensor.get("name", "<unnamed>"),
                     )
                     d = 1
@@ -197,9 +197,13 @@ def verify_esphome_compatibility(manifest: dict[str, Any]) -> dict[str, Any]:
             results["compatible"] = False
             results["errors"].append(f"Missing required field: {field}")
 
-    # Validate top-level version regardless of whether "micro" is present
+    if manifest.get("type") != "micro":
+        results["compatible"] = False
+        results["errors"].append("Manifest field 'type' must be 'micro'")
+
     if manifest.get("version") != 2:
-        results["warnings"].append("Manifest version should be 2 for ESPHome 2024.7+")
+        results["compatible"] = False
+        results["errors"].append("Manifest field 'version' must be 2")
 
     # Required micro section fields
     if "micro" in manifest:
@@ -228,6 +232,14 @@ def verify_esphome_compatibility(manifest: dict[str, Any]) -> dict[str, Any]:
             if not (0.0 < prob_cutoff <= 1.0):
                 results["compatible"] = False
                 results["errors"].append("probability_cutoff must be between 0 and 1")
+
+        if micro.get("feature_step_size") != 10:
+            results["compatible"] = False
+            results["errors"].append("feature_step_size must be 10")
+
+        if micro.get("minimum_esphome_version") != "2024.7.0":
+            results["compatible"] = False
+            results["errors"].append("minimum_esphome_version must be '2024.7.0'")
 
         # Validate tensor_arena_size is reasonable
         arena_size = micro.get("tensor_arena_size", 0)

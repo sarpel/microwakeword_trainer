@@ -175,6 +175,7 @@ class MixConvBlock(tf.keras.layers.Layer):
                     (ks, 1),
                     strides=1,
                     padding="valid",
+                    use_bias=False,
                     name=f"depthwise_convs_depthwise_conv2d{suffix}",
                 )
             )
