@@ -3,20 +3,22 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 import tensorflow as tf
 
-# Minimum tensor arena size in bytes (26 KB – the minimum for hey_jarvis models)
-DEFAULT_TENSOR_ARENA_SIZE = 22860
+logger = logging.getLogger(__name__)
+
+# Default tensor arena size in bytes (~30 KB - the reference size for okay_nabu models per Article X)
+DEFAULT_TENSOR_ARENA_SIZE = 30000  # Per ARCHITECTURAL_CONSTITUTION.md Article X
 
 
 def generate_manifest(
     model_path: str,
-    config: Dict[str, Any],
-    tflite_path: Optional[str] = None,
-) -> Dict[str, Any]:
+    config: dict[str, Any],
+    tflite_path: str | None = None,
+) -> dict[str, Any]:
     """Generate ESPHome V2 manifest for wake word model.
 
     Args:
@@ -51,9 +53,7 @@ def generate_manifest(
         "type": "micro",
         "wake_word": export_config.get("wake_word", "Hey Katya"),
         "author": export_config.get("author", "Sarpel GURAY"),
-        "website": export_config.get(
-            "website", "https://github.com/sarpel/microwakeword_trainer"
-        ),
+        "website": export_config.get("website", "https://github.com/sarpel/microwakeword_trainer"),
         "model": model_filename,
         "trained_languages": export_config.get("trained_languages", ["en"]),
         "version": 2,
@@ -62,16 +62,14 @@ def generate_manifest(
             "feature_step_size": feature_step_size,
             "sliding_window_size": export_config.get("sliding_window_size", 5),
             "tensor_arena_size": arena_size,
-            "minimum_esphome_version": export_config.get(
-                "minimum_esphome_version", "2024.7.0"
-            ),
+            "minimum_esphome_version": export_config.get("minimum_esphome_version", "2024.7.0"),
         },
     }
 
     return manifest
 
 
-def save_manifest(manifest: Dict[str, Any], output_path: str) -> str:
+def save_manifest(manifest: dict[str, Any], output_path: str) -> str:
     """Save manifest to JSON file.
 
     Args:
@@ -121,7 +119,7 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
                 elem_size = 4
             elif dtype == np.float16:
                 elem_size = 2
-            elif dtype == np.string_ or dtype == np.object_:
+            elif dtype == np.bytes_ or dtype == np.object_:
                 # String size is variable; use a conservative 32-byte estimate
                 elem_size = 32
             elif dtype in (np.int8, np.uint8):
@@ -135,8 +133,17 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
 
             num_elements = 1
             for dim in shape:
-                # Use abs(dim) to handle -1 dynamic dimensions gracefully
-                d = abs(dim) if dim != 0 else 1
+                if dim == -1:
+                    # Dynamic dimension: use a conservative estimate of 1 and warn
+                    logger.warning(
+                        "Tensor '%s' has a dynamic dimension (-1). " "Arena size estimate may be too small; using 1 for this dim.",
+                        tensor.get("name", "<unnamed>"),
+                    )
+                    d = 1
+                elif dim == 0:
+                    d = 1
+                else:
+                    d = abs(dim)
                 num_elements *= d
 
             total_memory += num_elements * elem_size
@@ -144,7 +151,7 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
         # Add 30% safety margin
         arena_size = int(total_memory * 1.3)
 
-        # Ensure minimum size (26KB is the minimum for hey_jarvis models)
+        # Ensure minimum size (26KB is the minimum for okay_nabu models)
         arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)
 
         return arena_size
@@ -158,7 +165,7 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
         return DEFAULT_TENSOR_ARENA_SIZE
 
 
-def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
+def verify_esphome_compatibility(manifest: dict[str, Any]) -> dict[str, Any]:
     """Verify manifest has required fields for ESPHome compatibility.
 
     Args:
@@ -167,7 +174,7 @@ def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dictionary with 'compatible' bool and 'errors' list
     """
-    results: Dict[str, Any] = {
+    results: dict[str, Any] = {
         "compatible": True,
         "errors": [],
         "warnings": [],
@@ -196,6 +203,12 @@ def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
 
     # Required micro section fields
     if "micro" in manifest:
+        micro_obj = manifest.get("micro")
+        if not isinstance(micro_obj, dict):
+            results["compatible"] = False
+            results["errors"].append("Field 'micro' must be an object")
+            return results
+
         micro_required = [
             "probability_cutoff",
             "feature_step_size",
@@ -204,7 +217,7 @@ def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
             "minimum_esphome_version",
         ]
         for field in micro_required:
-            if field not in manifest["micro"]:
+            if field not in micro_obj:
                 results["compatible"] = False
                 results["errors"].append(f"Missing required micro field: {field}")
 
@@ -219,21 +232,19 @@ def verify_esphome_compatibility(manifest: Dict[str, Any]) -> Dict[str, Any]:
         # Validate tensor_arena_size is reasonable
         arena_size = micro.get("tensor_arena_size", 0)
         if arena_size < DEFAULT_TENSOR_ARENA_SIZE:
-            results["warnings"].append(
-                f"tensor_arena_size ({arena_size}) is below recommended minimum ({DEFAULT_TENSOR_ARENA_SIZE})"
-            )
+            results["warnings"].append(f"tensor_arena_size ({arena_size}) is below recommended minimum ({DEFAULT_TENSOR_ARENA_SIZE})")
 
     return results
 
 
 def create_esphome_package(
     model: Any,
-    config: Dict[str, Any],
+    config: dict[str, Any],
     output_dir: str,
     model_name: str = "wake_word",
-    tflite_path: Optional[str] = None,
-    analysis_results: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    tflite_path: str | None = None,
+    analysis_results: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Create complete ESPHome package with manifest and model files.
 
     This is the main entry point for the export process, combining
@@ -245,7 +256,7 @@ def create_esphome_package(
         output_dir: Output directory for package files
         model_name: Name for the model (used in filenames)
         tflite_path: Optional path to TFLite model
-        analysis_results: Optional ai_edge_litert analysis results to include
+        analysis_results: Optional TFLite analysis results to include
 
     Returns:
         Dictionary with paths and metadata:
@@ -267,7 +278,7 @@ def create_esphome_package(
         tflite_path=tflite_path,
     )
 
-    # Add ai_edge_litert analysis results to manifest if provided
+    # Add TFLite analysis results to manifest if provided
     if analysis_results is not None:
         # Include key validation metrics in manifest metadata
         validation = analysis_results.get("validation_results", {})
@@ -296,9 +307,7 @@ def create_esphome_package(
     save_manifest(manifest, manifest_path)
 
     # Get tensor arena size from manifest
-    tensor_arena_size = manifest.get("micro", {}).get(
-        "tensor_arena_size", DEFAULT_TENSOR_ARENA_SIZE
-    )
+    tensor_arena_size = manifest.get("micro", {}).get("tensor_arena_size", DEFAULT_TENSOR_ARENA_SIZE)
 
     return {
         "manifest_path": manifest_path,

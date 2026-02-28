@@ -4,9 +4,10 @@ import cProfile
 import os
 import pstats
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from io import StringIO
-from typing import Any, Callable, Optional
+from typing import Any
 
 
 class TrainingProfiler:
@@ -30,8 +31,8 @@ class TrainingProfiler:
         """
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
-        self._current_profiler: Optional[cProfile.Profile] = None
-        self._current_section: Optional[str] = None
+        self._current_profiler: cProfile.Profile | None = None
+        self._current_section: str | None = None
 
     @contextmanager
     def profile_section(self, name: str):
@@ -71,9 +72,7 @@ class TrainingProfiler:
             self._current_profiler = None
             self._current_section = None
 
-    def profile_training_step(
-        self, model: Any, data_fn: Callable[[], Any], n_steps: int = 10
-    ) -> Optional[str]:
+    def profile_training_step(self, model: Any, data_fn: Callable[[], Any], n_steps: int = 10) -> str | None:
         """Profile multiple training steps.
 
         Runs n_steps iterations profiling the entire loop including
@@ -95,14 +94,14 @@ class TrainingProfiler:
 
         output = None
         try:
-            for step in range(n_steps):
+            for _step in range(n_steps):
                 # Get data batch
                 batch = data_fn()
 
                 # Forward pass (if model supports it)
                 if hasattr(model, "forward"):
                     output = model.forward(batch)
-                elif hasattr(model, "__call__"):
+                elif callable(model):
                     output = model(batch)
 
                 # Backward pass (if model supports it)

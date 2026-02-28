@@ -103,7 +103,15 @@ class RingBuffer:
 
         Returns:
             Updated buffer [batch, size, ...]
+
+        Raises:
+            ValueError: If new_data time dimension is not 1.
         """
+        # Validate that exactly 1 time step is provided
+        time_dim = new_data.shape[1] if hasattr(new_data, "shape") else None
+        if time_dim is not None and time_dim != 1:
+            raise ValueError(f"RingBuffer.update expects new_data with time dim=1, got {time_dim}. " "Pass one step at a time.")
+
         if self.buffer is None:
             self.buffer = new_data
             return self.buffer
@@ -212,7 +220,7 @@ class Stream(tf.keras.layers.Layer):
             strides = config.get("strides", (1, 1))
             dilation_rate = config.get("dilation_rate", (1, 1))
             kernel_size = config.get("kernel_size", (1, 1))
-            padding = config.get("padding", "valid")
+            _ = config.get("padding", "valid")  # noqa: F841  # padding config accessed for completeness
 
             # Normalize scalar values to 2-element tuples so indexing is safe
             if isinstance(strides, int):
@@ -224,36 +232,20 @@ class Stream(tf.keras.layers.Layer):
 
             self.stride = strides[0]
             self.stride_freq = strides[1] if len(strides) > 1 else self.stride
-            self.dilation_freq = (
-                dilation_rate[1] if len(dilation_rate) > 1 else dilation_rate[0]
-            )
-            self.kernel_size_freq = (
-                kernel_size[1] if len(kernel_size) > 1 else kernel_size[0]
-            )
+            self.dilation_freq = dilation_rate[1] if len(dilation_rate) > 1 else dilation_rate[0]
+            self.kernel_size_freq = kernel_size[1] if len(kernel_size) > 1 else kernel_size[0]
 
             # Calculate ring buffer size
             if self.use_one_step:
-                self.ring_buffer_size_in_time_dim = (
-                    (dilation_rate[0] * (kernel_size[0] - 1) + 1)
-                    if isinstance(dilation_rate, (tuple, list))
-                    else (dilation_rate * (kernel_size - 1) + 1)
-                )
+                self.ring_buffer_size_in_time_dim = (dilation_rate[0] * (kernel_size[0] - 1) + 1) if isinstance(dilation_rate, (tuple, list)) else (dilation_rate * (kernel_size - 1) + 1)
             else:
                 # For strided conv
-                dilation = (
-                    dilation_rate[0]
-                    if isinstance(dilation_rate, (tuple, list))
-                    else dilation_rate
-                )
-                kern = (
-                    kernel_size[0]
-                    if isinstance(kernel_size, (tuple, list))
-                    else kernel_size
-                )
+                dilation = dilation_rate[0] if isinstance(dilation_rate, (tuple, list)) else dilation_rate
+                kern = kernel_size[0] if isinstance(kernel_size, (tuple, list)) else kernel_size
                 stride_val = strides[0] if isinstance(strides, tuple) else strides
-                self.ring_buffer_size_in_time_dim = max(
-                    0, dilation * (kern - 1) - (stride_val - 1)
-                )
+                # Per IMPLEMENTATION_PLAN.md: kernel_size - stride = buffer_size
+                # With dilation: dilation * (kernel_size - 1) - (stride - 1)
+                self.ring_buffer_size_in_time_dim = max(0, dilation * (kern - 1) - stride_val + 1)
 
         # Build the wrapped cell if needed
         if isinstance(wrapped_cell, tf.keras.layers.Layer) and not wrapped_cell.built:
@@ -266,11 +258,7 @@ class Stream(tf.keras.layers.Layer):
         # Calculate state shape
         if self.ring_buffer_size_in_time_dim and self.ring_buffer_size_in_time_dim > 0:
             # State shape: [batch, ring_buffer_size, ...features]
-            shape_as_list = (
-                list(input_shape)
-                if isinstance(input_shape, (list, tuple))
-                else tf.TensorShape(input_shape).as_list()
-            )
+            shape_as_list = list(input_shape) if isinstance(input_shape, (list, tuple)) else tf.TensorShape(input_shape).as_list()
             self.state_shape = [
                 self.inference_batch_size,
                 self.ring_buffer_size_in_time_dim,
@@ -278,10 +266,7 @@ class Stream(tf.keras.layers.Layer):
 
         # Create state variable for internal streaming
         if self.mode == Modes.STREAM_INTERNAL_STATE_INFERENCE:
-            if (
-                self.ring_buffer_size_in_time_dim
-                and self.ring_buffer_size_in_time_dim > 0
-            ):
+            if self.ring_buffer_size_in_time_dim and self.ring_buffer_size_in_time_dim > 0:
                 self.states = self.add_weight(
                     name="states",
                     shape=self.state_shape,
@@ -292,10 +277,7 @@ class Stream(tf.keras.layers.Layer):
 
         # Create input state for external streaming
         elif self.mode == Modes.STREAM_EXTERNAL_STATE_INFERENCE:
-            if (
-                self.ring_buffer_size_in_time_dim
-                and self.ring_buffer_size_in_time_dim > 0
-            ):
+            if self.ring_buffer_size_in_time_dim and self.ring_buffer_size_in_time_dim > 0:
                 self.input_state = tf.keras.layers.Input(
                     shape=self.state_shape[1:],
                     batch_size=self.inference_batch_size,
@@ -305,12 +287,14 @@ class Stream(tf.keras.layers.Layer):
 
         super().build(input_shape)
 
-    def call(self, inputs, training=None):
+    def call(self, inputs, training=None, state=None):
         """Forward pass with streaming logic.
 
         Args:
             inputs: Input tensor
             training: Training flag
+            state: Optional runtime state tensor for external streaming.
+                   If provided, overrides self.input_state.
 
         Returns:
             Output tensor, or (output, output_state) for external streaming
@@ -318,7 +302,7 @@ class Stream(tf.keras.layers.Layer):
         if self.mode == Modes.STREAM_INTERNAL_STATE_INFERENCE:
             return self._streaming_internal_state(inputs)
         elif self.mode == Modes.STREAM_EXTERNAL_STATE_INFERENCE:
-            return self._streaming_external_state(inputs)
+            return self._streaming_external_state(inputs, state=state)
         elif self.mode in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
             return self._non_streaming(inputs, training)
         else:
@@ -336,7 +320,8 @@ class Stream(tf.keras.layers.Layer):
 
             # Shift buffer and add new input
             # Remove oldest: [batch, 1:buffer_size, ...]
-            memory = self.states[:, 1 : self.ring_buffer_size_in_time_dim, :]
+            # Use ellipsis (...) so this works for both 3D and 4D state tensors.
+            memory = self.states[:, 1 : self.ring_buffer_size_in_time_dim, ...]
             # Concatenate new input at end
             memory = tf.concat([memory, inputs], axis=1)
 
@@ -350,7 +335,7 @@ class Stream(tf.keras.layers.Layer):
             if self.ring_buffer_size_in_time_dim:
                 memory = tf.concat([self.states, inputs], axis=1)
                 # Keep only the last ring_buffer_size samples
-                state_update = memory[:, -self.ring_buffer_size_in_time_dim :, :]
+                state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
 
                 assign_op = self.states.assign(state_update)
                 with tf.control_dependencies([assign_op]):
@@ -358,8 +343,14 @@ class Stream(tf.keras.layers.Layer):
             else:
                 return self.cell(inputs)
 
-    def _streaming_external_state(self, inputs):
-        """Streaming with external state management."""
+    def _streaming_external_state(self, inputs, state=None):
+        """Streaming with external state management.
+
+        Args:
+            inputs: Input tensor
+            state: Optional runtime state tensor. If None, uses self.input_state.
+        """
+        input_state = state if state is not None else self.input_state
         if self.use_one_step:
             tf.debugging.assert_equal(
                 tf.shape(inputs)[1],
@@ -368,7 +359,7 @@ class Stream(tf.keras.layers.Layer):
             )
 
             # Shift buffer and add new input
-            memory = self.input_state[:, 1 : self.ring_buffer_size_in_time_dim, :]
+            memory = input_state[:, 1 : self.ring_buffer_size_in_time_dim, ...]
             memory = tf.concat([memory, inputs], axis=1)
 
             output = self.cell(memory)
@@ -376,8 +367,8 @@ class Stream(tf.keras.layers.Layer):
             return output, memory
         else:
             # Strided mode
-            memory = tf.concat([self.input_state, inputs], axis=1)
-            state_update = memory[:, -self.ring_buffer_size_in_time_dim :, :]
+            memory = tf.concat([input_state, inputs], axis=1)
+            state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
             output = self.cell(memory)
             self.output_state = state_update
             return output, state_update
@@ -386,13 +377,16 @@ class Stream(tf.keras.layers.Layer):
         """Non-streaming mode (training or inference)."""
         # Apply padding if specified
         if self.pad_time_dim:
-            pad_total = (
-                self.ring_buffer_size_in_time_dim - 1
-                if self.use_one_step
-                else self.ring_buffer_size_in_time_dim
-            )
+            pad_total = self.ring_buffer_size_in_time_dim - 1 if self.use_one_step else self.ring_buffer_size_in_time_dim
             if pad_total > 0:
-                pad = [[0, 0]] * inputs.shape.rank
+                # Build a dynamic padding spec that matches the actual input rank
+                _ = tf.rank(inputs)  # noqa: F841  # rank info retrieved but not directly used
+                # Padding: [[0,0]] for each dim, with [pad_total, 0] or [half, half]
+                # on the time dimension (axis 1).
+                # We use tf.pad with a statically-built list when rank is known, else dynamic.
+                static_rank = inputs.shape.rank
+                n_dims = static_rank if static_rank is not None else 4  # conservative default
+                pad = [[0, 0]] * n_dims
                 if self.pad_time_dim == "causal":
                     pad[1] = [pad_total, 0]
                 elif self.pad_time_dim == "same":
@@ -430,6 +424,8 @@ class Stream(tf.keras.layers.Layer):
     def get_input_state(self):
         """Get input state for external streaming."""
         if self.mode == Modes.STREAM_EXTERNAL_STATE_INFERENCE:
+            if self.input_state is None:
+                raise ValueError("input_state is None. Call build() before get_input_state().")
             return [self.input_state]
         raise ValueError(f"Expected external streaming mode, not {self.mode}")
 
@@ -455,9 +451,7 @@ class StridedDrop(tf.keras.layers.Layer):
     Used for matching dimensions between residual connections and conv outputs.
     """
 
-    def __init__(
-        self, time_slices_to_drop, mode=Modes.NON_STREAM_INFERENCE, name=None, **kwargs
-    ):
+    def __init__(self, time_slices_to_drop, mode=Modes.NON_STREAM_INFERENCE, name=None, **kwargs):
         super().__init__(name=name, **kwargs)
         self.time_slices_to_drop = time_slices_to_drop
         self.mode = mode
@@ -498,9 +492,7 @@ class StridedKeep(tf.keras.layers.Layer):
     Used in MixConv to split ring buffer into branches with different kernel sizes.
     """
 
-    def __init__(
-        self, time_slices_to_keep, mode=Modes.NON_STREAM_INFERENCE, name=None, **kwargs
-    ):
+    def __init__(self, time_slices_to_keep, mode=Modes.NON_STREAM_INFERENCE, name=None, **kwargs):
         super().__init__(name=name, **kwargs)
         self.time_slices_to_keep = max(time_slices_to_keep, 1)
         self.mode = mode
@@ -593,9 +585,7 @@ def frequency_pad(inputs, dilation, stride, kernel_size):
         Padded tensor
     """
     if inputs.shape.rank < 3:
-        raise ValueError(
-            f"input_shape.rank must be at least 3, got {inputs.shape.rank}"
-        )
+        raise ValueError(f"input_shape.rank must be at least 3, got {inputs.shape.rank}")
 
     kernel_size = (kernel_size - 1) * dilation + 1
     total_pad = kernel_size - stride
@@ -736,15 +726,21 @@ class StreamingMixedNet:
             List of probabilities for each inference step
         """
         import numpy as np
+
         from ..data.features import FeatureConfig, MicroFrontend
 
         # Normalize audio to [-1, 1] if needed
         if audio_samples.dtype == np.int16:
             audio_samples = audio_samples.astype(np.float32) / 32767.0
+        elif audio_samples.size == 0:
+            return []
         elif audio_samples.max() > 1.0 or audio_samples.min() < -1.0:
-            # Normalize to [-1, 1]
+            # Normalize to [-1, 1] — guard against all-zero arrays (max_val == 0)
             max_val = max(abs(audio_samples.max()), abs(audio_samples.min()))
-            audio_samples = audio_samples.astype(np.float32) / max_val
+            if max_val > 0.0:
+                audio_samples = audio_samples.astype(np.float32) / max_val
+            else:
+                audio_samples = audio_samples.astype(np.float32)
         else:
             audio_samples = audio_samples.astype(np.float32)
 
@@ -771,7 +767,8 @@ class StreamingMixedNet:
 
         # Run streaming inference with configurable step size
         probabilities = []
-        for i in range(0, spectrogram.shape[0] - model_stride + 1, step_samples):
+        upper = max(1, spectrogram.shape[0] - model_stride + 1)
+        for i in range(0, upper, step_samples):
             # Extract window
             window = spectrogram[i : i + model_stride, :]
 

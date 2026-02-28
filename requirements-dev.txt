@@ -1,0 +1,34 @@
+# Development dependencies for microwakeword_trainer
+# Install with: pip install -r requirements-dev.txt
+
+# Code Formatting
+black>=26.0
+
+# Linting
+ruff>=0.15
+
+# Type Checking
+mypy>=1.19
+
+# Testing
+pytest>=9.0
+pytest-cov>=6.0
+pytest-xdist>=3.6
+
+# Pre-commit hooks
+pre-commit>=4.0
+
+# Documentation
+sphinx>=8.0
+sphinx-rtd-theme>=3.0
+
+# Jupyter for notebooks
+jupyter>=1.1
+ipython>=8.31
+
+# Profiling
+py-spy>=0.3.14
+
+# Build tools
+build>=1.2
+twine>=6.0

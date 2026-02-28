@@ -22,21 +22,21 @@ Exit codes:
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.lite.python import schema_py_generated as schema
 
 
-def verify_esphome_compatibility(
-    tflite_path: str, verbose: bool = False
-) -> dict[str, Any]:
+def verify_esphome_compatibility(tflite_path: str, verbose: bool = False) -> dict[str, Any]:
     """
     Verify TFLite model is compatible with ESPHome micro_wake_word.
 
-    Based on analysis of hey_jarvis.tflite and okay_nabu.tflite official models.
+    Based on analysis of official ESPHome microWakeWord TFLite models (okay_nabu.tflite).
 
     Args:
         tflite_path: Path to TFLite model file
@@ -51,7 +51,7 @@ def verify_esphome_compatibility(
             "details": dict with detailed model info
         }
     """
-    results = {
+    results: dict[str, Any] = {
         "compatible": True,
         "errors": [],
         "warnings": [],
@@ -67,35 +67,27 @@ def verify_esphome_compatibility(
 
     try:
         # Load model
-        interpreter = tf.lite.Interpreter(model_path=tflite_path)
-        interpreter.allocate_tensors()
+        with open(tflite_path, "rb") as f:
+            tflite_bytes = f.read()
 
+        interpreter = tf.lite.Interpreter(model_content=tflite_bytes)
+        interpreter.allocate_tensors()
         vprint(f"Loaded: {tflite_path}")
 
         # Check 1: Number of subgraphs (must be 2)
         try:
-            if not hasattr(interpreter, "get_subgraphs"):
-                raise AttributeError("Interpreter has no public get_subgraphs() API")
-
-            subgraphs = interpreter.get_subgraphs()
-            num_subgraphs = len(subgraphs)
+            model_obj = schema.ModelT.InitFromPackedBuf(tflite_bytes, 0)
+            num_subgraphs = len(model_obj.subgraphs)
             results["details"]["num_subgraphs"] = num_subgraphs
 
             vprint(f"  Subgraphs: {num_subgraphs}")
 
             if num_subgraphs != 2:
                 results["compatible"] = False
-                results["errors"].append(
-                    f"Expected 2 subgraphs, got {num_subgraphs}. "
-                    "ESPHome requires dual-subgraph architecture (inference + init)."
-                )
+                results["errors"].append(f"Expected 2 subgraphs, got {num_subgraphs}. " "ESPHome requires dual-subgraph architecture (inference + init).")
         except Exception as e:
             results["compatible"] = False
-            results["errors"].append(
-                "Could not verify subgraphs via interpreter.get_subgraphs(); "
-                f"failing compatibility check: {e}"
-            )
-
+            results["errors"].append(f"Could not verify subgraphs via flatbuffers schema: {e}")
         # Check 2: Input tensor shape and dtype
         try:
             input_details = interpreter.get_input_details()
@@ -109,30 +101,68 @@ def verify_esphome_compatibility(
 
                 vprint(f"  Input shape: {input_shape}, dtype: {input_dtype}")
 
-                # Expected: [1, 3, 40] (batch=1, stride=3 frames, 40 mel bins)
-                if input_shape != [1, 3, 40]:
+                # Try to determine expected stride from model metadata or manifest
+                expected_strides = None
+                tflite_dir = Path(tflite_path).parent
+
+                # First, try to get stride from TFLite metadata
+                try:
+                    model = tf.lite.Interpreter(model_path=tflite_path)
+                    metadata = model.get_tensor_metadata() if hasattr(model, "get_tensor_metadata") else None
+                    if metadata and len(metadata) > 0:
+                        # Try to extract stride from metadata description or name
+                        meta = metadata[0]
+                        if "description" in meta:
+                            desc = meta["description"]
+                            if "stride" in desc.lower():
+                                import re
+
+                                match = re.search(r"stride[=:]\s*(\d+)", desc, re.IGNORECASE)
+                                if match:
+                                    expected_strides = [int(match.group(1))]
+                except Exception:  # noqa: S110
+                    logging.debug("Metadata not available")  # noqa: S110, continue to other methods
+
+                # If not found in metadata, check for manifest.json in same directory
+                if expected_strides is None:
+                    manifest_path = tflite_dir / "manifest.json"
+                    if manifest_path.exists():
+                        try:
+                            import json
+
+                            with open(manifest_path) as f:
+                                manifest = json.load(f)
+                            # Check if stride is stored in manifest (custom field)
+                            stride_val = manifest.get("stride") or manifest.get("model", {}).get("stride")
+                            if stride_val:
+                                expected_strides = [int(stride_val)]
+                        except Exception:  # noqa: S110
+                            logging.debug("Could not read manifest.json")  # noqa: S110
+
+                # Default: only accept stride 3 per ARCHITECTURAL_CONSTITUTION
+                if expected_strides is None:
+                    expected_strides = [3]
+
+                # Validate input shape against expected stride(s)
+                expected_shapes = [[1, s, 40] for s in expected_strides]
+                if input_shape not in expected_shapes:
                     results["compatible"] = False
-                    results["errors"].append(
-                        f"Expected input shape [1, 3, 40], got {input_shape}. "
-                        "ESPHome requires exactly [1, 3, 40] input shape."
-                    )
+                    expected_strides_str = ", ".join(map(str, expected_strides))
+                    results["errors"].append(f"Expected input shape [1, {{{expected_strides_str}}}, 40], got {input_shape}. " f"Valid shapes are: {expected_shapes}")
 
                 # Must be int8
                 if input_dtype != np.int8:
                     results["compatible"] = False
-                    results["errors"].append(
-                        f"Expected input dtype int8, got {input_dtype}. "
-                        "ESPHome requires INT8 input quantization."
-                    )
+                    results["errors"].append(f"Expected input dtype int8, got {input_dtype}. " "ESPHome requires INT8 input quantization.")
 
                 # Check quantization parameters
                 quant_params = input_info.get("quantization_parameters", {})
                 if quant_params:
-                    scales = quant_params.get("scales", [])
-                    zero_points = quant_params.get("zero_points", [])
-                    if scales:
+                    scales = np.asarray(quant_params.get("scales", []))
+                    zero_points = np.asarray(quant_params.get("zero_points", []))
+                    if scales.size > 0:
                         results["details"]["input_scale"] = float(scales[0])
-                    if zero_points:
+                    if zero_points.size > 0:
                         results["details"]["input_zero_point"] = int(zero_points[0])
             else:
                 results["compatible"] = False
@@ -156,26 +186,22 @@ def verify_esphome_compatibility(
 
                 # Expected: [1, 1] (batch=1, single probability)
                 if output_shape != [1, 1]:
-                    results["warnings"].append(
-                        f"Expected output shape [1, 1], got {output_shape}"
-                    )
+                    results["compatible"] = False
+                    results["errors"].append(f"Expected output shape [1, 1], got {output_shape}. " "ESPHome requires single probability output.")
 
                 # CRITICAL: Must be uint8, NOT int8!
                 if output_dtype != np.uint8:
                     results["compatible"] = False
-                    results["errors"].append(
-                        f"Expected output dtype uint8, got {output_dtype}. "
-                        "CRITICAL: ESPHome requires UINT8 output, not int8!"
-                    )
+                    results["errors"].append(f"Expected output dtype uint8, got {output_dtype}. " "CRITICAL: ESPHome requires UINT8 output, not int8!")
 
                 # Check quantization parameters
                 quant_params = output_info.get("quantization_parameters", {})
                 if quant_params:
-                    scales = quant_params.get("scales", [])
-                    zero_points = quant_params.get("zero_points", [])
-                    if scales:
+                    scales = np.asarray(quant_params.get("scales", []))
+                    zero_points = np.asarray(quant_params.get("zero_points", []))
+                    if scales.size > 0:
                         results["details"]["output_scale"] = float(scales[0])
-                    if zero_points:
+                    if zero_points.size > 0:
                         results["details"]["output_zero_point"] = int(zero_points[0])
             else:
                 results["compatible"] = False
@@ -184,39 +210,42 @@ def verify_esphome_compatibility(
         except Exception as e:
             results["warnings"].append(f"Could not verify output: {e}")
 
-        # Check 4: State variables (6 TYPE_13 tensors for streaming)
+        # Check 4: State variables (6 streaming state tensors)
         try:
-            tensor_details = interpreter.get_tensor_details()
-
-            # Count state variable tensors (type 13 = resource type for variables)
-            state_vars = [t for t in tensor_details if t.get("type") == 13]
-            num_state_vars = len(state_vars)
+            ops = interpreter._get_ops_details()
+            var_handle_count = sum(1 for op in ops if op.get("op_name") == "VAR_HANDLE")
+            num_state_vars = var_handle_count
             results["details"]["num_state_variables"] = num_state_vars
 
             vprint(f"  State variables: {num_state_vars}")
-            for var in state_vars:
-                vprint(f"    - {var.get('name', 'unnamed')}: {var.get('shape', [])}")
+            if verbose:
+                all_tensors = interpreter.get_tensor_details()
+                for op in ops:
+                    if op.get("op_name") == "READ_VARIABLE":
+                        out_idx = op["outputs"][0]
+                        t = all_tensors[out_idx]
+                        vprint(f"    - {t.get('name', 'unnamed')}: {t.get('shape', [])}")
 
             # Expected: 6 state variables for streaming
             if num_state_vars != 6:
-                results["warnings"].append(
-                    f"Expected 6 state variables, got {num_state_vars}. "
-                    "ESPHome streaming models typically have 6 state tensors."
-                )
-
+                results["compatible"] = False
+                results["errors"].append(f"Expected 6 state variables, got {num_state_vars}. " "ESPHome streaming models require exactly 6 state tensors for ring buffer management.")
         except Exception as e:
             results["warnings"].append(f"Could not verify state variables: {e}")
-
         # Check 5: Verify quantization is present
         try:
             if input_details and output_details:
                 input_quant = input_details[0].get("quantization_parameters", {})
                 output_quant = output_details[0].get("quantization_parameters", {})
 
-                if not input_quant or not input_quant.get("scales"):
-                    results["warnings"].append("Input quantization parameters missing")
-                if not output_quant or not output_quant.get("scales"):
-                    results["warnings"].append("Output quantization parameters missing")
+                input_scales = np.asarray(input_quant.get("scales", [])) if input_quant else np.array([])
+                if input_scales.size == 0:
+                    results["compatible"] = False
+                    results["errors"].append("Input quantization parameters missing. ESPHome requires INT8 quantization.")
+                output_scales = np.asarray(output_quant.get("scales", [])) if output_quant else np.array([])
+                if output_scales.size == 0:
+                    results["compatible"] = False
+                    results["errors"].append("Output quantization parameters missing. ESPHome requires UINT8 quantization.")
 
         except Exception as e:
             results["warnings"].append(f"Could not verify quantization: {e}")
@@ -289,13 +318,9 @@ def print_results(results: dict[str, Any], use_json: bool = False) -> None:
         if "num_subgraphs" in details:
             print(f"  Subgraphs: {details['num_subgraphs']}")
         if "input_shape" in details:
-            print(
-                f"  Input: {details['input_shape']} ({details.get('input_dtype', 'unknown')})"
-            )
+            print(f"  Input: {details['input_shape']} ({details.get('input_dtype', 'unknown')})")
         if "output_shape" in details:
-            print(
-                f"  Output: {details['output_shape']} ({details.get('output_dtype', 'unknown')})"
-            )
+            print(f"  Output: {details['output_shape']} ({details.get('output_dtype', 'unknown')})")
         if "num_state_variables" in details:
             print(f"  State variables: {details['num_state_variables']}")
         if "estimated_tensor_arena_size" in details:

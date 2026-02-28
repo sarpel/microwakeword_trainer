@@ -5,8 +5,12 @@ Creates minimal synthetic WAV files for testing purposes.
 """
 
 import wave
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+
+# Module-level RNG for deterministic but unique noise generation
+_rng = np.random.default_rng(42)
 
 # Configuration
 SAMPLE_RATE = 16000  # 16 kHz
@@ -15,14 +19,12 @@ NUM_CHANNELS = 1  # Mono
 SAMPLE_WIDTH = 2  # 16-bit (2 bytes)
 
 # Output directories
-DATASET_DIR = Path("/home/sarpel/mww/microwakeword_trainer/dataset")
+DATASET_DIR = Path(__file__).resolve().parent.parent / "dataset"
 POSITIVE_DIR = DATASET_DIR / "positive" / "speaker_001"
 NEGATIVE_DIR = DATASET_DIR / "negative" / "speech"
 
 
-def generate_sine_wave(
-    frequency: float, duration: float, sample_rate: int
-) -> np.ndarray:
+def generate_sine_wave(frequency: float, duration: float, sample_rate: int) -> np.ndarray:
     """Generate a sine wave."""
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
     # Apply fade in/out to avoid clicks
@@ -30,18 +32,18 @@ def generate_sine_wave(
     envelope = np.ones_like(t)
     envelope[:fade_len] = np.linspace(0, 1, fade_len)
     envelope[-fade_len:] = np.linspace(1, 0, fade_len)
-    return np.sin(2 * np.pi * frequency * t) * envelope * 0.7
+    return (np.sin(2 * np.pi * frequency * t) * envelope * 0.7).astype(np.float32)
 
 
 def generate_noise(duration: float, sample_rate: int) -> np.ndarray:
-    """Generate random noise."""
-    samples = np.random.randn(int(duration * sample_rate))
+    """Generate random noise (deterministic with seed)."""
+    samples = _rng.standard_normal(int(duration * sample_rate))
     # Apply fade in/out
     fade_len = int(sample_rate * 0.05)
     envelope = np.ones_like(samples)
     envelope[:fade_len] = np.linspace(0, 1, fade_len)
     envelope[-fade_len:] = np.linspace(1, 0, fade_len)
-    return envelope * samples * 0.3
+    return (envelope * samples * 0.3).astype(np.float32)
 
 
 def save_wav_file(filepath: Path, samples: np.ndarray, sample_rate: int):
@@ -133,19 +135,30 @@ def main():
 
     # Verify a few files
     print("Verification (sample files):")
-    pos_sample = list(POSITIVE_DIR.glob("*.wav"))[0]
-    neg_sample = list(NEGATIVE_DIR.glob("*.wav"))[0]
+    pos_files = list(POSITIVE_DIR.glob("*.wav"))
+    neg_files = list(NEGATIVE_DIR.glob("*.wav"))
+    if not pos_files or not neg_files:
+        print("  No WAV files found for verification.")
+        return
+    pos_sample = pos_files[0]
+    neg_sample = neg_files[0]
 
     pos_info = verify_wav_file(pos_sample)
     neg_info = verify_wav_file(neg_sample)
 
-    print(f"  Positive: {pos_sample.name}")
-    print(f"    Channels: {pos_info['channels']}, Rate: {pos_info['sample_rate']} Hz")
-    print(f"    Duration: {pos_info['duration']:.2f}s, Frames: {pos_info['n_frames']}")
+    if "error" in pos_info:
+        print(f"  Positive: {pos_sample.name} - ERROR: {pos_info['error']}")
+    else:
+        print(f"  Positive: {pos_sample.name}")
+        print(f"    Channels: {pos_info['channels']}, Rate: {pos_info['sample_rate']} Hz")
+        print(f"    Duration: {pos_info['duration']:.2f}s, Frames: {pos_info['n_frames']}")
 
-    print(f"  Negative: {neg_sample.name}")
-    print(f"    Channels: {neg_info['channels']}, Rate: {neg_info['sample_rate']} Hz")
-    print(f"    Duration: {neg_info['duration']:.2f}s, Frames: {neg_info['n_frames']}")
+    if "error" in neg_info:
+        print(f"  Negative: {neg_sample.name} - ERROR: {neg_info['error']}")
+    else:
+        print(f"  Negative: {neg_sample.name}")
+        print(f"    Channels: {neg_info['channels']}, Rate: {neg_info['sample_rate']} Hz")
+        print(f"    Duration: {neg_info['duration']:.2f}s, Frames: {neg_info['n_frames']}")
 
     # Count files
     pos_count = len(list(POSITIVE_DIR.glob("*.wav")))

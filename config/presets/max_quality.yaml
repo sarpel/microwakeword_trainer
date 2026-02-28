@@ -50,8 +50,10 @@ training:
 
   # Checkpoint selection - stricter target for max quality
   minimization_metric: "ambient_false_positives_per_hour"
-  target_minimization: 0.3
+  target_minimization: 0.2
   maximization_metric: "average_viable_recall"
+  # Hours of negative/background audio for FAH calculation
+  ambient_duration_hours: 10.0
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -59,19 +61,18 @@ training:
 model:
   architecture: "mixednet"
 
-  # Variant A (hey_jarvis - simpler)
-  first_conv_filters: 30
+  # okay_nabu architecture (official ESPHome MWW)
+  first_conv_filters: 32
   first_conv_kernel_size: 5
   stride: 3
-  spectrogram_length: 49
-  pointwise_filters: "60,60,60,60"
-  mixconv_kernel_sizes: "[5],[9],[13],[21]"
+  pointwise_filters: "64,64,64,64"
+  mixconv_kernel_sizes: "[5],[7,11],[9,15],[23]"
   repeat_in_block: "1,1,1,1"
   residual_connection: "0,0,0,0"
 
   # Common settings
   dropout_rate: 0.2
-  l2_regularization: 0.001
+  l2_regularization: 0.0001
 
 # ─────────────────────────────────────────────────────────────────
 # AUGMENTATION (Full + extra for max quality)
@@ -91,11 +92,27 @@ augmentation:
   AddBackgroundNoiseFromFile: 0.3
   ApplyImpulseResponse: 0.4
 
-  # Noise mixing parameters - wider range
+  # Noise mixing parameters - wider range for max quality
   background_min_snr_db: -10
   background_max_snr_db: 15
   min_jitter_s: 0.19
   max_jitter_s: 0.21
+
+  # Augmentation magnitude ranges - wider for max quality diversity
+  eq_min_gain_db: -9.0
+  eq_max_gain_db: 9.0
+  distortion_min: 0.05
+  distortion_max: 0.7
+  pitch_shift_min_semitones: -3.0
+  pitch_shift_max_semitones: 3.0
+  band_stop_min_center_freq: 80.0
+  band_stop_max_center_freq: 6000.0
+  band_stop_min_bandwidth_fraction: 0.5
+  band_stop_max_bandwidth_fraction: 1.99
+  gain_min_db: -6.0
+  gain_max_db: 6.0
+  color_noise_min_snr_db: -10.0
+  color_noise_max_snr_db: 15.0
 
   # Background sources - use your own dataset paths
   impulse_paths: ["./dataset/rirs"]
@@ -122,7 +139,7 @@ performance:
   intra_op_parallelism: 16
 
   # Profiling enabled with detailed output
-  enable_profiling: true
+  enable_profiling: false
   profile_every_n_steps: 100
   profile_output_dir: "./profiles"
 
@@ -135,8 +152,8 @@ performance:
 # ─────────────────────────────────────────────────────────────────
 speaker_clustering:
   enabled: true
-  method: "wavlm_ecapa"
-  embedding_model: "microsoft/wavlm-base-plus"
+  method: "agglomerative"
+  embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
   similarity_threshold: 0.75
   leakage_audit_enabled: true
 
@@ -166,5 +183,34 @@ export:
   # Validated optimal cutoff from model validation
   probability_cutoff: 0.97
   sliding_window_size: 5
-  tensor_arena_size: 22860
+  tensor_arena_size: 30000
   minimum_esphome_version: "2024.7.0"
+
+# ─────────────────────────────────────────────────────────────────
+# PREPROCESSING (strict settings for max quality datasets)
+# ─────────────────────────────────────────────────────────────────
+preprocessing:
+  min_duration_ms: 300.0
+  max_duration_ms: 2000.0
+  discarded_dir: "./discarded"
+  vad_aggressiveness: 3       # most aggressive VAD for max quality
+  vad_pad_ms: 150             # tighter padding for cleaner clips
+  vad_frame_ms: 30
+  split_max_chunk_ms: 2000.0
+  split_min_chunk_ms: 500.0
+  split_target_chunk_ms: 2000.0
+
+# ─────────────────────────────────────────────────────────────────
+# QUALITY SCORING THRESHOLDS (strict - only high-quality audio)
+# ─────────────────────────────────────────────────────────────────
+quality:
+  clip_threshold: 0.001
+  max_clip_ratio: 0.005       # strict: < 0.5% clipping
+  discard_bottom_pct: 10.0    # discard lowest 10% for max quality
+  min_wqi: 0.3                # require minimum quality index
+  discarded_quality_dir: "./discarded/quality"
+  min_snr_db: 0.0             # require positive SNR
+  vad_speech_threshold: 0.5   # require ≥50% speech frames
+  dnsmos_min_ovrl: 2.0        # require decent DNSMOS OVRL
+  dnsmos_min_sig: 2.5         # require good DNSMOS signal
+  dnsmos_cache_dir: "~/.cache/dnsmos"

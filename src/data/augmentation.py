@@ -4,6 +4,7 @@ Provides:
 - AudioAugmentation: Complete augmentation pipeline
 - Individual augmentations: EQ, distortion, pitch shift, etc.
 - Config-driven augmentation from YAML
+- apply_spec_augment_gpu: GPU-accelerated spectrogram SpecAugment via CuPy
 """
 
 import logging
@@ -13,6 +14,14 @@ from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
+
+try:
+    import cupy as cp
+
+    HAS_CUPY = True
+except ImportError:
+    cp = None
+    HAS_CUPY = False
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +101,7 @@ class AudioAugmentation:
                     else:
                         self.rir_files.append(path)
 
-        logger.info(
-            f"Loaded {len(self.background_noise_files)} background noise files, "
-            f"{len(self.rir_files)} RIR files"
-        )
+        logger.info(f"Loaded {len(self.background_noise_files)} background noise files, " f"{len(self.rir_files)} RIR files")
 
     def __call__(self, audio: np.ndarray, apply_all: bool = False) -> np.ndarray:
         """Apply augmentations to audio.
@@ -110,43 +116,49 @@ class AudioAugmentation:
         augmented = audio.copy()
 
         # Always apply gain
-        if apply_all or random.random() < self.config.Gain:
+        if apply_all or random.random() < self.config.Gain:  # noqa: S311
             augmented = self.apply_gain(augmented)
 
         # Apply EQ
-        if apply_all or random.random() < self.config.SevenBandParametricEQ:
+        if apply_all or random.random() < self.config.SevenBandParametricEQ:  # noqa: S311
             augmented = self.apply_eq(augmented)
 
         # Apply distortion
-        if apply_all or random.random() < self.config.TanhDistortion:
+        if apply_all or random.random() < self.config.TanhDistortion:  # noqa: S311
             augmented = self.apply_distortion(augmented)
 
         # Apply pitch shift
-        if apply_all or random.random() < self.config.PitchShift:
+        if apply_all or random.random() < self.config.PitchShift:  # noqa: S311
             augmented = self.apply_pitch_shift(augmented)
 
         # Apply band stop filter
-        if apply_all or random.random() < self.config.BandStopFilter:
+        if apply_all or random.random() < self.config.BandStopFilter:  # noqa: S311
             augmented = self.apply_band_stop(augmented)
 
         # Apply color noise
-        if apply_all or random.random() < self.config.AddColorNoise:
+        if apply_all or random.random() < self.config.AddColorNoise:  # noqa: S311
             augmented = self.apply_color_noise(augmented)
 
         # Apply background noise (check both old and new keys)
-        bg_noise_prob = self.config.AddBackgroundNoiseFromFile or self.config.AddBackgroundNoise
-        if apply_all or random.random() < bg_noise_prob:
+        bg_noise_prob = max(
+            float(getattr(self.config, "AddBackgroundNoiseFromFile", 0) or 0),
+            float(getattr(self.config, "AddBackgroundNoise", 0) or 0),
+        )
+        bg_noise_prob = min(max(bg_noise_prob, 0.0), 1.0)
+        if apply_all or random.random() < bg_noise_prob:  # noqa: S311
             augmented = self.apply_background_noise(augmented)
 
         # Apply RIR (check both old and new keys)
-        rir_prob = self.config.ApplyImpulseResponse or self.config.RIR
-        if apply_all or random.random() < rir_prob:
+        rir_prob = max(
+            float(getattr(self.config, "ApplyImpulseResponse", 0) or 0),
+            float(getattr(self.config, "RIR", 0) or 0),
+        )
+        rir_prob = min(max(rir_prob, 0.0), 1.0)
+        if apply_all or random.random() < rir_prob:  # noqa: S311
             augmented = self.apply_rir(augmented)
         return augmented
 
-    def apply_gain(
-        self, audio: np.ndarray, min_db: float = -3.0, max_db: float = 3.0
-    ) -> np.ndarray:
+    def apply_gain(self, audio: np.ndarray, min_db: float = -3.0, max_db: float = 3.0) -> np.ndarray:
         """Apply random gain adjustment.
 
         Args:
@@ -157,7 +169,7 @@ class AudioAugmentation:
         Returns:
             Gain-adjusted audio
         """
-        gain_db = random.uniform(min_db, max_db)
+        gain_db = random.uniform(min_db, max_db)  # noqa: S311
         gain_linear = 10 ** (gain_db / 20)
         return audio * gain_linear
 
@@ -173,9 +185,7 @@ class AudioAugmentation:
         try:
             import audiomentations
 
-            augmenter = audiomentations.SevenBandParametricEQ(
-                min_gain_db=-6.0, max_gain_db=6.0, p=1.0
-            )
+            augmenter = audiomentations.SevenBandParametricEQ(min_gain_db=-6.0, max_gain_db=6.0, p=1.0)
             return augmenter(samples=audio, sample_rate=self.sample_rate)
         except ImportError:
             logger.debug("audiomentations not available, skipping EQ")
@@ -193,13 +203,11 @@ class AudioAugmentation:
         try:
             import audiomentations
 
-            augmenter = audiomentations.TanhDistortion(
-                min_distortion=0.1, max_distortion=0.5, p=1.0
-            )
+            augmenter = audiomentations.TanhDistortion(min_distortion=0.1, max_distortion=0.5, p=1.0)
             return augmenter(samples=audio, sample_rate=self.sample_rate)
         except ImportError:
             # Simple tanh fallback
-            drive = random.uniform(0.5, 2.0)
+            drive = random.uniform(0.5, 2.0)  # noqa: S311
             return np.tanh(audio * drive)
 
     def apply_pitch_shift(self, audio: np.ndarray) -> np.ndarray:
@@ -214,10 +222,8 @@ class AudioAugmentation:
         try:
             import librosa
 
-            n_steps = random.uniform(-2, 2)
-            return librosa.effects.pitch_shift(
-                audio, sr=self.sample_rate, n_steps=n_steps
-            )
+            n_steps = random.uniform(-2, 2)  # noqa: S311
+            return librosa.effects.pitch_shift(audio, sr=self.sample_rate, n_steps=n_steps)
         except ImportError:
             logger.debug("librosa not available, skipping pitch shift")
             return audio
@@ -266,13 +272,15 @@ class AudioAugmentation:
             return augmenter(samples=audio, sample_rate=self.sample_rate)
         except ImportError:
             # Simple white noise fallback
-            snr_db = random.uniform(
-                self.config.background_min_snr_db, self.config.background_max_snr_db
-            )
+            snr_db = random.uniform(self.config.background_min_snr_db, self.config.background_max_snr_db)  # noqa: S311
             signal_power = np.mean(audio**2)
-            noise_power = signal_power / (10 ** (snr_db / 10))
-            noise = np.random.randn(len(audio)) * np.sqrt(noise_power)
-            return audio + noise
+            # Guard against silent input: use a small epsilon so noise is still audible
+            eps = 1e-10
+            safe_signal_power = max(float(signal_power), eps)
+            noise_power = safe_signal_power / (10 ** (snr_db / 10))
+            noise = np.random.randn(len(audio)).astype(np.float32)
+            noise *= np.sqrt(np.float32(noise_power))
+            return (audio + noise).astype(np.float32, copy=False)
 
     def apply_background_noise(self, audio: np.ndarray) -> np.ndarray:
         """Apply background noise from files.
@@ -287,7 +295,7 @@ class AudioAugmentation:
             return self.apply_color_noise(audio)
 
         # Select random background file
-        bg_file = random.choice(self.background_noise_files)
+        bg_file = random.choice(self.background_noise_files)  # noqa: S311
 
         try:
             from src.data.ingestion import load_audio_wave
@@ -303,13 +311,11 @@ class AudioAugmentation:
                 bg_audio = np.tile(bg_audio, repeats)[:target_len]
             else:
                 # Random crop
-                start = random.randint(0, len(bg_audio) - target_len)
+                start = random.randint(0, len(bg_audio) - target_len)  # noqa: S311
                 bg_audio = bg_audio[start : start + target_len]
 
             # Mix with SNR
-            snr_db = random.uniform(
-                self.config.background_min_snr_db, self.config.background_max_snr_db
-            )
+            snr_db = random.uniform(self.config.background_min_snr_db, self.config.background_max_snr_db)  # noqa: S311
 
             signal_power = np.mean(audio**2)
             noise_power = np.mean(bg_audio**2)
@@ -321,7 +327,7 @@ class AudioAugmentation:
 
             return audio + bg_audio
 
-        except Exception as e:
+        except (FileNotFoundError, ValueError, OSError) as e:
             logger.warning(f"Failed to apply background noise: {e}")
             return self.apply_color_noise(audio)
 
@@ -338,7 +344,7 @@ class AudioAugmentation:
             return audio
 
         # Select random RIR file
-        rir_file = random.choice(self.rir_files)
+        rir_file = random.choice(self.rir_files)  # noqa: S311
 
         try:
             from src.data.ingestion import load_audio_wave
@@ -354,8 +360,58 @@ class AudioAugmentation:
             if max_val > 0.99:
                 convolved = convolved * (0.99 / max_val)
 
-            return convolved
+            return convolved.astype(np.float32, copy=False)
 
         except Exception as e:
             logger.warning(f"Failed to apply RIR: {e}")
             return audio
+
+
+def apply_spec_augment_gpu(
+    spectrogram: np.ndarray,
+    time_mask_param: int = 40,
+    freq_mask_param: int = 27,
+    num_time_masks: int = 2,
+    num_freq_masks: int = 2,
+) -> np.ndarray:
+    """Apply SpecAugment on GPU using CuPy.
+
+    Applies time and frequency masking to a mel spectrogram on the GPU.
+    Called after feature extraction when GPU SpecAugment is enabled.
+
+    Args:
+        spectrogram: Input spectrogram array of shape (time_frames, mel_bins)
+        time_mask_param: Maximum width of time masks
+        freq_mask_param: Maximum width of frequency masks
+        num_time_masks: Number of time masks to apply
+        num_freq_masks: Number of frequency masks to apply
+
+    Returns:
+        Augmented spectrogram as numpy array
+
+    Raises:
+        ImportError: If CuPy is not installed (GPU required)
+    """
+    if not HAS_CUPY or cp is None:
+        raise ImportError("CuPy is required for GPU SpecAugment. Install: pip install cupy-cuda12x")
+
+    # Transfer to GPU
+    spec_gpu = cp.asarray(spectrogram)
+    time_frames, mel_bins = spec_gpu.shape
+
+    # Apply time masks
+    for _ in range(num_time_masks):
+        mask_width = int(cp.random.randint(0, time_mask_param + 1).item())
+        if mask_width > 0 and time_frames > mask_width:
+            start = int(cp.random.randint(0, time_frames - mask_width + 1).item())
+            spec_gpu[start : start + mask_width, :] = 0
+
+    # Apply frequency masks
+    for _ in range(num_freq_masks):
+        mask_width = int(cp.random.randint(0, freq_mask_param + 1).item())
+        if mask_width > 0 and mel_bins > mask_width:
+            start = int(cp.random.randint(0, mel_bins - mask_width + 1).item())
+            spec_gpu[:, start : start + mask_width] = 0
+
+    # Transfer back to CPU
+    return cp.asnumpy(spec_gpu)

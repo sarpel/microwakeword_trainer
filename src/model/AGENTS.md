@@ -4,10 +4,11 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 
 ## Files
 
-| File | Purpose | Key Classes |
-|------|---------|-------------|
-| architecture.py | Model definition and factory functions | MixedNet, MixConvBlock, ResidualBlock |
-| streaming.py | Streaming layers and state management | Stream, RingBuffer, Modes, StridedDrop, StridedKeep, ChannelSplit |
+| File | Lines | Purpose | Key Classes/Functions |
+|------|-------|---------|----------------------|
+| `architecture.py` | 757 | Model definition and factory | MixedNet, MixConvBlock, ResidualBlock, build_model() |
+| `streaming.py` | 831 | Streaming layers and state management | Stream, RingBuffer, Modes, StridedDrop, StridedKeep, ChannelSplit, StreamingMixedNet |
+| `__init__.py` | 9 | Package init | |
 
 ## Architecture Patterns
 
@@ -17,7 +18,35 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 
 **Streaming**: Stream wrapper manages ring buffers. Modes enum: TRAINING, NON_STREAM_INFERENCE, STREAM_INTERNAL_STATE_INFERENCE, STREAM_EXTERNAL_STATE_INFERENCE. Internal state uses tf.Variable, external uses Input layers.
 
-**Factory Functions**: build_model() parses string params (pointwise_filters, mixconv_kernel_sizes). Preset configs: hey_jarvis (30/60 filters), okay_nabu (32/64 filters).
+**Factory Functions**: `build_model()` parses string params (pointwise_filters, mixconv_kernel_sizes). Preset creator: `create_okay_nabu_model()` (32/64 filters, [[5],[7,11],[9,15],[23]] kernels).
+
+## architecture.py Symbols
+
+| Symbol | Type | Purpose |
+|--------|------|---------|
+| `MixConvBlock` | Class | Parallel depthwise convs with different kernel sizes per group |
+| `ResidualBlock` | Class | Wraps MixConvBlock with optional skip connection |
+| `MixedNet` | Class | Full model: Conv2D → N×MixConvBlock → Dense(1, sigmoid) |
+| `build_model()` | Function | Factory: parses string config → builds MixedNet |
+| `create_okay_nabu_model()` | Function | Preset: 32 filters, [[5],[7,11],[9,15],[23]] kernels |
+| `parse_model_param()` | Function | Parse comma-separated string to list |
+| `spectrogram_slices_dropped()` | Function | Calculate frames lost to striding |
+| `_split_channels()` | Function | Split tensor along channel dimension for MixConv |
+
+## streaming.py Symbols
+
+| Symbol | Type | Purpose |
+|--------|------|---------|
+| `Modes` | Enum | TRAINING, NON_STREAM_INFERENCE, STREAM_INTERNAL/EXTERNAL_STATE |
+| `RingBuffer` | Class | Circular buffer for temporal context (initialize, update) |
+| `Stream` | Class | Wraps any Keras layer with ring buffer state management |
+| `StridedDrop` | Class | Drop frames for stride alignment |
+| `StridedKeep` | Class | Keep frames for stride alignment (okay_nabu variant) |
+| `ChannelSplit` | Class | Split tensor along channels for MixConv groups |
+| `StreamingMixedNet` | Class | Full streaming inference wrapper (predict, predict_clip, reset) |
+| `frequency_pad()` | Function | Pad frequency dimension for causal convolutions |
+| `get_streaming_state_names()` | Function | List state variable names for export |
+| `create_state_initializer()` | Function | Create init subgraph for state zeroing |
 
 ## Anti-Patterns
 
@@ -26,6 +55,7 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 - Do not forget ring_buffer_size_in_time_dim calculation - causes dimension mismatches
 - Do not mix streaming modes in same model - pick internal or external, not both
 - Do not skip causal padding for small time dimensions - crashes on short inputs
+- Do not use `padding="same"` on time axis - produces different activations in streaming vs non-streaming
 
 ## Notes
 
@@ -33,6 +63,8 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 
 **ESPHome Requirements**: Input dtype int8 [1, 3, 40], output uint8 [1, 1]. Must have 2 subgraphs (main + init). Quantization required. Tensor arena size 20-30KB typical.
 
-**Tensor Shapes**: Training [batch, 98, 40], streaming [batch, 3, 40] per step. Channel dim added internally: [batch, time, 1, features].
+**Tensor Shapes**: Training shape is `(clip_duration_ms / window_step_ms, 40)` — e.g., `(100, 40)` for 1000ms clip, `(150, 40)` for 1500ms. Streaming: `[batch, 3, 40]` per step. Channel dim added internally: `[batch, time, 1, features]`.
+
+**Ring Buffer Law**: `buffer_frames = kernel_size - stride` — inviolable identity from ARCHITECTURAL_CONSTITUTION.md.
 
 **References**: microWakeWord (OHF-Voice), Google kws_streaming.

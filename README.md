@@ -54,7 +54,7 @@ pip install -r requirements.txt
 
 ### Environment 2: PyTorch (Speaker Clustering)
 
-Used for: Speaker clustering, WavLM embeddings, hard negative mining (optional)
+Used for: Speaker clustering, ECAPA-TDNN embeddings, hard negative mining (optional)
 
 ```bash
 # Adjust paths to match your installation directory
@@ -163,8 +163,86 @@ dataset/
 - Record at various distances (1-3 meters)
 - Record in different rooms/environments
 - Include variations in tone and speed
+- Include variations in tone and speed
 
-#### Step 2: Configure Your Training
+#### Step 2: Run Speaker Clustering (Optional but Recommended)
+
+To prevent train/test data leakage from the same speaker, use ML-based speaker clustering. This analyzes your audio samples and groups them by speaker voice characteristics.
+
+**Prerequisites:**
+- Requires PyTorch environment (`mww-torch`)
+- Hugging Face account (free) with accepted model terms
+- Run: `huggingface-cli login` after creating account
+
+**Analyze clusters (dry-run):**
+```bash
+mww-torch
+
+# Cluster positive dataset (default)
+mww-cluster-analyze --config standard
+
+# Cluster all datasets at once
+mww-cluster-analyze --config standard --dataset all
+
+# Cluster specific dataset
+mww-cluster-analyze --config standard --dataset negative
+
+# If you know your speaker count (~200 speakers), use --n-clusters
+# (recommended for short wake word clips where threshold-based clustering over-fragments)
+mww-cluster-analyze --config standard --n-clusters 200
+
+# Combine options
+mww-cluster-analyze --config standard --dataset all --n-clusters 200 --threshold 0.65
+
+# Generates per dataset:
+#   - cluster_output/{dataset}_namelist.json (file → speaker mapping)
+#   - cluster_output/{dataset}_cluster_report.txt (human-readable report)
+```
+
+Review the report. Check if speakers are grouped correctly. Files stay in place—this is read-only.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--config` | string | **required** | Config preset name or path to YAML file |
+| `--override` | string | None | Override config file (optional) |
+| `--dataset` | string | `positive` | Which dataset(s) to cluster: `positive`, `negative`, `hard_negative`, `all` |
+| `--n-clusters` | int | None | Explicit cluster count (overrides threshold). Use when you know approximate speaker count. |
+| `--threshold` | float | from config | Override similarity threshold |
+| `--output-dir` | string | `./cluster_output` | Directory for output files |
+| `--max-files` | int | None | Limit number of files to process (for testing) |
+
+**Organize files by speaker (after reviewing clusters):**
+```bash
+# Organize a single dataset
+mww-cluster-apply --namelist cluster_output/positive_namelist.json
+
+# Organize all datasets at once
+mww-cluster-apply --namelist-dir cluster_output
+
+# Preview first (recommended)
+mww-cluster-apply --namelist cluster_output/positive_namelist.json --dry-run
+
+# Undo if something looks wrong
+mww-cluster-apply --undo cluster_output/positive_backup_manifest.json
+```
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--namelist` | string | None | Path to a single namelist JSON from mww-cluster-analyze |
+| `--namelist-dir` | string | None | Directory containing `*_namelist.json` files (processes all) |
+| `--undo` | string | None | Path to backup manifest JSON to reverse a previous organization |
+| `--output-dir` | string | `./cluster_output` | Directory for backup manifests |
+| `--dry-run` | flag | off | Preview changes without moving files |
+
+> **Note:** `--namelist`, `--namelist-dir`, and `--undo` are mutually exclusive (pick one).
+> A backup manifest is saved automatically before any files are moved.
+
+**Skip this step if:**
+- You already organized files by speaker into subdirectories
+- You don't have multiple speakers (single-user wake word)
+- You prefer to use directory-based speaker detection
+
+#### Step 3: Configure Your Training
 
 Choose a preset configuration:
 
@@ -192,7 +270,7 @@ model:
   first_conv_filters: 30         # Model size (20-30 for smaller models)
 ```
 
-#### Step 3: Run Training
+#### Step 4: Run Training
 
 ```bash
 # Switch to TensorFlow environment
@@ -205,10 +283,8 @@ mww-train --config config/presets/standard.yaml
 mww-train --config config/presets/standard.yaml --override my_config.yaml
 
 # Resume from checkpoint (if interrupted)
-mww-train --config config/presets/standard.yaml --resume checkpoints/last.ckpt
-
-# Dry run (validate config without training)
-mww-train --config config/presets/standard.yaml --dry-run
+# (No --resume flag — restart training from scratch or use latest checkpoint)
+# Note: --resume and --dry-run are not supported flags in mww-train
 ```
 
 **During Training:**
@@ -221,17 +297,17 @@ mww-train --config config/presets/standard.yaml --dry-run
 
 ```bash
 # Export the best checkpoint
-mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/
 
 # Export with custom name
 mww-export \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
     --model-name "hey_computer"
 
 # Export without quantization (for debugging)
 mww-export \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
     --no-quantize
 ```
@@ -242,6 +318,40 @@ models/exported/
 ├── hey_computer.tflite      # The model file
 ├── manifest.json            # ESPHome manifest
 └── streaming/               # Streaming SavedModel (for debugging)
+```
+
+#### Step 4b: Auto-Tune (Optional — Improve FAH/Recall)
+
+If your model's FAH > 0.5 or recall < 0.90, use auto-tuning to improve metrics without full retraining.
+
+**What it does:** The `mww-autotune` tool adjusts probability thresholds and hyperparameters through iterative fine-tuning. It does **not** perform full model retraining — instead, it optimizes your existing checkpoint to achieve target FAH and recall metrics.
+
+**Duration:** Typically 5–10 minutes depending on dataset size.
+
+**Output:** Writes a new tuned checkpoint (does NOT overwrite the original) and saves results to the specified output directory.
+
+```bash
+# Auto-tune with default targets (FAH < 0.3, recall > 0.92)
+mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config standard
+
+# Custom targets
+mww-autotune \
+    --checkpoint checkpoints/best_weights.weights.h5 \
+    --config standard \
+    --target-fah 0.2 \
+    --target-recall 0.95
+
+mww-autotune \
+    --checkpoint checkpoints/best_weights.weights.h5 \
+    --config standard \
+    --output-dir checkpoints/tuned/
+```
+
+The tool will:
+- Iterate through hyperparameters to find optimal thresholds
+- Use hard negative mining to improve model discrimination
+- Save the tuned checkpoint to your output directory
+- Log metrics and final configuration
 ```
 
 #### Step 5: Verify ESPHome Compatibility
@@ -300,16 +410,28 @@ Train your first wake word model:
 ```bash
 # 1. Prepare dataset in dataset/positive/, dataset/negative/, etc.
 
-# 2. Switch to TF environment
+# 2. (Optional but recommended) Run speaker clustering to prevent data leakage
+mww-torch
+mww-cluster-analyze --config standard --dataset all --n-clusters 200
+# Review cluster_output/*_cluster_report.txt
+mww-cluster-apply --namelist-dir cluster_output --dry-run  # Preview first
+mww-cluster-apply --namelist-dir cluster_output            # Execute
+
+# 3. Switch to TF environment
 mww-tf
 
-# 3. Train
+# 4. Train
+# Note: You can use either the preset name (e.g., "standard") or full path (e.g., "config/presets/standard.yaml")
 mww-train --config config/presets/standard.yaml
 
-# 4. Export
-mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+# 5. (Optional) Auto-tune if FAH > 0.5 or recall < 0.90
+# Note: You can use either the preset name (e.g., "standard") or full path (e.g., "config/presets/standard.yaml")
+mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config config/presets/standard.yaml
 
-# 5. Verify
+# 6. Export
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/
+
+# 7. Verify
 python scripts/verify_esphome.py models/exported/wake_word.tflite
 ```
 
@@ -373,33 +495,34 @@ set_threading_config(inter_op_parallelism=16, intra_op_parallelism=16)
 
 ```bash
 # Basic training with standard preset
-mww-train --config config/presets/standard.yaml
+# Note: You can use either the preset name (e.g., "standard") or full path (e.g., "config/presets/standard.yaml")
+mww-train --config standard
+# Or: mww-train --config config/presets/standard.yaml
 
 # Training with custom config override
-mww-train --config config/presets/standard.yaml --override my_settings.yaml
+mww-train --config standard --override my_settings.yaml
 
 # Resume from checkpoint
-mww-train --config config/presets/standard.yaml --resume checkpoints/last.ckpt
+# (No --resume flag)
 
-# Dry run (validate config without training)
-mww-train --config config/presets/standard.yaml --dry-run
+# (No --dry-run flag in mww-train)
 ```
 
 ### Export
 
 ```bash
 # Export trained model to TFLite
-mww-export --checkpoint checkpoints/best.ckpt --output models/exported/
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/
 
 # Export with custom name
 mww-export \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
     --model-name "hey_computer"
 
 # Export without quantization (for debugging)
 mww-export \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
     --no-quantize
 ```
@@ -621,7 +744,7 @@ nvcc --version  # Should show 12.x
 
 # Reinstall cupy for your CUDA version
 pip uninstall cupy-cuda12x
-pip install cupy-cuda12x>=13.0
+pip install cupy-cuda12x>=14.0
 ```
 
 ### Model Not Detecting Wake Word
@@ -653,7 +776,7 @@ python scripts/verify_esphome.py model.tflite --verbose
 |--------------|---------|-----------|
 | Mixed precision (FP16) | 2-3x | Minimal accuracy loss |
 | Larger batch size | 1.5x | More VRAM needed |
-TS|BK|| CuPy SpecAugment | 5-10x | Requires GPU |
+| CuPy SpecAugment | 5-10x | Requires GPU |
 
 ### Model Size
 

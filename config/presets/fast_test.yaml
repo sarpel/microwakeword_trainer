@@ -52,6 +52,8 @@ training:
   minimization_metric: "ambient_false_positives_per_hour"
   target_minimization: 0.5
   maximization_metric: "average_viable_recall"
+  # Hours of negative/background audio for FAH calculation
+  ambient_duration_hours: 10.0
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -59,13 +61,12 @@ training:
 model:
   architecture: "mixednet"
 
-  # Variant A (hey_jarvis - simpler)
-  first_conv_filters: 30
+  # okay_nabu architecture (official ESPHome MWW)
+  first_conv_filters: 32
   first_conv_kernel_size: 5
   stride: 3
-  spectrogram_length: 49
-  pointwise_filters: "60,60,60,60"
-  mixconv_kernel_sizes: "[5],[9],[13],[21]"
+  pointwise_filters: "64,64,64,64"
+  mixconv_kernel_sizes: "[5],[7,11],[9,15],[23]"
   repeat_in_block: "1,1,1,1"
   residual_connection: "0,0,0,0"
 
@@ -87,11 +88,27 @@ augmentation:
   Gain: 0.0
   RIR: 0.0
 
-  # Noise mixing parameters (not used)
+  # Noise mixing parameters (not used when augmentation probs are 0)
   background_min_snr_db: -5
   background_max_snr_db: 10
   min_jitter_s: 0.195
   max_jitter_s: 0.205
+
+  # Augmentation magnitude ranges (same as standard, irrelevant when disabled)
+  eq_min_gain_db: -6.0
+  eq_max_gain_db: 6.0
+  distortion_min: 0.1
+  distortion_max: 0.5
+  pitch_shift_min_semitones: -2.0
+  pitch_shift_max_semitones: 2.0
+  band_stop_min_center_freq: 100.0
+  band_stop_max_center_freq: 5000.0
+  band_stop_min_bandwidth_fraction: 0.5
+  band_stop_max_bandwidth_fraction: 1.99
+  gain_min_db: -3.0
+  gain_max_db: 3.0
+  color_noise_min_snr_db: -5.0
+  color_noise_max_snr_db: 10.0
 
   # Background sources (not used)
   impulse_paths: ["./dataset/rirs"]
@@ -151,9 +168,38 @@ export:
   inference_input_type: "int8"
   inference_output_type: "uint8"
 
-  # Wake word detection threshold (high-confidence for production)
-  # Set to 0.70 for testing; validated threshold: 0.95-0.98 for production
+  # Testing threshold (NOT for production)
+  # For production use, set to 0.95-0.98 for high-confidence detection
   probability_cutoff: 0.70
   sliding_window_size: 5
-  tensor_arena_size: 22860
+  tensor_arena_size: 30000
   minimum_esphome_version: "2024.7.0"
+
+# ─────────────────────────────────────────────────────────────────
+# PREPROCESSING (lenient for fast testing)
+# ─────────────────────────────────────────────────────────────────
+preprocessing:
+  min_duration_ms: 300.0
+  max_duration_ms: 2000.0
+  discarded_dir: "./discarded"
+  vad_aggressiveness: 1       # lenient VAD for fast test
+  vad_pad_ms: 200
+  vad_frame_ms: 30
+  split_max_chunk_ms: 2000.0
+  split_min_chunk_ms: 500.0
+  split_target_chunk_ms: 2000.0
+
+# ─────────────────────────────────────────────────────────────────
+# QUALITY SCORING THRESHOLDS (lenient - accept more for fast tests)
+# ─────────────────────────────────────────────────────────────────
+quality:
+  clip_threshold: 0.001
+  max_clip_ratio: 0.05        # more lenient for fast test
+  discard_bottom_pct: 0.0     # don't discard anything for fast test
+  min_wqi: 0.0
+  discarded_quality_dir: "./discarded/quality"
+  min_snr_db: -20.0           # very lenient SNR for fast test
+  vad_speech_threshold: 0.1
+  dnsmos_min_ovrl: 0.0
+  dnsmos_min_sig: 0.0
+  dnsmos_cache_dir: "~/.cache/dnsmos"

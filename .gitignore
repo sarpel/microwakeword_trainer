@@ -1,29 +1,177 @@
-venv
-.mypy_cache
-*.pyc
+# Python
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
 __pycache__/
-*.pyo
-*.pyd
-.DS_Store
-.env
-.env.local
-.venv
-.env*.local
-*.sh
-dataset
-*.log
-*.sqlite3
-*.db
-*.bak
-*.backup
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+.cache
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# IDEs and Editors
+.vscode/
+.vscode-insiders/
+.idea/
+*.iml
 *.swp
 *.swo
+*~
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+.spyderproject
+.spyproject
+.ropeproject/
+.history/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Environments
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+.venv
+
+# Logs
+*.log
+logs/
+*.logs
+tensorboard/
+events.out.tfevents.*
+wandb/
+mlruns/
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+
+# Backups and temporary files
+*.bak
+*.backup
 *.tmp
-*.cache
-*.egg-info
-dist
-build
-*.egg
-.ruff_cache
+*.swp
+*.swo
+*~
+.nfs*
+
+# TensorFlow / ML Model files
+*.h5
+*.hdf5
+*.pb
+*.ckpt
+*.ckpt.*
 checkpoints/
-data/
+best_weights.weights.h5
+checkpoint_step_*.weights.h5
+*.index
+*.meta
+*.data-00000-of-00001
+
+# PyTorch (if using torch venv)
+*.pth
+*.pt
+
+# TFLite models (optional - comment out if you want to track exported models)
+# models/exported/*.tflite
+
+# Data directories
+dataset/
+data/processed/
+data/raw/
+cluster_output/
+
+# Documentation
+docs/_build/
+site/
+.sphinx_cache/
+
+# System
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+
+# Package managers
+.yarn/*
+.yarn-integrity
+node_modules/
+package-lock.json
+yarn.lock
+
+# CUDA/GPU
+*.cu.o
+*.ptx
+
+# Audio files (large dataset files)
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.aiff
+
+# Keep important source dirs from dataset/data exclusions
+!src/data/
+!src/config/
+discarded
+
+dataset.tar

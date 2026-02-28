@@ -5,6 +5,8 @@ GPU-mandatory: This module requires GPU availability and will raise RuntimeError
 if GPU is not available. No CPU fallback is provided.
 """
 
+from typing import Any, cast
+
 import numpy as np
 
 # Try to import CuPy and set up GPU availability flag
@@ -13,7 +15,7 @@ try:
 
     HAS_GPU = cp.cuda.is_available()
 except ImportError:
-    cp = None  # type: ignore
+    cp = None
     HAS_GPU = False
 
 
@@ -73,7 +75,7 @@ def spec_augment_gpu(
         spec_gpu[time_mask_start : time_mask_start + time_mask_size, :] = 0
 
     # Transfer back to CPU
-    return cp.asnumpy(spec_gpu)
+    return cast("np.ndarray[Any, Any]", cp.asnumpy(spec_gpu))
 
 
 def batch_spec_augment_gpu(
@@ -145,4 +147,4 @@ def batch_spec_augment_gpu(
             batch_gpu[i, mask_start : mask_start + mask_size, :] = 0
 
     # Transfer back to CPU
-    return cp.asnumpy(batch_gpu)
+    return cast("np.ndarray[Any, Any]", cp.asnumpy(batch_gpu))

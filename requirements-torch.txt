@@ -11,27 +11,33 @@
 #
 # For the main training pipeline, use requirements.txt (TensorFlow environment).
 
-# PyTorch (CPU or CUDA version based on your system)
-torch>=2.8.0,<2.11
-torchaudio>=2.8.0,<2.11
+# PyTorch — pin to <2.11 (2.10.x is latest stable as of 2026-02)
+# Install CUDA wheels via: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+torch>=2.9,<2.11
+torchaudio>=2.9,<2.11
 
 # Speaker Recognition & Embeddings
-speechbrain>=1.0.0
-transformers>=4.40.0
+speechbrain>=1.0.3
+
+# NLP/embedding utilities (5.x is latest; 4.x is still usable but EOL-adjacent)
+transformers>=5.0
 
 # Clustering
-scikit-learn>=1.4.0
+scikit-learn>=1.5
 
 # Audio/Data (same as TF env)
-numpy>=1.26
-scipy
-pyyaml
-datasets>=2.14
-audio_metadata
+numpy>=1.26,<2.0
+scipy>=1.13
+pyyaml>=6.0
+
+# HuggingFace datasets (4.x major release)
+datasets>=4.0
+
+audio-metadata>=0.12
 
 # Visualization
-matplotlib
-seaborn
+matplotlib>=3.9
+seaborn>=0.13
 
 # Utilities
-tqdm
+tqdm>=4.66

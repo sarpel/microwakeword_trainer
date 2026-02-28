@@ -1,22 +1,59 @@
-"""Model analysis and validation using ai_edge_litert (formerly TF Lite)."""
+"""Model analysis and validation using TensorFlow Lite."""
 
+import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
+logger = logging.getLogger(__name__)
 import numpy as np
 import tensorflow as tf
+from tensorflow.lite.python.interpreter import Interpreter
 
 # =============================================================================
 # MODEL ARCHITECTURE ANALYSIS
 # =============================================================================
 
 
-def analyze_model_architecture(model_path: str) -> Dict[str, Any]:
-    """Analyze detailed architecture of a TFLite model using ai_edge_litert.
+def _build_interpreter_analysis(model_content: bytes) -> str:
+    """Build analysis text from Interpreter when Analyzer API is unavailable.
 
-    Uses tf.lite.experimental.Analyzer.analyze() for detailed layer analysis.
+    Generates a text format compatible with _parse_analysis_output() regex patterns
+    so the downstream parsing pipeline continues to work.
+    """
+    try:
+        interpreter = Interpreter(model_content=model_content)
+        interpreter.allocate_tensors()
+        lines: list[str] = []
+
+        for d in interpreter.get_input_details():
+            shape = ", ".join(str(s) for s in d["shape"])
+            dtype_name = d["dtype"].__name__ if hasattr(d["dtype"], "__name__") else str(d["dtype"])
+            idx = d["index"]
+            lines.append(f"T#{idx} INPUT [{shape}] {dtype_name}")
+            # Check for quantization via quantization_parameters
+            qp = d.get("quantization_parameters", {})
+            scales = qp.get("scales", None)
+            if scales is not None and len(scales) > 0:
+                lines.append("quantization: int8")
+
+        for d in interpreter.get_output_details():
+            shape = ", ".join(str(s) for s in d["shape"])
+            dtype_name = d["dtype"].__name__ if hasattr(d["dtype"], "__name__") else str(d["dtype"])
+            idx = d["index"]
+            lines.append(f"T#{idx} OUTPUT [{shape}] {dtype_name}")
+
+        return "\n".join(lines)
+    except Exception as exc:
+        logger.warning("Interpreter-based analysis fallback also failed: %s", exc)
+        return ""
+
+
+def analyze_model_architecture(model_path: str) -> dict[str, Any]:
+    """Analyze detailed architecture of a TFLite model.
+
+    Uses tf.lite.Interpreter for model analysis.
 
     Args:
         model_path: Path to the TFLite model file
@@ -37,10 +74,17 @@ def analyze_model_architecture(model_path: str) -> Dict[str, Any]:
     with open(model_path, "rb") as f:
         model_content = f.read()
 
-    analysis_text = tf.lite.experimental.Analyzer.analyze(
-        model_content=model_content,
-        gpu_compatibility=False,
-    )
+    try:
+        analysis_text = tf.lite.experimental.Analyzer.analyze(
+            model_content=model_content,
+            gpu_compatibility=False,
+        )
+    except (AttributeError, TypeError) as exc:
+        logger.warning(
+            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. " "Falling back to Interpreter-based analysis.",
+            exc,
+        )
+        analysis_text = _build_interpreter_analysis(model_content)
 
     result = _parse_analysis_output(analysis_text, model_content)
     result["analysis_text"] = analysis_text
@@ -50,9 +94,9 @@ def analyze_model_architecture(model_path: str) -> Dict[str, Any]:
     return result
 
 
-def _parse_analysis_output(analysis_text: str, model_content: bytes) -> Dict[str, Any]:
+def _parse_analysis_output(analysis_text: str, model_content: bytes) -> dict[str, Any]:
     """Parse the raw analysis output into structured data."""
-    result = {
+    result: dict[str, Any] = {
         "layer_count": 0,
         "operators": [],
         "operator_counts": {},
@@ -63,9 +107,7 @@ def _parse_analysis_output(analysis_text: str, model_content: bytes) -> Dict[str
         "total_parameters": 0,
     }
 
-    result["has_quantization"] = (
-        "quantization" in analysis_text.lower() or "int8" in analysis_text.lower()
-    )
+    result["has_quantization"] = "quantization" in analysis_text.lower() or "int8" in analysis_text.lower()
 
     subgraph_matches = re.findall(r"Subgraph#(\d+)", analysis_text)
     if subgraph_matches:
@@ -109,15 +151,15 @@ def _parse_analysis_output(analysis_text: str, model_content: bytes) -> Dict[str
 
 def validate_model_quality(
     model_path: str,
-    expected_input_shape: Optional[Tuple[int, ...]] = None,
-    expected_output_shape: Optional[Tuple[int, ...]] = None,
-    expected_input_dtype: Optional[np.dtype] = None,
-    expected_output_dtype: Optional[np.dtype] = None,
+    expected_input_shape: tuple[int, ...] | None = None,
+    expected_output_shape: tuple[int, ...] | None = None,
+    expected_input_dtype: np.dtype | type[np.integer] | None = None,
+    expected_output_dtype: np.dtype | type[np.integer] | None = None,
     stride: int = 3,
     mel_bins: int = 40,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Validate TFLite model quality and health metrics."""
-    results: Dict[str, Any] = {
+    results: dict[str, Any] = {
         "valid": True,
         "errors": [],
         "warnings": [],
@@ -139,12 +181,19 @@ def validate_model_quality(
         expected_output_dtype = np.uint8
 
     try:
-        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter = Interpreter(model_path=model_path)
         interpreter.allocate_tensors()
 
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
-        subgraphs = interpreter.get_subgraphs()
+        # Get actual subgraph count from interpreter, handle different TF versions
+        if hasattr(interpreter, "num_subgraphs"):
+            num_subgraphs = interpreter.num_subgraphs()
+        elif hasattr(interpreter, "_interpreter") and hasattr(interpreter._interpreter, "GetSubgraphCount"):
+            num_subgraphs = interpreter._interpreter.GetSubgraphCount()
+        else:
+            # Fallback - check via tensor details or another method
+            num_subgraphs = 1  # conservative default
 
         if input_details:
             inp = input_details[0]
@@ -153,21 +202,17 @@ def validate_model_quality(
 
             valid_input_shapes = [expected_input_shape, (1, 1, mel_bins)]
             if inp_shape not in valid_input_shapes:
-                results["warnings"].append(
-                    f"Unexpected input shape: {inp_shape}. Expected one of {valid_input_shapes}"
-                )
+                results["warnings"].append(f"Unexpected input shape: {inp_shape}. Expected one of {valid_input_shapes}")
 
             if inp_dtype != expected_input_dtype:
                 results["valid"] = False
-                results["errors"].append(
-                    f"Invalid input dtype: {inp_dtype}. Expected {expected_input_dtype}"
-                )
+                results["errors"].append(f"Invalid input dtype: {inp_dtype}. Expected {expected_input_dtype}")
             else:
                 results["info"]["input_dtype_correct"] = True
 
             if "quantization_parameters" in inp:
                 qp = inp["quantization_parameters"]
-                if qp.get("scales") and qp.get("zero_points"):
+                if qp.get("scales") is not None and qp.get("zero_points") is not None and len(qp["scales"]) > 0 and len(qp["zero_points"]) > 0:
                     results["info"]["input_quantized"] = True
                     results["info"]["input_scale"] = float(qp["scales"][0])
                     results["info"]["input_zero_point"] = int(qp["zero_points"][0])
@@ -178,32 +223,26 @@ def validate_model_quality(
             out_dtype = out["dtype"]
 
             if out_shape != expected_output_shape:
-                results["warnings"].append(
-                    f"Unexpected output shape: {out_shape}. Expected {expected_output_shape}"
-                )
+                results["warnings"].append(f"Unexpected output shape: {out_shape}. Expected {expected_output_shape}")
 
             if out_dtype != expected_output_dtype:
                 results["valid"] = False
-                results["errors"].append(
-                    f"Invalid output dtype: {out_dtype}. Expected {expected_output_dtype} "
-                    "(CRITICAL for ESPHome compatibility)"
-                )
+                results["errors"].append(f"Invalid output dtype: {out_dtype}. Expected {expected_output_dtype} " "(CRITICAL for ESPHome compatibility)")
             else:
                 results["info"]["output_dtype_correct"] = True
 
             if "quantization_parameters" in out:
                 qp = out["quantization_parameters"]
-                if qp.get("scales") and qp.get("zero_points"):
+                if qp.get("scales") is not None and qp.get("zero_points") is not None and len(qp["scales"]) > 0 and len(qp["zero_points"]) > 0:
                     results["info"]["output_quantized"] = True
                     results["info"]["output_scale"] = float(qp["scales"][0])
                     results["info"]["output_zero_point"] = int(qp["zero_points"][0])
 
-        if len(subgraphs) != 2:
-            results["warnings"].append(
-                f"Expected 2 subgraphs for streaming model, found {len(subgraphs)}"
-            )
+        if num_subgraphs != 2:
+            results["warnings"].append(f"Expected 2 subgraphs for streaming model, found {num_subgraphs}")
         else:
             results["info"]["subgraph_count_correct"] = True
+            results["info"]["subgraph_count"] = num_subgraphs
 
         tensor_details = interpreter.get_tensor_details()
         results["info"]["total_tensors"] = len(tensor_details)
@@ -216,9 +255,7 @@ def validate_model_quality(
         results["info"]["model_size_kb"] = round(model_size_kb, 2)
 
         if model_size_kb > 100:
-            results["warnings"].append(
-                f"Model size ({model_size_kb:.1f} KB) is larger than typical for wake word models"
-            )
+            results["warnings"].append(f"Model size ({model_size_kb:.1f} KB) is larger than typical for wake word models")
 
     except Exception as e:
         results["valid"] = False
@@ -237,17 +274,13 @@ def compare_models(
     model_path_b: str,
     stride: int = 3,
     mel_bins: int = 40,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compare two model versions to identify differences."""
     analysis_a = analyze_model_architecture(model_path_a)
     analysis_b = analyze_model_architecture(model_path_b)
 
-    validation_a = validate_model_quality(
-        model_path_a, stride=stride, mel_bins=mel_bins
-    )
-    validation_b = validate_model_quality(
-        model_path_b, stride=stride, mel_bins=mel_bins
-    )
+    validation_a = validate_model_quality(model_path_a, stride=stride, mel_bins=mel_bins)
+    validation_b = validate_model_quality(model_path_b, stride=stride, mel_bins=mel_bins)
 
     size_a = analysis_a.get("model_size_bytes", 0)
     size_b = analysis_b.get("model_size_bytes", 0)
@@ -266,12 +299,7 @@ def compare_models(
     out_a = validation_a.get("info", {}).get("output_dtype_correct", False)
     out_b = validation_b.get("info", {}).get("output_dtype_correct", False)
 
-    compatible = (
-        inp_a == inp_b
-        and out_a == out_b
-        and validation_a["valid"]
-        and validation_b["valid"]
-    )
+    compatible = inp_a == inp_b and out_a == out_b and validation_a["valid"] and validation_b["valid"]
 
     return {
         "model_a": {
@@ -317,9 +345,9 @@ def estimate_performance(
     model_path: str,
     stride: int = 3,
     mel_bins: int = 40,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Estimate performance metrics for the TFLite model."""
-    results: Dict[str, Any] = {
+    results: dict[str, Any] = {
         "model_size_kb": 0,
         "tensor_arena_estimate": 0,
         "estimated_latency_ms": 0,
@@ -337,7 +365,7 @@ def estimate_performance(
 
         analysis = analyze_model_architecture(model_path)
 
-        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter = Interpreter(model_path=model_path)
         interpreter.allocate_tensors()
         tensor_details = interpreter.get_tensor_details()
 
@@ -386,29 +414,19 @@ def estimate_performance(
         recommendations = []
 
         if model_size_bytes > 50 * 1024:
-            recommendations.append(
-                "Consider reducing model complexity for smaller footprint"
-            )
+            recommendations.append("Consider reducing model complexity for smaller footprint")
 
         if not analysis.get("has_quantization", False):
-            recommendations.append(
-                "Enable INT8 quantization to reduce size and improve latency"
-            )
+            recommendations.append("Enable INT8 quantization to reduce size and improve latency")
 
         if layer_count > 20:
-            recommendations.append(
-                "Consider reducing number of layers for faster inference"
-            )
+            recommendations.append("Consider reducing number of layers for faster inference")
 
         if estimated_latency > 50:
-            recommendations.append(
-                f"Estimated latency ({estimated_latency:.1f}ms) may be high for real-time wake word"
-            )
+            recommendations.append(f"Estimated latency ({estimated_latency:.1f}ms) may be high for real-time wake word")
 
         if tensor_arena > 30 * 1024:
-            recommendations.append(
-                f"Consider reducing tensor arena size ({tensor_arena // 1024}KB) if memory constrained"
-            )
+            recommendations.append(f"Consider reducing tensor arena size ({tensor_arena // 1024}KB) if memory constrained")
 
         if not recommendations:
             recommendations.append("Model appears well-optimized for edge deployment")
@@ -434,7 +452,7 @@ def estimate_performance(
 # =============================================================================
 
 
-def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
+def check_gpu_compatibility(model_path: str) -> dict[str, Any]:
     """Check if model is compatible with GPU delegation."""
     if not os.path.exists(model_path):
         return {"error": f"Model not found: {model_path}"}
@@ -442,10 +460,29 @@ def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
     with open(model_path, "rb") as f:
         model_content = f.read()
 
-    analysis_text = tf.lite.experimental.Analyzer.analyze(
-        model_content=model_content,
-        gpu_compatibility=True,
-    )
+    # Try to use tf.lite.experimental.Analyzer for GPU compatibility check
+    gpu_compatibility_checked = True
+    try:
+        analysis_text = tf.lite.experimental.Analyzer.analyze(
+            model_content=model_content,
+            gpu_compatibility=True,
+        )
+    except (AttributeError, TypeError) as exc:
+        logger.warning(
+            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. " "GPU compatibility cannot be determined.",
+            exc,
+        )
+        gpu_compatibility_checked = False
+        analysis_text = ""
+
+    # If we couldn't perform the GPU compatibility check, return indeterminate
+    if not gpu_compatibility_checked:
+        return {
+            "gpu_compatible": None,
+            "gpu_compatibility_checked": False,
+            "issues": ["GPU compatibility cannot be determined (tf.lite.experimental.Analyzer unavailable)"],
+            "analysis": "GPU compatibility check skipped",
+        }
 
     # Improved GPU compatibility check with positive indicators and negation handling
     # Define positive indicators (must appear without negation nearby)
@@ -471,15 +508,12 @@ def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
     # Check for positive indicators
     has_positive = False
     for pattern in positive_indicators:
-        if pattern in analysis_text:
+        if re.search(re.escape(pattern), analysis_text, re.IGNORECASE):
             # Check if there's a negation nearby (within 50 characters)
             for neg_pattern in negative_patterns:
-                import re
 
                 # Find all occurrences of the positive pattern
-                for match in re.finditer(
-                    re.escape(pattern), analysis_text, re.IGNORECASE
-                ):
+                for match in re.finditer(re.escape(pattern), analysis_text, re.IGNORECASE):
                     pos_start = match.start()
                     pos_end = match.end()
                     # Check surrounding context (before and after)
@@ -521,6 +555,7 @@ def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
 
     return {
         "gpu_compatible": gpu_compatible,
+        "gpu_compatibility_checked": True,
         "issues": issues,
         "analysis": analysis_text,
     }
@@ -531,11 +566,18 @@ def check_gpu_compatibility(model_path: str) -> Dict[str, Any]:
 # =============================================================================
 
 
-def generate_model_report(
-    model_path: str, stride: int = 3, mel_bins: int = 40
-) -> Dict[str, Any]:
+def generate_model_report(model_path: str, stride: int = 3, mel_bins: int = 40) -> dict[str, Any]:
     """Generate a comprehensive model analysis report."""
-    architecture = analyze_model_architecture(model_path)
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+
+    try:
+        architecture = analyze_model_architecture(model_path)
+    except Exception as e:
+        _log.warning("analyze_model_architecture failed for '%s': %s", model_path, e)
+        architecture = {"error": str(e), "layer_count": 0, "has_quantization": False}
+
     validation = validate_model_quality(model_path, stride=stride, mel_bins=mel_bins)
     performance = estimate_performance(model_path, stride=stride, mel_bins=mel_bins)
     gpu_check = check_gpu_compatibility(model_path)

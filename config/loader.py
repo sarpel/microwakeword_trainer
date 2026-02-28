@@ -9,12 +9,17 @@ Provides:
 - Configuration validation
 """
 
+import dataclasses
+import logging
 import os
 import re
-import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+
+import yaml
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # DATACLASS CONFIGURATION STRUCTURES
@@ -57,9 +62,7 @@ class TrainingConfig:
     # Class weights
     positive_class_weight: List[float] = field(default_factory=lambda: [1.0, 1.0])
     negative_class_weight: List[float] = field(default_factory=lambda: [20.0, 20.0])
-    hard_negative_class_weight: List[float] = field(
-        default_factory=lambda: [40.0, 40.0]
-    )  # Higher weight for false positives
+    hard_negative_class_weight: List[float] = field(default_factory=lambda: [40.0, 40.0])  # Higher weight for false positives
     # SpecAugment parameters
     time_mask_max_size: List[int] = field(default_factory=lambda: [0, 0])
     time_mask_count: List[int] = field(default_factory=lambda: [0, 0])
@@ -69,6 +72,8 @@ class TrainingConfig:
     minimization_metric: str = "ambient_false_positives_per_hour"
     target_minimization: float = 0.5
     maximization_metric: str = "average_viable_recall"
+    steps_per_epoch: int = 1000
+    ambient_duration_hours: float = 11.3
 
 
 @dataclass
@@ -92,7 +97,7 @@ class ModelConfig:
 class AugmentationConfig:
     """Audio augmentation parameters."""
 
-    # Time-domain augmentations
+    # Time-domain augmentations — probabilities
     SevenBandParametricEQ: float = 0.1
     TanhDistortion: float = 0.1
     PitchShift: float = 0.1
@@ -105,15 +110,28 @@ class AugmentationConfig:
     AddBackgroundNoiseFromFile: float = 0.0
     ApplyImpulseResponse: float = 0.0
     # Noise mixing parameters
-    background_min_snr_db: int = -5
-    background_max_snr_db: int = 10
+    background_min_snr_db: float = -5.0
+    background_max_snr_db: float = 10.0
     min_jitter_s: float = 0.195
     max_jitter_s: float = 0.205
+    # Augmentation magnitude ranges
+    eq_min_gain_db: float = -6.0
+    eq_max_gain_db: float = 6.0
+    distortion_min: float = 0.1
+    distortion_max: float = 0.5
+    pitch_shift_min_semitones: float = -2.0
+    pitch_shift_max_semitones: float = 2.0
+    band_stop_min_center_freq: float = 100.0
+    band_stop_max_center_freq: float = 5000.0
+    band_stop_min_bandwidth_fraction: float = 0.5
+    band_stop_max_bandwidth_fraction: float = 1.99
+    gain_min_db: float = -3.0
+    gain_max_db: float = 3.0
+    color_noise_min_snr_db: float = -5.0
+    color_noise_max_snr_db: float = 10.0
     # Background sources
     impulse_paths: List[str] = field(default_factory=lambda: ["mit_rirs"])
-    background_paths: List[str] = field(
-        default_factory=lambda: ["fma_16k", "audioset_16k"]
-    )
+    background_paths: List[str] = field(default_factory=lambda: ["fma_16k", "audioset_16k"])
     augmentation_duration_s: float = 3.2
 
 
@@ -141,13 +159,28 @@ class PerformanceConfig:
 
 @dataclass
 class SpeakerClusteringConfig:
-    """Speaker clustering configuration."""
+    """Speaker clustering configuration with performance optimizations."""
 
     enabled: bool = True
-    method: str = "wavlm_ecapa"
-    embedding_model: str = "microsoft/wavlm-base-plus"
+    method: str = "adaptive"  # agglomerative, hdbscan, or adaptive
+    embedding_model: str = "speechbrain/ecapa-tdnn-voxceleb"
     similarity_threshold: float = 0.72
+    n_clusters: Optional[int] = None
     leakage_audit_enabled: bool = True
+    leakage_similarity_threshold: float = 0.9
+
+    # Performance optimizations (Phase 2)
+    use_embedding_cache: bool = True
+    cache_dir: Optional[str] = None  # Custom cache directory
+    batch_size: Optional[int] = None  # None = auto-detect from GPU
+    num_io_workers: int = 8
+    use_mixed_precision: bool = True
+    use_dataloader: bool = False
+
+    # Adaptive clustering (Phase 3)
+    use_adaptive_clustering: bool = True
+    hdbscan_min_cluster_size: int = 5
+    hdbscan_min_samples: int = 3
 
 
 @dataclass
@@ -178,6 +211,53 @@ class ExportConfig:
 
 
 @dataclass
+class PreprocessingConfig:
+    """Preprocessing pipeline parameters (VAD, splitting, duration filtering)."""
+
+    # Duration filtering applied by vad_trim_audio.py
+    min_duration_ms: float = 300.0
+    max_duration_ms: float = 2000.0
+    discarded_dir: str = "./discarded"
+
+    # VAD trim parameters
+    vad_aggressiveness: int = 2  # webrtcvad aggressiveness (0-3)
+    vad_pad_ms: int = 200  # silence padding to keep around speech (ms)
+    vad_frame_ms: int = 30  # VAD frame size (must be 10, 20, or 30 ms)
+
+    # Background audio splitting (split_long_audio.py)
+    split_max_chunk_ms: float = 2000.0
+    split_min_chunk_ms: float = 500.0
+    split_target_chunk_ms: float = 2000.0
+
+
+@dataclass
+class QualityConfig:
+    """Audio quality scoring thresholds for dataset curation."""
+
+    # Clipping detection
+    clip_threshold: float = 0.001  # fraction of samples at or beyond clip level
+    max_clip_ratio: float = 0.01  # maximum allowed clipping ratio (0.0-1.0)
+
+    # Score-based filtering
+    discard_bottom_pct: float = 5.0  # discard lowest N% of files by WQI score
+    min_wqi: float = 0.0  # absolute minimum WQI threshold (0.0-1.0)
+    discarded_quality_dir: str = "./discarded/quality"
+
+    # WADA-SNR threshold
+    min_snr_db: float = -10.0  # minimum acceptable SNR in dB
+
+    # Silero VAD speech threshold (used by score_audio_quality_full.py)
+    vad_speech_threshold: float = 0.3  # minimum fraction of frames containing speech
+
+    # DNSMOS thresholds (score_audio_quality_full.py)
+    dnsmos_min_ovrl: float = 0.0  # minimum DNSMOS OVRL score (0.0-5.0)
+    dnsmos_min_sig: float = 0.0  # minimum DNSMOS SIG score (0.0-5.0)
+
+    # DNSMOS model cache directory
+    dnsmos_cache_dir: str = "~/.cache/dnsmos"
+
+
+@dataclass
 class FullConfig:
     """Complete configuration container."""
 
@@ -188,13 +268,11 @@ class FullConfig:
 
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
-    speaker_clustering: SpeakerClusteringConfig = field(
-        default_factory=SpeakerClusteringConfig
-    )
-    hard_negative_mining: HardNegativeMiningConfig = field(
-        default_factory=HardNegativeMiningConfig
-    )
+    speaker_clustering: SpeakerClusteringConfig = field(default_factory=SpeakerClusteringConfig)
+    hard_negative_mining: HardNegativeMiningConfig = field(default_factory=HardNegativeMiningConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
+    preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
+    quality: QualityConfig = field(default_factory=QualityConfig)
 
 
 # =============================================================================
@@ -227,6 +305,8 @@ class ConfigLoader:
         "speaker_clustering": SpeakerClusteringConfig,
         "hard_negative_mining": HardNegativeMiningConfig,
         "export": ExportConfig,
+        "preprocessing": PreprocessingConfig,
+        "quality": QualityConfig,
     }
 
     def __init__(self, base_dir: Optional[Path] = None):
@@ -289,10 +369,7 @@ class ConfigLoader:
             FileNotFoundError: If preset file doesn't exist
         """
         if name not in self.VALID_PRESETS:
-            raise ValueError(
-                f"Invalid preset '{name}'. "
-                f"Valid presets: {', '.join(sorted(self.VALID_PRESETS))}"
-            )
+            raise ValueError(f"Invalid preset '{name}'. " f"Valid presets: {', '.join(sorted(self.VALID_PRESETS))}")
 
         preset_path = self.presets_dir / f"{name}.yaml"
         return self.load(preset_path)
@@ -314,11 +391,7 @@ class ConfigLoader:
         result = self._deep_copy_dict(base)
 
         for key, value in override.items():
-            if (
-                key in result
-                and isinstance(result[key], dict)
-                and isinstance(value, dict)
-            ):
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 # Recursively merge nested dicts
                 result[key] = self.merge(result[key], value)
             else:
@@ -327,9 +400,7 @@ class ConfigLoader:
 
         return result
 
-    def load_and_merge(
-        self, preset_name: str, override_path: Optional[Union[str, Path]] = None
-    ) -> Dict[str, Any]:
+    def load_and_merge(self, preset_name: str, override_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
         """
         Load preset and optionally merge with override config.
 
@@ -385,20 +456,16 @@ class ConfigLoader:
             if not isinstance(tr.get("learning_rates", []), list):
                 issues.append("training.learning_rates must be a list")
             if len(tr.get("training_steps", [])) != len(tr.get("learning_rates", [])):
-                issues.append(
-                    "training.training_steps and learning_rates must have same length"
-                )
+                issues.append("training.training_steps and learning_rates must have same length")
             if tr.get("batch_size", 0) <= 0:
                 issues.append("training.batch_size must be > 0")
 
         # Validate model section
         if "model" in config:
             md = config["model"]
-            valid_architectures = ["mixednet", "dnn", "cnn", "crnn"]
+            valid_architectures = ["mixednet"]
             if md.get("architecture") not in valid_architectures:
-                issues.append(
-                    f"model.architecture must be one of: {valid_architectures}"
-                )
+                issues.append(f"model.architecture must be one of: {valid_architectures}")
 
         # Validate performance section
         if "performance" in config:
@@ -425,8 +492,13 @@ class ConfigLoader:
         for section_name, section_class in self.SECTION_CLASSES.items():
             if section_name in config:
                 section_data = config[section_name]
-
-                result[section_name] = section_class(**section_data)
+                # Filter to only fields the dataclass accepts
+                valid_fields = {f.name for f in dataclasses.fields(section_class)}
+                filtered = {k: v for k, v in section_data.items() if k in valid_fields}
+                if len(filtered) < len(section_data):
+                    unknown = set(section_data) - valid_fields
+                    logger.warning(f"Config section '{section_name}' has unknown fields " f"(ignored): {unknown}")
+                result[section_name] = section_class(**filtered)
         return FullConfig(**result)
 
     # =========================================================================
@@ -436,7 +508,7 @@ class ConfigLoader:
     def _process_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Process configuration: env vars, path resolution, defaults."""
         if not isinstance(config, dict):
-            return config
+            return config  # type: ignore[unreachable]
 
         result = {}
         for key, value in config.items():
@@ -500,10 +572,14 @@ class ConfigLoader:
 
     def _resolve_path(self, value: str) -> str:
         """
-        Resolve relative paths relative to config file location.
+        Resolve relative paths.
 
-        Resolves paths that start with ../ (parent directory), ./ (current directory),
-        or bare relative paths (not starting with / and not being absolute URLs).
+        - Paths starting with ``./`` resolve against the **current working
+          directory** (project root), because they represent data/output paths.
+        - Paths starting with ``../`` resolve against the **config file
+          directory**, because they reference sibling/parent configs.
+        - Bare relative paths with slashes (e.g. ``config/data.yaml``) resolve
+          against CWD if they look like file paths.
 
         Args:
             value: String potentially containing a path
@@ -511,22 +587,45 @@ class ConfigLoader:
         Returns:
             Resolved path string
         """
-        # Only resolve obvious path patterns
         if not isinstance(value, str):
-            return value
+            return value  # type: ignore[unreachable]
 
         # Skip URLs and absolute paths
         if value.startswith(("http://", "https://", "file://", "/")):
             return value
 
-        # Resolve relative paths against config directory
-        if self._config_dir is not None:
-            if value.startswith("../") or value.startswith("./"):
-                resolved = (self._config_dir / value).resolve()
-                return str(resolved)
-            # Handle bare relative paths (e.g., "config/data.yaml")
-            if not os.path.isabs(value) and "/" in value:
-                resolved = (self._config_dir / value).resolve()
+        # Skip HuggingFace-style model IDs (e.g. "microsoft/wavlm-base-plus", "org/model.v2")
+        # Treat as HF ID if it contains '/' and the last segment doesn't end with a known file extension
+        _file_extensions = (
+            ".json",
+            ".yaml",
+            ".yml",
+            ".py",
+            ".txt",
+            ".cfg",
+            ".ini",
+            ".toml",
+        )
+        if "/" in value and not value.split("/")[-1].endswith(_file_extensions):
+            return value
+
+        # ./paths → resolve against CWD (project root)
+        if value.startswith("./"):
+            resolved = (Path.cwd() / value).resolve()
+            return str(resolved)
+
+        # ../paths → resolve against config file directory
+        if value.startswith("../") and self._config_dir is not None:
+            resolved = (self._config_dir / value).resolve()
+            return str(resolved)
+
+        # Bare relative paths with slashes → resolve against CWD
+        if self._config_dir is not None and not os.path.isabs(value) and "/" in value:
+            parts = value.split("/")
+            has_extension = "." in parts[-1]
+            has_multiple_segments = len(parts) > 2
+            if has_extension or has_multiple_segments:
+                resolved = (Path.cwd() / value).resolve()
                 return str(resolved)
 
         return value
@@ -580,9 +679,7 @@ def load_preset(name: str) -> Dict[str, Any]:
     return get_default_loader().load_preset(name)
 
 
-def load_full_config(
-    preset_name: str = "standard", override_path: Optional[Union[str, Path]] = None
-) -> FullConfig:
+def load_full_config(preset_name: str = "standard", override_path: Optional[Union[str, Path]] = None) -> FullConfig:
     """
     Load complete configuration as dataclass.
 
