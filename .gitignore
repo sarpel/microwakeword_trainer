@@ -172,5 +172,6 @@ yarn.lock
 # Keep important source dirs from dataset/data exclusions
 !src/data/
 !src/config/
-docs/IMPLEMENTATION_PLAN.md
+discarded
 
+dataset.tar
