@@ -124,7 +124,7 @@ def batch_spec_augment_gpu(
     for _ in range(freq_mask_count):
         freq_mask_sizes = cp.random.randint(0, freq_mask_max_size + 1, size=batch_size)
         freq_mask_starts = cp.random.randint(
-            0, cp.maximum(1, num_freq_bins - freq_mask_sizes + 1)
+            0, cp.maximum(1, num_freq_bins - freq_mask_sizes + 1), size=batch_size
         )
 
         # Vectorized frequency masking across batch
@@ -137,7 +137,7 @@ def batch_spec_augment_gpu(
     for _ in range(time_mask_count):
         time_mask_sizes = cp.random.randint(0, time_mask_max_size + 1, size=batch_size)
         time_mask_starts = cp.random.randint(
-            0, cp.maximum(1, num_time_frames - time_mask_sizes + 1)
+            0, cp.maximum(1, num_time_frames - time_mask_sizes + 1), size=batch_size
         )
 
         # Vectorized time masking across batch

@@ -79,9 +79,15 @@ class TrainingConfig:
     test_split: float = 0.1
     split_seed: int = 42
     strict_content_hash_leakage_check: bool = True
+    # Optimizer and loss parameters (NEW)
+    optimizer: str = "adam"  # Optimizer type (currently only "adam" supported)
+    label_smoothing: float = 0.0  # Label smoothing for BinaryCrossentropy (0.0 = disabled)
+    gradient_clipnorm: Optional[float] = None  # Gradient clipping (None = disabled)
+    ema_decay: Optional[float] = None  # EMA decay rate (None = disabled) - REQUIRES IMPLEMENTATION
 
 
 @dataclass
+class ModelConfig:
 class ModelConfig:
     """Model architecture parameters."""
 
@@ -156,8 +162,12 @@ class PerformanceConfig:
     # TensorBoard
     tensorboard_enabled: bool = True
     tensorboard_log_dir: str = "./logs"
+    # Data pipeline (NEW)
+    prefetch_buffer: int = 2  # Buffer size for tf.data pipeline
 
 
+@dataclass
+class SpeakerClusteringConfig:
 @dataclass
 class SpeakerClusteringConfig:
     """Speaker clustering configuration with performance optimizations."""
@@ -209,6 +219,24 @@ class ExportConfig:
     sliding_window_size: int = 5
     tensor_arena_size: int = 26080
     minimum_esphome_version: str = "2024.7.0"
+    # TFLite calibration (NEW)
+    representative_dataset_size: int = 500  # Number of samples for random calibration
+    representative_dataset_real_size: int = 2000  # Number of samples for real-data calibration
+    arena_size_margin: float = 1.3  # Multiplier for tensor arena size (1.3 = 30% margin)
+class ExportConfig:
+    """Model export settings."""
+
+    wake_word: str = "Hey Katya"
+    author: str = "Your Name"
+    website: str = "https://your-repo.com"
+    trained_languages: List[str] = field(default_factory=lambda: ["en"])
+    quantize: bool = True
+    inference_input_type: str = "int8"
+    inference_output_type: str = "uint8"
+    probability_cutoff: float = 0.97
+    sliding_window_size: int = 5
+    tensor_arena_size: int = 26080
+    minimum_esphome_version: str = "2024.7.0"
 
 
 @dataclass
@@ -232,6 +260,95 @@ class PreprocessingConfig:
 
 
 @dataclass
+class QualityConfig:
+    """Audio quality scoring thresholds for dataset curation."""
+
+    # Clipping detection
+    clip_threshold: float = 0.001  # fraction of samples at or beyond clip level
+    max_clip_ratio: float = 0.01  # maximum allowed clipping ratio (0.0-1.0)
+
+    # Score-based filtering
+    discard_bottom_pct: float = 5.0  # discard lowest N% of files by WQI score
+    min_wqi: float = 0.0  # absolute minimum WQI threshold (0.0-1.0)
+    discarded_quality_dir: str = "./discarded/quality"
+
+    # WADA-SNR threshold
+    min_snr_db: float = -10.0  # minimum acceptable SNR in dB
+
+    # Silero VAD speech threshold (used by score_audio_quality_full.py)
+    vad_speech_threshold: float = 0.3  # minimum fraction of frames containing speech
+
+    # DNSMOS thresholds (score_audio_quality_full.py)
+    dnsmos_min_ovrl: float = 0.0  # minimum DNSMOS OVRL score (0.0-5.0)
+    dnsmos_min_sig: float = 0.0  # minimum DNSMOS SIG score (0.0-5.0)
+
+    # DNSMOS model cache directory
+    dnsmos_cache_dir: str = "~/.cache/dnsmos"
+
+
+@dataclass
+class EvaluationConfig:
+    """Evaluation and metrics configuration."""
+
+    default_threshold: float = 0.5  # Default probability threshold for metrics
+    n_thresholds: int = 101  # Number of thresholds for ROC/PR curves
+    max_fah: float = 10.0  # Maximum FAH for average viable recall calculation
+    warmup_runs: int = 10  # Warmup runs for latency measurement
+    n_latency_runs: int = 100  # Number of runs for latency measurement
+
+
+@dataclass
+class QualityConfig:
+    """Audio quality scoring thresholds for dataset curation."""
+
+    # Clipping detection
+    clip_threshold: float = 0.001  # fraction of samples at or beyond clip level
+    max_clip_ratio: float = 0.01  # maximum allowed clipping ratio (0.0-1.0)
+
+    # Score-based filtering
+    discard_bottom_pct: float = 5.0  # discard lowest N% of files by WQI score
+    min_wqi: float = 0.0  # absolute minimum WQI threshold (0.0-1.0)
+    discarded_quality_dir: str = "./discarded/quality"
+
+    # WADA-SNR threshold
+    min_snr_db: float = -10.0  # minimum acceptable SNR in dB
+
+    # Silero VAD speech threshold (used by score_audio_quality_full.py)
+    vad_speech_threshold: float = 0.3  # minimum fraction of frames containing speech
+
+    # DNSMOS thresholds (score_audio_quality_full.py)
+    dnsmos_min_ovrl: float = 0.0  # minimum DNSMOS OVRL score (0.0-5.0)
+    dnsmos_min_sig: float = 0.0  # minimum DNSMOS SIG score (0.0-5.0)
+
+    # DNSMOS model cache directory
+    dnsmos_cache_dir: str = "~/.cache/dnsmos"
+
+
+@dataclass
+class FullConfig:
+    """Complete configuration container."""
+
+    hardware: HardwareConfig = field(default_factory=HardwareConfig)
+    paths: PathsConfig = field(default_factory=PathsConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+
+    augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
+    performance: PerformanceConfig = field(default_factory=PerformanceConfig)
+    speaker_clustering: SpeakerClusteringConfig = field(default_factory=SpeakerClusteringConfig)
+    hard_negative_mining: HardNegativeMiningConfig = field(default_factory=HardNegativeMiningConfig)
+    export: ExportConfig = field(default_factory=ExportConfig)
+    preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
+    quality: QualityConfig = field(default_factory=QualityConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+class EvaluationConfig:
+    """Evaluation and metrics configuration."""
+
+    default_threshold: float = 0.5  # Default probability threshold for metrics
+    n_thresholds: int = 101  # Number of thresholds for ROC/PR curves
+    max_fah: float = 10.0  # Maximum FAH for average viable recall calculation
+    warmup_runs: int = 10  # Warmup runs for latency measurement
+    n_latency_runs: int = 100  # Number of runs for latency measurement
 class QualityConfig:
     """Audio quality scoring thresholds for dataset curation."""
 
@@ -301,6 +418,20 @@ class ConfigLoader:
     }
 
     # Config section mapping to dataclass
+    SECTION_CLASSES = {
+        "hardware": HardwareConfig,
+        "paths": PathsConfig,
+        "training": TrainingConfig,
+        "model": ModelConfig,
+        "augmentation": AugmentationConfig,
+        "performance": PerformanceConfig,
+        "speaker_clustering": SpeakerClusteringConfig,
+        "hard_negative_mining": HardNegativeMiningConfig,
+        "export": ExportConfig,
+        "preprocessing": PreprocessingConfig,
+        "quality": QualityConfig,
+        "evaluation": EvaluationConfig,
+    }
     SECTION_CLASSES = {
         "hardware": HardwareConfig,
         "paths": PathsConfig,
@@ -455,7 +586,13 @@ class ConfigLoader:
                 issues.append("hardware.window_size_ms must be > 0")
             if hw.get("window_step_ms", 0) <= 0:
                 issues.append("hardware.window_step_ms must be > 0")
-
+            # ARCHITECTURAL_CONSTITUTION enforcement - IMMUTABLE VALUES
+            if hw.get("sample_rate_hz") != 16000:
+                issues.append("hardware.sample_rate_hz must be 16000 (ARCHITECTURAL_CONSTITUTION)")
+            if hw.get("mel_bins") != 40:
+                issues.append("hardware.mel_bins must be 40 (ARCHITECTURAL_CONSTITUTION)")
+            if hw.get("window_step_ms") != 10:
+                issues.append("hardware.window_step_ms must be 10 (ARCHITECTURAL_CONSTITUTION)")
         # Validate training section
         if "training" in config:
             tr = config["training"]
@@ -480,8 +617,25 @@ class ConfigLoader:
             valid_architectures = ["mixednet"]
             if md.get("architecture") not in valid_architectures:
                 issues.append(f"model.architecture must be one of: {valid_architectures}")
-
+            # ARCHITECTURAL_CONSTITUTION enforcement - stride must be 3
+            if md.get("stride") != 3:
+                issues.append("model.stride must be 3 (ARCHITECTURAL_CONSTITUTION)")
         # Validate performance section
+        if "performance" in config:
+            perf = config["performance"]
+            if perf.get("num_workers", 0) < 0:
+                issues.append("performance.num_workers must be >= 0")
+            if perf.get("max_memory_gb", 0) <= 0:
+                issues.append("performance.max_memory_gb must be > 0")
+
+        # Validate export section
+        if "export" in config:
+            exp = config["export"]
+            # ARCHITECTURAL_CONSTITUTION enforcement - output type must be uint8
+            if exp.get("inference_output_type") != "uint8":
+                issues.append("export.inference_output_type must be 'uint8' (ARCHITECTURAL_CONSTITUTION)")
+
+        return issues
         if "performance" in config:
             perf = config["performance"]
             if perf.get("num_workers", 0) < 0:

@@ -9,6 +9,10 @@ Step-based training loop with:
 """
 
 import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices=false"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -820,13 +824,7 @@ def train(config: dict) -> tf.keras.Model:
 
 def main():
     """Main entry point for mww-train command."""
-    # Suppress verbose TF/XLA logs BEFORE any TF imports
-    # Must be set before importing tensorflow
-    import os
-
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-    os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
-    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+    # Env vars for TF log suppression are set at module level (top of file).
 
     import argparse
 

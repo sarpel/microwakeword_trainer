@@ -58,7 +58,13 @@ training:
   train_split: 0.8
   val_split: 0.1
   test_split: 0.1
-  split_seed: 42
+  strict_content_hash_leakage_check: true
+
+  # Optimizer and loss parameters
+  optimizer: "adam"
+  label_smoothing: 0.0  # No label smoothing for standard preset
+  gradient_clipnorm: null  # No gradient clipping
+  ema_decay: null  # No EMA (requires implementation)
   strict_content_hash_leakage_check: true
 
 # ─────────────────────────────────────────────────────────────────
@@ -148,6 +154,11 @@ performance:
   tensorboard_enabled: true
   tensorboard_log_dir: "./logs"
 
+  # Data pipeline
+  prefetch_buffer: 2
+  tensorboard_enabled: true
+  tensorboard_log_dir: "./logs"
+
 # ─────────────────────────────────────────────────────────────────
 # SPEAKER CLUSTERING (Enabled for standard quality)
 # ─────────────────────────────────────────────────────────────────
@@ -193,7 +204,15 @@ export:
 
   probability_cutoff: 0.97
   sliding_window_size: 5
-  tensor_arena_size: 30000
+  tensor_arena_size: 22860
+  minimum_esphome_version: "2024.7.0"
+
+  # TFLite calibration settings
+  representative_dataset_size: 500
+  representative_dataset_real_size: 2000
+  arena_size_margin: 1.3
+  sliding_window_size: 5
+  tensor_arena_size: 22860
   minimum_esphome_version: "2024.7.0"
 
 # ─────────────────────────────────────────────────────────────────
@@ -235,6 +254,19 @@ quality:
   vad_speech_threshold: 0.3
 
   # DNSMOS thresholds (full scorer)
+  dnsmos_min_ovrl: 0.0
+  dnsmos_min_sig: 0.0
+  dnsmos_cache_dir: "~/.cache/dnsmos"
+
+# ─────────────────────────────────────────────────────────────────
+# EVALUATION AND METRICS
+# ─────────────────────────────────────────────────────────────────
+evaluation:
+  default_threshold: 0.5      # Default probability threshold for metrics
+  n_thresholds: 101           # Number of thresholds for ROC/PR curves
+  max_fah: 10.0               # Maximum FAH for average viable recall
+  warmup_runs: 10             # Warmup runs for latency measurement
+  n_latency_runs: 100         # Number of runs for latency measurement
   dnsmos_min_ovrl: 0.0
   dnsmos_min_sig: 0.0
   dnsmos_cache_dir: "~/.cache/dnsmos"
