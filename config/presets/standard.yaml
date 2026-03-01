@@ -55,6 +55,11 @@ training:
 
   # Hours of negative/background audio for FAH calculation
   ambient_duration_hours: 10.0
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  split_seed: 42
+  strict_content_hash_leakage_check: true
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -85,9 +90,9 @@ augmentation:
   PitchShift: 0.1
   BandStopFilter: 0.1
   AddColorNoise: 0.1
-  AddBackgroundNoise: 0.75
+  AddBackgroundNoiseFromFile: 0.0
   Gain: 1.0
-  RIR: 0.5
+  ApplyImpulseResponse: 0.0
 
   # Noise mixing parameters
   background_min_snr_db: -5
@@ -124,15 +129,15 @@ performance:
   mixed_precision: true
 
   # Standard CPU resources
-  num_workers: 16
+  num_workers: 12
   num_threads_per_worker: 2
   prefetch_factor: 8
   pin_memory: true
-  max_memory_gb: 60
+  max_memory_gb: 32
 
   # Standard parallelism
-  inter_op_parallelism: 16
-  intra_op_parallelism: 16
+  inter_op_parallelism: 12
+  intra_op_parallelism: 12
 
   # Profiling enabled
   enable_profiling: true
@@ -151,7 +156,18 @@ speaker_clustering:
   method: "agglomerative"
   embedding_model: "speechbrain/spkrec-ecapa-voxceleb"
   similarity_threshold: 0.72
+  n_clusters: null
   leakage_audit_enabled: true
+  leakage_similarity_threshold: 0.9
+  use_embedding_cache: true
+  cache_dir: null
+  batch_size: null
+  num_io_workers: 8
+  use_mixed_precision: true
+  use_dataloader: false
+  use_adaptive_clustering: true
+  hdbscan_min_cluster_size: 5
+  hdbscan_min_samples: 3
 
 # ─────────────────────────────────────────────────────────────────
 # HARD NEGATIVE MINING (Enabled for standard quality)

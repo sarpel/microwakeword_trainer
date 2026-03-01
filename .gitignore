@@ -27,7 +27,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+.claude/
 # Testing
 .pytest_cache/
 .coverage

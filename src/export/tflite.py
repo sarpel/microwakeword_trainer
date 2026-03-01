@@ -11,6 +11,8 @@ import h5py
 import numpy as np
 import tensorflow as tf
 
+from src.export.verification import verify_tflite_model
+
 # =============================================================================
 # KERAS 3 CHECKPOINT LOADER
 # =============================================================================
@@ -289,18 +291,22 @@ class StreamingExportModel(tf.keras.Model):
         the model is mathematically equivalent but BN layers are bypassed in
         call() so no ReadVariableOp is emitted for BN statistics.
         """
+        if self._bn_folded:
+            raise RuntimeError("fold_batch_norms() has already been applied on this model instance")
+
         self._folded_biases = []
         for block in self.mixconv_layers:
             bn = block["bn"]
             pw = block["pointwise"]
 
-            gamma = bn.gamma.numpy()  # (out_ch,)
-            beta = bn.beta.numpy()  # (out_ch,)
             mean = bn.moving_mean.numpy()  # (out_ch,)
             variance = bn.moving_variance.numpy()  # (out_ch,)
             eps = float(bn.epsilon)
+            inv_std = 1.0 / np.sqrt(variance + eps)
+            gamma = bn.gamma.numpy() if bn.gamma is not None else np.ones_like(mean)
+            beta = bn.beta.numpy() if bn.beta is not None else np.zeros_like(mean)
 
-            scale = gamma / np.sqrt(variance + eps)  # (out_ch,)
+            scale = gamma * inv_std  # (out_ch,)
 
             # Fold scale into pointwise kernel: (1, 1, in_ch, out_ch)
             kernel = pw.kernel.numpy()
@@ -575,186 +581,7 @@ def verify_exported_model(tflite_path: str) -> dict:
     Returns:
         Dict with verification results
     """
-    resolver_type = tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
-    interpreter = tf.lite.Interpreter(model_path=tflite_path, experimental_op_resolver_type=resolver_type)
-    interpreter.allocate_tensors()
-
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    ops_details = interpreter._get_ops_details()
-
-    errors: list[str] = []
-    warnings: list[str] = []
-    checks: dict[str, bool] = {}
-    valid = True
-
-    # Check input shape [1, 3, 40] and dtype int8
-    input_shape = list(input_details[0]["shape"])
-    input_dtype = input_details[0]["dtype"]
-
-    if input_shape != [1, 3, 40]:
-        errors.append(f"Input shape {input_shape} != [1, 3, 40]")
-        valid = False
-    checks["input_shape"] = input_shape == [1, 3, 40]
-
-    if input_dtype != np.int8:
-        errors.append(f"Input dtype {input_dtype} != int8")
-        valid = False
-    checks["input_dtype"] = input_dtype == np.int8
-
-    # Check output shape [1, 1] and dtype uint8
-    output_shape = list(output_details[0]["shape"])
-    output_dtype = output_details[0]["dtype"]
-
-    if output_shape != [1, 1]:
-        errors.append(f"Output shape {output_shape} != [1, 1]")
-        valid = False
-    checks["output_shape"] = output_shape == [1, 1]
-
-    if output_dtype != np.uint8:
-        errors.append(f"Output dtype {output_dtype} != uint8")
-        valid = False
-    checks["output_dtype"] = output_dtype == np.uint8
-
-    input_quant = input_details[0].get("quantization_parameters", {})
-    output_quant = output_details[0].get("quantization_parameters", {})
-    input_scales = np.asarray(input_quant.get("scales", [])) if input_quant else np.array([])
-    input_zero_points = np.asarray(input_quant.get("zero_points", [])) if input_quant else np.array([])
-    output_scales = np.asarray(output_quant.get("scales", [])) if output_quant else np.array([])
-    output_zero_points = np.asarray(output_quant.get("zero_points", [])) if output_quant else np.array([])
-
-    if input_scales.size == 0 or input_zero_points.size == 0:
-        errors.append("Missing input quantization parameters")
-        valid = False
-        checks["input_quant_params"] = False
-    else:
-        input_scale = float(input_scales[0])
-        input_zero = int(input_zero_points[0])
-        checks["input_quant_params"] = abs(input_scale - 0.101961) <= 1e-4 and input_zero == -128
-        if not checks["input_quant_params"]:
-            errors.append(f"Input quantization mismatch: scale={input_scale}, zero_point={input_zero}")
-            valid = False
-
-    if output_scales.size == 0 or output_zero_points.size == 0:
-        errors.append("Missing output quantization parameters")
-        valid = False
-        checks["output_quant_params"] = False
-    else:
-        output_scale = float(output_scales[0])
-        output_zero = int(output_zero_points[0])
-        checks["output_quant_params"] = abs(output_scale - 0.00390625) <= 1e-6 and output_zero == 0
-        if not checks["output_quant_params"]:
-            errors.append(f"Output quantization mismatch: scale={output_scale}, zero_point={output_zero}")
-            valid = False
-
-    # Check for required ops
-    op_counts: dict[str, int] = {}
-    for op in ops_details:
-        op_name = op.get("op_name", "")
-        op_counts[op_name] = op_counts.get(op_name, 0) + 1
-
-    allowed_ops = {
-        "CALL_ONCE",
-        "VAR_HANDLE",
-        "READ_VARIABLE",
-        "STRIDED_SLICE",
-        "CONCATENATION",
-        "ASSIGN_VARIABLE",
-        "CONV_2D",
-        "DEPTHWISE_CONV_2D",
-        "MUL",
-        "ADD",
-        "MEAN",
-        "FULLY_CONNECTED",
-        "LOGISTIC",
-        "QUANTIZE",
-        "RESHAPE",
-        "SPLIT_V",
-    }
-    unpermitted_ops = sorted(op for op in op_counts if op and op not in allowed_ops)
-    if unpermitted_ops:
-        errors.append(f"Unpermitted ops detected: {unpermitted_ops}")
-        valid = False
-    checks["op_whitelist"] = len(unpermitted_ops) == 0
-
-    # Check state variable ops
-    var_handle_count = op_counts.get("VAR_HANDLE", 0)
-    read_var_count = op_counts.get("READ_VARIABLE", 0)
-    assign_var_count = op_counts.get("ASSIGN_VARIABLE", 0)
-
-    if var_handle_count != 6:
-        errors.append(f"Expected 6 VAR_HANDLE ops, got {var_handle_count}")
-        valid = False
-    checks["var_handle_count"] = var_handle_count == 6
-
-    if read_var_count != 6:
-        errors.append(f"Expected 6 READ_VARIABLE ops, got {read_var_count}")
-        valid = False
-    checks["read_var_count"] = read_var_count == 6
-
-    if assign_var_count != 6:
-        errors.append(f"Expected 6 ASSIGN_VARIABLE ops, got {assign_var_count}")
-        valid = False
-    checks["assign_var_count"] = assign_var_count == 6
-
-    expected_state_shapes = {
-        (1, 2, 1, 40),
-        (1, 4, 1, 32),
-        (1, 10, 1, 64),
-        (1, 14, 1, 64),
-        (1, 22, 1, 64),
-        (1, 5, 1, 64),
-    }
-    all_tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
-    observed_state_shapes: set[tuple[int, ...]] = set()
-    for op in ops_details:
-        if op.get("op_name") == "READ_VARIABLE":
-            out_idx = op["outputs"][0]
-            tensor = all_tensors.get(out_idx)
-            if tensor is not None:
-                observed_state_shapes.add(tuple(int(v) for v in tensor.get("shape", [])))
-    checks["state_shapes"] = observed_state_shapes == expected_state_shapes
-    if not checks["state_shapes"]:
-        errors.append(f"State tensor shape mismatch: observed={sorted(observed_state_shapes)}, expected={sorted(expected_state_shapes)}")
-        valid = False
-
-    # Check subgraph count
-    try:
-        subgraphs = interpreter.get_subgraphs()
-        subgraph_count = len(subgraphs)
-    except Exception:
-        try:
-            subgraph_count = interpreter.num_subgraphs()
-        except Exception:
-            subgraph_count = 2  # Assume correct if we can't check
-
-    if subgraph_count != 2:
-        errors.append(f"Expected 2 subgraphs, got {subgraph_count}")
-        valid = False
-    checks["subgraph_count"] = subgraph_count == 2
-
-    # Test inference
-    try:
-        test_input = np.random.randint(-128, 127, (1, 3, 40), dtype=np.int8)
-        interpreter.set_tensor(input_details[0]["index"], test_input)
-        interpreter.invoke()
-        test_output = interpreter.get_tensor(output_details[0]["index"])
-        checks["inference_works"] = True
-        test_output_range: tuple[float, float] | None = (float(test_output.min()), float(test_output.max()))
-    except Exception as e:
-        errors.append(f"Inference test failed: {e}")
-        checks["inference_works"] = False
-        valid = False
-        test_output_range = None
-    results: dict[str, object] = {
-        "valid": valid,
-        "errors": errors,
-        "warnings": warnings,
-        "checks": checks,
-    }
-    if test_output_range is not None:
-        results["test_output_range"] = test_output_range
-    return results
+    return verify_tflite_model(tflite_path)
 
 
 # =============================================================================
