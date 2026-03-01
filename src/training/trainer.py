@@ -761,6 +761,14 @@ class Trainer:
             self.model.load_weights(self.best_weights_path)
 
         if test_data_factory is not None:
+            from src.evaluation.test_evaluator import TestEvaluator
+            log_dir = self.config.get("performance", {}).get("tensorboard_log_dir", "./logs")
+            test_feature_store_path = os.path.join(
+                self.config.get("paths", {}).get("processed_dir", "./data/processed"),
+                "test"
+            )
+            evaluator = TestEvaluator(self.model, self.config, log_dir)
+            evaluator.evaluate(test_data_factory, test_feature_store_path=test_feature_store_path)
             self.logger.log_info("Running held-out test evaluation...")
             test_metrics = self.validate(test_data_factory)
             self.logger.log_validation_results(test_metrics, total_steps, total_steps)
