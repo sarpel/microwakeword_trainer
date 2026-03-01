@@ -64,7 +64,6 @@ training:
   label_smoothing: 0.0
   gradient_clipnorm: null
   ema_decay: null
-  strict_content_hash_leakage_check: true
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -156,8 +155,6 @@ performance:
 
   # Data pipeline
   prefetch_buffer: 2
-  tensorboard_enabled: true
-  tensorboard_log_dir: "./logs"
 
 # ─────────────────────────────────────────────────────────────────
 # SPEAKER CLUSTERING (Disabled for fast test)
@@ -213,9 +210,6 @@ export:
   representative_dataset_size: 500
   representative_dataset_real_size: 2000
   arena_size_margin: 1.3
-  sliding_window_size: 5
-  tensor_arena_size: 22860
-  minimum_esphome_version: "2024.7.0"
 
 # ─────────────────────────────────────────────────────────────────
 # PREPROCESSING (lenient for fast testing)
@@ -242,6 +236,7 @@ quality:
   discarded_quality_dir: "./discarded/quality"
   min_snr_db: -20.0           # very lenient SNR for fast test
   vad_speech_threshold: 0.1
+  dnsmos_min_ovrl: 0.0
   dnsmos_min_sig: 0.0
   dnsmos_cache_dir: "~/.cache/dnsmos"
 
@@ -254,5 +249,3 @@ evaluation:
   max_fah: 10.0
   warmup_runs: 10
   n_latency_runs: 100
-  dnsmos_min_sig: 0.0
-  dnsmos_cache_dir: "~/.cache/dnsmos"

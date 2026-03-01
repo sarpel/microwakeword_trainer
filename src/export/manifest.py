@@ -37,7 +37,10 @@ def generate_manifest(
 
     # Calculate tensor arena size if TFLite model exists
     if tflite_path and Path(tflite_path).exists():
-        arena_size = calculate_tensor_arena_size(tflite_path)
+        arena_size = calculate_tensor_arena_size(
+            tflite_path,
+            margin=float(export_config.get("arena_size_margin", 1.3) or 1.3),
+        )
     else:
         # Use configured value or default
         arena_size = export_config.get("tensor_arena_size", DEFAULT_TENSOR_ARENA_SIZE)
@@ -91,7 +94,7 @@ def save_manifest(manifest: dict[str, Any], output_path: str) -> str:
     return str(output_file)
 
 
-def calculate_tensor_arena_size(tflite_path: str) -> int:
+def calculate_tensor_arena_size(tflite_path: str, margin: float = 1.3) -> int:
     """Calculate required tensor arena size for TFLite model.
 
     Uses the TFLite interpreter to analyze tensor allocations and
@@ -148,8 +151,8 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
 
             total_memory += num_elements * elem_size
 
-        # Add 30% safety margin
-        arena_size = int(total_memory * 1.3)
+        # Add safety margin
+        arena_size = int(total_memory * margin)
 
         # Ensure minimum size (26KB is the minimum for okay_nabu models)
         arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)

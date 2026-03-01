@@ -397,7 +397,7 @@ class StreamingExportModel(tf.keras.Model):
 
 def create_representative_dataset(
     config: dict,
-    num_samples: int = 500,
+    num_samples: int | None = None,
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset generator for quantization.
 
@@ -410,6 +410,9 @@ def create_representative_dataset(
     """
     stride = config.get("stride", 3)
     mel_bins = config.get("mel_bins", 40)
+    export_cfg = config.get("export", {})
+    if num_samples is None:
+        num_samples = export_cfg.get("representative_dataset_size", 500)
 
     def representative_dataset_gen():
         np.random.seed(42)
@@ -430,7 +433,7 @@ def create_representative_dataset(
 def create_representative_dataset_from_data(
     config: dict,
     data_dir: str,
-    num_samples: int = 2000,
+    num_samples: int | None = None,
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset from real training features for quantization.
 
@@ -454,6 +457,9 @@ def create_representative_dataset_from_data(
 
     stride = config.get("stride", 3)
     mel_bins = config.get("mel_bins", 40)
+    export_cfg = config.get("export", {})
+    if num_samples is None:
+        num_samples = export_cfg.get("representative_dataset_real_size", 2000)
     store_path = Path(data_dir) / "train"
 
     if not store_path.exists():

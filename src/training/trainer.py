@@ -9,6 +9,7 @@ Step-based training loop with:
 """
 
 import os
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices=false"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
@@ -42,6 +43,7 @@ class EvaluationMetrics:
         self,
         cutoffs: list[float] | None = None,
         ambient_duration_hours: float = 0.0,
+        default_threshold: float = 0.5,
     ):
         """Initialize metrics tracker.
 
@@ -54,6 +56,7 @@ class EvaluationMetrics:
             cutoffs_list = cutoffs if isinstance(cutoffs, list) else list(cutoffs)
         self.cutoffs: list[float] = [float(cutoff) for cutoff in cutoffs_list]
         self.ambient_duration_hours = ambient_duration_hours
+        self.default_threshold = default_threshold
 
         # Accumulated predictions and labels
         self.all_y_true: list = []
@@ -115,7 +118,7 @@ class EvaluationMetrics:
         # Get basic metrics using default threshold 0.5
         metrics = calc.compute_all_metrics(
             ambient_duration_hours=self.ambient_duration_hours,
-            threshold=0.5,
+            threshold=self.default_threshold,
         )
 
         # Add per-threshold metrics for backward compatibility (ROC/PR curves)
@@ -221,6 +224,7 @@ class Trainer:
         self.intra_op_parallelism = performance.get("intra_op_parallelism", 16)
         self.tensorboard_enabled = performance.get("tensorboard_enabled", True)
         self.tensorboard_log_dir = performance.get("tensorboard_log_dir", "./logs")
+        self.prefetch_buffer = performance.get("prefetch_buffer", 2)
         self.tensorboard_writer: tf.summary.SummaryWriter | None = None
 
         # Rich terminal logger
@@ -233,7 +237,6 @@ class Trainer:
         mel_bins = hardware.get("mel_bins", 40)
         self.input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
 
-        # FAH calculation - prefer evaluation config, fall back to training config.
         # FAH calculation - prefer evaluation config, fall back to training config.
         # Only overwrite if evaluation block explicitly provides a non-zero value.
         self.ambient_duration_hours = training.get("ambient_duration_hours", 10.0)
@@ -265,8 +268,18 @@ class Trainer:
         self._spec_augment_warning_shown = False
 
         # Metrics trackers
-        self.train_metrics = TrainingMetrics(ambient_duration_hours=self.ambient_duration_hours)
-        self.val_metrics = TrainingMetrics(ambient_duration_hours=self.ambient_duration_hours)
+        self.evaluation_config = evaluation
+        default_threshold = float(self.evaluation_config.get("default_threshold", 0.5) or 0.5)
+        self.train_metrics = TrainingMetrics(
+            cutoffs=self._get_cutoffs(),
+            ambient_duration_hours=self.ambient_duration_hours,
+            default_threshold=default_threshold,
+        )
+        self.val_metrics = TrainingMetrics(
+            cutoffs=self._get_cutoffs(),
+            ambient_duration_hours=self.ambient_duration_hours,
+            default_threshold=default_threshold,
+        )
 
         # Hard negative mining
         hn_config = config.get("hard_negative_mining", {})
@@ -280,6 +293,16 @@ class Trainer:
                 output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
             )
             self.logger.log_info(f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}")
+
+        if training.get("ema_decay") is not None:
+            self.logger.log_warning("training.ema_decay is configured but EMA is not implemented yet; value will be ignored")
+
+    def _get_cutoffs(self) -> list[float]:
+        """Generate cutoff thresholds for evaluation metrics."""
+        n_thresholds = int(self.evaluation_config.get("n_thresholds", 101) or 101)
+        if n_thresholds < 2:
+            n_thresholds = 2
+        return np.linspace(0.0, 1.0, n_thresholds).tolist()
 
     def _get_current_phase_settings(self, step: int) -> dict[str, Any]:
         """Get training settings for current step.
@@ -342,11 +365,21 @@ class Trainer:
         phase_settings = self._get_current_phase_settings(0)
 
         # Compile model with BinaryCrossentropy loss
-        optimizer = keras.optimizers.Adam(learning_rate=phase_settings["learning_rate"])
+        training = self.config.get("training", {})
+        optimizer_name = str(training.get("optimizer", "adam")).lower()
+        if optimizer_name != "adam":
+            self.logger.log_warning(f"Unsupported optimizer '{optimizer_name}', falling back to Adam")
+        optimizer = keras.optimizers.Adam(
+            learning_rate=phase_settings["learning_rate"],
+            clipnorm=training.get("gradient_clipnorm"),
+        )
 
         model.compile(
             optimizer=optimizer,
-            loss=keras.losses.BinaryCrossentropy(from_logits=False),
+            loss=keras.losses.BinaryCrossentropy(
+                from_logits=False,
+                label_smoothing=float(training.get("label_smoothing", 0.0) or 0.0),
+            ),
             metrics=[
                 keras.metrics.BinaryAccuracy(name="accuracy"),
                 keras.metrics.Recall(name="recall"),

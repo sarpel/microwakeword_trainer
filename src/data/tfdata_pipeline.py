@@ -60,7 +60,7 @@ class OptimizedDataPipeline:
 
         # Performance settings
         self.autotune = tf.data.AUTOTUNE
-        self.prefetch_buffer = 2  # Number of batches to prefetch
+        self.prefetch_buffer = config.get("performance", {}).get("prefetch_buffer", 2)
 
     def _calculate_max_frames(self) -> int:
         """Calculate max time frames from hardware config."""
@@ -150,7 +150,7 @@ class OptimizedDataPipeline:
         )
 
         # Prefetch to GPU
-        ds = ds.prefetch(buffer_size=self.autotune)
+        ds = ds.prefetch(buffer_size=self.prefetch_buffer if self.prefetch_buffer is not None else self.autotune)
 
         return ds
 
@@ -195,7 +195,7 @@ class OptimizedDataPipeline:
         )
 
         # Prefetch
-        ds = ds.prefetch(buffer_size=self.autotune)
+        ds = ds.prefetch(buffer_size=self.prefetch_buffer if self.prefetch_buffer is not None else self.autotune)
 
         return ds
 

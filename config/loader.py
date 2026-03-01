@@ -88,15 +88,14 @@ class TrainingConfig:
 
 @dataclass
 class ModelConfig:
-class ModelConfig:
     """Model architecture parameters."""
 
     architecture: str = "mixednet"
-    first_conv_filters: int = 30
+    first_conv_filters: int = 32
     first_conv_kernel_size: int = 5
     stride: int = 3
-    pointwise_filters: str = "60,60,60,60"
-    mixconv_kernel_sizes: str = "[5],[9],[13],[21]"
+    pointwise_filters: str = "64,64,64,64"
+    mixconv_kernel_sizes: str = "[5],[7,11],[9,15],[23]"
     repeat_in_block: str = "1,1,1,1"
     residual_connection: str = "0,0,0,0"
     dropout_rate: float = 0.0
@@ -168,8 +167,6 @@ class PerformanceConfig:
 
 @dataclass
 class SpeakerClusteringConfig:
-@dataclass
-class SpeakerClusteringConfig:
     """Speaker clustering configuration with performance optimizations."""
 
     enabled: bool = True
@@ -223,20 +220,6 @@ class ExportConfig:
     representative_dataset_size: int = 500  # Number of samples for random calibration
     representative_dataset_real_size: int = 2000  # Number of samples for real-data calibration
     arena_size_margin: float = 1.3  # Multiplier for tensor arena size (1.3 = 30% margin)
-class ExportConfig:
-    """Model export settings."""
-
-    wake_word: str = "Hey Katya"
-    author: str = "Your Name"
-    website: str = "https://your-repo.com"
-    trained_languages: List[str] = field(default_factory=lambda: ["en"])
-    quantize: bool = True
-    inference_input_type: str = "int8"
-    inference_output_type: str = "uint8"
-    probability_cutoff: float = 0.97
-    sliding_window_size: int = 5
-    tensor_arena_size: int = 26080
-    minimum_esphome_version: str = "2024.7.0"
 
 
 @dataclass
@@ -298,33 +281,6 @@ class EvaluationConfig:
 
 
 @dataclass
-class QualityConfig:
-    """Audio quality scoring thresholds for dataset curation."""
-
-    # Clipping detection
-    clip_threshold: float = 0.001  # fraction of samples at or beyond clip level
-    max_clip_ratio: float = 0.01  # maximum allowed clipping ratio (0.0-1.0)
-
-    # Score-based filtering
-    discard_bottom_pct: float = 5.0  # discard lowest N% of files by WQI score
-    min_wqi: float = 0.0  # absolute minimum WQI threshold (0.0-1.0)
-    discarded_quality_dir: str = "./discarded/quality"
-
-    # WADA-SNR threshold
-    min_snr_db: float = -10.0  # minimum acceptable SNR in dB
-
-    # Silero VAD speech threshold (used by score_audio_quality_full.py)
-    vad_speech_threshold: float = 0.3  # minimum fraction of frames containing speech
-
-    # DNSMOS thresholds (score_audio_quality_full.py)
-    dnsmos_min_ovrl: float = 0.0  # minimum DNSMOS OVRL score (0.0-5.0)
-    dnsmos_min_sig: float = 0.0  # minimum DNSMOS SIG score (0.0-5.0)
-
-    # DNSMOS model cache directory
-    dnsmos_cache_dir: str = "~/.cache/dnsmos"
-
-
-@dataclass
 class FullConfig:
     """Complete configuration container."""
 
@@ -341,56 +297,6 @@ class FullConfig:
     preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
-class EvaluationConfig:
-    """Evaluation and metrics configuration."""
-
-    default_threshold: float = 0.5  # Default probability threshold for metrics
-    n_thresholds: int = 101  # Number of thresholds for ROC/PR curves
-    max_fah: float = 10.0  # Maximum FAH for average viable recall calculation
-    warmup_runs: int = 10  # Warmup runs for latency measurement
-    n_latency_runs: int = 100  # Number of runs for latency measurement
-class QualityConfig:
-    """Audio quality scoring thresholds for dataset curation."""
-
-    # Clipping detection
-    clip_threshold: float = 0.001  # fraction of samples at or beyond clip level
-    max_clip_ratio: float = 0.01  # maximum allowed clipping ratio (0.0-1.0)
-
-    # Score-based filtering
-    discard_bottom_pct: float = 5.0  # discard lowest N% of files by WQI score
-    min_wqi: float = 0.0  # absolute minimum WQI threshold (0.0-1.0)
-    discarded_quality_dir: str = "./discarded/quality"
-
-    # WADA-SNR threshold
-    min_snr_db: float = -10.0  # minimum acceptable SNR in dB
-
-    # Silero VAD speech threshold (used by score_audio_quality_full.py)
-    vad_speech_threshold: float = 0.3  # minimum fraction of frames containing speech
-
-    # DNSMOS thresholds (score_audio_quality_full.py)
-    dnsmos_min_ovrl: float = 0.0  # minimum DNSMOS OVRL score (0.0-5.0)
-    dnsmos_min_sig: float = 0.0  # minimum DNSMOS SIG score (0.0-5.0)
-
-    # DNSMOS model cache directory
-    dnsmos_cache_dir: str = "~/.cache/dnsmos"
-
-
-@dataclass
-class FullConfig:
-    """Complete configuration container."""
-
-    hardware: HardwareConfig = field(default_factory=HardwareConfig)
-    paths: PathsConfig = field(default_factory=PathsConfig)
-    training: TrainingConfig = field(default_factory=TrainingConfig)
-    model: ModelConfig = field(default_factory=ModelConfig)
-
-    augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
-    performance: PerformanceConfig = field(default_factory=PerformanceConfig)
-    speaker_clustering: SpeakerClusteringConfig = field(default_factory=SpeakerClusteringConfig)
-    hard_negative_mining: HardNegativeMiningConfig = field(default_factory=HardNegativeMiningConfig)
-    export: ExportConfig = field(default_factory=ExportConfig)
-    preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
-    quality: QualityConfig = field(default_factory=QualityConfig)
 
 
 # =============================================================================
@@ -431,19 +337,6 @@ class ConfigLoader:
         "preprocessing": PreprocessingConfig,
         "quality": QualityConfig,
         "evaluation": EvaluationConfig,
-    }
-    SECTION_CLASSES = {
-        "hardware": HardwareConfig,
-        "paths": PathsConfig,
-        "training": TrainingConfig,
-        "model": ModelConfig,
-        "augmentation": AugmentationConfig,
-        "performance": PerformanceConfig,
-        "speaker_clustering": SpeakerClusteringConfig,
-        "hard_negative_mining": HardNegativeMiningConfig,
-        "export": ExportConfig,
-        "preprocessing": PreprocessingConfig,
-        "quality": QualityConfig,
     }
 
     def __init__(self, base_dir: Optional[Path] = None):

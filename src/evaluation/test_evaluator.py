@@ -76,8 +76,11 @@ class TestEvaluator:
 
         self.log_dir = perf_config.get("tensorboard_log_dir", log_dir)
         self.processed_dir = paths_config.get("processed_dir", "./data/processed")
+        evaluation_config = config.get("evaluation", {})
         self.test_split = training_config.get("test_split", 0.1)
         self.ambient_duration_hours = training_config.get("ambient_duration_hours", 10.0)
+        self.default_threshold = float(evaluation_config.get("default_threshold", 0.5) or 0.5)
+        self.n_thresholds = int(evaluation_config.get("n_thresholds", 101) or 101)
 
     def evaluate(self, test_data_factory: Callable, test_feature_store_path: str | None = None) -> dict | None:
         """Run comprehensive test evaluation."""
@@ -99,6 +102,11 @@ class TestEvaluator:
             raw_labels = self._load_raw_labels(test_feature_store_path)
 
         results = {}
+        if y_score is None:
+            logger.warning("No predictions available; skipping metric computation")
+            self.console.print("[yellow]No predictions available; skipping metrics[/yellow]")
+            return None
+
         results["basic_metrics"] = self._compute_basic_metrics(y_true, y_score)
         results["advanced_metrics"] = self._compute_advanced_metrics(y_true, y_score, has_both_classes)
         results["confidence_intervals"] = self._compute_bootstrap_cis(y_true, y_score)
@@ -137,8 +145,12 @@ class TestEvaluator:
                     continue
 
                 predictions = self.model.predict(features, verbose=0)
-                if len(predictions.shape) > 1:
-                    predictions = predictions.flatten()
+                if predictions.ndim > 1:
+                    predictions = predictions.reshape(predictions.shape[0], -1)
+                    if predictions.shape[1] == 1:
+                        predictions = predictions[:, 0]
+                    else:
+                        predictions = np.mean(predictions, axis=1)
 
                 y_true_list.append(labels)
                 y_score_list.append(predictions)
@@ -179,7 +191,7 @@ class TestEvaluator:
 
     def _compute_basic_metrics(self, y_true: np.ndarray, y_score: np.ndarray) -> dict:
         """Compute basic classification metrics at threshold 0.5."""
-        threshold = 0.5
+        threshold = self.default_threshold
         y_pred = (y_score >= threshold).astype(np.int32)
 
         tp = int(np.sum((y_true == 1) & (y_pred == 1)))
@@ -212,7 +224,7 @@ class TestEvaluator:
         results = {}
 
         if has_both_classes:
-            curves = compute_roc_pr_curves(y_true, y_score)
+            curves = compute_roc_pr_curves(y_true, y_score, n_thresholds=self.n_thresholds)
             fpr = curves["fpr"]
             tpr = curves["tpr"]
             thresholds = curves["thresholds"]
@@ -303,10 +315,10 @@ class TestEvaluator:
         if raw_labels is None:
             return {"available": False}
 
-        threshold = 0.5
+        threshold = self.default_threshold
         y_pred = (y_score >= threshold).astype(np.int32)
 
-        results = {"available": True}
+        results: dict[str, dict[str, int | float] | bool] = {"available": True}
 
         pos_mask = raw_labels == 1
         if np.sum(pos_mask) > 0:
@@ -344,12 +356,12 @@ class TestEvaluator:
         target_fahs = [0.1, 0.5, 1.0, 2.0]
         scaled_duration = self.ambient_duration_hours * self.test_split
 
-        thresholds = np.linspace(0.01, 0.99, 100)
+        thresholds = np.linspace(0.01, 0.99, self.n_thresholds)
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
 
         operating_points = []
         for target_fah in target_fahs:
-            best_threshold = 0.5
+            best_threshold = self.default_threshold
             best_recall = 0.0
             best_fah = float("inf")
 
@@ -444,7 +456,7 @@ class TestEvaluator:
 
     def _compute_confusion_matrix(self, y_true: np.ndarray, y_score: np.ndarray) -> dict:
         """Compute confusion matrix at threshold 0.5."""
-        threshold = 0.5
+        threshold = self.default_threshold
         y_pred = (y_score >= threshold).astype(np.int32)
 
         tp = int(np.sum((y_true == 1) & (y_pred == 1)))
@@ -537,10 +549,10 @@ class TestEvaluator:
                 return [convert(i) for i in obj]
             return obj
 
-        results = convert(results)
+        converted = convert(results)
 
         with open(json_path, "w") as f:
-            json.dump(results, f, indent=2)
+            json.dump(converted, f, indent=2)
 
         logger.info(f"JSON report saved to {json_path}")
 
