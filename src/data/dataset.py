@@ -9,6 +9,7 @@ Provides:
 import logging
 import os
 import struct
+from hashlib import sha1
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -57,7 +58,7 @@ class RaggedMmap:
         self,
         base_dir: Union[str, Path],
         name: str = "ragged",
-        dtype: "np.dtype[Any]" = None,  # noqa: B008
+        dtype: Optional["np.dtype[Any]"] = None,
         create: bool = True,
     ):
         """Initialize RaggedMmap storage.
@@ -103,6 +104,8 @@ class RaggedMmap:
 
     def _load_index(self):
         """Load index files (offsets and lengths)."""
+        assert self._offsets_file is not None, "offsets_file not initialized"
+        assert self._lengths_file is not None, "lengths_file not initialized"
         if os.path.exists(self._offsets_file) and os.path.exists(self._lengths_file):
             # Read binary offset data
             with open(self._offsets_file, "rb") as f:
@@ -246,7 +249,7 @@ class RaggedMmap:
         arrays: List[np.ndarray],
         base_dir: Union[str, Path],
         name: str = "ragged",
-        dtype: "np.dtype[Any]" = None,  # noqa: B008
+        dtype: Optional["np.dtype[Any]"] = None,
     ) -> "RaggedMmap":
         """Create RaggedMmap from list of arrays.
 
@@ -378,7 +381,7 @@ class FeatureStore:
         if not features:
             raise ValueError("features must be non-empty")
         if len(features) != len(labels):
-            raise ValueError(f"features and labels must have the same length, " f"got {len(features)} vs {len(labels)}")
+            raise ValueError(f"features and labels must have the same length, got {len(features)} vs {len(labels)}")
 
         if self.features is None:
             # Initialize with first sample to get feature dim
@@ -423,7 +426,7 @@ class FeatureStore:
         self.labels = RaggedMmap(
             self.base_dir,
             self.config.labels_name,
-            np.int32,
+            np.dtype(np.int32),
             create=False,
         )
         self.labels.open("r")
@@ -477,7 +480,7 @@ class WakeWordDataset:
             self.data_path = Path(paths_cfg.get("processed_dir", "./data/processed"))
             self.batch_size = training_cfg.get("batch_size", batch_size)
             self.feature_dim = hardware_cfg.get("mel_bins", feature_dim)
-            self.split = split
+            self.split = self._normalize_split_name(split)
             self._is_built = False
 
             # Derive max_time_frames from hardware config
@@ -488,7 +491,7 @@ class WakeWordDataset:
             # Legacy initialization
             # Legacy initialization
             self.data_path = Path(data_path) if data_path else Path("./data/processed")
-            self.split = split
+            self.split = self._normalize_split_name(split)
             self.batch_size = batch_size
             self.feature_dim = feature_dim
             self._is_built = False
@@ -498,8 +501,18 @@ class WakeWordDataset:
         self.feature_store: Optional[FeatureStore] = None
         self._load_store()
 
+    @staticmethod
+    def _normalize_split_name(split: str) -> str:
+        normalized = split.strip().lower()
+        if normalized in {"validation", "val"}:
+            return "val"
+        if normalized in {"train", "test"}:
+            return normalized
+        raise ValueError(f"Unsupported split '{split}'. Expected one of: train, val, validation, test")
+
     def _load_store(self):
         """Load feature store if available."""
+        self.split = self._normalize_split_name(self.split)
         store_path = self.data_path / self.split
         if store_path.exists():
             self.feature_store = FeatureStore(store_path)
@@ -528,6 +541,106 @@ class WakeWordDataset:
             raise RuntimeError("Feature store not available")
 
         return self.feature_store.get(idx)
+
+    @staticmethod
+    def _label_to_int(label: Any) -> int:
+        from src.data.ingestion import Label
+
+        if label == Label.POSITIVE:
+            return 1
+        if label == Label.HARD_NEGATIVE:
+            return 2
+        return 0
+
+    @staticmethod
+    def _resolved_sample_paths(samples: List[Any]) -> set[str]:
+        return {str(Path(sample.path).resolve()) for sample in samples}
+
+    @staticmethod
+    def _normalized_speaker_ids(samples: List[Any]) -> set[str]:
+        speaker_ids: set[str] = set()
+        for sample in samples:
+            sid = sample.speaker_id
+            if sid is None:
+                continue
+            sid_norm = str(sid).strip().lower()
+            if not sid_norm or sid_norm in {"unknown", "none", "null"}:
+                continue
+            speaker_ids.add(sid_norm)
+        return speaker_ids
+
+    def _assert_split_integrity(self, train_samples: List[Any], val_samples: List[Any], test_samples: List[Any], cfg: Dict[str, Any]) -> None:
+        split_to_samples = {
+            "train": train_samples,
+            "val": val_samples,
+            "test": test_samples,
+        }
+
+        split_paths = {name: self._resolved_sample_paths(samples) for name, samples in split_to_samples.items()}
+
+        for split_name, paths in split_paths.items():
+            if len(paths) != len(split_to_samples[split_name]):
+                raise RuntimeError(f"Duplicate clip paths detected within split '{split_name}'. This can cause silent leakage and inflated metrics.")
+
+        for left_name, right_name in (("train", "val"), ("train", "test"), ("val", "test")):
+            overlap = split_paths[left_name].intersection(split_paths[right_name])
+            if overlap:
+                examples = sorted(overlap)[:5]
+                raise RuntimeError(f"Data leakage detected: {len(overlap)} overlapping file(s) between {left_name} and {right_name}. Examples: {examples}")
+
+        speaker_cfg = cfg.get("speaker_clustering", {})
+        if speaker_cfg.get("leakage_audit_enabled", False):
+            split_speakers = {name: self._normalized_speaker_ids(samples) for name, samples in split_to_samples.items()}
+            for left_name, right_name in (("train", "val"), ("train", "test"), ("val", "test")):
+                overlap = split_speakers[left_name].intersection(split_speakers[right_name])
+                if overlap:
+                    examples = sorted(overlap)[:10]
+                    raise RuntimeError(f"Speaker leakage detected: {len(overlap)} overlapping speaker_id(s) between {left_name} and {right_name}. Examples: {examples}")
+
+        check_hashes = cfg.get("training", {}).get("strict_content_hash_leakage_check", True)
+        if check_hashes:
+            split_hashes = {
+                "train": self._sample_content_hashes(train_samples),
+                "val": self._sample_content_hashes(val_samples),
+                "test": self._sample_content_hashes(test_samples),
+            }
+            for left_name, right_name in (("train", "val"), ("train", "test"), ("val", "test")):
+                overlap = split_hashes[left_name].intersection(split_hashes[right_name])
+                if overlap:
+                    raise RuntimeError(f"Content leakage detected: {len(overlap)} duplicate-audio hash(es) between {left_name} and {right_name}.")
+
+    @staticmethod
+    def _file_content_hash(file_path: Path) -> str:
+        digest = sha1()
+        with file_path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _sample_content_hashes(self, samples: List[Any]) -> set[str]:
+        return {self._file_content_hash(Path(sample.path)) for sample in samples}
+
+    def _extract_features_to_store(self, samples: List[Any], store_dir: Path, frontend: Any, sample_rate: int, split_name: str, mel_bins: int) -> int:
+        logger.info(f"Extracting features for {len(samples)} {split_name} clips...")
+        store = FeatureStore(store_dir)
+        store.initialize(len(samples), feature_dim=mel_bins)
+
+        for sample in samples:
+            try:
+                audio = load_audio_wave(sample.path, target_sr=sample_rate)
+                features = frontend.compute_mel_spectrogram(audio)
+                store.add(features, self._label_to_int(sample.label))
+            except Exception as e:
+                logger.warning(f"Failed to process {sample.path}: {e}")
+                continue
+
+        count = len(store)
+        store.close()
+        logger.info(f"Processed {count} {split_name} samples")
+        return count
 
     def build(self, config: Optional[Dict[str, Any]] = None) -> "WakeWordDataset":
         """Build the dataset from raw audio files.
@@ -560,7 +673,7 @@ class WakeWordDataset:
 
         # Create feature config
         from src.data.features import FeatureConfig, MicroFrontend
-        from src.data.ingestion import Clips, ClipsLoaderConfig, Label, Split
+        from src.data.ingestion import Clips, ClipsLoaderConfig, Split
 
         feature_config = FeatureConfig(
             sample_rate=sample_rate,
@@ -578,86 +691,45 @@ class WakeWordDataset:
         # Load clips using ClipsLoaderConfig
         logger.info("Loading audio clips from dataset directories...")
 
+        training_cfg = cfg.get("training", {})
+        train_split = float(training_cfg.get("train_split", 0.8))
+        val_split = float(training_cfg.get("val_split", 0.1))
+        test_split = float(training_cfg.get("test_split", 0.1))
+        split_seed = int(training_cfg.get("split_seed", 42))
+        split_sum = train_split + val_split + test_split
+        if abs(split_sum - 1.0) > 1e-6:
+            raise ValueError(f"training split ratios must sum to 1.0, got {split_sum:.6f}")
+
         clips_config = ClipsLoaderConfig(
             positive_dir=Path(positive_dir) if positive_dir else None,
             negative_dir=Path(negative_dir) if negative_dir else None,
             hard_negative_dir=Path(hard_negative_dir) if hard_negative_dir else None,
-            train_split=0.8,
-            val_split=0.1,
-            test_split=0.1,
-            seed=42,
+            train_split=train_split,
+            val_split=val_split,
+            test_split=test_split,
+            seed=split_seed,
         )
 
         clips = Clips(config=clips_config)
 
-        # Get train and val samples
         train_samples = clips.get_split(Split.TRAIN)
         val_samples = clips.get_split(Split.VAL)
+        test_samples = clips.get_split(Split.TEST)
 
-        logger.info(f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples")
+        self._assert_split_integrity(train_samples, val_samples, test_samples, cfg)
+
+        logger.info(f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples, {len(test_samples)} test samples")
 
         if not train_samples:
             raise RuntimeError("No training samples found. Please check your dataset directories.")
+        if not test_samples:
+            raise RuntimeError("No held-out test samples found. A strict test split is required for leakage-safe evaluation.")
 
-        # Extract features and store for training
-        logger.info(f"Extracting features for {len(train_samples)} training clips...")
-        train_store = FeatureStore(dirs["train"])
-        train_store.initialize(len(train_samples), feature_dim=mel_bins)
-
-        for sample in train_samples:
-            try:
-                # Load audio
-                audio = load_audio_wave(sample.path, target_sr=sample_rate)
-
-                # Extract features
-                features = frontend.compute_mel_spectrogram(audio)
-
-                # Determine label: 1 for positive, 2 for hard_negative, 0 for regular negative
-                # Determine label: 1 for positive, 2 for hard_negative, 0 for regular negative
-                if sample.label == Label.POSITIVE:
-                    label = 1
-                elif sample.label == Label.HARD_NEGATIVE:
-                    label = 2
-                else:
-                    label = 0
-                # Add to store
-                train_store.add(features, label)
-
-            except Exception as e:
-                logger.warning(f"Failed to process {sample.path}: {e}")
-                continue
-
-        # Capture sample count before closing the store
-        sample_count = len(train_store)
-        train_store.close()
-        logger.info(f"Processed {sample_count} training samples")
-
-        # Extract features for validation
+        self._extract_features_to_store(train_samples, dirs["train"], frontend, sample_rate, "training", mel_bins)
         if val_samples:
-            logger.info(f"Extracting features for {len(val_samples)} validation clips...")
-            val_store = FeatureStore(dirs["val"])
-            val_store.initialize(len(val_samples), feature_dim=mel_bins)
-
-            for sample in val_samples:
-                try:
-                    audio = load_audio_wave(sample.path, target_sr=sample_rate)
-
-                    features = frontend.compute_mel_spectrogram(audio)
-                    if sample.label == Label.POSITIVE:
-                        label = 1
-                    elif sample.label == Label.HARD_NEGATIVE:
-                        label = 2
-                    else:
-                        label = 0
-                    val_store.add(features, label)
-
-                except Exception as e:
-                    logger.warning(f"Failed to process {sample.path}: {e}")
-                    continue
-
-            val_count = len(val_store)
-            val_store.close()
-            logger.info(f"Processed {val_count} validation samples")
+            self._extract_features_to_store(val_samples, dirs["val"], frontend, sample_rate, "validation", mel_bins)
+        if test_samples:
+            self._extract_features_to_store(test_samples, dirs["test"], frontend, sample_rate, "test", mel_bins)
 
         # Reload the train store for training
         self._load_store()
@@ -685,45 +757,89 @@ class WakeWordDataset:
             return np.vstack([features, padding])
         return features
 
+    def _iter_split_batches(
+        self,
+        split: str,
+        max_time_frames: int,
+        *,
+        infinite: bool,
+        shuffle: bool,
+        include_hard_negative_flag: bool,
+    ):
+        split_name = self._normalize_split_name(split)
+        store_path = self.data_path / split_name
+        if not store_path.exists():
+            logger.warning(f"Split store not found at {store_path}")
+            return
+
+        store = FeatureStore(store_path)
+        try:
+            store.open()
+            num_samples = len(store)
+            if num_samples == 0:
+                return
+
+            indices = list(range(num_samples))
+            rng = np.random.RandomState(42)
+
+            while True:
+                epoch_indices = rng.permutation(indices).tolist() if shuffle else indices
+                batch_features = []
+                batch_labels = []
+                batch_is_hard_neg = []
+
+                for idx in epoch_indices:
+                    try:
+                        feature, label = store.get(idx)
+                    except (RuntimeError, IndexError):
+                        continue
+
+                    fixed_feature = self._pad_or_truncate(feature, max_time_frames)
+                    batch_features.append(fixed_feature)
+                    batch_labels.append(label & 1)
+                    if include_hard_negative_flag:
+                        batch_is_hard_neg.append(label == 2)
+
+                    if len(batch_features) >= self.batch_size:
+                        fingerprints = np.array(batch_features, dtype=np.float32)
+                        ground_truth = np.array(batch_labels, dtype=np.int32)
+                        sample_weights = np.ones(len(batch_labels), dtype=np.float32)
+                        if include_hard_negative_flag:
+                            is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
+                            yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
+                        else:
+                            yield (fingerprints, ground_truth, sample_weights)
+                        batch_features = []
+                        batch_labels = []
+                        batch_is_hard_neg = []
+
+                if batch_features:
+                    fingerprints = np.array(batch_features, dtype=np.float32)
+                    ground_truth = np.array(batch_labels, dtype=np.int32)
+                    sample_weights = np.ones(len(batch_labels), dtype=np.float32)
+                    if include_hard_negative_flag:
+                        is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
+                        yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
+                    else:
+                        yield (fingerprints, ground_truth, sample_weights)
+
+                if not infinite:
+                    break
+        finally:
+            store.close()
+
     def train_generator_factory(self, max_time_frames: Optional[int] = None):
         if max_time_frames is None:
             max_time_frames = self.max_time_frames
 
         def factory():
-            num_samples = len(self)
-            if num_samples == 0:
-                return iter([])
-            indices = list(range(num_samples))
-            rng = np.random.RandomState(42)
-            while True:
-                epoch_indices = rng.permutation(indices).tolist()
-                batch_features = []
-                batch_labels = []
-                batch_is_hard_neg = []
-                for idx in epoch_indices:
-                    try:
-                        feature, label = self[idx]
-                    except (RuntimeError, IndexError):
-                        continue
-                    fixed_feature = self._pad_or_truncate(feature, max_time_frames)
-                    batch_features.append(fixed_feature)
-                    batch_labels.append(label & 1)  # ground_truth: 1=positive, 0=negative/hard_neg
-                    batch_is_hard_neg.append(label == 2)
-                    if len(batch_features) >= self.batch_size:
-                        fingerprints = np.array(batch_features, dtype=np.float32)
-                        ground_truth = np.array(batch_labels, dtype=np.int32)
-                        sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                        is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
-                        yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
-                        batch_features = []
-                        batch_labels = []
-                        batch_is_hard_neg = []
-                if batch_features:
-                    fingerprints = np.array(batch_features, dtype=np.float32)
-                    ground_truth = np.array(batch_labels, dtype=np.int32)
-                    sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                    is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
-                    yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
+            yield from self._iter_split_batches(
+                split="train",
+                max_time_frames=max_time_frames,
+                infinite=True,
+                shuffle=True,
+                include_hard_negative_flag=True,
+            )
 
         return factory
 
@@ -732,32 +848,43 @@ class WakeWordDataset:
             max_time_frames = self.max_time_frames
 
         def factory():
-            num_samples = len(self)
-            if num_samples == 0:
-                return iter([])
-            indices = list(range(num_samples))
-            batch_features = []
-            batch_labels = []
-            for idx in indices:
-                try:
-                    feature, label = self[idx]
-                except (RuntimeError, IndexError):
-                    continue
-                fixed_feature = self._pad_or_truncate(feature, max_time_frames)
-                batch_features.append(fixed_feature)
-                batch_labels.append(label & 1)  # ground_truth: binary (hard_neg maps to 0)
-                if len(batch_features) >= self.batch_size:
-                    fingerprints = np.array(batch_features, dtype=np.float32)
-                    ground_truth = np.array(batch_labels, dtype=np.int32)
-                    sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                    yield (fingerprints, ground_truth, sample_weights)
-                    batch_features = []
-                    batch_labels = []
-            if batch_features:
-                fingerprints = np.array(batch_features, dtype=np.float32)
-                ground_truth = np.array(batch_labels, dtype=np.int32)
-                sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                yield (fingerprints, ground_truth, sample_weights)
+            yield from self._iter_split_batches(
+                split="val",
+                max_time_frames=max_time_frames,
+                infinite=False,
+                shuffle=False,
+                include_hard_negative_flag=False,
+            )
+
+        return factory
+
+    def test_generator_factory(self, max_time_frames: Optional[int] = None):
+        if max_time_frames is None:
+            max_time_frames = self.max_time_frames
+
+        def factory():
+            yield from self._iter_split_batches(
+                split="test",
+                max_time_frames=max_time_frames,
+                infinite=False,
+                shuffle=False,
+                include_hard_negative_flag=False,
+            )
+
+        return factory
+
+    def train_mining_generator_factory(self, max_time_frames: Optional[int] = None):
+        if max_time_frames is None:
+            max_time_frames = self.max_time_frames
+
+        def factory():
+            yield from self._iter_split_batches(
+                split="train",
+                max_time_frames=max_time_frames,
+                infinite=False,
+                shuffle=False,
+                include_hard_negative_flag=False,
+            )
 
         return factory
 

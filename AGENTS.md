@@ -9,6 +9,15 @@
 > ⛔ **VIOLATION = NUCLEAR WASTE**: Code that breaks ARCHITECTURAL_CONSTITUTION rules produces models that are physically incompatible with ESPHome runtime. The device will silently fail. There is no error message. There is no recovery.
 
 ---
+## MANUAL IMPORTANT RULES FROM USER
+
+**Rule-1:** This is a personal project. There will be no backward compatibility edits, I never use deprecated variable names, so do not add backward compatible multiple names for the same variable/config.
+
+**Rule-2:** Check the file you are gonna edit if last time you read that file more than 5 seconds ago. I edit files in the background with you, so you cant know if the file is the same what is left of it in your memory.
+
+**Rule-3:** Do not overthink when you are planning an edit, it takes more time and money than if something is not right and you fix it later. Don't take my time!
+
+**Rule-4:** When in need to find a suitable value for a configuration, check @docs/my_environment.md file for trained model's working conditions, it may give you hints.
 
 ## Overview
 

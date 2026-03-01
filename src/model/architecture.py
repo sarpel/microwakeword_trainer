@@ -175,9 +175,14 @@ class MixConvBlock(tf.keras.layers.Layer):
                     (ks, 1),
                     strides=1,
                     padding="valid",
+                    use_bias=False,
                     name=f"depthwise_convs_depthwise_conv2d{suffix}",
                 )
             )
+
+        for conv in self.depthwise_convs:
+            if conv.use_bias:
+                raise ValueError("MixConvBlock requires bias-free DepthwiseConv2D layers")
 
         super().build(input_shape)
 

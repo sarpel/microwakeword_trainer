@@ -11,6 +11,8 @@ import h5py
 import numpy as np
 import tensorflow as tf
 
+from src.export.verification import verify_tflite_model
+
 # =============================================================================
 # KERAS 3 CHECKPOINT LOADER
 # =============================================================================
@@ -19,8 +21,13 @@ import tensorflow as tf
 def load_weights_from_keras3_checkpoint(model: tf.keras.Model, checkpoint_path: str) -> int:
     """Load weights from Keras 3 format .weights.h5 checkpoint.
 
-    Keras 3 stores weights differently than Keras 2. This function maps
-    the hierarchical structure to the model's weight names.
+    In Keras 3, weight.name is the bare variable name (e.g. "kernel", "gamma") with
+    no layer-path prefix.  We therefore iterate over layers directly, using
+    layer.name as the flat identifier and weight.name as the variable type.
+
+    The checkpoint uses a hierarchical HDF5 layout (e.g. "initial_conv/cell/vars/0").
+    StreamingExportModel layer names are the same paths with '/' replaced by '_'
+    (e.g. "initial_conv_cell"), so a simple replace-based lookup resolves them.
 
     Args:
         model: The model to load weights into
@@ -29,61 +36,70 @@ def load_weights_from_keras3_checkpoint(model: tf.keras.Model, checkpoint_path: 
     Returns:
         Number of weights successfully loaded
     """
+    # Map Keras 3 weight names to checkpoint var index
+    _VAR_IDX = {
+        "kernel": "0",  # Conv2D, DepthwiseConv2D, Dense kernel
+        "bias": "1",  # Dense bias
+        "gamma": "0",  # BatchNorm gamma
+        "beta": "1",  # BatchNorm beta
+        "moving_mean": "2",  # BatchNorm moving_mean
+        "moving_variance": "3",  # BatchNorm moving_variance
+    }
+
     print(f"Loading weights from: {checkpoint_path}")
 
     loaded_count = 0
     with h5py.File(checkpoint_path, "r") as f:
-        for weight in model.weights:
-            weight_name = weight.name
-            weight_shape = tuple(weight.shape.as_list())
+        # Build lookup map: (flat_layer_name, var_idx_str) -> hdf5_dataset_path.
+        # Checkpoint hierarchical paths (e.g. "initial_conv/cell/vars/0") are
+        # converted to flat names by replacing '/' with '_'.
+        ckpt_map: dict = {}
 
-            # Remove :0 suffix
-            base_name = weight_name.replace(":0", "")
+        def _collect_datasets(name: str, obj) -> None:
+            if isinstance(obj, h5py.Dataset) and "/vars/" in name:
+                parts = name.rsplit("/vars/", 1)
+                ckpt_map[(parts[0].replace("/", "_"), parts[1])] = name
 
-            # Remove streaming_model/ prefix if present
-            if base_name.startswith("streaming_model/"):
-                base_name = base_name[len("streaming_model/") :]
+        f.visititems(_collect_datasets)
 
-            # Determine variable index based on weight type
-            if "kernel" in base_name or "depthwise_kernel" in base_name:
-                var_idx = "0"
-            elif "bias" in base_name:
-                var_idx = "1"
-            elif "gamma" in base_name:
-                var_idx = "0"
-            elif "beta" in base_name:
-                var_idx = "1"
-            elif "moving_mean" in base_name:
-                var_idx = "2"
-            elif "moving_variance" in base_name:
-                var_idx = "3"
-            else:
+        consumed_keys: set[tuple[str, str]] = set()
+        model_layer_names: set[str] = set()
+
+        # Iterate over layers (not model.weights) so we have layer.name available.
+        for layer in model._flatten_layers(include_self=False):
+            if not layer.weights:
                 continue
+            flat_name = layer.name
+            model_layer_names.add(flat_name)
+            for weight in layer.weights:
+                var_idx = _VAR_IDX.get(weight.name)
+                if var_idx is None:
+                    continue  # state/ring-buffer variables — not in checkpoint
 
-            # Extract layer path from weight name
-            layer_path = None
-            for suffix in ["/kernel", "/depthwise_kernel", "/bias", "/gamma", "/beta", "/moving_mean", "/moving_variance"]:
-                if suffix in base_name:
-                    layer_path = base_name.rsplit(suffix, 1)[0]
-                    break
+                ckpt_path = ckpt_map.get((flat_name, var_idx))
+                if ckpt_path is None:
+                    continue
 
-            if layer_path is None:
-                continue
-
-            ckpt_path = f"{layer_path}/vars/{var_idx}"
-
-            try:
-                if ckpt_path in f:
+                try:
                     ds = f[ckpt_path]
                     if isinstance(ds, h5py.Dataset):
                         value = ds[()]
+                        weight_shape = tuple(weight.shape.as_list())
                         if weight_shape == tuple(value.shape):
                             weight.assign(value)
                             loaded_count += 1
+                            consumed_keys.add((flat_name, var_idx))
                         else:
-                            print(f"  Shape mismatch: {weight_name} {weight_shape} vs {tuple(value.shape)}")
-            except Exception as e:
-                print(f"  Error loading {weight_name}: {e}")
+                            print(f"  Shape mismatch: {flat_name}/{weight.name} {weight_shape} vs {tuple(value.shape)}")
+                except Exception as e:
+                    print(f"  Error loading {flat_name}/{weight.name}: {e}")
+
+        unexpected_keys = [key for key in ckpt_map if key[0] in model_layer_names and key[1] in {"0", "1", "2", "3"} and key not in consumed_keys]
+        if unexpected_keys:
+            sample = ", ".join(f"{name}/vars/{idx}" for name, idx in unexpected_keys[:5])
+            raise ValueError(
+                f"Checkpoint has unsupported or unmatched layer variables for this export architecture (examples: {sample}). This usually indicates architecture drift between training and export."
+            )
 
     print(f"Loaded {loaded_count}/{len(model.weights)} weights")
     return loaded_count
@@ -107,7 +123,16 @@ class StreamingExportModel(tf.keras.Model):
     - 6 streaming state variables for ring buffers
     """
 
-    def __init__(self, first_conv_filters: int = 32, first_conv_kernel: int = 5, stride: int = 3, pointwise_filters: list = None, mixconv_kernel_sizes: list = None, mel_bins: int = 40, **kwargs):
+    def __init__(
+        self,
+        first_conv_filters: int = 32,
+        first_conv_kernel: int = 5,
+        stride: int = 3,
+        pointwise_filters: Optional[list[int]] = None,
+        mixconv_kernel_sizes: Optional[list[list[int]]] = None,
+        mel_bins: int = 40,
+        **kwargs,
+    ):
         super().__init__(name="streaming_model", **kwargs)
 
         # Default to okay_nabu architecture
@@ -142,6 +167,9 @@ class StreamingExportModel(tf.keras.Model):
 
         # State variables will be created in build()
         self.state_vars: list[tf.Variable] = []
+        # BN folding state — set True after calling fold_batch_norms()
+        self._bn_folded: bool = False
+        self._folded_biases: list = []
 
     def _build_mixconv_blocks(self):
         """Build all MixConv blocks with proper naming."""
@@ -251,6 +279,45 @@ class StreamingExportModel(tf.keras.Model):
         """Split tensor along channel dimension."""
         return tf.split(inputs, splits, axis=-1)
 
+    def fold_batch_norms(self) -> None:
+        """Fold BN statistics into the preceding pointwise conv kernels.
+
+        Keras 3 wraps BN variable reads in Cast ops, which breaks the MLIR
+        FreezeGlobalTensors pass used during TFLite INT8 quantization.  This
+        method eliminates BN resource variables from the export graph entirely
+        by absorbing gamma/beta/mean/variance into the pointwise conv weights.
+
+        Must be called after weights are loaded from checkpoint.  After this
+        the model is mathematically equivalent but BN layers are bypassed in
+        call() so no ReadVariableOp is emitted for BN statistics.
+        """
+        if self._bn_folded:
+            raise RuntimeError("fold_batch_norms() has already been applied on this model instance")
+
+        self._folded_biases = []
+        for block in self.mixconv_layers:
+            bn = block["bn"]
+            pw = block["pointwise"]
+
+            mean = bn.moving_mean.numpy()  # (out_ch,)
+            variance = bn.moving_variance.numpy()  # (out_ch,)
+            eps = float(bn.epsilon)
+            inv_std = 1.0 / np.sqrt(variance + eps)
+            gamma = bn.gamma.numpy() if bn.gamma is not None else np.ones_like(mean)
+            beta = bn.beta.numpy() if bn.beta is not None else np.zeros_like(mean)
+
+            scale = gamma * inv_std  # (out_ch,)
+
+            # Fold scale into pointwise kernel: (1, 1, in_ch, out_ch)
+            kernel = pw.kernel.numpy()
+            pw.kernel.assign(kernel * scale[np.newaxis, np.newaxis, np.newaxis, :])
+
+            # Store folded bias as a tf.constant (no tf.Variable → no ReadVariableOp
+            # in the traced graph)
+            self._folded_biases.append(tf.constant(beta - scale * mean, dtype=tf.float32))
+
+        self._bn_folded = True
+
     def call(self, inputs, training=None, mask=None):
         """Forward pass for streaming inference."""
         del mask
@@ -281,8 +348,11 @@ class StreamingExportModel(tf.keras.Model):
             else:
                 # Multi-kernel - split channels
                 filters = x.shape[-1]
-                splits = [filters // len(kernels)] * len(kernels)
-                splits[0] += filters - sum(splits)  # Adjust first split
+                if filters is None:
+                    raise ValueError("Channel dimension must be statically known for MixConv splitting")
+                filters_int = int(filters)
+                splits = [filters_int // len(kernels)] * len(kernels)
+                splits[0] += filters_int - sum(splits)  # Adjust first split
 
                 x_splits = self._split_channels(x, splits)
                 outputs = []
@@ -297,7 +367,11 @@ class StreamingExportModel(tf.keras.Model):
 
             # Pointwise conv
             x = block_layers["pointwise"](x)
-            x = block_layers["bn"](x, training=is_training)
+            if self._bn_folded:
+                # BN is folded into pointwise kernel; add the folded bias only
+                x = x + tf.reshape(self._folded_biases[i], [1, 1, 1, -1])
+            else:
+                x = block_layers["bn"](x, training=is_training)
             x = block_layers["relu"](x)
 
         # stream_5 (temporal pooling)
@@ -318,7 +392,7 @@ class StreamingExportModel(tf.keras.Model):
 def create_representative_dataset(
     config: dict,
     num_samples: int = 500,
-) -> Callable[[], Generator[np.ndarray, None, None]]:
+) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset generator for quantization.
 
     Args:
@@ -351,7 +425,7 @@ def export_streaming_tflite(
     checkpoint_path: str,
     output_dir: str = "./models/exported",
     model_name: str = "wake_word",
-    config: dict = None,
+    config: Optional[dict] = None,
 ) -> dict:
     """Export trained checkpoint to ESPHome-compatible streaming TFLite.
 
@@ -405,14 +479,38 @@ def export_streaming_tflite(
     if loaded < 29:
         print(f"Warning: Expected at least 29 weights, got {loaded}")
 
+    # Fold BN statistics into pointwise conv weights so that no Keras BN
+    # variable reads appear in the TFLite export graph (Keras 3 wraps them in
+    # Cast ops that break MLIR's FreezeGlobalTensors pass).
+    model.fold_batch_norms()
+    print("  ✓ BatchNorm folded into pointwise convolutions")
+
     print("\n[3/5] Converting to TFLite...")
 
     # Create temp directory for SavedModel
     saved_model_dir = tempfile.mkdtemp(prefix="mww_streaming_")
 
     try:
-        # Save as SavedModel
-        tf.saved_model.save(model, saved_model_dir)
+        export_archive = tf.keras.export.ExportArchive()
+        export_archive.track(model)
+
+        export_input_sig = [
+            tf.TensorSpec(
+                shape=(1, input_shape[0], input_shape[1]),
+                dtype=tf.float32,
+                name="inputs",
+            )
+        ]
+
+        def serve_fn(inputs: tf.Tensor) -> tf.Tensor:
+            return model(inputs, training=False)
+
+        export_archive.add_endpoint(
+            name="serve",
+            fn=serve_fn,
+            input_signature=export_input_sig,
+        )
+        export_archive.write_out(saved_model_dir)
 
         # Convert to TFLite
         converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
@@ -483,105 +581,7 @@ def verify_exported_model(tflite_path: str) -> dict:
     Returns:
         Dict with verification results
     """
-    interpreter = tf.lite.Interpreter(model_path=tflite_path)
-    interpreter.allocate_tensors()
-
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    ops_details = interpreter._get_ops_details()
-
-    errors: list[str] = []
-    warnings: list[str] = []
-    checks: dict[str, bool] = {}
-    valid = True
-
-    # Check input shape [1, 3, 40] and dtype int8
-    input_shape = list(input_details[0]["shape"])
-    input_dtype = input_details[0]["dtype"]
-
-    if input_shape != [1, 3, 40]:
-        errors.append(f"Input shape {input_shape} != [1, 3, 40]")
-        valid = False
-    checks["input_shape"] = input_shape == [1, 3, 40]
-
-    if input_dtype != np.int8:
-        errors.append(f"Input dtype {input_dtype} != int8")
-        valid = False
-    checks["input_dtype"] = input_dtype == np.int8
-
-    # Check output shape [1, 1] and dtype uint8
-    output_shape = list(output_details[0]["shape"])
-    output_dtype = output_details[0]["dtype"]
-
-    if output_shape != [1, 1]:
-        errors.append(f"Output shape {output_shape} != [1, 1]")
-        valid = False
-    checks["output_shape"] = output_shape == [1, 1]
-
-    if output_dtype != np.uint8:
-        errors.append(f"Output dtype {output_dtype} != uint8")
-        valid = False
-    checks["output_dtype"] = output_dtype == np.uint8
-
-    # Check for required ops
-    op_counts: dict[str, int] = {}
-    for op in ops_details:
-        op_name = op.get("op_name", "")
-        op_counts[op_name] = op_counts.get(op_name, 0) + 1
-
-    # Check state variable ops
-    var_handle_count = op_counts.get("VAR_HANDLE", 0)
-    read_var_count = op_counts.get("READ_VARIABLE", 0)
-    assign_var_count = op_counts.get("ASSIGN_VARIABLE", 0)
-
-    if var_handle_count != 6:
-        warnings.append(f"Expected 6 VAR_HANDLE ops, got {var_handle_count}")
-    checks["var_handle_count"] = var_handle_count == 6
-
-    if read_var_count != 6:
-        warnings.append(f"Expected 6 READ_VARIABLE ops, got {read_var_count}")
-    checks["read_var_count"] = read_var_count == 6
-
-    if assign_var_count != 6:
-        warnings.append(f"Expected 6 ASSIGN_VARIABLE ops, got {assign_var_count}")
-    checks["assign_var_count"] = assign_var_count == 6
-
-    # Check subgraph count
-    try:
-        subgraphs = interpreter.get_subgraphs()
-        subgraph_count = len(subgraphs)
-    except Exception:
-        try:
-            subgraph_count = interpreter.num_subgraphs()
-        except Exception:
-            subgraph_count = 2  # Assume correct if we can't check
-
-    if subgraph_count != 2:
-        warnings.append(f"Expected 2 subgraphs, got {subgraph_count}")
-    checks["subgraph_count"] = subgraph_count == 2
-
-    # Test inference
-    try:
-        test_input = np.random.randint(-128, 127, (1, 3, 40), dtype=np.int8)
-        interpreter.set_tensor(input_details[0]["index"], test_input)
-        interpreter.invoke()
-        test_output = interpreter.get_tensor(output_details[0]["index"])
-        checks["inference_works"] = True
-        test_output_range: tuple[float, float] | None = (float(test_output.min()), float(test_output.max()))
-    except Exception as e:
-        errors.append(f"Inference test failed: {e}")
-        checks["inference_works"] = False
-        valid = False
-        test_output_range = None
-    results: dict[str, object] = {
-        "valid": valid,
-        "errors": errors,
-        "warnings": warnings,
-        "checks": checks,
-    }
-    if test_output_range is not None:
-        results["test_output_range"] = test_output_range
-    return results
+    return verify_tflite_model(tflite_path)
 
 
 # =============================================================================
