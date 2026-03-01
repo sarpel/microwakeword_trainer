@@ -10,8 +10,8 @@ import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
-# Default tensor arena size in bytes (~30 KB - the reference size for okay_nabu models per Article X)
-DEFAULT_TENSOR_ARENA_SIZE = 30000  # Per ARCHITECTURAL_CONSTITUTION.md Article X
+# Default tensor arena size in bytes per ARCHITECTURAL_CONSTITUTION.md Article X
+DEFAULT_TENSOR_ARENA_SIZE = 22860
 
 
 def generate_manifest(
@@ -59,8 +59,8 @@ def generate_manifest(
         "version": 2,
         "micro": {
             "probability_cutoff": export_config.get("probability_cutoff", 0.97),
-            "feature_step_size": feature_step_size,
             "sliding_window_size": export_config.get("sliding_window_size", 5),
+            "feature_step_size": feature_step_size,
             "tensor_arena_size": arena_size,
             "minimum_esphome_version": export_config.get("minimum_esphome_version", "2024.7.0"),
         },

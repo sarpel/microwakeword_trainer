@@ -108,13 +108,21 @@ def _evaluate_checkpoint(
     y_scores = []
 
     gen = gen_factory()
-    for batch_features, batch_labels in gen:
+    for batch in gen:
+        batch_features = batch[0]
+        batch_labels = batch[1]
         predictions = model.predict(batch_features, verbose=0)
         y_true.extend(batch_labels.flatten().tolist())
         y_scores.extend(predictions.flatten().tolist())
 
     y_true = np.array(y_true)
     y_scores = np.array(y_scores)
+
+    # Debug: Print prediction distribution
+    console.print(f"\n[dim]Debug: y_true unique values: {np.unique(y_true)}[/]")
+    console.print(f"[dim]Debug: y_scores range: [{y_scores.min():.4f}, {y_scores.max():.4f}], mean: {y_scores.mean():.4f}[/]")
+    console.print(f"[dim]Debug: Positive samples: {y_true.sum()}/{len(y_true)} ({100*y_true.mean():.1f}%)[/]")
+    console.print(f"[dim]Debug: Predictions > 0.5: {(y_scores > 0.5).sum()}/{len(y_scores)}[/]")
 
     # Calculate metrics
     return _compute_metrics(y_true, y_scores, config, console)
@@ -154,7 +162,15 @@ def _evaluate_tflite(
     split: str,
     console: Console,
 ) -> dict:
-    """Evaluate TFLite model."""
+    """Evaluate streaming TFLite model.
+
+    The exported TFLite model is a streaming model with input shape [1, 3, 40]
+    (Article II). Full spectrograms must be fed in stride-sized chunks, and the
+    final output after processing the entire clip is the prediction.
+
+    State variables (Article VI) must be explicitly zeroed between samples
+    because allocate_tensors() only invokes CALL_ONCE on the first call.
+    """
     from src.data.dataset import WakeWordDataset
 
     # Load TFLite model
@@ -163,6 +179,42 @@ def _evaluate_tflite(
 
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
+
+    # Architectural constants (Article II, Article VII)
+    stride = 3
+    mel_bins = 40
+    input_dtype = input_details[0]["dtype"]
+    input_quant = input_details[0].get("quantization_parameters", {})
+    input_scale = input_quant.get("scales", np.array([1.0]))[0]
+    input_zero_point = input_quant.get("zero_points", np.array([0]))[0]
+
+    output_dtype = output_details[0]["dtype"]
+    output_quant = output_details[0].get("quantization_parameters", {})
+    output_scale = output_quant.get("scales", np.array([1.0]))[0]
+    output_zero_point = output_quant.get("zero_points", np.array([0]))[0]
+
+    # Discover streaming state tensors (Article VI: exactly 6 state variables)
+    # State tensors in TFLite are identified by 'ReadVariableOp' in their name.
+    # These are the ring buffer variables that persist across inference calls.
+    # allocate_tensors() does NOT re-invoke CALL_ONCE (state zeroing subgraph)
+    # after the first call, so we must zero them manually between samples.
+    input_indices = {d["index"] for d in input_details}
+    output_indices = {d["index"] for d in output_details}
+
+    state_tensors = []  # list of (index, shape, dtype)
+    for tensor in interpreter.get_tensor_details():
+        idx = tensor["index"]
+        if idx in input_indices or idx in output_indices:
+            continue
+        name = tensor.get("name", "")
+        # State variables have 'ReadVariableOp' in their name from streaming.py tf.Variable usage
+        if "ReadVariableOp" in name:
+            shape = tuple(tensor.get("shape", ()))
+            state_tensors.append((idx, shape, tensor["dtype"]))
+
+    console.print(f"  Found {len(state_tensors)} state tensors to reset between samples")
+    if len(state_tensors) != 6:
+        console.print(f"[yellow]  Warning: Expected 6 state variables, found {len(state_tensors)}[/]")
 
     # Load dataset
     dataset = WakeWordDataset(config)
@@ -179,24 +231,63 @@ def _evaluate_tflite(
     # Collect predictions
     y_true = []
     y_scores = []
+    sample_count = 0
 
     gen = gen_factory()
-    for batch_features, batch_labels in gen:
+    for batch in gen:
+        batch_features = batch[0]
+        batch_labels = batch[1]
         # Process each sample in batch
         for i in range(len(batch_features)):
-            features = batch_features[i : i + 1]
+            full_spectrogram = batch_features[i]  # shape: [time_frames, 40]
             label = batch_labels[i]
+            num_frames = full_spectrogram.shape[0]
 
-            # Set input
-            interpreter.set_tensor(input_details[0]["index"], features)
-            interpreter.invoke()
+            # Reset all streaming state variables to zero (Article VI)
+            # allocate_tensors() does NOT re-invoke CALL_ONCE after the first call,
+            # so state from previous samples leaks into the next prediction.
+            for idx, shape, dtype in state_tensors:
+                interpreter.set_tensor(idx, np.zeros(shape, dtype=dtype))
 
-            # Get output
-            prediction = interpreter.get_tensor(output_details[0]["index"])
+            # Streaming inference: slide stride-sized chunks across spectrogram
+            prediction = 0.0
+            for t in range(0, num_frames - stride + 1, stride):
+                chunk = full_spectrogram[t : t + stride]  # [stride, mel_bins]
+                chunk = chunk.reshape(1, stride, mel_bins)  # [1, 3, 40]
+
+                # Quantize float32 -> int8 (Article II, Article III)
+                if input_dtype != np.float32:
+                    chunk = np.clip(chunk / input_scale + input_zero_point, -128, 127).astype(input_dtype)
+
+                interpreter.set_tensor(input_details[0]["index"], chunk)
+                interpreter.invoke()
+
+                raw_out = interpreter.get_tensor(output_details[0]["index"])
+                # Dequantize uint8 -> float (Article II, Article III)
+                if output_dtype != np.float32:
+                    prediction = (raw_out.astype(np.float32) - output_zero_point) * output_scale
+                    prediction = prediction.flatten()[0]
+                else:
+                    prediction = raw_out.flatten()[0]
 
             y_true.append(label)
-            y_scores.append(prediction.flatten()[0])
+            y_scores.append(prediction)
+            sample_count += 1
 
+            if sample_count % 200 == 0:
+                console.print(f"  Processed {sample_count} samples...")
+
+    console.print(f"  Total: {sample_count} samples")
+    y_true = np.array(y_true)
+    y_scores = np.array(y_scores)
+
+    # Debug: Print prediction distribution
+    console.print(f"\n[dim]Debug: y_true unique values: {np.unique(y_true)}[/]")
+    console.print(f"[dim]Debug: y_scores range: [{y_scores.min():.4f}, {y_scores.max():.4f}], mean: {y_scores.mean():.4f}[/]")
+    console.print(f"[dim]Debug: Positive samples: {y_true.sum()}/{len(y_true)} ({100*y_true.mean():.1f}%)[/]")
+    console.print(f"[dim]Debug: Predictions > 0.5: {(y_scores > 0.5).sum()}/{len(y_scores)}[/]")
+
+    return _compute_metrics(y_true, y_scores, config, console)
     y_true = np.array(y_true)
     y_scores = np.array(y_scores)
 

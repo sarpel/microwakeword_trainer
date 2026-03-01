@@ -31,7 +31,7 @@ paths:
 # ─────────────────────────────────────────────────────────────────
 training:
   # Maximum steps for best quality
-  training_steps: [30000, 10000]
+  training_steps: [50000, 20000]
   learning_rates: [0.001, 0.0001]
   batch_size: 128
   eval_step_interval: 500

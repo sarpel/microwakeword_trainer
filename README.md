@@ -163,7 +163,6 @@ dataset/
 - Record at various distances (1-3 meters)
 - Record in different rooms/environments
 - Include variations in tone and speed
-- Include variations in tone and speed
 
 #### Step 2: Run Speaker Clustering (Optional but Recommended)
 
@@ -293,7 +292,7 @@ mww-train --config config/presets/standard.yaml --override my_config.yaml
 - Profiles saved to `./profiles/` (if enabled)
 - Monitor with TensorBoard: `tensorboard --logdir ./logs`
 
-#### Step 4: Export to TFLite
+#### Step 5: Export to TFLite
 
 ```bash
 # Export the best checkpoint
@@ -320,7 +319,7 @@ models/exported/
 └── streaming/               # Streaming SavedModel (for debugging)
 ```
 
-#### Step 4b: Auto-Tune (Optional — Improve FAH/Recall)
+#### Step 5b: Auto-Tune (Optional — Improve FAH/Recall)
 
 If your model's FAH > 0.5 or recall < 0.90, use auto-tuning to improve metrics without full retraining.
 
@@ -352,9 +351,8 @@ The tool will:
 - Use hard negative mining to improve model discrimination
 - Save the tuned checkpoint to your output directory
 - Log metrics and final configuration
-```
 
-#### Step 5: Verify ESPHome Compatibility
+#### Step 6: Verify ESPHome Compatibility
 
 ```bash
 # Verify the exported model
@@ -378,7 +376,7 @@ Expected output:
 ✓ ESPHome compatible: YES
 ```
 
-#### Step 6: Deploy to ESPHome
+#### Step 7: Deploy to ESPHome
 
 Copy the model and manifest to your ESPHome configuration:
 
@@ -538,6 +536,31 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite --verbose
 
 # JSON output for CI/CD
 python scripts/verify_esphome.py models/exported/wake_word.tflite --json
+```
+
+### Utility Scripts
+
+```bash
+# Analyze audio files
+python scripts/audio_analyzer.py <audio_file>
+
+# Detect duplicate/similar audio files
+python scripts/audio_similarity_detector.py <directory>
+
+# Count dataset samples
+python scripts/count_dataset.py <dataset_directory>
+
+# Score audio quality (fast)
+python scripts/score_quality_fast.py <audio_file>
+
+# Score audio quality (full)
+python scripts/score_quality_full.py <audio_file>
+
+# Split audio files
+python scripts/split_audio.py <audio_file>
+
+# VAD-based audio trimming
+python scripts/vad_trim.py <audio_file>
 ```
 
 ---
@@ -796,22 +819,37 @@ export:
 ## Project Structure
 
 ```
-/home/sarpel/mww/microwakeword_trainer/
+./
 ├── config/
 │   ├── presets/           # standard, max_quality, fast_test
-│   └── loader.py          # Configuration loading
+│   └── loader.py          # Configuration loading (736 lines)
 ├── src/
-│   ├── training/          # Training loop
-│   ├── data/              # Dataset and augmentation
-│   ├── model/             # MixedNet architecture
-│   ├── export/            # TFLite conversion
-│   └── utils/             # Performance utilities
+│   ├── training/          # Training loop, augmentation, mining, profiling
+│   ├── tuning/            # Auto-tuning (mww-autotune)
+│   ├── data/              # Dataset, ingestion, features, augmentation, clustering, preprocessing, quality
+│   ├── model/             # MixedNet architecture + streaming layers
+│   ├── export/            # TFLite export, analysis, verification, manifests
+│   ├── evaluation/        # Metrics, FAH estimation, calibration, test evaluation
+│   ├── utils/             # GPU config, performance, terminal logger, optional deps
+│   ├── tools/             # CLI entry points (cluster-analyze, cluster-apply)
+│   └── config/            # Config package init
 ├── scripts/
-│   └── verify_esphome.py  # Compatibility checker
+│   ├── verify_esphome.py          # ESPHome compatibility checker
+│   ├── generate_test_dataset.py   # Synthetic dataset generator
+│   ├── evaluate_model.py          # Post-training model evaluation
+│   ├── audio_analyzer.py          # Audio file analysis
+│   ├── audio_similarity_detector.py  # Duplicate/similar audio detection
+│   ├── count_dataset.py           # Dataset sample counter
+│   ├── score_quality_fast.py      # Fast audio quality scoring
+│   ├── score_quality_full.py      # Full audio quality scoring
+│   ├── split_audio.py             # Audio splitting utility
+│   └── vad_trim.py                # VAD-based audio trimming
 ├── dataset/               # Audio data (user-provided)
 ├── requirements.txt       # TensorFlow environment
 ├── requirements-torch.txt # PyTorch environment
-└── models/                # Checkpoints and exports
+├── models/                # Checkpoints and exports
+├── docs/                  # Documentation
+└── ARCHITECTURAL_CONSTITUTION.md  # Immutable source truth
 ```
 
 ---

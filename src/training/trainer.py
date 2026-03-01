@@ -323,11 +323,11 @@ class Trainer:
         model = build_model(
             input_shape=input_shape,
             num_classes=2,
-            first_conv_filters=model_cfg.get("first_conv_filters", 30),
+            first_conv_filters=model_cfg.get("first_conv_filters", 32),
             first_conv_kernel_size=model_cfg.get("first_conv_kernel_size", 5),
             stride=model_cfg.get("stride", 3),
-            pointwise_filters=model_cfg.get("pointwise_filters", "60,60,60,60"),
-            mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[9],[13],[21]"),
+            pointwise_filters=model_cfg.get("pointwise_filters", "64,64,64,64"),
+            mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"),
             repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
             residual_connection=model_cfg.get("residual_connection", "0,0,0,0"),
             dropout_rate=model_cfg.get("dropout_rate", 0.0),
@@ -762,11 +762,9 @@ class Trainer:
 
         if test_data_factory is not None:
             from src.evaluation.test_evaluator import TestEvaluator
+
             log_dir = self.config.get("performance", {}).get("tensorboard_log_dir", "./logs")
-            test_feature_store_path = os.path.join(
-                self.config.get("paths", {}).get("processed_dir", "./data/processed"),
-                "test"
-            )
+            test_feature_store_path = os.path.join(self.config.get("paths", {}).get("processed_dir", "./data/processed"), "test")
             evaluator = TestEvaluator(self.model, self.config, log_dir)
             evaluator.evaluate(test_data_factory, test_feature_store_path=test_feature_store_path)
             self.logger.log_info("Running held-out test evaluation...")
@@ -822,6 +820,14 @@ def train(config: dict) -> tf.keras.Model:
 
 def main():
     """Main entry point for mww-train command."""
+    # Suppress verbose TF/XLA logs BEFORE any TF imports
+    # Must be set before importing tensorflow
+    import os
+
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
+    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
     import argparse
 
     from config.loader import load_full_config

@@ -1,6 +1,12 @@
 """Export module for model conversion to TFLite."""
 
 import os
+
+# Suppress verbose TF/XLA logs before importing tensorflow
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
 import shutil
 import sys
 import tempfile
@@ -421,11 +427,95 @@ def create_representative_dataset(
     return representative_dataset_gen
 
 
+def create_representative_dataset_from_data(
+    config: dict,
+    data_dir: str,
+    num_samples: int = 2000,
+) -> Callable[[], Generator[list[np.ndarray], None, None]]:
+    """Create representative dataset from real training features for quantization.
+
+    Loads preprocessed spectrograms from the FeatureStore and slices them into
+    stride-sized chunks. This produces calibration data that matches the actual
+    feature distribution, resulting in better INT8 quantization ranges.
+
+    Uses ~2000 samples by default — the sweet spot for INT8 calibration quality
+    per TFLite best practices. With 150k+ files in the dataset, this is trivially
+    achievable from real data alone.
+
+    Args:
+        config: Configuration dict with stride and mel_bins
+        data_dir: Path to processed data directory (containing train/ subfolder)
+        num_samples: Number of calibration samples to generate (default 2000)
+
+    Returns:
+        Generator function that yields samples
+    """
+    from src.data.dataset import FeatureStore
+
+    stride = config.get("stride", 3)
+    mel_bins = config.get("mel_bins", 40)
+    store_path = Path(data_dir) / "train"
+
+    if not store_path.exists():
+        print(f"  Warning: No training data at {store_path}, falling back to random calibration")
+        return create_representative_dataset(config, num_samples)
+
+    store = FeatureStore(store_path)
+    try:
+        store.open()
+    except (FileNotFoundError, OSError) as e:
+        print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
+        return create_representative_dataset(config, num_samples)
+
+    n_stored = len(store)
+    if n_stored == 0:
+        print("  Warning: Feature store is empty, falling back to random calibration")
+        store.close()
+        return create_representative_dataset(config, num_samples)
+
+    # Pre-extract stride-sized chunks from real spectrograms
+    chunks: list[np.ndarray] = []
+    np.random.seed(42)
+    indices = np.random.permutation(n_stored)
+
+    for idx in indices:
+        if len(chunks) >= num_samples:
+            break
+        spec, _label = store.get(int(idx))  # shape: [time_frames, mel_bins] or flat
+        if spec.ndim == 1:
+            # Flat array — reshape to [time_frames, mel_bins]
+            if spec.size % mel_bins != 0:
+                continue
+            spec = spec.reshape(-1, mel_bins)
+        n_frames = spec.shape[0]
+        if n_frames < stride:
+            continue
+        # Extract all non-overlapping stride-sized chunks from this spectrogram
+        n_possible = n_frames // stride
+        remaining = num_samples - len(chunks)
+        n_to_take = min(n_possible, remaining)
+        starts = np.arange(n_to_take) * stride
+        for t in starts:
+            chunk = spec[t : t + stride].reshape(1, stride, mel_bins).astype(np.float32)
+            chunks.append(chunk)
+
+    store.close()
+
+    print(f"  Using {len(chunks)} real-data calibration samples")
+
+    def representative_dataset_gen():
+        for chunk in chunks:
+            yield [chunk]
+
+    return representative_dataset_gen
+
+
 def export_streaming_tflite(
     checkpoint_path: str,
     output_dir: str = "./models/exported",
     model_name: str = "wake_word",
     config: Optional[dict] = None,
+    data_dir: Optional[str] = None,
 ) -> dict:
     """Export trained checkpoint to ESPHome-compatible streaming TFLite.
 
@@ -440,6 +530,7 @@ def export_streaming_tflite(
         output_dir: Output directory for exported model
         model_name: Name for the exported model
         config: Optional configuration dict with model parameters
+        data_dir: Optional path to processed data dir for real-data quantization calibration
 
     Returns:
         Dict with export results including paths and validation info
@@ -514,13 +605,16 @@ def export_streaming_tflite(
 
         # Convert to TFLite
         converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        converter.optimizations = {tf.lite.Optimize.DEFAULT}
         converter.experimental_enable_resource_variables = True
         converter._experimental_variable_quantization = True
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+        converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
         converter.inference_input_type = tf.int8
         converter.inference_output_type = tf.uint8
-        converter.representative_dataset = create_representative_dataset(config)
+        if data_dir:
+            converter.representative_dataset = create_representative_dataset_from_data(config, data_dir)
+        else:
+            converter.representative_dataset = create_representative_dataset(config)
 
         tflite_model = converter.convert()
     finally:
@@ -712,6 +806,12 @@ def main():
         action="store_true",
         help="Disable quantization (not recommended for ESPHome)",
     )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=None,
+        help="Path to processed data directory for real-data quantization calibration",
+    )
 
     args = parser.parse_args()
 
@@ -751,6 +851,7 @@ def main():
             output_dir=args.output,
             model_name=args.model_name,
             config=config,
+            data_dir=args.data_dir,
         )
 
         if result["model_valid"]:

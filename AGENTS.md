@@ -27,26 +27,34 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 
 ```
 ./
-├── src/                    # Source code (~11,919 lines Python)
+├── src/                    # Source code (~19,685 lines Python)
+│   ├── training/          # Training loop, augmentation, mining, profiling
 │   ├── tuning/            # Auto-tuning for post-training fine-tuning (mww-autotune)
-│   ├── data/              # Dataset, ingestion, features, augmentation, clustering
+│   ├── data/              # Dataset, ingestion, features, augmentation, clustering, preprocessing, quality
 │   ├── model/             # MixedNet architecture + streaming layers
-│   ├── export/            # TFLite export, model analysis, manifests (mww-export)
-│   ├── utils/             # GPU config, performance helpers
-│   ├── evaluation/        # Metrics, FAH estimation, calibration
+│   ├── export/            # TFLite export, model analysis, verification, manifests (mww-export)
+│   ├── utils/             # GPU config, performance helpers, optional deps
+│   ├── evaluation/        # Metrics, FAH estimation, calibration, test evaluation
 │   ├── tools/             # CLI entry points (mww-cluster-analyze, mww-cluster-apply)
+│   └── config/            # Config package init
 ├── config/                # YAML presets & loader
 │   ├── presets/           # standard.yaml, max_quality.yaml, fast_test.yaml
-│   └── loader.py          # Complex config system (666 lines)
+│   └── loader.py          # Complex config system (736 lines)
 ├── tests/                 # Test suite (unit/ and integration/ subdirectories)
 ├── scripts/               # Standalone tools
-│   ├── verify_esphome.py  # TFLite ESPHome compatibility checker (406 lines)
+│   ├── verify_esphome.py  # TFLite ESPHome compatibility checker (168 lines)
 │   ├── generate_test_dataset.py  # Synthetic dataset generator (190 lines)
-│   └── evaluate_model.py    # Post-training model evaluation
+│   ├── evaluate_model.py         # Post-training model evaluation
+│   ├── audio_analyzer.py         # Audio file analysis (387 lines)
+│   ├── audio_similarity_detector.py  # Duplicate/similar audio detection (924 lines)
+│   ├── count_dataset.py          # Dataset sample counter (114 lines)
+│   ├── score_quality_fast.py     # Fast audio quality scoring (72 lines)
+│   ├── score_quality_full.py     # Full audio quality scoring (82 lines)
+│   ├── split_audio.py            # Audio splitting utility (59 lines)
+│   └── vad_trim.py               # VAD-based audio trimming (168 lines)
 ├── cluster_output/       # Output from mww-cluster-analyze
-│   ├── {dataset}_namelist.json     # File → speaker mappings (per dataset)
-│   ├── {dataset}_namelist.json     # File → speaker mappings (per dataset)
-│   └── {dataset}_cluster_report.txt # Human-readable report (per dataset)
+│   ├── {dataset}_namelist.json        # File → speaker mappings (per dataset)
+│   └── {dataset}_cluster_report.txt   # Human-readable report (per dataset)
 ├── dataset/               # Audio data
 │   ├── positive/          # Wake word samples (by speaker)
 │   ├── negative/          # Background speech
@@ -56,10 +64,19 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 ├── checkpoints/           # Training checkpoints
 ├── models/                # Exports
 │   └── exported/          # TFLite models + manifests
+├── exports/               # Additional export outputs
+├── official_models/       # Reference ESPHome TFLite models
 ├── data/processed/        # Preprocessed feature stores (train/val)
 ├── logs/                  # Training logs (TensorBoard)
 ├── profiles/              # Performance profiles
 ├── notebooks/             # Analysis notebooks
+├── docs/                  # Documentation
+│   ├── GUIDE.md           # Complete configuration reference
+│   ├── IMPLEMENTATION_PLAN.md  # v2.0 implementation plan (1782 lines)
+│   ├── my_environment.md  # Project-specific training profile
+│   ├── POST_TRAINING_ANALYSIS.md  # Post-training analysis guide
+│   ├── RESEARCH_REPORT_MIXED_PRECISION.md  # Mixed precision research (Turkish)
+│   └── LOG_ANALYSIS_GUIDE.md  # Log analysis guide (Turkish)
 └── ARCHITECTURAL_CONSTITUTION.md  # ⛔ IMMUTABLE SOURCE TRUTH (530 lines)
 ```
 
@@ -87,7 +104,7 @@ Heavy YAML-based config with presets in `config/presets/`:
 - `max_quality.yaml` - Best accuracy
 - `fast_test.yaml` - Quick iteration
 
-Loader (666 lines) supports:
+Loader (736 lines) supports:
 - 9 dataclass sections: Hardware, Paths, Training, Model, Augmentation, Performance, SpeakerClustering, HardNegativeMining, Export
 - Env var substitution (`${VAR}` or `${VAR:-default}`)
 - Preset merging with custom overrides
@@ -128,34 +145,46 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Training loop | `src/training/trainer.py` (825 lines) | Trainer class, EvaluationMetrics, train(), main() |
+| Training loop | `src/training/trainer.py` (951 lines) | Trainer class, EvaluationMetrics, train(), main() |
 | Training logging | `src/training/rich_logger.py` (299 lines) | RichTrainingLogger — Rich-based progress display |
-| Hard example mining | `src/training/miner.py` (297 lines) | HardExampleMiner — negative sample selection |
-| Waveform augmentation | `src/training/augmentation.py` (265 lines) | AudioAugmentationPipeline, ParallelAugmenter |
+| Hard example mining | `src/training/miner.py` (306 lines) | HardExampleMiner — negative sample selection |
+| Waveform augmentation | `src/training/augmentation.py` (309 lines) | AudioAugmentationPipeline, ParallelAugmenter |
 | Training profiling | `src/training/profiler.py` (175 lines) | TrainingProfiler — section-based timing |
-| Audio ingestion | `src/data/ingestion.py` (734 lines) | SampleRecord, Clips, ClipsLoaderConfig, audio validation |
-| Feature extraction | `src/data/features.py` (525 lines) | FeatureConfig, MicroFrontend, SpectrogramGeneration |
-| Dataset storage | `src/data/dataset.py` (831 lines) | RaggedMmap, FeatureStore, WakeWordDataset |
-| Speaker clustering | `src/data/clustering.py` (589 lines) | SpeechBrain ECAPA-TDNN embeddings, leakage audit |
-| Audio augmentation | `src/data/augmentation.py` (437 lines) | AudioAugmentation — 8 augmentation types (EQ, pitch, RIR, etc.) |
-| Hard negative mining | `src/data/hard_negatives.py` (328 lines) | FP detection, auto-mining pipeline |
-| GPU SpecAugment | `src/data/spec_augment_gpu.py` (148 lines) | CuPy GPU-only time/freq masking |
-| Model architecture | `src/model/architecture.py` (689 lines) | MixedNet, MixConvBlock, ResidualBlock, build_model() |
-| Streaming layers | `src/model/streaming.py` (787 lines) | Stream, RingBuffer, Modes, StridedDrop/Keep, StreamingMixedNet |
-| TFLite export | `src/export/tflite.py` (768 lines) | convert_model_saved(), INT8 quantization, main() |
-| Model analysis | `src/export/model_analyzer.py` (530 lines) | analyze_model_architecture(), validate_model_quality() |
-| ESPHome manifest | `src/export/manifest.py` (318 lines) | generate_manifest(), calculate_tensor_arena_size() |
-| Evaluation metrics | `src/evaluation/metrics.py` (397 lines) | MetricsCalculator — FAH, ROC/PR, recall |
-| FAH estimation | `src/evaluation/fah_estimator.py` (74 lines) | FAHEstimator class |
-| Calibration | `src/evaluation/calibration.py` (94 lines) | calibration curves, Brier score |
-| Config loading | `config/loader.py` (666 lines) | ConfigLoader, 9 dataclasses, FullConfig |
-| GPU/performance | `src/utils/performance.py` (257 lines) | TF GPU config, mixed precision, threading |
-| ESPHome verification | `scripts/verify_esphome.py` (406 lines) | TFLite compatibility checker |
-| Auto-tuning | `src/tuning/autotuner.py` (690 lines) | AutoTuner, TuningTarget, TuningState |
-| Auto-tune CLI | `src/tuning/cli.py` (250 lines) | mww-autotune entry point |
-| TF data pipeline | `src/data/tfdata_pipeline.py` (364 lines) | OptimizedDataPipeline, benchmark_pipeline, create_optimized_dataset |
 | Performance optimizer | `src/training/performance_optimizer.py` (288 lines) | PerformanceOptimizer |
+| Audio ingestion | `src/data/ingestion.py` (777 lines) | SampleRecord, Clips, ClipsLoaderConfig, audio validation |
+| Feature extraction | `src/data/features.py` (513 lines) | FeatureConfig, MicroFrontend, SpectrogramGeneration |
+| Dataset storage | `src/data/dataset.py` (962 lines) | RaggedMmap, FeatureStore, WakeWordDataset |
+| Speaker clustering | `src/data/clustering.py` (1,212 lines) | SpeechBrain ECAPA-TDNN embeddings, leakage audit |
+| Audio augmentation | `src/data/augmentation.py` (405 lines) | AudioAugmentation — 8 augmentation types (EQ, pitch, RIR, etc.) |
+| Hard negative mining | `src/data/hard_negatives.py` (317 lines) | FP detection, auto-mining pipeline |
+| GPU SpecAugment | `src/data/spec_augment_gpu.py` (150 lines) | CuPy GPU-only time/freq masking |
+| TF data pipeline | `src/data/tfdata_pipeline.py` (364 lines) | OptimizedDataPipeline, benchmark_pipeline, create_optimized_dataset |
+| Audio preprocessing | `src/data/preprocessing.py` (598 lines) | SpeechPreprocessConfig, PreprocessResult, SplitResult |
+| Audio quality scoring | `src/data/quality.py` (660 lines) | QualityScoreConfig, FileScore |
+| Model architecture | `src/model/architecture.py` (694 lines) | MixedNet, MixConvBlock, ResidualBlock, build_model() |
+| Streaming layers | `src/model/streaming.py` (787 lines) | Stream, RingBuffer, Modes, StridedDrop/Keep, StreamingMixedNet |
+| TFLite export | `src/export/tflite.py` (780 lines) | convert_model_saved(), INT8 quantization, main() |
+| Model analysis | `src/export/model_analyzer.py` (600 lines) | analyze_model_architecture(), validate_model_quality() |
+| ESPHome manifest | `src/export/manifest.py` (330 lines) | generate_manifest(), calculate_tensor_arena_size() |
+| Export verification | `src/export/verification.py` (218 lines) | Export verification tools |
+| Evaluation metrics | `src/evaluation/metrics.py` (373 lines) | MetricsCalculator — FAH, ROC/PR, recall |
+| FAH estimation | `src/evaluation/fah_estimator.py` (72 lines) | FAHEstimator class |
+| Calibration | `src/evaluation/calibration.py` (89 lines) | calibration curves, Brier score |
+| Test evaluator | `src/evaluation/test_evaluator.py` (650 lines) | TestEvaluator — comprehensive test set evaluation |
+| Config loading | `config/loader.py` (736 lines) | ConfigLoader, 9 dataclasses, FullConfig |
+| GPU/performance | `src/utils/performance.py` (257 lines) | TF GPU config, mixed precision, threading |
 | Terminal logger | `src/utils/terminal_logger.py` (246 lines) | TeeOutput, TerminalLogger |
+| Optional deps | `src/utils/optional_deps.py` (27 lines) | Optional dependency handling |
+| ESPHome verification | `scripts/verify_esphome.py` (168 lines) | TFLite compatibility checker |
+| Auto-tuning | `src/tuning/autotuner.py` (691 lines) | AutoTuner, TuningTarget, TuningState |
+| Auto-tune CLI | `src/tuning/cli.py` (257 lines) | mww-autotune entry point |
+| Audio analyzer | `scripts/audio_analyzer.py` (387 lines) | Audio file analysis tool |
+| Similarity detector | `scripts/audio_similarity_detector.py` (924 lines) | Duplicate/similar audio detection |
+| Dataset counter | `scripts/count_dataset.py` (114 lines) | Dataset sample counting |
+| Quality scorer (fast) | `scripts/score_quality_fast.py` (72 lines) | Fast audio quality scoring |
+| Quality scorer (full) | `scripts/score_quality_full.py` (82 lines) | Full audio quality scoring |
+| Audio splitter | `scripts/split_audio.py` (59 lines) | Audio splitting utility |
+| VAD trimmer | `scripts/vad_trim.py` (168 lines) | VAD-based audio trimming |
 
 ## Implemented Configurations
 | Config | Status | Implementation |
@@ -171,14 +200,16 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 
 ## Notes
 - ✅ **ALL PHASES COMPLETE** - All config variables implemented and connected
-- ~11,919 lines of Python across ~35 files
-- Config loader (666 lines) - complex validation and merging with 9 dataclass sections
+- ~19,685 lines of Python across ~70 files
+- Config loader (736 lines) - complex validation and merging with 9 dataclass sections
 - Uses custom RaggedMmap storage for efficient variable-length audio data loading
 - Speaker clustering and hard negative mining fully implemented
 - Audio augmentation: waveform-level (8 types in `src/data/augmentation.py`) + spectrogram-level (GPU SpecAugment)
 - Two-phase training with class weighting (positive=1.0, negative=20.0, hard_neg=40.0)
 - Rich-based training logger for formatted progress display
 - Model analyzer for architecture verification and quality validation
+- Audio preprocessing pipeline with VAD trimming, splitting, and quality scoring
+- Test evaluator for comprehensive post-training evaluation
 - **ARCHITECTURAL_CONSTITUTION.md is the supreme source of truth** - all constants verified from TFLite flatbuffers
 - **No CI/CD pipeline** - no .github/workflows, Makefile, or Dockerfile
 
@@ -199,9 +230,8 @@ alias mww-torch='source ~/.venvs/mww-torch/bin/activate && cd $PROJECT_DIR'
 ```
 
 ## Development Notes
-- Project is in active development (v2.0.0, Beta status)
 - Project is in active development (v2.0.0, Beta status) — uses `pyproject.toml` for packaging
-- Config loader (666 lines) - complex validation and merging
+- Config loader (736 lines) - complex validation and merging
 - Uses custom RaggedMmap storage for efficient audio data loading
 - Supports speaker clustering (ECAPA-TDNN) and hard negative mining
 - Relaxed mypy typing (pyproject.toml: `disallow_untyped_defs=false`)
