@@ -281,6 +281,27 @@ class Trainer:
             default_threshold=default_threshold,
         )
 
+        # TensorBoard metric selection (keep focused, high-signal metrics)
+        self._tb_train_metric_keys = ["loss", "precision", "recall", "auc"]
+        self._tb_val_metric_keys = [
+            "precision",
+            "recall",
+            "f1_score",
+            "auc_roc",
+            "auc_pr",
+            "ambient_false_positives_per_hour",
+            "recall_at_no_faph",
+            "threshold_for_no_faph",
+            "average_viable_recall",
+            "quality_score",
+            "gain_f1_score_per_1k_steps",
+            "gain_average_viable_recall_per_1k_steps",
+            "gain_recall_at_no_faph_per_1k_steps",
+            "gain_auc_pr_per_1k_steps",
+        ]
+        self._prev_quality_metrics: dict[str, float] | None = None
+        self._prev_quality_step: int | None = None
+
         # Hard negative mining
         hn_config = config.get("hard_negative_mining", {})
         self.hard_negative_mining_enabled = hn_config.get("enabled", False)
@@ -333,6 +354,64 @@ class Trainer:
             "negative_weight": self.negative_weights[current_phase],
             "hard_negative_weight": self.hard_negative_weights[current_phase],
         }
+
+    def _log_tensorboard_metrics(
+        self,
+        prefix: str,
+        metrics: dict[str, float],
+        step: int,
+        keys: list[str],
+    ) -> None:
+        if self.tensorboard_writer is None:
+            return
+        with self.tensorboard_writer.as_default():
+            for name in keys:
+                if name not in metrics:
+                    continue
+                value = metrics[name]
+                if value is None:
+                    continue
+                if isinstance(value, (int, float, np.floating, np.integer)):
+                    tf.summary.scalar(f"{prefix}/{name}", float(value), step=step)
+
+    def _augment_quality_metrics(self, metrics: dict[str, float], step: int) -> dict[str, float]:
+        """Add derived quality metrics and gains per 1k steps."""
+        quality_metrics = dict(metrics)
+        quality_score = None
+        if metrics.get("average_viable_recall") is not None:
+            quality_score = metrics.get("average_viable_recall")
+        elif metrics.get("recall_at_no_faph") is not None:
+            quality_score = metrics.get("recall_at_no_faph")
+        elif metrics.get("f1_score") is not None:
+            quality_score = metrics.get("f1_score")
+        if isinstance(quality_score, (int, float, np.floating, np.integer)):
+            quality_metrics["quality_score"] = float(quality_score)
+
+        if self._prev_quality_metrics is not None and self._prev_quality_step is not None:
+            step_delta = step - self._prev_quality_step
+            if step_delta > 0:
+                scale = 1000.0 / float(step_delta)
+                gain_sources = [
+                    "f1_score",
+                    "average_viable_recall",
+                    "recall_at_no_faph",
+                    "auc_pr",
+                ]
+                for name in gain_sources:
+                    current = metrics.get(name)
+                    previous = self._prev_quality_metrics.get(name)
+                    if current is None or previous is None:
+                        continue
+                    if isinstance(current, (int, float, np.floating, np.integer)) and isinstance(
+                        previous,
+                        (int, float, np.floating, np.integer),
+                    ):
+                        gain_name = f"gain_{name}_per_1k_steps"
+                        quality_metrics[gain_name] = (float(current) - float(previous)) * scale
+
+        self._prev_quality_metrics = {key: float(value) for key, value in metrics.items() if isinstance(value, (int, float, np.floating, np.integer))}
+        self._prev_quality_step = step
+        return quality_metrics
 
     def _build_model(self, input_shape: tuple[int, ...]) -> tf.keras.Model:
         """Build the model architecture.
@@ -704,10 +783,8 @@ class Trainer:
                 self.logger.update_step(progress, progress_task, step, train_metrics, phase_settings_display)
 
                 if self.tensorboard_writer is not None:
+                    self._log_tensorboard_metrics("train", train_metrics, step, self._tb_train_metric_keys)
                     with self.tensorboard_writer.as_default():
-                        for name, value in train_metrics.items():
-                            if isinstance(value, (int, float, np.floating, np.integer)):
-                                tf.summary.scalar(f"train/{name}", float(value), step=step)
                         tf.summary.scalar("train/learning_rate", float(phase_settings_display["learning_rate"]), step=step)
 
                 # Detect and announce phase transitions
@@ -728,6 +805,7 @@ class Trainer:
                 # Evaluate every N steps (regardless of phase transition)
                 if step % self.eval_step_interval == 0:
                     val_metrics = self.validate(val_data_factory)
+                    val_metrics = self._augment_quality_metrics(val_metrics, step)
 
                     # Log validation results with Rich table and confusion matrix
                     self.logger.log_validation_results(val_metrics, step, total_steps)
@@ -740,14 +818,7 @@ class Trainer:
                     self.logger.log_confusion_matrix(tp, fp, tn, fn)
 
                     if self.tensorboard_writer is not None:
-                        with self.tensorboard_writer.as_default():
-                            for name, value in val_metrics.items():
-                                if isinstance(value, (int, float, np.floating, np.integer)):
-                                    tf.summary.scalar(f"val/{name}", float(value), step=step)
-                            tf.summary.scalar("val/confusion_tp", float(tp), step=step)
-                            tf.summary.scalar("val/confusion_fp", float(fp), step=step)
-                            tf.summary.scalar("val/confusion_tn", float(tn), step=step)
-                            tf.summary.scalar("val/confusion_fn", float(fn), step=step)
+                        self._log_tensorboard_metrics("val", val_metrics, step, self._tb_val_metric_keys)
                         self.tensorboard_writer.flush()
 
                     # Check if best model

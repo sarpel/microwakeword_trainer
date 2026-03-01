@@ -164,6 +164,7 @@ class RichTrainingLogger:
             ("f1_score", "F1 Score", ".4f", "bold green"),
             ("auc_roc", "AUC-ROC", ".4f", None),
             ("auc_pr", "AUC-PR", ".4f", None),
+            ("quality_score", "Quality Score", ".4f", "bold cyan"),
         ]
 
         for key, label, fmt, style in metric_defs:
@@ -197,6 +198,10 @@ class RichTrainingLogger:
             ("recall_at_no_faph", "Recall @ No FAPH", ".4f"),
             ("threshold_for_no_faph", "Threshold for No FAPH", ".4f"),
             ("average_viable_recall", "Avg Viable Recall", ".4f"),
+            ("gain_f1_score_per_1k_steps", "F1 Gain / 1k steps", ".4f"),
+            ("gain_average_viable_recall_per_1k_steps", "Avg Recall Gain / 1k steps", ".4f"),
+            ("gain_recall_at_no_faph_per_1k_steps", "Recall@NoFAPH Gain / 1k steps", ".4f"),
+            ("gain_auc_pr_per_1k_steps", "AUC-PR Gain / 1k steps", ".4f"),
         ]
         for key, label, fmt in optional_metrics:
             if key in metrics and metrics[key] is not None:
@@ -241,7 +246,7 @@ class RichTrainingLogger:
         neg_weight: float,
     ) -> None:
         """Display a phase transition rule."""
-        title = f"Phase {phase + 1}/{total_phases} — " f"LR: {lr:.6f} | Weights: pos={pos_weight:.1f} neg={neg_weight:.1f}"
+        title = f"Phase {phase + 1}/{total_phases} — LR: {lr:.6f} | Weights: pos={pos_weight:.1f} neg={neg_weight:.1f}"
         self.console.print(Rule(title=title, style="bold cyan"))
 
     def log_checkpoint(self, reason: str, is_best: bool, path: str = "") -> None:

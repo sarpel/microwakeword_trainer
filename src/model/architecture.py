@@ -241,6 +241,20 @@ class MixConvBlock(tf.keras.layers.Layer):
 
         return net
 
+    def compute_output_shape(self, input_shape):
+        """Compute output shape for model.summary()."""
+        if self.filters is None:
+            return input_shape
+        if isinstance(input_shape, tf.TensorShape):
+            shape_list = input_shape.as_list()
+        else:
+            shape_list = list(input_shape)
+        if len(shape_list) < 4:
+            return tf.TensorShape(shape_list)
+        shape_list[1] = None
+        shape_list[-1] = self.filters
+        return tf.TensorShape(shape_list)
+
     def get_config(self):
         config = super().get_config()
         config.update(
@@ -342,6 +356,18 @@ class ResidualBlock(tf.keras.layers.Layer):
             net = net + residual
 
         return net
+
+    def compute_output_shape(self, input_shape):
+        """Compute output shape for model.summary()."""
+        if isinstance(input_shape, tf.TensorShape):
+            shape_list = input_shape.as_list()
+        else:
+            shape_list = list(input_shape)
+        if len(shape_list) < 4:
+            return tf.TensorShape(shape_list)
+        shape_list[1] = None
+        shape_list[-1] = self.filters
+        return tf.TensorShape(shape_list)
 
     def get_config(self):
         config = super().get_config()
@@ -565,6 +591,15 @@ class MixedNet(tf.keras.Model):
         net = self.output_dense(net)
 
         return net
+
+    def compute_output_shape(self, input_shape):
+        """Compute output shape for model.summary()."""
+        if isinstance(input_shape, tf.TensorShape):
+            shape_list = input_shape.as_list()
+        else:
+            shape_list = list(input_shape)
+        batch_dim = shape_list[0] if shape_list else None
+        return tf.TensorShape([batch_dim, 1])
 
     def get_config(self):
         config = super().get_config()

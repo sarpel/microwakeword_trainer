@@ -1,0 +1,5 @@
+training:
+  training_steps: [100]
+  learning_rates: [0.001]
+  steps_per_epoch: 20
+  eval_step_interval: 50

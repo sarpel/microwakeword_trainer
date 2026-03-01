@@ -97,14 +97,18 @@ def main():
         duration_min = data["duration"] / 60
         avg_duration = data["duration"] / count if count > 0 else 0.0
 
-        # Use bold for TOTAL
+        # Format plain string first, then apply ANSI styling
+        category_plain = f"{category:<20}"
+        count_field = f"{count:>14,}"
+        duration_field = f"{duration_min:>20.2f}"
+        avg_field = f"{avg_duration:>18.2f}"
+
+        # Apply bold styling to TOTAL by wrapping the already-formatted string
         if category == "TOTAL":
             # ANSI escape code: \033[1m = bold, \033[0m = reset
-            category_display = f"\033[1m{category}\033[0m"
-        else:
-            category_display = category
+            category_plain = f"\033[1m{category_plain}\033[0m"
 
-        print(f"{category_display:<20} {count:>14,} {duration_min:>20.2f} {avg_duration:>18.2f}")
+        print(f"{category_plain} {count_field} {duration_field} {avg_field}")
 
     print("=" * 80)
     print(f"\nAnalysis complete! Total files: {total_count:,}")

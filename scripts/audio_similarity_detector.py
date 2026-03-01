@@ -36,40 +36,18 @@ Python Version: 3.8+
 
 # SYSTEM LIBRARIES
 # These come pre-installed with Python and handle basic operations
-import argparse  # Command Line Argument Parser - lets users configure the script
-import sys  # System-specific parameters and functions
-from pathlib import Path  # Object-oriented file system paths (modern way!)
-from typing import Dict, List, Optional, Tuple  # Type hints for code clarity
+import argparse
+import shutil
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-# EXPLANATION:
-# - AutoModel: Automatically loads the correct model architecture
-# - AutoProcessor: Automatically loads the correct data preprocessor
-# These "Auto" classes are smart - they detect what model you're using and
-# configure themselves accordingly. No manual setup needed!
-# AUDIO PROCESSING
-import librosa  # Advanced audio loading library
-
-# NUMERICAL & SCIENTIFIC COMPUTING
-# CONCEPT: These libraries handle math, arrays, and scientific calculations
-import numpy as np  # NumPy: "Numerical Python" - the foundation for data science
-
-# SYNTAX: "as np" creates a shorthand so we write "np.array" instead of "numpy.array"
-import torch  # PyTorch: Deep Learning framework with GPU support
-import torchaudio  # PyTorch's audio processing library
-
-# CONCEPT: tqdm shows progress bars like: [████████░░] 80%
-# Without it, long operations would just show nothing - frustrating!
-from scipy.spatial.distance import cosine  # Cosine similarity calculation
-
-# WHY BOTH librosa AND torchaudio?
-# - librosa: Better at handling corrupted/unusual audio formats
-# - torchaudio: Faster GPU-accelerated processing
-# We use librosa to load safely, then convert to torchaudio tensors
-# UTILITIES
-from tqdm import tqdm  # Progress bar visualization
-
-# CONCEPT: torchaudio is like "audio + torch" - it loads audio files as PyTorch tensors
-# MACHINE LEARNING MODELS
+import librosa
+import numpy as np
+import torch
+import torchaudio
+from scipy.spatial.distance import cosine
+from tqdm import tqdm
 from transformers import AutoModel, AutoProcessor
 
 # CONCEPT: Cosine similarity measures how "aligned" two vectors are
@@ -647,7 +625,6 @@ class AudioSimilarityDetector:
                 try:
                     if copy_mode:
                         # COPY FILE (original remains)
-                        import shutil  # Import only when needed (local import)
 
                         shutil.copy2(file_path, destination)
                         # copy2() preserves metadata (creation date, permissions)

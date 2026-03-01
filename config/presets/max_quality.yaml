@@ -116,7 +116,7 @@ hard_negative_mining:
   enabled: true
   fp_threshold: 0.75
   max_samples: 15000
-  mining_interval_epochs: 3
+  mining_interval_epochs: 5
 export:
   wake_word: "Hey Katya"
   author: "Sarpel GURAY"
