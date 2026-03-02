@@ -720,7 +720,7 @@ class WakeWordDataset:
 
     def _is_cache_valid(self, processed_dir: str, paths_cfg: dict, hardware_cfg: dict, training_cfg: dict) -> bool:
         """Check if cached features are still valid.
-        
+
         Returns True if:
         - Manifest file exists
         - All hashes match (file list, hardware config, split config)
@@ -780,10 +780,7 @@ class WakeWordDataset:
             "file_list_hash": self._compute_file_list_hash(paths_cfg),
             "hardware_hash": self._compute_hardware_hash(hardware_cfg),
             "split_hash": self._compute_split_hash(training_cfg),
-            "splits": {
-                name: {"count": count, "dir": name}
-                for name, count in splits.items()
-            },
+            "splits": {name: {"count": count, "dir": name} for name, count in splits.items()},
         }
         manifest_path = Path(processed_dir) / "cache_manifest.json"
         with open(manifest_path, "w") as f:
@@ -918,98 +915,6 @@ class WakeWordDataset:
             training_cfg,
             splits={"train": train_count, "val": val_count, "test": test_count},
         )
-
-        # Reload the train store for training
-        self._load_store()
-
-        return self
-        """Build the dataset from raw audio files.
-
-        Args:
-            config: Configuration dictionary with paths and hardware settings.
-                   If not provided, uses config from __init__.
-
-        Returns:
-            self for method chaining
-        """
-        # Use provided config or fall back to stored config
-        cfg = config if config is not None else self._config
-        if cfg is None:
-            raise ValueError("No config provided. Pass config to __init__ or build(config)")
-
-        # Extract paths from config
-        paths_cfg = cfg.get("paths", {})
-        positive_dir = paths_cfg.get("positive_dir")
-        negative_dir = paths_cfg.get("negative_dir")
-        hard_negative_dir = paths_cfg.get("hard_negative_dir")
-        processed_dir = paths_cfg.get("processed_dir", "./data/processed")
-
-        # Extract hardware config for feature extraction
-        hardware_cfg = cfg.get("hardware", {})
-        sample_rate = hardware_cfg.get("sample_rate_hz", 16000)
-        mel_bins = hardware_cfg.get("mel_bins", 40)
-        window_size_ms = hardware_cfg.get("window_size_ms", 30)
-        window_step_ms = hardware_cfg.get("window_step_ms", 10)
-
-        # Create feature config
-        from src.data.features import FeatureConfig, MicroFrontend
-        from src.data.ingestion import Clips, ClipsLoaderConfig, Split
-
-        feature_config = FeatureConfig(
-            sample_rate=sample_rate,
-            mel_bins=mel_bins,
-            window_size_ms=window_size_ms,
-            window_step_ms=window_step_ms,
-        )
-
-        # Initialize feature extractor
-        frontend = MicroFrontend(feature_config)
-
-        # Ensure processed directories exist
-        dirs = ensure_processed_directory(processed_dir)
-
-        # Load clips using ClipsLoaderConfig
-        logger.info("Loading audio clips from dataset directories...")
-
-        training_cfg = cfg.get("training", {})
-        train_split = float(training_cfg.get("train_split", 0.8))
-        val_split = float(training_cfg.get("val_split", 0.1))
-        test_split = float(training_cfg.get("test_split", 0.1))
-        split_seed = int(training_cfg.get("split_seed", 42))
-        split_sum = train_split + val_split + test_split
-        if abs(split_sum - 1.0) > 1e-6:
-            raise ValueError(f"training split ratios must sum to 1.0, got {split_sum:.6f}")
-
-        clips_config = ClipsLoaderConfig(
-            positive_dir=Path(positive_dir) if positive_dir else None,
-            negative_dir=Path(negative_dir) if negative_dir else None,
-            hard_negative_dir=Path(hard_negative_dir) if hard_negative_dir else None,
-            train_split=train_split,
-            val_split=val_split,
-            test_split=test_split,
-            seed=split_seed,
-        )
-
-        clips = Clips(config=clips_config)
-
-        train_samples = clips.get_split(Split.TRAIN)
-        val_samples = clips.get_split(Split.VAL)
-        test_samples = clips.get_split(Split.TEST)
-
-        self._assert_split_integrity(train_samples, val_samples, test_samples, cfg)
-
-        logger.info(f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples, {len(test_samples)} test samples")
-
-        if not train_samples:
-            raise RuntimeError("No training samples found. Please check your dataset directories.")
-        if not test_samples:
-            raise RuntimeError("No held-out test samples found. A strict test split is required for leakage-safe evaluation.")
-
-        self._extract_features_to_store(train_samples, dirs["train"], frontend, sample_rate, "training", mel_bins)
-        if val_samples:
-            self._extract_features_to_store(val_samples, dirs["val"], frontend, sample_rate, "validation", mel_bins)
-        if test_samples:
-            self._extract_features_to_store(test_samples, dirs["test"], frontend, sample_rate, "test", mel_bins)
 
         # Reload the train store for training
         self._load_store()

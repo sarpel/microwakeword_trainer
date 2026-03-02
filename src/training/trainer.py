@@ -395,8 +395,6 @@ class Trainer:
                 if name not in metrics:
                     continue
                 value = metrics[name]
-                if value is None:
-                    continue
                 if isinstance(value, (int, float, np.floating, np.integer)):
                     tf.summary.scalar(f"{prefix}/{name}", float(value), step=step)
 
@@ -854,7 +852,7 @@ class Trainer:
                     if self.time_mask_count[current_phase] > 0 or self.freq_mask_count[current_phase] > 0:
                         try:
                             # Convert to numpy for CuPy SpecAugment if needed
-                            if hasattr(train_fingerprints, 'numpy'):
+                            if hasattr(train_fingerprints, "numpy"):
                                 train_fingerprints = train_fingerprints.numpy()
                             train_fingerprints = batch_spec_augment_gpu(
                                 train_fingerprints,
