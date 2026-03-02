@@ -4,12 +4,20 @@ Captures all terminal output (including Rich console output) to a log file
 for later analysis and debugging.
 """
 
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
 from rich.console import Console
+
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def strip_ansi_codes(text: str) -> str:
+    """Remove ANSI escape sequences from text."""
+    return ANSI_ESCAPE_PATTERN.sub("", text)
 
 
 class TeeOutput:
@@ -35,7 +43,10 @@ class TeeOutput:
         bytes_written = 0
         for stream in self.streams:
             try:
-                result = stream.write(data)
+                # Strip ANSI codes for file streams (not terminals)
+                is_file = not hasattr(stream, "isatty") or not stream.isatty()
+                write_data = strip_ansi_codes(data) if is_file else data
+                result = stream.write(write_data)
                 if result is not None:
                     bytes_written = max(bytes_written, result)
                 stream.flush()

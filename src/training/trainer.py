@@ -15,6 +15,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +41,9 @@ class EvaluationMetrics:
 
     def __init__(
         self,
-        cutoffs: list | None = None,
+        cutoffs: list[float] | None = None,
         ambient_duration_hours: float = 0.0,
+        default_threshold: float = 0.5,
     ):
         """Initialize metrics tracker.
 
@@ -49,11 +51,12 @@ class EvaluationMetrics:
             cutoffs: Array of threshold values (default: 101 points from 0 to 1)
         """
         if cutoffs is None:
-            cutoffs = np.linspace(0.0, 1.0, 101).tolist()
-        elif hasattr(cutoffs, "tolist"):
-            cutoffs = cutoffs.tolist()
-        self.cutoffs = cutoffs
+            cutoffs_list = np.linspace(0.0, 1.0, 101).tolist()
+        else:
+            cutoffs_list = cutoffs if isinstance(cutoffs, list) else list(cutoffs)
+        self.cutoffs: list[float] = [float(cutoff) for cutoff in cutoffs_list]
         self.ambient_duration_hours = ambient_duration_hours
+        self.default_threshold = default_threshold
 
         # Accumulated predictions and labels
         self.all_y_true: list = []
@@ -115,7 +118,7 @@ class EvaluationMetrics:
         # Get basic metrics using default threshold 0.5
         metrics = calc.compute_all_metrics(
             ambient_duration_hours=self.ambient_duration_hours,
-            threshold=0.5,
+            threshold=self.default_threshold,
         )
 
         # Add per-threshold metrics for backward compatibility (ROC/PR curves)
@@ -245,7 +248,6 @@ class Trainer:
         self.input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
 
         # FAH calculation - prefer evaluation config, fall back to training config.
-        # FAH calculation - prefer evaluation config, fall back to training config.
         # Only overwrite if evaluation block explicitly provides a non-zero value.
         self.ambient_duration_hours = training.get("ambient_duration_hours", 10.0)
         if self.ambient_duration_hours > 0:
@@ -254,7 +256,7 @@ class Trainer:
         eval_ambient = evaluation.get("ambient_duration_hours")
         if eval_ambient is not None and eval_ambient > 0:
             self.ambient_duration_hours = eval_ambient
-            self.logger.log_info(f"FAH calculation overridden by evaluation config: " f"{self.ambient_duration_hours:.2f} hours of ambient audio")
+            self.logger.log_info(f"FAH calculation overridden by evaluation config: {self.ambient_duration_hours:.2f} hours of ambient audio")
 
         # Apply threading config
         if self.inter_op_parallelism > 0:
@@ -337,7 +339,17 @@ class Trainer:
                 mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
                 output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
             )
-            self.logger.log_info(f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, " f"max_samples={hn_config.get('max_samples', 5000)}")
+            self.logger.log_info(f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}")
+
+        if training.get("ema_decay") is not None:
+            self.logger.log_warning("training.ema_decay is configured but EMA is not implemented yet; value will be ignored")
+
+    def _get_cutoffs(self) -> list[float]:
+        """Generate cutoff thresholds for evaluation metrics."""
+        n_thresholds = int(self.evaluation_config.get("n_thresholds", 101) or 101)
+        if n_thresholds < 2:
+            n_thresholds = 2
+        return np.linspace(0.0, 1.0, n_thresholds).tolist()
 
     def _get_current_phase_settings(self, step: int) -> dict[str, Any]:
         """Get training settings for current step.
@@ -484,11 +496,11 @@ class Trainer:
         model = build_model(
             input_shape=input_shape,
             num_classes=2,
-            first_conv_filters=model_cfg.get("first_conv_filters", 30),
+            first_conv_filters=model_cfg.get("first_conv_filters", 32),
             first_conv_kernel_size=model_cfg.get("first_conv_kernel_size", 5),
             stride=model_cfg.get("stride", 3),
-            pointwise_filters=model_cfg.get("pointwise_filters", "60,60,60,60"),
-            mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[9],[13],[21]"),
+            pointwise_filters=model_cfg.get("pointwise_filters", "64,64,64,64"),
+            mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"),
             repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
             residual_connection=model_cfg.get("residual_connection", "0,0,0,0"),
             dropout_rate=model_cfg.get("dropout_rate", 0.0),
@@ -499,11 +511,21 @@ class Trainer:
         phase_settings = self._get_current_phase_settings(0)
 
         # Compile model with BinaryCrossentropy loss
-        optimizer = keras.optimizers.Adam(learning_rate=phase_settings["learning_rate"])
+        training = self.config.get("training", {})
+        optimizer_name = str(training.get("optimizer", "adam")).lower()
+        if optimizer_name != "adam":
+            self.logger.log_warning(f"Unsupported optimizer '{optimizer_name}', falling back to Adam")
+        optimizer = keras.optimizers.Adam(
+            learning_rate=phase_settings["learning_rate"],
+            clipnorm=training.get("gradient_clipnorm"),
+        )
 
         model.compile(
             optimizer=optimizer,
-            loss=keras.losses.BinaryCrossentropy(from_logits=False),
+            loss=keras.losses.BinaryCrossentropy(
+                from_logits=False,
+                label_smoothing=float(training.get("label_smoothing", 0.0) or 0.0),
+            ),
             metrics=[
                 keras.metrics.BinaryAccuracy(name="accuracy"),
                 keras.metrics.Recall(name="recall"),
@@ -651,7 +673,10 @@ class Trainer:
         phase_settings = self._get_current_phase_settings(self.current_step)
 
         # Update learning rate
-        self.model.optimizer.learning_rate.assign(phase_settings["learning_rate"])
+        optimizer = self.model.optimizer
+        if optimizer is None:
+            raise RuntimeError("Model optimizer is not set")
+        optimizer.learning_rate.assign(phase_settings["learning_rate"])
 
         # Apply class weights
         combined_weights = self._apply_class_weights(
@@ -672,12 +697,14 @@ class Trainer:
         )
 
         # Build metrics dict
-        metrics_dict = {}
+        metrics_dict: dict[str, float] = {}
         if isinstance(result, dict):
             metrics_dict = result
         else:
             # Fallback path for environments not supporting return_dict
             metric_names = getattr(self.model, "metrics_names", [])
+            if not isinstance(result, (list, tuple)):
+                result = [result]
             for i, value in enumerate(result):
                 name = metric_names[i] if i < len(metric_names) else f"metric_{i}"
                 metrics_dict[name] = value
@@ -703,10 +730,12 @@ class Trainer:
         self.val_metrics.reset()
 
         iterator = data_generator() if callable(data_generator) else data_generator
+        if not isinstance(iterator, Iterable):
+            raise ValueError("Trainer.validate() expected an iterable or generator from data_generator")
 
         for batch in iterator:
             if not isinstance(batch, tuple) or len(batch) != 3:
-                raise ValueError("Trainer.validate() expects data_generator to yield " "(fingerprints, ground_truth, metadata) 3-tuples. " f"Got: {type(batch).__name__} with value {batch!r}")
+                raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
             fingerprints, ground_truth, _ = batch
             # Get predictions
             predictions = self.model(fingerprints, training=False).numpy()
@@ -751,6 +780,8 @@ class Trainer:
         self,
         train_data_factory,
         val_data_factory,
+        mining_data_factory=None,
+        test_data_factory=None,
         input_shape: tuple[int, ...] | None = None,
     ) -> tf.keras.Model:
         """Execute full step-based training loop.
@@ -773,7 +804,7 @@ class Trainer:
         self.logger.log_info("Building model...")
         self.model = self._build_model(input_shape)
         # Build model weights before summary so params are visible
-        self.model.build((None, *input_shape))
+        _ = self.model(tf.zeros((1, *input_shape), dtype=tf.float32), training=False)
         self.model.summary(print_fn=self.logger.console.print)
 
         # Setup profiler
@@ -795,20 +826,26 @@ class Trainer:
         last_throughput_samples = 0
         # Create initial generator from factory so we can restart it if exhausted
         train_data_generator = train_data_factory()
+        run_name = time.strftime("run_%Y%m%d_%H%M%S")
+        if self.tensorboard_enabled:
+            log_dir = Path(self.tensorboard_log_dir) / run_name
+            log_dir.mkdir(parents=True, exist_ok=True)
+            self.tensorboard_writer = tf.summary.create_file_writer(str(log_dir))
 
-        for step in range(1, total_steps + 1):
-            self.current_step = step
+        try:
+            for step in range(1, total_steps + 1):
+                self.current_step = step
 
-            # Get training batch
-            try:
-                train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
-            except StopIteration:
-                # Restart by calling the factory again
-                train_data_generator = train_data_factory()
+                # Get training batch
                 try:
                     train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
-                except StopIteration as exc:
-                    raise RuntimeError("train_data_factory() returned an empty generator after restart. " "Cannot continue training without batches.") from exc
+                except StopIteration:
+                    # Restart by calling the factory again
+                    train_data_generator = train_data_factory()
+                    try:
+                        train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
+                    except StopIteration as exc:
+                        raise RuntimeError("train_data_factory() returned an empty generator after restart. Cannot continue training without batches.") from exc
 
                 # Apply SpecAugment if enabled (GPU-accelerated, requires numpy)
                 if self.spec_augment_enabled:
@@ -817,7 +854,7 @@ class Trainer:
                     if self.time_mask_count[current_phase] > 0 or self.freq_mask_count[current_phase] > 0:
                         try:
                             # Convert to numpy for CuPy SpecAugment if needed
-                            if hasattr(train_fingerprints, "numpy"):
+                            if hasattr(train_fingerprints, 'numpy'):
                                 train_fingerprints = train_fingerprints.numpy()
                             train_fingerprints = batch_spec_augment_gpu(
                                 train_fingerprints,
@@ -859,20 +896,25 @@ class Trainer:
                 if self.eval_log_every_step or step % self.eval_basic_step_interval == 0:
                     self.logger.update_step(progress, progress_task, step, train_metrics, phase_settings_display)
 
-            # Detect and announce phase transitions
-            current_phase = phase_settings_display["phase"]
-            if current_phase != prev_phase:
-                if prev_phase >= 0:  # Skip announcement for initial phase
-                    progress.stop()
-                    self.logger.log_phase_transition(
-                        current_phase,
-                        len(self.training_steps_list),
-                        phase_settings_display["learning_rate"],
-                        phase_settings_display["positive_weight"],
-                        phase_settings_display["negative_weight"],
-                    )
-                    progress.start()
-                prev_phase = current_phase
+                if self.tensorboard_writer is not None:
+                    self._log_tensorboard_metrics("train", train_metrics, step, self._tb_train_metric_keys)
+                    with self.tensorboard_writer.as_default():
+                        tf.summary.scalar("train/learning_rate", float(phase_settings_display["learning_rate"]), step=step)
+
+                # Detect and announce phase transitions
+                current_phase = phase_settings_display["phase"]
+                if current_phase != prev_phase:
+                    if prev_phase >= 0:  # Skip announcement for initial phase
+                        progress.stop()
+                        self.logger.log_phase_transition(
+                            current_phase,
+                            len(self.training_steps_list),
+                            phase_settings_display["learning_rate"],
+                            phase_settings_display["positive_weight"],
+                            phase_settings_display["negative_weight"],
+                        )
+                        progress.start()
+                    prev_phase = current_phase
 
                 # Evaluate every N steps (regardless of phase transition)
                 basic_due = step % self.eval_basic_step_interval == 0
@@ -919,8 +961,12 @@ class Trainer:
                             except Exception:
                                 raise
 
-                # Resume progress bar
-                progress.start()
+                    # Resume progress bar
+                    progress.start()
+        finally:
+            if self.tensorboard_writer is not None:
+                self.tensorboard_writer.flush()
+                self.tensorboard_writer.close()
 
         # Training complete
         total_time = time.time() - start_time
@@ -935,6 +981,22 @@ class Trainer:
         # Load best weights for return
         if self.best_weights_path and os.path.exists(self.best_weights_path):
             self.model.load_weights(self.best_weights_path)
+
+        if test_data_factory is not None:
+            from src.evaluation.test_evaluator import TestEvaluator
+
+            log_dir = self.config.get("performance", {}).get("tensorboard_log_dir", "./logs")
+            test_feature_store_path = os.path.join(self.config.get("paths", {}).get("processed_dir", "./data/processed"), "test")
+            evaluator = TestEvaluator(self.model, self.config, log_dir)
+            evaluator.evaluate(test_data_factory, test_feature_store_path=test_feature_store_path)
+            self.logger.log_info("Running held-out test evaluation...")
+            test_metrics = self.validate(test_data_factory)
+            self.logger.log_validation_results(test_metrics, total_steps, total_steps)
+            tp = self.val_metrics.tp_at_threshold.get(0.5, 0)
+            fp = self.val_metrics.fp_at_threshold.get(0.5, 0)
+            tn = self.val_metrics.tn_at_threshold.get(0.5, 0)
+            fn = self.val_metrics.fn_at_threshold.get(0.5, 0)
+            self.logger.log_confusion_matrix(tp, fp, tn, fn)
 
         return self.model
 
@@ -1023,6 +1085,8 @@ def train(config: dict) -> tf.keras.Model:
 
 def main():
     """Main entry point for mww-train command."""
+    # Env vars for TF log suppression are set at module level (top of file).
+
     import argparse
 
     from config.loader import load_full_config
@@ -1060,11 +1124,10 @@ def main():
             config_dict = dataclasses.asdict(config)
 
             # Update log directory from loaded config
-            paths_dict = config_dict.get("paths", {})
-            if paths_dict and paths_dict.get("logs"):
-                log_dir = paths_dict.get("logs", "./logs")
-                terminal_logger.log_dir = Path(log_dir)
-                terminal_logger.log_dir.mkdir(parents=True, exist_ok=True)
+            perf_dict = config_dict.get("performance", {})
+            log_dir = perf_dict.get("tensorboard_log_dir", "./logs")
+            terminal_logger.log_dir = Path(log_dir)
+            terminal_logger.log_dir.mkdir(parents=True, exist_ok=True)
 
             # Train model
             train(config_dict)

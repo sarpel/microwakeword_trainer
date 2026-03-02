@@ -262,7 +262,7 @@ class RichTrainingLogger:
         neg_weight: float,
     ) -> None:
         """Display a phase transition rule."""
-        title = f"Phase {phase + 1}/{total_phases} — " f"LR: {lr:.6f} | Weights: pos={pos_weight:.1f} neg={neg_weight:.1f}"
+        title = f"Phase {phase + 1}/{total_phases} — LR: {lr:.6f} | Weights: pos={pos_weight:.1f} neg={neg_weight:.1f}"
         self.console.print(Rule(title=title, style="bold cyan"))
 
     def log_checkpoint(self, reason: str, is_best: bool, path: str = "") -> None:

@@ -74,7 +74,7 @@ class RaggedMmap:
         self,
         base_dir: Union[str, Path],
         name: str = "ragged",
-        dtype: "np.dtype[Any]" = None,  # noqa: B008
+        dtype: Optional["np.dtype[Any]"] = None,
         create: bool = True,
     ):
         """Initialize RaggedMmap storage.
@@ -121,6 +121,8 @@ class RaggedMmap:
 
     def _load_index(self):
         """Load index files (offsets and lengths)."""
+        assert self._offsets_file is not None, "offsets_file not initialized"
+        assert self._lengths_file is not None, "lengths_file not initialized"
         if os.path.exists(self._offsets_file) and os.path.exists(self._lengths_file):
             # Read binary offset data
             with open(self._offsets_file, "rb") as f:
@@ -293,7 +295,7 @@ class RaggedMmap:
         arrays: List[np.ndarray],
         base_dir: Union[str, Path],
         name: str = "ragged",
-        dtype: "np.dtype[Any]" = None,  # noqa: B008
+        dtype: Optional["np.dtype[Any]"] = None,
     ) -> "RaggedMmap":
         """Create RaggedMmap from list of arrays.
 
@@ -425,7 +427,7 @@ class FeatureStore:
         if not features:
             raise ValueError("features must be non-empty")
         if len(features) != len(labels):
-            raise ValueError(f"features and labels must have the same length, " f"got {len(features)} vs {len(labels)}")
+            raise ValueError(f"features and labels must have the same length, got {len(features)} vs {len(labels)}")
 
         if self.features is None:
             # Initialize with first sample to get feature dim
@@ -470,7 +472,7 @@ class FeatureStore:
         self.labels = RaggedMmap(
             self.base_dir,
             self.config.labels_name,
-            np.int32,
+            np.dtype(np.int32),
             create=False,
         )
         self.labels.open("r", disable_mmap=disable_mmap)
@@ -524,7 +526,7 @@ class WakeWordDataset:
             self.data_path = Path(paths_cfg.get("processed_dir", "./data/processed"))
             self.batch_size = training_cfg.get("batch_size", batch_size)
             self.feature_dim = hardware_cfg.get("mel_bins", feature_dim)
-            self.split = split
+            self.split = self._normalize_split_name(split)
             self._is_built = False
 
             # Derive max_time_frames from hardware config
@@ -535,7 +537,7 @@ class WakeWordDataset:
             # Legacy initialization
             # Legacy initialization
             self.data_path = Path(data_path) if data_path else Path("./data/processed")
-            self.split = split
+            self.split = self._normalize_split_name(split)
             self.batch_size = batch_size
             self.feature_dim = feature_dim
             self._is_built = False
@@ -545,8 +547,18 @@ class WakeWordDataset:
         self.feature_store: Optional[FeatureStore] = None
         self._load_store()
 
+    @staticmethod
+    def _normalize_split_name(split: str) -> str:
+        normalized = split.strip().lower()
+        if normalized in {"validation", "val"}:
+            return "val"
+        if normalized in {"train", "test"}:
+            return normalized
+        raise ValueError(f"Unsupported split '{split}'. Expected one of: train, val, validation, test")
+
     def _load_store(self):
         """Load feature store if available."""
+        self.split = self._normalize_split_name(self.split)
         store_path = self.data_path / self.split
         if store_path.exists():
             self.feature_store = FeatureStore(store_path)
@@ -708,7 +720,7 @@ class WakeWordDataset:
 
     def _is_cache_valid(self, processed_dir: str, paths_cfg: dict, hardware_cfg: dict, training_cfg: dict) -> bool:
         """Check if cached features are still valid.
-
+        
         Returns True if:
         - Manifest file exists
         - All hashes match (file list, hardware config, split config)
@@ -768,7 +780,10 @@ class WakeWordDataset:
             "file_list_hash": self._compute_file_list_hash(paths_cfg),
             "hardware_hash": self._compute_hardware_hash(hardware_cfg),
             "split_hash": self._compute_split_hash(training_cfg),
-            "splits": {name: {"count": count, "dir": name} for name, count in splits.items()},
+            "splits": {
+                name: {"count": count, "dir": name}
+                for name, count in splits.items()
+            },
         }
         manifest_path = Path(processed_dir) / "cache_manifest.json"
         with open(manifest_path, "w") as f:
@@ -936,23 +951,6 @@ class WakeWordDataset:
         window_size_ms = hardware_cfg.get("window_size_ms", 30)
         window_step_ms = hardware_cfg.get("window_step_ms", 10)
 
-        # Extract training config for splits
-        training_cfg = cfg.get("training", {})
-        train_split = float(training_cfg.get("train_split", 0.8))
-        val_split = float(training_cfg.get("val_split", 0.1))
-        test_split = float(training_cfg.get("test_split", 0.1))
-
-        # Ensure processed directories exist
-        dirs = ensure_processed_directory(processed_dir)
-
-        # Check if valid cache exists
-        if self._is_cache_valid(processed_dir, paths_cfg, hardware_cfg, training_cfg):
-            logger.info("[CACHE] Valid feature cache found — skipping feature extraction")
-            self._load_store()
-            return self
-
-        logger.info("[CACHE] No valid cache found — performing full feature extraction")
-
         # Create feature config
         from src.data.features import FeatureConfig, MicroFrontend
         from src.data.ingestion import Clips, ClipsLoaderConfig, Split
@@ -966,6 +964,9 @@ class WakeWordDataset:
 
         # Initialize feature extractor
         frontend = MicroFrontend(feature_config)
+
+        # Ensure processed directories exist
+        dirs = ensure_processed_directory(processed_dir)
 
         # Load clips using ClipsLoaderConfig
         logger.info("Loading audio clips from dataset directories...")
@@ -1061,32 +1062,42 @@ class WakeWordDataset:
             store.open(readonly=readonly, disable_mmap=disable_mmap)
             num_samples = len(store)
             if num_samples == 0:
-                return iter([])
+                return
+
             indices = list(range(num_samples))
             rng = np.random.RandomState(42)
+
             while True:
-                epoch_indices = rng.permutation(indices).tolist()
+                epoch_indices = rng.permutation(indices).tolist() if shuffle else indices
                 batch_features = []
                 batch_labels = []
                 batch_is_hard_neg = []
+
                 for idx in epoch_indices:
                     try:
-                        feature, label = self[idx]
+                        feature, label = store.get(idx)
                     except (RuntimeError, IndexError):
                         continue
+
                     fixed_feature = self._pad_or_truncate(feature, max_time_frames)
                     batch_features.append(fixed_feature)
-                    batch_labels.append(label & 1)  # ground_truth: 1=positive, 0=negative/hard_neg
-                    batch_is_hard_neg.append(label == 2)
+                    batch_labels.append(label & 1)
+                    if include_hard_negative_flag:
+                        batch_is_hard_neg.append(label == 2)
+
                     if len(batch_features) >= self.batch_size:
                         fingerprints = np.array(batch_features, dtype=np.float32)
                         ground_truth = np.array(batch_labels, dtype=np.int32)
                         sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                        is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
-                        yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
+                        if include_hard_negative_flag:
+                            is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
+                            yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
+                        else:
+                            yield (fingerprints, ground_truth, sample_weights)
                         batch_features = []
                         batch_labels = []
                         batch_is_hard_neg = []
+
                 if batch_features:
                     fingerprints = np.array(batch_features, dtype=np.float32)
                     ground_truth = np.array(batch_labels, dtype=np.int32)
@@ -1125,32 +1136,43 @@ class WakeWordDataset:
             max_time_frames = self.max_time_frames
 
         def factory():
-            num_samples = len(self)
-            if num_samples == 0:
-                return iter([])
-            indices = list(range(num_samples))
-            batch_features = []
-            batch_labels = []
-            for idx in indices:
-                try:
-                    feature, label = self[idx]
-                except (RuntimeError, IndexError):
-                    continue
-                fixed_feature = self._pad_or_truncate(feature, max_time_frames)
-                batch_features.append(fixed_feature)
-                batch_labels.append(label & 1)  # ground_truth: binary (hard_neg maps to 0)
-                if len(batch_features) >= self.batch_size:
-                    fingerprints = np.array(batch_features, dtype=np.float32)
-                    ground_truth = np.array(batch_labels, dtype=np.int32)
-                    sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                    yield (fingerprints, ground_truth, sample_weights)
-                    batch_features = []
-                    batch_labels = []
-            if batch_features:
-                fingerprints = np.array(batch_features, dtype=np.float32)
-                ground_truth = np.array(batch_labels, dtype=np.int32)
-                sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                yield (fingerprints, ground_truth, sample_weights)
+            yield from self._iter_split_batches(
+                split="val",
+                max_time_frames=max_time_frames,
+                infinite=False,
+                shuffle=False,
+                include_hard_negative_flag=False,
+            )
+
+        return factory
+
+    def test_generator_factory(self, max_time_frames: Optional[int] = None):
+        if max_time_frames is None:
+            max_time_frames = self.max_time_frames
+
+        def factory():
+            yield from self._iter_split_batches(
+                split="test",
+                max_time_frames=max_time_frames,
+                infinite=False,
+                shuffle=False,
+                include_hard_negative_flag=False,
+            )
+
+        return factory
+
+    def train_mining_generator_factory(self, max_time_frames: Optional[int] = None):
+        if max_time_frames is None:
+            max_time_frames = self.max_time_frames
+
+        def factory():
+            yield from self._iter_split_batches(
+                split="train",
+                max_time_frames=max_time_frames,
+                infinite=False,
+                shuffle=False,
+                include_hard_negative_flag=False,
+            )
 
         return factory
 

@@ -43,14 +43,10 @@ def spec_augment_gpu(
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
     if cp is None:
-        raise RuntimeError(
-            "CuPy is not available. Install cupy package: pip install cupy"
-        )
+        raise RuntimeError("CuPy is not available. Install cupy package: pip install cupy")
 
     if not HAS_GPU:
-        raise RuntimeError(
-            "GPU is not available. This module requires GPU acceleration."
-        )
+        raise RuntimeError("GPU is not available. This module requires GPU acceleration.")
 
     # Transfer to GPU
     spec_gpu = cp.asarray(spectrogram)
@@ -61,17 +57,13 @@ def spec_augment_gpu(
     # Apply frequency masks
     for _ in range(freq_mask_count):
         freq_mask_size = cp.random.randint(0, freq_mask_max_size + 1)
-        freq_mask_start = cp.random.randint(
-            0, max(1, num_freq_bins - freq_mask_size + 1)
-        )
+        freq_mask_start = cp.random.randint(0, max(1, num_freq_bins - freq_mask_size + 1))
         spec_gpu[:, freq_mask_start : freq_mask_start + freq_mask_size] = 0
 
     # Apply time masks
     for _ in range(time_mask_count):
         time_mask_size = cp.random.randint(0, time_mask_max_size + 1)
-        time_mask_start = cp.random.randint(
-            0, max(1, num_time_frames - time_mask_size + 1)
-        )
+        time_mask_start = cp.random.randint(0, max(1, num_time_frames - time_mask_size + 1))
         spec_gpu[time_mask_start : time_mask_start + time_mask_size, :] = 0
 
     # Transfer back to CPU
@@ -105,14 +97,10 @@ def batch_spec_augment_gpu(
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
     if cp is None:
-        raise RuntimeError(
-            "CuPy is not available. Install cupy package: pip install cupy"
-        )
+        raise RuntimeError("CuPy is not available. Install cupy package: pip install cupy")
 
     if not HAS_GPU:
-        raise RuntimeError(
-            "GPU is not available. This module requires GPU acceleration."
-        )
+        raise RuntimeError("GPU is not available. This module requires GPU acceleration.")
 
     # Transfer entire batch to GPU
     batch_gpu = cp.asarray(batch)
@@ -123,9 +111,10 @@ def batch_spec_augment_gpu(
     # Apply frequency masks - different mask for each sample in batch
     for _ in range(freq_mask_count):
         freq_mask_sizes = cp.random.randint(0, freq_mask_max_size + 1, size=batch_size)
-        freq_mask_starts = cp.random.randint(
-            0, cp.maximum(1, num_freq_bins - freq_mask_sizes + 1)
-        )
+        freq_mask_start_highs = cp.maximum(1, num_freq_bins - freq_mask_sizes + 1)
+        freq_mask_starts = cp.empty(batch_size, dtype=cp.int64)
+        for i in range(batch_size):
+            freq_mask_starts[i] = cp.random.randint(0, int(freq_mask_start_highs[i]))
 
         # Vectorized frequency masking across batch
         for i in range(batch_size):
@@ -136,9 +125,10 @@ def batch_spec_augment_gpu(
     # Apply time masks - different mask for each sample in batch
     for _ in range(time_mask_count):
         time_mask_sizes = cp.random.randint(0, time_mask_max_size + 1, size=batch_size)
-        time_mask_starts = cp.random.randint(
-            0, cp.maximum(1, num_time_frames - time_mask_sizes + 1)
-        )
+        time_mask_start_highs = cp.maximum(1, num_time_frames - time_mask_sizes + 1)
+        time_mask_starts = cp.empty(batch_size, dtype=cp.int64)
+        for i in range(batch_size):
+            time_mask_starts[i] = cp.random.randint(0, int(time_mask_start_highs[i]))
 
         # Vectorized time masking across batch
         for i in range(batch_size):

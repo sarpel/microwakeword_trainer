@@ -162,9 +162,10 @@ def compute_roc_pr_curves(
 def compute_recall_at_no_faph(
     y_true: np.ndarray,
     y_scores: np.ndarray,
+    n_thresholds: int = 101,
 ) -> tuple[float, float]:
     """Compute recall at the lowest threshold yielding zero false positives."""
-    thresholds = np.linspace(0, 1, 101)
+    thresholds = np.linspace(0, 1, n_thresholds)
 
     for thresh in thresholds:
         neg_mask = y_true == 0
@@ -247,9 +248,10 @@ def compute_average_viable_recall(
     y_scores: np.ndarray,
     ambient_duration_hours: float,
     max_fah: float = 10.0,
+    n_thresholds: int = 101,
 ) -> float:
     """Compute average viable recall (AUC of recall vs normalized FAH)."""
-    thresholds = np.linspace(0, 1, 101)
+    thresholds = np.linspace(0, 1, n_thresholds)
 
     recalls = []
     fahs = []
@@ -323,6 +325,7 @@ class MetricsCalculator:
         self,
         ambient_duration_hours: float,
         max_fah: float = 10.0,
+        n_thresholds: int = 101,
     ) -> float:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_average_viable_recall requires y_score")
@@ -331,12 +334,13 @@ class MetricsCalculator:
             self.y_score,
             ambient_duration_hours=ambient_duration_hours,
             max_fah=max_fah,
+            n_thresholds=n_thresholds,
         )
 
-    def compute_recall_at_no_faph(self) -> tuple[float, float]:
+    def compute_recall_at_no_faph(self, n_thresholds: int = 101) -> tuple[float, float]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_recall_at_no_faph requires y_score")
-        return compute_recall_at_no_faph(self.y_true, self.y_score)
+        return compute_recall_at_no_faph(self.y_true, self.y_score, n_thresholds=n_thresholds)
 
     def compute_recall_at_target_fah(
         self,

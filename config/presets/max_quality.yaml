@@ -1,38 +1,21 @@
-# ─────────────────────────────────────────────────────────────────
-# MAX QUALITY PRESET - Maximum quality settings
-# Use for: Production training with best accuracy
-# ─────────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────────
-# HARDWARE PARAMETERS (IMMUTABLE)
-# ─────────────────────────────────────────────────────────────────
 hardware:
   sample_rate_hz: 16000
   mel_bins: 40
   window_size_ms: 30
   window_step_ms: 10
   clip_duration_ms: 1000
-
-# ─────────────────────────────────────────────────────────────────
-# PATHS
-# ─────────────────────────────────────────────────────────────────
 paths:
   positive_dir: "./dataset/positive"
   negative_dir: "./dataset/negative"
   hard_negative_dir: "./dataset/hard_negative"
   background_dir: "./dataset/background"
   rir_dir: "./dataset/rirs"
-  processed_dir: "./dataset/processed"
+  processed_dir: "./data/processed"
   checkpoint_dir: "./models/checkpoints"
   export_dir: "./models/exported"
-
-# ─────────────────────────────────────────────────────────────────
-# TRAINING PARAMETERS
-# ─────────────────────────────────────────────────────────────────
 training:
-  # Maximum steps for best quality
-  training_steps: [50000, 20000]
-  learning_rates: [0.001, 0.0001]
+  training_steps: [40000, 25000, 10000]
+  learning_rates: [0.001, 0.0001, 0.00005]
   batch_size: 128
   eval_step_interval: 1000
   eval_basic_step_interval: 1000
@@ -52,18 +35,16 @@ training:
   freq_mask_max_size: [4, 3, 2]
   freq_mask_count: [2, 2, 1]
   minimization_metric: "ambient_false_positives_per_hour"
-  target_minimization: 0.2
+  target_minimization: 0.1
   maximization_metric: "average_viable_recall"
-  # Hours of negative/background audio for FAH calculation
-  ambient_duration_hours: 10.0
-
-# ─────────────────────────────────────────────────────────────────
-# MIXEDNET ARCHITECTURE
-# ─────────────────────────────────────────────────────────────────
+  ambient_duration_hours: 28.75
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  strict_content_hash_leakage_check: true
+  optimizer: "adam"
 model:
   architecture: "mixednet"
-
-  # okay_nabu architecture (official ESPHome MWW)
   first_conv_filters: 32
   first_conv_kernel_size: 5
   stride: 3
@@ -71,36 +52,21 @@ model:
   mixconv_kernel_sizes: "[5],[7,11],[9,15],[23]"
   repeat_in_block: "1,1,1,1"
   residual_connection: "0,0,0,0"
-
-  # Common settings
-  dropout_rate: 0.2
+  dropout_rate: 0.15
   l2_regularization: 0.0001
-
-# ─────────────────────────────────────────────────────────────────
-# AUGMENTATION (Full + extra for max quality)
-# ─────────────────────────────────────────────────────────────────
 augmentation:
-  # Time-domain augmentations - higher probabilities
-  SevenBandParametricEQ: 0.15
+  SevenBandParametricEQ: 0.20
   TanhDistortion: 0.15
-  PitchShift: 0.15
-  BandStopFilter: 0.15
-  AddColorNoise: 0.15
-  AddBackgroundNoise: 0.8
+  PitchShift: 0.20
+  BandStopFilter: 0.20
+  AddColorNoise: 0.25
   Gain: 1.0
-  RIR: 0.6
-
-  # Additional augmentations for max quality
-  AddBackgroundNoiseFromFile: 0.3
-  ApplyImpulseResponse: 0.4
-
-  # Noise mixing parameters - wider range for max quality
-  background_min_snr_db: -10
-  background_max_snr_db: 15
-  min_jitter_s: 0.19
-  max_jitter_s: 0.21
-
-  # Augmentation magnitude ranges - wider for max quality diversity
+  AddBackgroundNoiseFromFile: 0.75
+  ApplyImpulseResponse: 0.60
+  background_min_snr_db: -10.0
+  background_max_snr_db: 20.0
+  min_jitter_s: 0.15
+  max_jitter_s: 0.25
   eq_min_gain_db: -9.0
   eq_max_gain_db: 9.0
   distortion_min: 0.05
@@ -114,22 +80,13 @@ augmentation:
   gain_min_db: -6.0
   gain_max_db: 6.0
   color_noise_min_snr_db: -10.0
-  color_noise_max_snr_db: 15.0
-
-  # Background sources - use your own dataset paths
+  color_noise_max_snr_db: 20.0
   impulse_paths: ["./dataset/rirs"]
   background_paths: ["./dataset/background"]
   augmentation_duration_s: 3.2
-
-# ─────────────────────────────────────────────────────────────────
-# PERFORMANCE CONFIGURATION (Maximum resources)
-# ─────────────────────────────────────────────────────────────────
 performance:
-  # GPU mandatory for max quality
   gpu_only: true
   mixed_precision: true
-
-  # Maximum CPU resources
   num_workers: 16
   num_threads_per_worker: 2
   prefetch_factor: 8
@@ -137,13 +94,9 @@ performance:
   max_memory_gb: 32
   inter_op_parallelism: 16
   intra_op_parallelism: 16
-
-  # Profiling enabled with detailed output
   enable_profiling: false
   profile_every_n_steps: 100
   profile_output_dir: "./profiles"
-
-  # TensorBoard enabled with full metrics
   tensorboard_enabled: true
   tensorboard_log_dir: "./logs"
   prefetch_buffer: null  # null = tf.data.AUTOTUNE (dynamic optimization)
@@ -155,67 +108,61 @@ performance:
   disable_mmap: false
 speaker_clustering:
   enabled: true
-  method: "agglomerative"
+  method: "adaptive"
   embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
-  similarity_threshold: 0.75
+  similarity_threshold: 0.68
+  n_clusters: null
   leakage_audit_enabled: true
-
-# ─────────────────────────────────────────────────────────────────
-# HARD NEGATIVE MINING (Enabled with aggressive settings)
-# ─────────────────────────────────────────────────────────────────
+  leakage_similarity_threshold: 0.9
+  use_embedding_cache: true
+  cache_dir: null
+  batch_size: null
+  num_io_workers: 8
+  use_mixed_precision: true
+  use_dataloader: false
+  use_adaptive_clustering: true
+  hdbscan_min_cluster_size: 5
+  hdbscan_min_samples: 3
 hard_negative_mining:
   enabled: false
   fp_threshold: 0.75
-  max_samples: 10000
-  mining_interval_epochs: 3
-
-# ─────────────────────────────────────────────────────────────────
-# EXPORT SETTINGS
-# ─────────────────────────────────────────────────────────────────
+  max_samples: 15000
+  mining_interval_epochs: 5
 export:
   wake_word: "Hey Katya"
   author: "Sarpel GURAY"
   website: "https://github.com/sarpel/microwakeword-training-platform"
   trained_languages: ["en"]
-
   quantize: true
   inference_input_type: "int8"
   inference_output_type: "uint8"
-
-  # Wake word detection threshold (high-confidence production-safe threshold)
-  # Validated optimal cutoff from model validation
   probability_cutoff: 0.97
   sliding_window_size: 5
-  tensor_arena_size: 30000
+  tensor_arena_size: 22860
   minimum_esphome_version: "2024.7.0"
-
-# ─────────────────────────────────────────────────────────────────
-# PREPROCESSING (strict settings for max quality datasets)
-# ─────────────────────────────────────────────────────────────────
+  representative_dataset_size: 500
+  representative_dataset_real_size: 2000
+  arena_size_margin: 1.3
 preprocessing:
   min_duration_ms: 300.0
   max_duration_ms: 2000.0
   discarded_dir: "./discarded"
-  vad_aggressiveness: 3       # most aggressive VAD for max quality
-  vad_pad_ms: 150             # tighter padding for cleaner clips
+  vad_aggressiveness: 2
+  vad_pad_ms: 200
   vad_frame_ms: 30
   split_max_chunk_ms: 2000.0
   split_min_chunk_ms: 500.0
   split_target_chunk_ms: 2000.0
-
-# ─────────────────────────────────────────────────────────────────
-# QUALITY SCORING THRESHOLDS (strict - only high-quality audio)
-# ─────────────────────────────────────────────────────────────────
 quality:
   clip_threshold: 0.001
   max_clip_ratio: 0.005
   discard_bottom_pct: 3.0
   min_wqi: 0.3
   discarded_quality_dir: "./discarded/quality"
-  min_snr_db: 0.0             # require positive SNR
-  vad_speech_threshold: 0.5   # require ≥50% speech frames
-  dnsmos_min_ovrl: 2.0        # require decent DNSMOS OVRL
-  dnsmos_min_sig: 2.5         # require good DNSMOS signal
+  min_snr_db: 0.0
+  vad_speech_threshold: 0.4
+  dnsmos_min_ovrl: 2.0
+  dnsmos_min_sig: 2.5
   dnsmos_cache_dir: "~/.cache/dnsmos"
 
 evaluation:

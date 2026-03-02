@@ -729,6 +729,7 @@ mww-export --checkpoint checkpoints/best.ckpt
 # Export with custom name
 mww-export --checkpoint checkpoints/best.ckpt --model-name "hey_computer"
 
+mww-export --checkpoint models/checkpoints/checkpoint_step_70000.weights.h5 --output models/exported/ --config config/presets/max_quality.yaml
 # Export to custom directory
 mww-export --checkpoint checkpoints/best.ckpt --output /path/to/output
 

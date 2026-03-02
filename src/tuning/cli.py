@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
+# Suppress verbose TF/XLA logs before importing tensorflow (via autotuner)
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
 import argparse
 import sys
 from pathlib import Path

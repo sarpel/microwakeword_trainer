@@ -1,18 +1,21 @@
 # src/data/
 
-Audio data pipeline: ingestion, feature extraction, augmentation, dataset storage, and clustering for wake word training.
+Audio data pipeline: ingestion, feature extraction, augmentation, dataset storage, clustering, preprocessing, and quality scoring for wake word training.
 
 ## Files
 
 | File | Lines | Purpose | Key Classes/Functions |
 |------|-------|---------|----------------------|
-| `dataset.py` | 831 | Training dataset with mmap storage | `RaggedMmap`, `FeatureStore`, `WakeWordDataset`, `load_dataset()` |
-| `ingestion.py` | 734 | Audio loading, validation, metadata | `SampleRecord`, `Clips`, `ClipsLoaderConfig`, `Split`, `Label`, `load_clips()` |
-| `clustering.py` | 589 | Speaker diversity via embeddings | `extract_speaker_embeddings`, `cluster_samples`, `SpeakerClustering`, `SpeakerClusteringConfig` |
-| `features.py` | 525 | Mel spectrogram generation | `FeatureConfig`, `MicroFrontend`, `SpectrogramGeneration`, `extract_features()` |
-| `augmentation.py` | 437 | Data-level audio augmentation (8 types) | `AudioAugmentation`, `AugmentationConfig`, `apply_spec_augment_gpu()` |
-| `hard_negatives.py` | 328 | Hard negative mining pipeline | FP detection, auto-mining |
-| `spec_augment_gpu.py` | 148 | CuPy SpecAugment (GPU-only) | `spec_augment_gpu`, `batch_spec_augment_gpu` |
+| `dataset.py` | 962 | Training dataset with mmap storage | `RaggedMmap`, `FeatureStore`, `WakeWordDataset`, `load_dataset()` |
+| `ingestion.py` | 777 | Audio loading, validation, metadata | `SampleRecord`, `Clips`, `ClipsLoaderConfig`, `Split`, `Label`, `load_clips()` |
+| `clustering.py` | 1,212 | Speaker diversity via embeddings | `extract_speaker_embeddings`, `cluster_samples`, `SpeakerClustering`, `SpeakerClusteringConfig` |
+| `features.py` | 513 | Mel spectrogram generation | `FeatureConfig`, `MicroFrontend`, `SpectrogramGeneration`, `extract_features()` |
+| `augmentation.py` | 405 | Data-level audio augmentation (8 types) | `AudioAugmentation`, `AugmentationConfig`, `apply_spec_augment_gpu()` |
+| `hard_negatives.py` | 317 | Hard negative mining pipeline | FP detection, auto-mining |
+| `spec_augment_gpu.py` | 150 | CuPy SpecAugment (GPU-only) | `spec_augment_gpu`, `batch_spec_augment_gpu` |
+| `tfdata_pipeline.py` | 364 | TF data pipeline optimization | `OptimizedDataPipeline`, `benchmark_pipeline`, `create_optimized_dataset` |
+| `preprocessing.py` | 598 | Audio preprocessing pipeline | `SpeechPreprocessConfig`, `PreprocessResult`, `SplitResult` |
+| `quality.py` | 660 | Audio quality scoring | `QualityScoreConfig`, `FileScore` |
 
 ## Data Flow
 
@@ -67,6 +70,19 @@ Audio validation constants: VALIDATION_SAMPLE_RATE=16000, VALIDATION_SAMPLE_WIDT
 - `FeatureStore`: Wraps RaggedMmap with add/get semantics for processed features
 - `WakeWordDataset`: Full dataset with `train_generator_factory()` / `val_generator_factory()`
 - `load_dataset()`: Convenience function to load and return ready dataset
+
+## Preprocessing Module (`preprocessing.py`)
+
+- `SpeechPreprocessConfig`: Configuration for preprocessing pipeline
+- `PreprocessResult`: Result container for preprocessed audio
+- `SplitResult`: Result container for split audio segments
+- Handles VAD trimming, audio splitting, and normalization
+
+## Quality Module (`quality.py`)
+
+- `QualityScoreConfig`: Configuration for quality scoring
+- `FileScore`: Score container for individual audio files
+- Evaluates audio quality metrics (SNR, clipping, silence ratio, etc.)
 
 ## Key Patterns
 

@@ -79,6 +79,16 @@ class TrainingConfig:
     maximization_metric: str = "average_viable_recall"
     steps_per_epoch: int = 1000
     ambient_duration_hours: float = 11.3
+    train_split: float = 0.8
+    val_split: float = 0.1
+    test_split: float = 0.1
+    split_seed: int = 42
+    strict_content_hash_leakage_check: bool = True
+    # Optimizer and loss parameters (NEW)
+    optimizer: str = "adam"  # Optimizer type (currently only "adam" supported)
+    label_smoothing: float = 0.0  # Label smoothing for BinaryCrossentropy (0.0 = disabled)
+    gradient_clipnorm: Optional[float] = None  # Gradient clipping (None = disabled)
+    ema_decay: Optional[float] = None  # EMA decay rate (None = disabled) - REQUIRES IMPLEMENTATION
 
 
 @dataclass
@@ -86,11 +96,11 @@ class ModelConfig:
     """Model architecture parameters."""
 
     architecture: str = "mixednet"
-    first_conv_filters: int = 30
+    first_conv_filters: int = 32
     first_conv_kernel_size: int = 5
     stride: int = 3
-    pointwise_filters: str = "60,60,60,60"
-    mixconv_kernel_sizes: str = "[5],[9],[13],[21]"
+    pointwise_filters: str = "64,64,64,64"
+    mixconv_kernel_sizes: str = "[5],[7,11],[9,15],[23]"
     repeat_in_block: str = "1,1,1,1"
     residual_connection: str = "0,0,0,0"
     dropout_rate: float = 0.0
@@ -107,12 +117,9 @@ class AugmentationConfig:
     PitchShift: float = 0.1
     BandStopFilter: float = 0.1
     AddColorNoise: float = 0.1
-    AddBackgroundNoise: float = 0.75
+    AddBackgroundNoiseFromFile: float = 0.75
     Gain: float = 1.0
-    RIR: float = 0.5
-    # Additional augmentations for max quality
-    AddBackgroundNoiseFromFile: float = 0.0
-    ApplyImpulseResponse: float = 0.0
+    ApplyImpulseResponse: float = 0.5
     # Noise mixing parameters
     background_min_snr_db: float = -5.0
     background_max_snr_db: float = 10.0
@@ -223,6 +230,10 @@ class ExportConfig:
     sliding_window_size: int = 5
     tensor_arena_size: int = 26080
     minimum_esphome_version: str = "2024.7.0"
+    # TFLite calibration (NEW)
+    representative_dataset_size: int = 500  # Number of samples for random calibration
+    representative_dataset_real_size: int = 2000  # Number of samples for real-data calibration
+    arena_size_margin: float = 1.3  # Multiplier for tensor arena size (1.3 = 30% margin)
 
 
 @dataclass
@@ -305,6 +316,7 @@ class FullConfig:
     export: ExportConfig = field(default_factory=ExportConfig)
     preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
 
 
 # =============================================================================
@@ -324,7 +336,12 @@ class ConfigLoader:
     """
 
     # Valid preset names
-    VALID_PRESETS = {"fast_test", "standard", "max_quality"}
+    VALID_PRESETS = {"fast_test", "standard", "max_quality", "test", "standart", "high_quality"}
+    PRESET_ALIASES = {
+        "test": "fast_test",
+        "standart": "standard",
+        "high_quality": "max_quality",
+    }
 
     # Config section mapping to dataclass
     SECTION_CLASSES = {
@@ -339,6 +356,7 @@ class ConfigLoader:
         "export": ExportConfig,
         "preprocessing": PreprocessingConfig,
         "quality": QualityConfig,
+        "evaluation": EvaluationConfig,
     }
 
     def __init__(self, base_dir: Optional[Path] = None):
@@ -400,10 +418,12 @@ class ConfigLoader:
             ValueError: If preset name is invalid
             FileNotFoundError: If preset file doesn't exist
         """
-        if name not in self.VALID_PRESETS:
-            raise ValueError(f"Invalid preset '{name}'. " f"Valid presets: {', '.join(sorted(self.VALID_PRESETS))}")
+        canonical_name = self.PRESET_ALIASES.get(name, name)
 
-        preset_path = self.presets_dir / f"{name}.yaml"
+        if canonical_name not in {"fast_test", "standard", "max_quality"}:
+            raise ValueError(f"Invalid preset '{name}'. Valid presets: {', '.join(sorted(self.VALID_PRESETS))}")
+
+        preset_path = self.presets_dir / f"{canonical_name}.yaml"
         return self.load(preset_path)
 
     def merge(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -479,7 +499,13 @@ class ConfigLoader:
                 issues.append("hardware.window_size_ms must be > 0")
             if hw.get("window_step_ms", 0) <= 0:
                 issues.append("hardware.window_step_ms must be > 0")
-
+            # ARCHITECTURAL_CONSTITUTION enforcement - IMMUTABLE VALUES
+            if hw.get("sample_rate_hz") != 16000:
+                issues.append("hardware.sample_rate_hz must be 16000 (ARCHITECTURAL_CONSTITUTION)")
+            if hw.get("mel_bins") != 40:
+                issues.append("hardware.mel_bins must be 40 (ARCHITECTURAL_CONSTITUTION)")
+            if hw.get("window_step_ms") != 10:
+                issues.append("hardware.window_step_ms must be 10 (ARCHITECTURAL_CONSTITUTION)")
         # Validate training section
         if "training" in config:
             tr = config["training"]
@@ -491,6 +517,12 @@ class ConfigLoader:
                 issues.append("training.training_steps and learning_rates must have same length")
             if tr.get("batch_size", 0) <= 0:
                 issues.append("training.batch_size must be > 0")
+            train_split = tr.get("train_split", 0.0)
+            val_split = tr.get("val_split", 0.0)
+            test_split = tr.get("test_split", 0.0)
+            split_sum = train_split + val_split + test_split
+            if abs(split_sum - 1.0) > 1e-6:
+                issues.append("training.train_split + training.val_split + training.test_split must equal 1.0")
 
         # Validate model section
         if "model" in config:
@@ -498,7 +530,9 @@ class ConfigLoader:
             valid_architectures = ["mixednet"]
             if md.get("architecture") not in valid_architectures:
                 issues.append(f"model.architecture must be one of: {valid_architectures}")
-
+            # ARCHITECTURAL_CONSTITUTION enforcement - stride must be 3
+            if md.get("stride") != 3:
+                issues.append("model.stride must be 3 (ARCHITECTURAL_CONSTITUTION)")
         # Validate performance section
         if "performance" in config:
             perf = config["performance"]
@@ -536,7 +570,7 @@ class ConfigLoader:
                 filtered = {k: v for k, v in section_data.items() if k in valid_fields}
                 if len(filtered) < len(section_data):
                     unknown = set(section_data) - valid_fields
-                    logger.warning(f"Config section '{section_name}' has unknown fields " f"(ignored): {unknown}")
+                    logger.warning(f"Config section '{section_name}' has unknown fields (ignored): {unknown}")
                 result[section_name] = section_class(**filtered)
         return FullConfig(**result)
 
@@ -713,7 +747,7 @@ def load_preset(name: str) -> Dict[str, Any]:
     Convenience function using default loader.
 
     Args:
-        name: Preset name (fast_test, standard, max_quality)
+        name: Preset name (fast_test, standard, max_quality, test, standart, high_quality)
     """
     return get_default_loader().load_preset(name)
 

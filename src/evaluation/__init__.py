@@ -6,3 +6,4 @@ for assessing wake word model performance.
 """
 
 __version__ = "2.0.0"
+from src.evaluation.test_evaluator import TestEvaluator

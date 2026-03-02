@@ -421,6 +421,20 @@ class Stream(tf.keras.layers.Layer):
             config["cell"] = tf.keras.layers.deserialize(cell_config)
         return cls(**config)
 
+    def compute_output_shape(self, input_shape):
+        """Compute output shape so model.summary() shows real shapes instead of '?'."""
+        if self.mode in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
+            # In non-streaming modes the Stream wrapper passes through to the cell.
+            # The cell may have been built with a None time-dim, so we delegate directly.
+            return self.cell.compute_output_shape(input_shape)
+        else:
+            # In streaming modes the time dimension collapses to 1 (one-step) or stride.
+            out = self.cell.compute_output_shape(input_shape)
+            out_list = list(out)
+            if len(out_list) > 1:
+                out_list[1] = 1 if self.use_one_step else self.stride
+            return tf.TensorShape(out_list)
+
     def get_input_state(self):
         """Get input state for external streaming."""
         if self.mode == Modes.STREAM_EXTERNAL_STATE_INFERENCE:

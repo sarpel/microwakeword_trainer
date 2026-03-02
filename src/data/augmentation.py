@@ -39,13 +39,9 @@ class AugmentationConfig:
     PitchShift: float = 0.1
     BandStopFilter: float = 0.1
     AddColorNoise: float = 0.1
-    AddBackgroundNoise: float = 0.75
+    AddBackgroundNoiseFromFile: float = 0.75
     Gain: float = 1.0
-    RIR: float = 0.5
-
-    # Additional augmentations
-    AddBackgroundNoiseFromFile: float = 0.0
-    ApplyImpulseResponse: float = 0.0
+    ApplyImpulseResponse: float = 0.5
 
     # Noise mixing parameters
     background_min_snr_db: float = -5.0
@@ -101,7 +97,7 @@ class AudioAugmentation:
                     else:
                         self.rir_files.append(path)
 
-        logger.info(f"Loaded {len(self.background_noise_files)} background noise files, " f"{len(self.rir_files)} RIR files")
+        logger.info(f"Loaded {len(self.background_noise_files)} background noise files, {len(self.rir_files)} RIR files")
 
     def __call__(self, audio: np.ndarray, apply_all: bool = False) -> np.ndarray:
         """Apply augmentations to audio.
@@ -139,20 +135,12 @@ class AudioAugmentation:
         if apply_all or random.random() < self.config.AddColorNoise:  # noqa: S311
             augmented = self.apply_color_noise(augmented)
 
-        # Apply background noise (check both old and new keys)
-        bg_noise_prob = max(
-            float(getattr(self.config, "AddBackgroundNoiseFromFile", 0) or 0),
-            float(getattr(self.config, "AddBackgroundNoise", 0) or 0),
-        )
+        bg_noise_prob = float(getattr(self.config, "AddBackgroundNoiseFromFile", 0) or 0)
         bg_noise_prob = min(max(bg_noise_prob, 0.0), 1.0)
         if apply_all or random.random() < bg_noise_prob:  # noqa: S311
             augmented = self.apply_background_noise(augmented)
 
-        # Apply RIR (check both old and new keys)
-        rir_prob = max(
-            float(getattr(self.config, "ApplyImpulseResponse", 0) or 0),
-            float(getattr(self.config, "RIR", 0) or 0),
-        )
+        rir_prob = float(getattr(self.config, "ApplyImpulseResponse", 0) or 0)
         rir_prob = min(max(rir_prob, 0.0), 1.0)
         if apply_all or random.random() < rir_prob:  # noqa: S311
             augmented = self.apply_rir(augmented)

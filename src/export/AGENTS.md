@@ -10,9 +10,10 @@ Export module handles streaming model conversion, INT8 quantization, model analy
 
 | File | Lines | Purpose | Key Functions/Classes |
 |------|-------|---------|----------------------|
-| `tflite.py` | 817 | Streaming conversion, quantization, export | `convert_model_saved()`, `convert_saved_model_to_tflite()`, `export_to_tflite()`, `main()` |
-| `model_analyzer.py` | 568 | Architecture analysis and validation | `analyze_model_architecture()`, `validate_model_quality()`, `compare_models()`, `generate_model_report()` |
-| `manifest.py` | 327 | ESPHome V2 manifest generation | `generate_manifest()`, `save_manifest()`, `calculate_tensor_arena_size()` |
+| `tflite.py` | 780 | Streaming conversion, quantization, export | `convert_model_saved()`, `convert_saved_model_to_tflite()`, `export_to_tflite()`, `main()` |
+| `model_analyzer.py` | 600 | Architecture analysis and validation | `analyze_model_architecture()`, `validate_model_quality()`, `compare_models()`, `generate_model_report()` |
+| `manifest.py` | 330 | ESPHome V2 manifest generation | `generate_manifest()`, `save_manifest()`, `calculate_tensor_arena_size()` |
+| `verification.py` | 218 | Export verification tools | Export verification functions |
 | `__init__.py` | 8 | Package init | |
 
 ## Export Flow
@@ -65,6 +66,10 @@ Checkpoint → Streaming SavedModel → TFLite (INT8) → manifest.json
 | `save_manifest()` | Write manifest to file |
 | `calculate_tensor_arena_size()` | Compute required arena size with margin |
 
+## verification.py
+
+Export verification tools for validating exported models against ESPHome requirements.
+
 ## Critical Settings
 
 These settings are **required** for ESPHome compatibility:
@@ -97,4 +102,4 @@ Streaming model uses 2 subgraphs with 6 state variables for ring buffers.
 - Representative dataset requires minimum **500 training samples** with forced min/max boundary anchors (0.0 and 26.0)
 - `model_analyzer.py` can compare models, estimate performance, and generate full reports
 - DEFAULT_TENSOR_ARENA_SIZE = 22860 bytes in manifest.py (add 10% margin to measured value)
-- Verification also available via `scripts/verify_esphome.py` (standalone, 406 lines)
+- Verification also available via `scripts/verify_esphome.py` (standalone, 168 lines)

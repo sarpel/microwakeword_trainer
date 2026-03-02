@@ -27,7 +27,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+.claude/
 # Testing
 .pytest_cache/
 .coverage
@@ -38,7 +38,7 @@ htmlcov/
 coverage.xml
 *.cover
 .hypothesis/
-
+exports/
 .cache
 scripts
 # Type checking
@@ -48,7 +48,7 @@ dmypy.json
 .pyre/
 .pytype/
 .ruff_cache/
-
+scripts/personal
 # IDEs and Editors
 .vscode/
 .vscode-insiders/
@@ -175,3 +175,4 @@ yarn.lock
 discarded
 
 dataset.tar
+key_katya_scripts.sh

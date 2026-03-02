@@ -10,8 +10,8 @@ import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
-# Default tensor arena size in bytes (~30 KB - the reference size for okay_nabu models per Article X)
-DEFAULT_TENSOR_ARENA_SIZE = 30000  # Per ARCHITECTURAL_CONSTITUTION.md Article X
+# Default tensor arena size in bytes per ARCHITECTURAL_CONSTITUTION.md Article X
+DEFAULT_TENSOR_ARENA_SIZE = 22860
 
 
 def generate_manifest(
@@ -37,7 +37,10 @@ def generate_manifest(
 
     # Calculate tensor arena size if TFLite model exists
     if tflite_path and Path(tflite_path).exists():
-        arena_size = calculate_tensor_arena_size(tflite_path)
+        arena_size = calculate_tensor_arena_size(
+            tflite_path,
+            margin=float(export_config.get("arena_size_margin", 1.3) or 1.3),
+        )
     else:
         # Use configured value or default
         arena_size = export_config.get("tensor_arena_size", DEFAULT_TENSOR_ARENA_SIZE)
@@ -59,8 +62,8 @@ def generate_manifest(
         "version": 2,
         "micro": {
             "probability_cutoff": export_config.get("probability_cutoff", 0.97),
-            "feature_step_size": feature_step_size,
             "sliding_window_size": export_config.get("sliding_window_size", 5),
+            "feature_step_size": feature_step_size,
             "tensor_arena_size": arena_size,
             "minimum_esphome_version": export_config.get("minimum_esphome_version", "2024.7.0"),
         },
@@ -91,7 +94,7 @@ def save_manifest(manifest: dict[str, Any], output_path: str) -> str:
     return str(output_file)
 
 
-def calculate_tensor_arena_size(tflite_path: str) -> int:
+def calculate_tensor_arena_size(tflite_path: str, margin: float = 1.3) -> int:
     """Calculate required tensor arena size for TFLite model.
 
     Uses the TFLite interpreter to analyze tensor allocations and
@@ -136,7 +139,7 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
                 if dim == -1:
                     # Dynamic dimension: use a conservative estimate of 1 and warn
                     logger.warning(
-                        "Tensor '%s' has a dynamic dimension (-1). " "Arena size estimate may be too small; using 1 for this dim.",
+                        "Tensor '%s' has a dynamic dimension (-1). Arena size estimate may be too small; using 1 for this dim.",
                         tensor.get("name", "<unnamed>"),
                     )
                     d = 1
@@ -148,8 +151,8 @@ def calculate_tensor_arena_size(tflite_path: str) -> int:
 
             total_memory += num_elements * elem_size
 
-        # Add 30% safety margin
-        arena_size = int(total_memory * 1.3)
+        # Add safety margin
+        arena_size = int(total_memory * margin)
 
         # Ensure minimum size (26KB is the minimum for okay_nabu models)
         arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)
@@ -197,9 +200,13 @@ def verify_esphome_compatibility(manifest: dict[str, Any]) -> dict[str, Any]:
             results["compatible"] = False
             results["errors"].append(f"Missing required field: {field}")
 
-    # Validate top-level version regardless of whether "micro" is present
+    if manifest.get("type") != "micro":
+        results["compatible"] = False
+        results["errors"].append("Manifest field 'type' must be 'micro'")
+
     if manifest.get("version") != 2:
-        results["warnings"].append("Manifest version should be 2 for ESPHome 2024.7+")
+        results["compatible"] = False
+        results["errors"].append("Manifest field 'version' must be 2")
 
     # Required micro section fields
     if "micro" in manifest:
@@ -228,6 +235,14 @@ def verify_esphome_compatibility(manifest: dict[str, Any]) -> dict[str, Any]:
             if not (0.0 < prob_cutoff <= 1.0):
                 results["compatible"] = False
                 results["errors"].append("probability_cutoff must be between 0 and 1")
+
+        if micro.get("feature_step_size") != 10:
+            results["compatible"] = False
+            results["errors"].append("feature_step_size must be 10")
+
+        if micro.get("minimum_esphome_version") != "2024.7.0":
+            results["compatible"] = False
+            results["errors"].append("minimum_esphome_version must be '2024.7.0'")
 
         # Validate tensor_arena_size is reasonable
         arena_size = micro.get("tensor_arena_size", 0)

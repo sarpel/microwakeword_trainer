@@ -193,8 +193,7 @@ class AudioAugmentationPipeline:
                 )
             )
 
-        # Check both old and new keys for background noise
-        bg_prob = self.probabilities.get("AddBackgroundNoiseFromFile", 0) or self.probabilities.get("AddBackgroundNoise", 0)
+        bg_prob = float(self.probabilities.get("AddBackgroundNoiseFromFile", 0.0) or 0.0)
         if bg_prob > 0 and background_paths:
             self.augmentations.append(
                 (
@@ -208,8 +207,7 @@ class AudioAugmentationPipeline:
                 )
             )
 
-        # Check both old and new keys for impulse response
-        rir_prob = self.probabilities.get("ApplyImpulseResponse", 0) or self.probabilities.get("RIR", 0)
+        rir_prob = float(self.probabilities.get("ApplyImpulseResponse", 0.0) or 0.0)
         if rir_prob > 0 and impulse_paths:
             self.augmentations.append(
                 (
