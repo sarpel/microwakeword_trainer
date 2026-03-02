@@ -34,21 +34,23 @@ training:
   training_steps: [50000, 20000]
   learning_rates: [0.001, 0.0001]
   batch_size: 128
-  eval_step_interval: 500
-  steps_per_epoch: 1000  # Approximate steps per epoch for mining calculations
-
-  # Class weights - higher negative weight for fewer false accepts
-  positive_class_weight: [1.0, 1.0]
-  negative_class_weight: [25.0, 25.0]
-  hard_negative_class_weight: [50.0, 50.0]
-
-  # SpecAugment disabled (using full audio augmentation)
-  time_mask_max_size: [0, 0]
-  time_mask_count: [0, 0]
-  freq_mask_max_size: [0, 0]
-  freq_mask_count: [0, 0]
-
-  # Checkpoint selection - stricter target for max quality
+  eval_step_interval: 1000
+  eval_basic_step_interval: 1000
+  eval_advanced_step_interval: 5000
+  eval_confusion_matrix_interval: 5000
+  eval_checkpoints_interval: 5000
+  eval_log_every_step: true
+  steps_per_epoch: 1000
+  label_smoothing: 0.02
+  gradient_clipnorm: 1.0
+  ema_decay: 0.999
+  positive_class_weight: [1.0, 1.0, 1.0]
+  negative_class_weight: [12.0, 15.0, 18.0]
+  hard_negative_class_weight: [25.0, 30.0, 35.0]
+  time_mask_max_size: [8, 6, 4]
+  time_mask_count: [2, 2, 1]
+  freq_mask_max_size: [4, 3, 2]
+  freq_mask_count: [2, 2, 1]
   minimization_metric: "ambient_false_positives_per_hour"
   target_minimization: 0.2
   maximization_metric: "average_viable_recall"
@@ -102,7 +104,7 @@ augmentation:
   eq_min_gain_db: -9.0
   eq_max_gain_db: 9.0
   distortion_min: 0.05
-  distortion_max: 0.7
+  distortion_max: 0.3
   pitch_shift_min_semitones: -3.0
   pitch_shift_max_semitones: 3.0
   band_stop_min_center_freq: 80.0
@@ -132,9 +134,7 @@ performance:
   num_threads_per_worker: 2
   prefetch_factor: 8
   pin_memory: true
-  max_memory_gb: 60
-
-  # Maximum parallelism
+  max_memory_gb: 32
   inter_op_parallelism: 16
   intra_op_parallelism: 16
 
@@ -146,10 +146,13 @@ performance:
   # TensorBoard enabled with full metrics
   tensorboard_enabled: true
   tensorboard_log_dir: "./logs"
-
-# ─────────────────────────────────────────────────────────────────
-# SPEAKER CLUSTERING (Enabled with strict settings)
-# ─────────────────────────────────────────────────────────────────
+  prefetch_buffer: null  # null = tf.data.AUTOTUNE (dynamic optimization)
+  tfdata_prefetch_to_device: true
+  tfdata_prefetch_device: "/GPU:0"
+  benchmark_pipeline: false
+  log_throughput: true
+  log_throughput_interval: 1000
+  disable_mmap: false
 speaker_clustering:
   enabled: true
   method: "agglomerative"
@@ -161,7 +164,7 @@ speaker_clustering:
 # HARD NEGATIVE MINING (Enabled with aggressive settings)
 # ─────────────────────────────────────────────────────────────────
 hard_negative_mining:
-  enabled: true
+  enabled: false
   fp_threshold: 0.75
   max_samples: 10000
   mining_interval_epochs: 3
@@ -205,12 +208,19 @@ preprocessing:
 # ─────────────────────────────────────────────────────────────────
 quality:
   clip_threshold: 0.001
-  max_clip_ratio: 0.005       # strict: < 0.5% clipping
-  discard_bottom_pct: 10.0    # discard lowest 10% for max quality
-  min_wqi: 0.3                # require minimum quality index
+  max_clip_ratio: 0.005
+  discard_bottom_pct: 3.0
+  min_wqi: 0.3
   discarded_quality_dir: "./discarded/quality"
   min_snr_db: 0.0             # require positive SNR
   vad_speech_threshold: 0.5   # require ≥50% speech frames
   dnsmos_min_ovrl: 2.0        # require decent DNSMOS OVRL
   dnsmos_min_sig: 2.5         # require good DNSMOS signal
   dnsmos_cache_dir: "~/.cache/dnsmos"
+
+evaluation:
+  default_threshold: 0.97
+  n_thresholds: 101
+  max_fah: 0.5
+  warmup_runs: 10
+  n_latency_runs: 100

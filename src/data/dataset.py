@@ -9,6 +9,23 @@ Provides:
 import logging
 import os
 import struct
+import json
+from datetime import datetime
+from hashlib import sha1, sha256
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+import os
+import struct
+import json
+from datetime import datetime
+from hashlib import sha1, sha256
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+import os
+import struct
+from hashlib import sha1
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -74,11 +91,12 @@ class RaggedMmap:
         self._data_file: Optional[str] = None
         self._offsets_file: Optional[str] = None
         self._lengths_file: Optional[str] = None
-        self._data: Optional[np.memmap] = None
+        self._data: Optional[np.ndarray] = None
         self._offsets: Union[List[int], np.ndarray, None] = None
         self._lengths: Union[List[int], np.ndarray, None] = None
         self._num_arrays: int = 0
         self._total_bytes: int = 0
+        self._memory_cache: dict[int, np.ndarray] | None = None
 
         if create:
             self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -123,7 +141,7 @@ class RaggedMmap:
                 raise ValueError(f"Offsets ({len(self._offsets)}) and lengths ({len(self._lengths)}) mismatch")
             self._total_bytes = int(self._lengths.sum())
 
-    def open(self, mode: str = "r"):
+    def open(self, mode: str = "r", disable_mmap: bool = False):
         """Open the storage for reading or writing.
 
         Args:
@@ -133,11 +151,20 @@ class RaggedMmap:
             self._load_index()
             assert self._data_file is not None, "data_file not initialized"
             if os.path.exists(self._data_file):
-                self._data = np.memmap(
-                    self._data_file,
-                    dtype=self.dtype,
-                    mode="r",
-                )
+                if disable_mmap:
+                    with open(self._data_file, "rb") as handle:
+                        data = handle.read()
+                    self._data = np.frombuffer(data, dtype=self.dtype)
+                    self._memory_cache = {}
+                else:
+                    self._data = np.memmap(
+                        self._data_file,
+                        dtype=self.dtype,
+                        mode="r",
+                    )
+                    data_size = os.path.getsize(self._data_file)
+                    if data_size < self._total_bytes:
+                        raise RuntimeError(f"RaggedMmap data file is smaller than expected: {data_size} bytes < {self._total_bytes} bytes")
         elif mode == "w":
             # Truncate existing files before writing to prevent data corruption
             for f in [self._data_file, self._offsets_file, self._lengths_file]:
@@ -154,9 +181,20 @@ class RaggedMmap:
     def close(self):
         """Close the storage and flush any pending writes."""
         if self._data is not None:
-            self._data.flush()
+            try:
+                mmap_obj = getattr(self._data, "_mmap", None)
+                if mmap_obj is not None:
+                    mmap_obj.close()
+            except AttributeError:
+                pass
+            flush_method = getattr(self._data, "flush", None)
+            if callable(flush_method):
+                flush_method()
             del self._data
             self._data = None
+        self._offsets = None
+        self._lengths = None
+        self._memory_cache = None
 
     def append(self, arrays: List[np.ndarray]):
         """Append arrays to storage.
@@ -229,13 +267,22 @@ class RaggedMmap:
 
         offset = int(self._offsets[idx])
         length = int(self._lengths[idx])
+        if offset < 0 or length < 0:
+            raise RuntimeError("RaggedMmap offset/length must be non-negative")
 
         # Convert byte offsets/lengths to element counts
         itemsize = self._data.itemsize
         elem_offset = offset // itemsize
         elem_length = length // itemsize
+        if elem_offset + elem_length > self._data.shape[0]:
+            raise RuntimeError("RaggedMmap index out of bounds; data file may be corrupted")
 
-        return np.array(self._data[elem_offset : elem_offset + elem_length])
+        if self._memory_cache is not None and idx in self._memory_cache:
+            return self._memory_cache[idx]
+        array = np.array(self._data[elem_offset : elem_offset + elem_length])
+        if self._memory_cache is not None:
+            self._memory_cache[idx] = array
+        return array
 
     def __len__(self) -> int:
         """Get number of stored arrays."""
@@ -410,7 +457,7 @@ class FeatureStore:
             return 0
         return len(self.features)
 
-    def open(self):
+    def open(self, readonly: bool = True, disable_mmap: bool = False):
         """Open store for reading."""
         self.features = RaggedMmap(
             self.base_dir,
@@ -418,7 +465,7 @@ class FeatureStore:
             self.config.dtype,
             create=False,
         )
-        self.features.open("r")
+        self.features.open("r", disable_mmap=disable_mmap)
 
         self.labels = RaggedMmap(
             self.base_dir,
@@ -426,7 +473,7 @@ class FeatureStore:
             np.int32,
             create=False,
         )
-        self.labels.open("r")
+        self.labels.open("r", disable_mmap=disable_mmap)
 
     def close(self):
         """Close store and flush writes."""
@@ -504,7 +551,12 @@ class WakeWordDataset:
         if store_path.exists():
             self.feature_store = FeatureStore(store_path)
             try:
-                self.feature_store.open()
+                readonly = True
+                disable_mmap = False
+                if self._config is not None:
+                    readonly = bool(self._config.get("performance", {}).get("mmap_readonly", True))
+                    disable_mmap = bool(self._config.get("performance", {}).get("disable_mmap", False))
+                self.feature_store.open(readonly=readonly, disable_mmap=disable_mmap)
             except (FileNotFoundError, PermissionError, OSError, IOError) as e:
                 logger.warning(f"Could not open feature store at {store_path}: {e}")
                 self.feature_store = None
@@ -528,6 +580,219 @@ class WakeWordDataset:
             raise RuntimeError("Feature store not available")
 
         return self.feature_store.get(idx)
+
+    @staticmethod
+    def _label_to_int(label: Any) -> int:
+        from src.data.ingestion import Label
+
+        if label == Label.POSITIVE:
+            return 1
+        if label == Label.HARD_NEGATIVE:
+            return 2
+        return 0
+
+    @staticmethod
+    def _resolved_sample_paths(samples: List[Any]) -> set[str]:
+        return {str(Path(sample.path).resolve()) for sample in samples}
+
+    @staticmethod
+    def _normalized_speaker_ids(samples: List[Any]) -> set[str]:
+        speaker_ids: set[str] = set()
+        for sample in samples:
+            sid = sample.speaker_id
+            if sid is None:
+                continue
+            sid_norm = str(sid).strip().lower()
+            if not sid_norm or sid_norm in {"unknown", "none", "null"}:
+                continue
+            speaker_ids.add(sid_norm)
+        return speaker_ids
+
+    def _assert_split_integrity(self, train_samples: List[Any], val_samples: List[Any], test_samples: List[Any], cfg: Dict[str, Any]) -> None:
+        split_to_samples = {
+            "train": train_samples,
+            "val": val_samples,
+            "test": test_samples,
+        }
+
+        split_paths = {name: self._resolved_sample_paths(samples) for name, samples in split_to_samples.items()}
+
+        for split_name, paths in split_paths.items():
+            if len(paths) != len(split_to_samples[split_name]):
+                raise RuntimeError(f"Duplicate clip paths detected within split '{split_name}'. This can cause silent leakage and inflated metrics.")
+
+        for left_name, right_name in (("train", "val"), ("train", "test"), ("val", "test")):
+            overlap = split_paths[left_name].intersection(split_paths[right_name])
+            if overlap:
+                examples = sorted(overlap)[:5]
+                raise RuntimeError(f"Data leakage detected: {len(overlap)} overlapping file(s) between {left_name} and {right_name}. Examples: {examples}")
+
+        speaker_cfg = cfg.get("speaker_clustering", {})
+        if speaker_cfg.get("leakage_audit_enabled", False):
+            split_speakers = {name: self._normalized_speaker_ids(samples) for name, samples in split_to_samples.items()}
+            for left_name, right_name in (("train", "val"), ("train", "test"), ("val", "test")):
+                overlap = split_speakers[left_name].intersection(split_speakers[right_name])
+                if overlap:
+                    examples = sorted(overlap)[:10]
+                    raise RuntimeError(f"Speaker leakage detected: {len(overlap)} overlapping speaker_id(s) between {left_name} and {right_name}. Examples: {examples}")
+
+        check_hashes = cfg.get("training", {}).get("strict_content_hash_leakage_check", True)
+        if check_hashes:
+            split_hashes = {
+                "train": self._sample_content_hashes(train_samples),
+                "val": self._sample_content_hashes(val_samples),
+                "test": self._sample_content_hashes(test_samples),
+            }
+            for left_name, right_name in (("train", "val"), ("train", "test"), ("val", "test")):
+                overlap = split_hashes[left_name].intersection(split_hashes[right_name])
+                if overlap:
+                    raise RuntimeError(f"Content leakage detected: {len(overlap)} duplicate-audio hash(es) between {left_name} and {right_name}.")
+
+    @staticmethod
+    def _file_content_hash(file_path: Path) -> str:
+        digest = sha1()
+        with file_path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _sample_content_hashes(self, samples: List[Any]) -> set[str]:
+        return {self._file_content_hash(Path(sample.path)) for sample in samples}
+
+    # =========================================================================
+    # CACHE MANAGEMENT - Skip expensive feature extraction when valid cache exists
+    # =========================================================================
+
+    def _compute_file_list_hash(self, paths_cfg: dict) -> str:
+        """Compute hash of all WAV files by path, mtime, and size (fast, no reads)."""
+        entries: list[str] = []
+        for dir_key in ("positive_dir", "negative_dir", "hard_negative_dir"):
+            dir_path = paths_cfg.get(dir_key)
+            if not dir_path:
+                continue
+            dir_path = Path(dir_path)
+            if not dir_path.exists():
+                continue
+            for wav in sorted(dir_path.rglob("*.wav")):
+                try:
+                    stat = wav.stat()
+                    entries.append(f"{wav}|{stat.st_mtime_ns}|{stat.st_size}")
+                except OSError:
+                    continue
+        return sha256("\n".join(entries).encode()).hexdigest()
+
+    def _compute_hardware_hash(self, hardware_cfg: dict) -> str:
+        """Compute hash of hardware/feature extraction config."""
+        hardware_key = {
+            "sample_rate_hz": hardware_cfg.get("sample_rate_hz", 16000),
+            "mel_bins": hardware_cfg.get("mel_bins", 40),
+            "window_size_ms": hardware_cfg.get("window_size_ms", 30),
+            "window_step_ms": hardware_cfg.get("window_step_ms", 10),
+            "clip_duration_ms": hardware_cfg.get("clip_duration_ms", 1000),
+        }
+        return sha256(json.dumps(hardware_key, sort_keys=True).encode()).hexdigest()
+
+    def _compute_split_hash(self, training_cfg: dict) -> str:
+        """Compute hash of split configuration."""
+        split_key = {
+            "train_split": float(training_cfg.get("train_split", 0.8)),
+            "val_split": float(training_cfg.get("val_split", 0.1)),
+            "test_split": float(training_cfg.get("test_split", 0.1)),
+            "split_seed": int(training_cfg.get("split_seed", 42)),
+            "speaker_based_split": bool(training_cfg.get("speaker_based_split", False)),
+        }
+        return sha256(json.dumps(split_key, sort_keys=True).encode()).hexdigest()
+
+    def _is_cache_valid(self, processed_dir: str, paths_cfg: dict, hardware_cfg: dict, training_cfg: dict) -> bool:
+        """Check if cached features are still valid.
+
+        Returns True if:
+        - Manifest file exists
+        - All hashes match (file list, hardware config, split config)
+        - All RaggedMmap files exist for train/val/test
+        """
+        manifest_path = Path(processed_dir) / "cache_manifest.json"
+        if not manifest_path.exists():
+            return False
+
+        try:
+            with open(manifest_path, "r") as f:
+                manifest = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return False
+
+        # Verify version
+        if manifest.get("version") != 1:
+            return False
+
+        # Compute current hashes
+        current_file_hash = self._compute_file_list_hash(paths_cfg)
+        current_hardware_hash = self._compute_hardware_hash(hardware_cfg)
+        current_split_hash = self._compute_split_hash(training_cfg)
+
+        # Compare hashes
+        if manifest.get("file_list_hash") != current_file_hash:
+            return False
+        if manifest.get("hardware_hash") != current_hardware_hash:
+            return False
+        if manifest.get("split_hash") != current_split_hash:
+            return False
+
+        # Verify RaggedMmap files exist for all splits
+        for split_name in ("train", "val", "test"):
+            split_dir = Path(processed_dir) / split_name
+            for name in ("features", "labels"):
+                data_file = split_dir / f"{name}.data"
+                offsets_file = split_dir / f"{name}.offsets"
+                lengths_file = split_dir / f"{name}.lengths"
+                if not data_file.exists() or not offsets_file.exists() or not lengths_file.exists():
+                    return False
+
+        return True
+
+    def _write_cache_manifest(
+        self,
+        processed_dir: str,
+        paths_cfg: dict,
+        hardware_cfg: dict,
+        training_cfg: dict,
+        splits: dict,
+    ) -> None:
+        """Write cache manifest after successful feature extraction."""
+        manifest = {
+            "version": 1,
+            "created_at": datetime.now().isoformat(),
+            "file_list_hash": self._compute_file_list_hash(paths_cfg),
+            "hardware_hash": self._compute_hardware_hash(hardware_cfg),
+            "split_hash": self._compute_split_hash(training_cfg),
+            "splits": {name: {"count": count, "dir": name} for name, count in splits.items()},
+        }
+        manifest_path = Path(processed_dir) / "cache_manifest.json"
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        return {self._file_content_hash(Path(sample.path)) for sample in samples}
+
+    def _extract_features_to_store(self, samples: List[Any], store_dir: Path, frontend: Any, sample_rate: int, split_name: str, mel_bins: int) -> int:
+        logger.info(f"Extracting features for {len(samples)} {split_name} clips...")
+        store = FeatureStore(store_dir)
+        store.initialize(len(samples), feature_dim=mel_bins)
+
+        for sample in samples:
+            try:
+                audio = load_audio_wave(sample.path, target_sr=sample_rate)
+                features = frontend.compute_mel_spectrogram(audio)
+                store.add(features, self._label_to_int(sample.label))
+            except Exception as e:
+                logger.warning(f"Failed to process {sample.path}: {e}")
+                continue
+
+        count = len(store)
+        store.close()
+        logger.info(f"Processed {count} {split_name} samples")
+        return count
 
     def build(self, config: Optional[Dict[str, Any]] = None) -> "WakeWordDataset":
         """Build the dataset from raw audio files.
@@ -558,9 +823,26 @@ class WakeWordDataset:
         window_size_ms = hardware_cfg.get("window_size_ms", 30)
         window_step_ms = hardware_cfg.get("window_step_ms", 10)
 
+        # Extract training config for splits
+        training_cfg = cfg.get("training", {})
+        train_split = float(training_cfg.get("train_split", 0.8))
+        val_split = float(training_cfg.get("val_split", 0.1))
+        test_split = float(training_cfg.get("test_split", 0.1))
+
+        # Ensure processed directories exist
+        dirs = ensure_processed_directory(processed_dir)
+
+        # Check if valid cache exists
+        if self._is_cache_valid(processed_dir, paths_cfg, hardware_cfg, training_cfg):
+            logger.info("[CACHE] Valid feature cache found — skipping feature extraction")
+            self._load_store()
+            return self
+
+        logger.info("[CACHE] No valid cache found — performing full feature extraction")
+
         # Create feature config
         from src.data.features import FeatureConfig, MicroFrontend
-        from src.data.ingestion import Clips, ClipsLoaderConfig, Label, Split
+        from src.data.ingestion import Clips, ClipsLoaderConfig, Split
 
         feature_config = FeatureConfig(
             sample_rate=sample_rate,
@@ -572,92 +854,161 @@ class WakeWordDataset:
         # Initialize feature extractor
         frontend = MicroFrontend(feature_config)
 
-        # Ensure processed directories exist
-        dirs = ensure_processed_directory(processed_dir)
-
         # Load clips using ClipsLoaderConfig
         logger.info("Loading audio clips from dataset directories...")
+
+        split_seed = int(training_cfg.get("split_seed", 42))
+        split_sum = train_split + val_split + test_split
+        if abs(split_sum - 1.0) > 1e-6:
+            raise ValueError(f"training split ratios must sum to 1.0, got {split_sum:.6f}")
 
         clips_config = ClipsLoaderConfig(
             positive_dir=Path(positive_dir) if positive_dir else None,
             negative_dir=Path(negative_dir) if negative_dir else None,
             hard_negative_dir=Path(hard_negative_dir) if hard_negative_dir else None,
-            train_split=0.8,
-            val_split=0.1,
-            test_split=0.1,
-            seed=42,
+            train_split=train_split,
+            val_split=val_split,
+            test_split=test_split,
+            seed=split_seed,
         )
 
         clips = Clips(config=clips_config)
 
-        # Get train and val samples
         train_samples = clips.get_split(Split.TRAIN)
         val_samples = clips.get_split(Split.VAL)
+        test_samples = clips.get_split(Split.TEST)
 
-        logger.info(f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples")
+        self._assert_split_integrity(train_samples, val_samples, test_samples, cfg)
+
+        logger.info(f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples, {len(test_samples)} test samples")
 
         if not train_samples:
             raise RuntimeError("No training samples found. Please check your dataset directories.")
+        if not test_samples:
+            raise RuntimeError("No held-out test samples found. A strict test split is required for leakage-safe evaluation.")
 
-        # Extract features and store for training
-        logger.info(f"Extracting features for {len(train_samples)} training clips...")
-        train_store = FeatureStore(dirs["train"])
-        train_store.initialize(len(train_samples), feature_dim=mel_bins)
-
-        for sample in train_samples:
-            try:
-                # Load audio
-                audio = load_audio_wave(sample.path, target_sr=sample_rate)
-
-                # Extract features
-                features = frontend.compute_mel_spectrogram(audio)
-
-                # Determine label: 1 for positive, 2 for hard_negative, 0 for regular negative
-                # Determine label: 1 for positive, 2 for hard_negative, 0 for regular negative
-                if sample.label == Label.POSITIVE:
-                    label = 1
-                elif sample.label == Label.HARD_NEGATIVE:
-                    label = 2
-                else:
-                    label = 0
-                # Add to store
-                train_store.add(features, label)
-
-            except Exception as e:
-                logger.warning(f"Failed to process {sample.path}: {e}")
-                continue
-
-        # Capture sample count before closing the store
-        sample_count = len(train_store)
-        train_store.close()
-        logger.info(f"Processed {sample_count} training samples")
-
-        # Extract features for validation
+        train_count = self._extract_features_to_store(train_samples, dirs["train"], frontend, sample_rate, "training", mel_bins)
+        val_count = 0
+        test_count = 0
         if val_samples:
-            logger.info(f"Extracting features for {len(val_samples)} validation clips...")
-            val_store = FeatureStore(dirs["val"])
-            val_store.initialize(len(val_samples), feature_dim=mel_bins)
+            val_count = self._extract_features_to_store(val_samples, dirs["val"], frontend, sample_rate, "validation", mel_bins)
+        if test_samples:
+            test_count = self._extract_features_to_store(test_samples, dirs["test"], frontend, sample_rate, "test", mel_bins)
 
-            for sample in val_samples:
-                try:
-                    audio = load_audio_wave(sample.path, target_sr=sample_rate)
+        # Write cache manifest for subsequent runs
+        self._write_cache_manifest(
+            processed_dir,
+            paths_cfg,
+            hardware_cfg,
+            training_cfg,
+            splits={"train": train_count, "val": val_count, "test": test_count},
+        )
 
-                    features = frontend.compute_mel_spectrogram(audio)
-                    if sample.label == Label.POSITIVE:
-                        label = 1
-                    elif sample.label == Label.HARD_NEGATIVE:
-                        label = 2
-                    else:
-                        label = 0
-                    val_store.add(features, label)
+        # Reload the train store for training
+        self._load_store()
 
-                except Exception as e:
-                    logger.warning(f"Failed to process {sample.path}: {e}")
-                    continue
+        return self
+        """Build the dataset from raw audio files.
 
-            val_count = len(val_store)
-            val_store.close()
-            logger.info(f"Processed {val_count} validation samples")
+        Args:
+            config: Configuration dictionary with paths and hardware settings.
+                   If not provided, uses config from __init__.
+
+        Returns:
+            self for method chaining
+        """
+        # Use provided config or fall back to stored config
+        cfg = config if config is not None else self._config
+        if cfg is None:
+            raise ValueError("No config provided. Pass config to __init__ or build(config)")
+
+        # Extract paths from config
+        paths_cfg = cfg.get("paths", {})
+        positive_dir = paths_cfg.get("positive_dir")
+        negative_dir = paths_cfg.get("negative_dir")
+        hard_negative_dir = paths_cfg.get("hard_negative_dir")
+        processed_dir = paths_cfg.get("processed_dir", "./data/processed")
+
+        # Extract hardware config for feature extraction
+        hardware_cfg = cfg.get("hardware", {})
+        sample_rate = hardware_cfg.get("sample_rate_hz", 16000)
+        mel_bins = hardware_cfg.get("mel_bins", 40)
+        window_size_ms = hardware_cfg.get("window_size_ms", 30)
+        window_step_ms = hardware_cfg.get("window_step_ms", 10)
+
+        # Extract training config for splits
+        training_cfg = cfg.get("training", {})
+        train_split = float(training_cfg.get("train_split", 0.8))
+        val_split = float(training_cfg.get("val_split", 0.1))
+        test_split = float(training_cfg.get("test_split", 0.1))
+
+        # Ensure processed directories exist
+        dirs = ensure_processed_directory(processed_dir)
+
+        # Check if valid cache exists
+        if self._is_cache_valid(processed_dir, paths_cfg, hardware_cfg, training_cfg):
+            logger.info("[CACHE] Valid feature cache found — skipping feature extraction")
+            self._load_store()
+            return self
+
+        logger.info("[CACHE] No valid cache found — performing full feature extraction")
+
+        # Create feature config
+        from src.data.features import FeatureConfig, MicroFrontend
+        from src.data.ingestion import Clips, ClipsLoaderConfig, Split
+
+        feature_config = FeatureConfig(
+            sample_rate=sample_rate,
+            mel_bins=mel_bins,
+            window_size_ms=window_size_ms,
+            window_step_ms=window_step_ms,
+        )
+
+        # Initialize feature extractor
+        frontend = MicroFrontend(feature_config)
+
+        # Load clips using ClipsLoaderConfig
+        logger.info("Loading audio clips from dataset directories...")
+
+        training_cfg = cfg.get("training", {})
+        train_split = float(training_cfg.get("train_split", 0.8))
+        val_split = float(training_cfg.get("val_split", 0.1))
+        test_split = float(training_cfg.get("test_split", 0.1))
+        split_seed = int(training_cfg.get("split_seed", 42))
+        split_sum = train_split + val_split + test_split
+        if abs(split_sum - 1.0) > 1e-6:
+            raise ValueError(f"training split ratios must sum to 1.0, got {split_sum:.6f}")
+
+        clips_config = ClipsLoaderConfig(
+            positive_dir=Path(positive_dir) if positive_dir else None,
+            negative_dir=Path(negative_dir) if negative_dir else None,
+            hard_negative_dir=Path(hard_negative_dir) if hard_negative_dir else None,
+            train_split=train_split,
+            val_split=val_split,
+            test_split=test_split,
+            seed=split_seed,
+        )
+
+        clips = Clips(config=clips_config)
+
+        train_samples = clips.get_split(Split.TRAIN)
+        val_samples = clips.get_split(Split.VAL)
+        test_samples = clips.get_split(Split.TEST)
+
+        self._assert_split_integrity(train_samples, val_samples, test_samples, cfg)
+
+        logger.info(f"Loaded {len(train_samples)} training samples, {len(val_samples)} validation samples, {len(test_samples)} test samples")
+
+        if not train_samples:
+            raise RuntimeError("No training samples found. Please check your dataset directories.")
+        if not test_samples:
+            raise RuntimeError("No held-out test samples found. A strict test split is required for leakage-safe evaluation.")
+
+        self._extract_features_to_store(train_samples, dirs["train"], frontend, sample_rate, "training", mel_bins)
+        if val_samples:
+            self._extract_features_to_store(val_samples, dirs["val"], frontend, sample_rate, "validation", mel_bins)
+        if test_samples:
+            self._extract_features_to_store(test_samples, dirs["test"], frontend, sample_rate, "test", mel_bins)
 
         # Reload the train store for training
         self._load_store()
@@ -685,12 +1036,30 @@ class WakeWordDataset:
             return np.vstack([features, padding])
         return features
 
-    def train_generator_factory(self, max_time_frames: Optional[int] = None):
-        if max_time_frames is None:
-            max_time_frames = self.max_time_frames
+    def _iter_split_batches(
+        self,
+        split: str,
+        max_time_frames: int,
+        *,
+        infinite: bool,
+        shuffle: bool,
+        include_hard_negative_flag: bool,
+    ):
+        split_name = self._normalize_split_name(split)
+        store_path = self.data_path / split_name
+        if not store_path.exists():
+            logger.warning(f"Split store not found at {store_path}")
+            return
 
-        def factory():
-            num_samples = len(self)
+        store = FeatureStore(store_path)
+        try:
+            readonly = True
+            disable_mmap = False
+            if self._config is not None:
+                readonly = bool(self._config.get("performance", {}).get("mmap_readonly", True))
+                disable_mmap = bool(self._config.get("performance", {}).get("disable_mmap", False))
+            store.open(readonly=readonly, disable_mmap=disable_mmap)
+            num_samples = len(store)
             if num_samples == 0:
                 return iter([])
             indices = list(range(num_samples))
@@ -722,8 +1091,32 @@ class WakeWordDataset:
                     fingerprints = np.array(batch_features, dtype=np.float32)
                     ground_truth = np.array(batch_labels, dtype=np.int32)
                     sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                    is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
-                    yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
+                    if include_hard_negative_flag:
+                        is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
+                        yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
+                    else:
+                        yield (fingerprints, ground_truth, sample_weights)
+
+                if not infinite:
+                    break
+        finally:
+            try:
+                store.close()
+            except (ValueError, RuntimeError) as e:
+                logger.warning(f"Feature store close failed: {e}")
+
+    def train_generator_factory(self, max_time_frames: Optional[int] = None):
+        if max_time_frames is None:
+            max_time_frames = self.max_time_frames
+
+        def factory():
+            yield from self._iter_split_batches(
+                split="train",
+                max_time_frames=max_time_frames,
+                infinite=True,
+                shuffle=True,
+                include_hard_negative_flag=True,
+            )
 
         return factory
 

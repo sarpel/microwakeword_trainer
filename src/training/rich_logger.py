@@ -65,6 +65,12 @@ class RichTrainingLogger:
             "Eval Interval",
             f"every {training.get('eval_step_interval', 'N/A')} steps",
         )
+        basic_interval = training.get("eval_basic_step_interval", None)
+        advanced_interval = training.get("eval_advanced_step_interval", None)
+        if basic_interval:
+            table.add_row("Basic Eval Interval", f"every {basic_interval} steps")
+        if advanced_interval:
+            table.add_row("Advanced Eval Interval", f"every {advanced_interval} steps")
         table.add_row("Total Steps", f"{total_steps:,}")
 
         # Mixed precision
@@ -138,12 +144,13 @@ class RichTrainingLogger:
         accuracy = metrics.get("accuracy", 0)
         lr = phase_info["learning_rate"]
         phase = phase_info["phase"]
+        epoch = phase_info.get("epoch", 0)
 
         progress.update(
             task_id,
             completed=step,
             description=f"Phase {phase + 1}",
-            metrics=f"loss={loss:.4f} acc={accuracy:.4f} lr={lr:.6f}",
+            metrics=f"epoch={epoch} loss={loss:.4f} acc={accuracy:.4f} lr={lr:.6f}",
         )
 
     def log_validation_results(self, metrics: dict, step: int, total_steps: int) -> None:
@@ -164,6 +171,9 @@ class RichTrainingLogger:
             ("f1_score", "F1 Score", ".4f", "bold green"),
             ("auc_roc", "AUC-ROC", ".4f", None),
             ("auc_pr", "AUC-PR", ".4f", None),
+            ("quality_score", "Quality Score", ".4f", "bold cyan"),
+            ("recall_at_target_fah", "Recall @ Target FAH", ".4f", None),
+            ("fah_at_target_recall", "FAH @ Target Recall", ".4f", None),
         ]
 
         for key, label, fmt, style in metric_defs:
@@ -197,6 +207,17 @@ class RichTrainingLogger:
             ("recall_at_no_faph", "Recall @ No FAPH", ".4f"),
             ("threshold_for_no_faph", "Threshold for No FAPH", ".4f"),
             ("average_viable_recall", "Avg Viable Recall", ".4f"),
+            ("threshold_for_target_fah", "Threshold for Target FAH", ".4f"),
+            ("threshold_for_target_recall", "Threshold for Target Recall", ".4f"),
+            ("quality_plateau_score", "Quality Plateau", ".0f"),
+            ("quality_plateau_slope", "Quality Slope", ".6f"),
+            ("quality_plateau_gap", "Quality Gap", ".6f"),
+            ("gain_f1_score_per_1k_steps", "F1 Gain / 1k steps", ".4f"),
+            ("gain_average_viable_recall_per_1k_steps", "Avg Recall Gain / 1k steps", ".4f"),
+            ("gain_recall_at_no_faph_per_1k_steps", "Recall@NoFAPH Gain / 1k steps", ".4f"),
+            ("gain_auc_pr_per_1k_steps", "AUC-PR Gain / 1k steps", ".4f"),
+            ("gain_recall_at_target_fah_per_1k_steps", "Recall@TargetFAH Gain / 1k steps", ".4f"),
+            ("gain_fah_at_target_recall_per_1k_steps", "FAH@TargetRecall Gain / 1k steps", ".4f"),
         ]
         for key, label, fmt in optional_metrics:
             if key in metrics and metrics[key] is not None:

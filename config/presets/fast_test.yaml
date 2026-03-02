@@ -143,6 +143,18 @@ performance:
   tensorboard_enabled: false
   tensorboard_log_dir: "./logs"
 
+  # Data pipeline
+  prefetch_buffer: null  # null = tf.data.AUTOTUNE (dynamic optimization)
+  use_tfdata: true
+  tfdata_cache_dir: null
+  mmap_readonly: true
+  tfdata_prefetch_to_device: true
+  tfdata_prefetch_device: "/GPU:0"
+  benchmark_pipeline: false
+  log_throughput: true
+  log_throughput_interval: 1000
+  disable_mmap: false
+
 # ─────────────────────────────────────────────────────────────────
 # SPEAKER CLUSTERING (Disabled for fast test)
 # ─────────────────────────────────────────────────────────────────

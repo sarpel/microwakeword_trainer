@@ -40,7 +40,7 @@ coverage.xml
 .hypothesis/
 
 .cache
-
+scripts
 # Type checking
 .mypy_cache/
 .dmypy.json

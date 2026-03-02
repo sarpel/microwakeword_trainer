@@ -59,6 +59,11 @@ class TrainingConfig:
     learning_rates: List[float] = field(default_factory=lambda: [0.001, 0.0001])
     batch_size: int = 128
     eval_step_interval: int = 500
+    eval_basic_step_interval: int = 1000
+    eval_advanced_step_interval: int = 5000
+    eval_confusion_matrix_interval: int = 5000
+    eval_checkpoints_interval: int = 5000
+    eval_log_every_step: bool = True
     # Class weights
     positive_class_weight: List[float] = field(default_factory=lambda: [1.0, 1.0])
     negative_class_weight: List[float] = field(default_factory=lambda: [20.0, 20.0])
@@ -154,6 +159,17 @@ class PerformanceConfig:
     # TensorBoard
     tensorboard_enabled: bool = True
     tensorboard_log_dir: str = "./logs"
+    # Data pipeline (NEW)
+    prefetch_buffer: int = 2  # Buffer size for tf.data pipeline
+    use_tfdata: bool = True  # Use tf.data pipeline instead of Python generators
+    tfdata_cache_dir: Optional[str] = None  # Cache directory (None = memory cache)
+    mmap_readonly: bool = True  # Open feature store mmap as read-only
+    tfdata_prefetch_to_device: bool = True  # Use GPU prefetch when available
+    tfdata_prefetch_device: str = "/GPU:0"  # Device string for prefetch_to_device
+    benchmark_pipeline: bool = False  # Benchmark generator vs tf.data pipeline
+    log_throughput: bool = True  # Log data/step throughput to detect bottlenecks
+    log_throughput_interval: int = 1000  # Steps between throughput logs
+    disable_mmap: bool = False  # Disable feature-store mmap (use on SIGBUS)
 
 
 @dataclass
@@ -254,6 +270,23 @@ class QualityConfig:
 
     # DNSMOS model cache directory
     dnsmos_cache_dir: str = "~/.cache/dnsmos"
+
+
+@dataclass
+class EvaluationConfig:
+    """Evaluation and metrics configuration."""
+
+    default_threshold: float = 0.5  # Default probability threshold for metrics
+    n_thresholds: int = 101  # Number of thresholds for ROC/PR curves
+    max_fah: float = 10.0  # Maximum FAH for average viable recall calculation
+    target_fah: float = 0.5  # Target FAH for recall@FAH metrics
+    target_recall: float = 0.95  # Target recall for FAH@recall metrics
+    gain_window_steps: int = 1000  # Step window for gain metrics
+    plateau_window_evals: int = 5  # Rolling evals for plateau detection
+    plateau_min_delta: float = 0.001  # Minimum improvement to consider progress
+    plateau_slope_eps: float = 0.0001  # Slope epsilon for plateau detection
+    warmup_runs: int = 10  # Warmup runs for latency measurement
+    n_latency_runs: int = 100  # Number of runs for latency measurement
 
 
 @dataclass
@@ -473,6 +506,13 @@ class ConfigLoader:
                 issues.append("performance.num_workers must be >= 0")
             if perf.get("max_memory_gb", 0) <= 0:
                 issues.append("performance.max_memory_gb must be > 0")
+
+        # Validate export section
+        if "export" in config:
+            exp = config["export"]
+            # ARCHITECTURAL_CONSTITUTION enforcement - output type must be uint8
+            if exp.get("inference_output_type") != "uint8":
+                issues.append("export.inference_output_type must be 'uint8' (ARCHITECTURAL_CONSTITUTION)")
 
         return issues
 

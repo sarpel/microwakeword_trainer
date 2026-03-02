@@ -60,7 +60,10 @@ class OptimizedDataPipeline:
 
         # Performance settings
         self.autotune = tf.data.AUTOTUNE
-        self.prefetch_buffer = 2  # Number of batches to prefetch
+        self.prefetch_buffer = config.get("performance", {}).get("prefetch_buffer", 2)
+        self.cache_dir = config.get("performance", {}).get("tfdata_cache_dir")
+        self.prefetch_to_device = config.get("performance", {}).get("tfdata_prefetch_to_device", True)
+        self.prefetch_device = config.get("performance", {}).get("tfdata_prefetch_device", "/GPU:0")
 
     def _calculate_max_frames(self) -> int:
         """Calculate max time frames from hardware config."""
@@ -89,7 +92,11 @@ class OptimizedDataPipeline:
                 factory = self.dataset.val_generator_factory(self.max_time_frames)
 
             gen = factory()
-            for features, labels in gen:
+            for batch in gen:
+                if not isinstance(batch, tuple) or len(batch) < 2:
+                    continue
+                features = batch[0]
+                labels = batch[1]
                 yield features, labels
 
         return generator
@@ -98,6 +105,7 @@ class OptimizedDataPipeline:
         self,
         cache_dir: str | None = None,
         shuffle_buffer: int = 10000,
+        shuffle_seed: int | None = None,
     ) -> tf.data.Dataset:
         """Create optimized training data pipeline.
 
@@ -121,8 +129,8 @@ class OptimizedDataPipeline:
         # Create dataset from generator
         # Output signature must match generator output
         output_signature = (
-            tf.TensorSpec(shape=(None, 40), dtype=tf.float32),  # features (variable time)
-            tf.TensorSpec(shape=(None,), dtype=tf.float32),  # labels
+            tf.TensorSpec(shape=(None, self.max_time_frames, 40), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.float32),
         )
 
         ds = tf.data.Dataset.from_generator(
@@ -131,26 +139,27 @@ class OptimizedDataPipeline:
         )
 
         # Cache first (before shuffle for proper training behavior)
-        if cache_dir:
-            ds = ds.cache(cache_dir)
-            logger.info(f"Using disk cache: {cache_dir}")
+        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
+        if resolved_cache_dir:
+            ds = ds.cache(resolved_cache_dir)
+            logger.info(f"Using disk cache: {resolved_cache_dir}")
         else:
             ds = ds.cache()
             logger.info("Using memory cache")
 
         # Shuffle for training (after cache to reshuffle each epoch)
-        ds = ds.shuffle(buffer_size=shuffle_buffer, reshuffle_each_iteration=True)
+        ds = ds.shuffle(buffer_size=shuffle_buffer, seed=shuffle_seed, reshuffle_each_iteration=True)
 
-        # Batch with padding for variable-length sequences
-        ds = ds.padded_batch(
-            batch_size=self.batch_size,
-            padded_shapes=([self.max_time_frames, 40], [self.max_time_frames]),
-            padding_values=(0.0, 0.0),
-            drop_remainder=True,
-        )
+        # No extra batching (generator already yields full batches)
 
         # Prefetch to GPU
         ds = ds.prefetch(buffer_size=self.autotune)
+        if self.prefetch_to_device:
+            try:
+                ds = tf.data.experimental.prefetch_to_device(self.prefetch_device)(ds)
+                logger.info(f"Prefetching dataset to device: {self.prefetch_device}")
+            except Exception as e:
+                logger.warning(f"GPU prefetch disabled: {e}")
 
         return ds
 
@@ -171,7 +180,7 @@ class OptimizedDataPipeline:
         generator = self._generator_factory("val")
 
         output_signature = (
-            tf.TensorSpec(shape=(None, 40), dtype=tf.float32),
+            tf.TensorSpec(shape=(None, self.max_time_frames, 40), dtype=tf.float32),
             tf.TensorSpec(shape=(None,), dtype=tf.float32),
         )
 
@@ -181,21 +190,22 @@ class OptimizedDataPipeline:
         )
 
         # Cache (no shuffle for validation)
-        if cache_dir:
-            ds = ds.cache(cache_dir)
+        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
+        if resolved_cache_dir:
+            ds = ds.cache(resolved_cache_dir)
         else:
             ds = ds.cache()
 
-        # Batch
-        ds = ds.padded_batch(
-            batch_size=self.batch_size,
-            padded_shapes=([self.max_time_frames, 40], [self.max_time_frames]),
-            padding_values=(0.0, 0.0),
-            drop_remainder=False,  # Keep all validation samples
-        )
+        # No extra batching (generator already yields full batches)
 
         # Prefetch
         ds = ds.prefetch(buffer_size=self.autotune)
+        if self.prefetch_to_device:
+            try:
+                ds = tf.data.experimental.prefetch_to_device(self.prefetch_device)(ds)
+                logger.info(f"Prefetching dataset to device: {self.prefetch_device}")
+            except Exception as e:
+                logger.warning(f"GPU prefetch disabled: {e}")
 
         return ds
 
@@ -329,10 +339,13 @@ def benchmark_pipeline(
     gen = factory()
 
     start = time.time()
-    for i, (x, y) in enumerate(gen):
+    for i, batch in enumerate(gen):
         if i >= n_batches:
             break
-        # Simulate training step
+        if not isinstance(batch, tuple) or len(batch) < 2:
+            continue
+        x = batch[0]
+        y = batch[1]
         _ = x.sum() + y.sum()
     gen_time = time.time() - start
     results["generator_time"] = gen_time

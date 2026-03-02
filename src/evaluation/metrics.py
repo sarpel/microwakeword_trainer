@@ -183,6 +183,65 @@ def compute_recall_at_no_faph(
     return float(recall), thresh
 
 
+def compute_recall_at_target_fah(
+    y_true: np.ndarray,
+    y_scores: np.ndarray,
+    ambient_duration_hours: float,
+    target_fah: float,
+    n_thresholds: int = 101,
+) -> tuple[float, float, float]:
+    """Compute recall at the highest threshold meeting target FAH."""
+    thresholds = np.linspace(0, 1, n_thresholds)
+    neg_mask = y_true == 0
+    pos_mask = y_true == 1
+    pos_total = np.sum(pos_mask)
+    best_threshold = float(thresholds[-1])
+    best_recall = 0.0
+    best_fah = float("inf")
+
+    for thresh in thresholds:
+        fp = np.sum(y_scores[neg_mask] >= thresh)
+        fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else float("inf")
+        if fah <= target_fah:
+            tp = np.sum(y_scores[pos_mask] >= thresh)
+            recall = tp / pos_total if pos_total > 0 else 0.0
+            best_threshold = float(thresh)
+            best_recall = float(recall)
+            best_fah = float(fah)
+
+    return float(best_recall), float(best_threshold), float(best_fah)
+
+
+def compute_fah_at_target_recall(
+    y_true: np.ndarray,
+    y_scores: np.ndarray,
+    ambient_duration_hours: float,
+    target_recall: float,
+    n_thresholds: int = 101,
+) -> tuple[float, float, float]:
+    """Compute FAH at the lowest threshold meeting target recall."""
+    thresholds = np.linspace(0, 1, n_thresholds)
+    neg_mask = y_true == 0
+    pos_mask = y_true == 1
+    pos_total = np.sum(pos_mask)
+    best_threshold = float(thresholds[-1])
+    best_recall = 0.0
+    best_fah = float("inf")
+
+    for thresh in thresholds:
+        tp = np.sum(y_scores[pos_mask] >= thresh)
+        recall = tp / pos_total if pos_total > 0 else 0.0
+        if recall >= target_recall:
+            fp = np.sum(y_scores[neg_mask] >= thresh)
+            fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else float("inf")
+            best_threshold = float(thresh)
+            best_recall = float(recall)
+            best_fah = float(fah)
+            break
+
+    return float(best_fah), float(best_threshold), float(best_recall)
+
+
 def compute_average_viable_recall(
     y_true: np.ndarray,
     y_scores: np.ndarray,
@@ -278,6 +337,38 @@ class MetricsCalculator:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_recall_at_no_faph requires y_score")
         return compute_recall_at_no_faph(self.y_true, self.y_score)
+
+    def compute_recall_at_target_fah(
+        self,
+        ambient_duration_hours: float,
+        target_fah: float,
+        n_thresholds: int = 101,
+    ) -> tuple[float, float, float]:
+        if self.y_score is None:
+            raise ValueError("MetricsCalculator.compute_recall_at_target_fah requires y_score")
+        return compute_recall_at_target_fah(
+            self.y_true,
+            self.y_score,
+            ambient_duration_hours=ambient_duration_hours,
+            target_fah=target_fah,
+            n_thresholds=n_thresholds,
+        )
+
+    def compute_fah_at_target_recall(
+        self,
+        ambient_duration_hours: float,
+        target_recall: float,
+        n_thresholds: int = 101,
+    ) -> tuple[float, float, float]:
+        if self.y_score is None:
+            raise ValueError("MetricsCalculator.compute_fah_at_target_recall requires y_score")
+        return compute_fah_at_target_recall(
+            self.y_true,
+            self.y_score,
+            ambient_duration_hours=ambient_duration_hours,
+            target_recall=target_recall,
+            n_thresholds=n_thresholds,
+        )
 
     def compute_all_metrics(
         self,
