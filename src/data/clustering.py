@@ -844,19 +844,23 @@ def cluster_samples_adaptive(
     n_clusters: Optional[int] = None,
     similarity_threshold: float = 0.72,
     min_cluster_size: int = 5,
+    threshold_small: int = 5000,
+    threshold_large: int = 50000,
 ) -> np.ndarray:
     """Adaptive clustering based on dataset size.
 
     Automatically selects the appropriate clustering algorithm:
-    - n <= 5000: AgglomerativeClustering (exact, high quality)
-    - 5000 < n <= 50000: HDBSCAN (fast, scalable)
-    - n > 50000: Agglomerative with kNN connectivity (memory efficient)
+    - n <= threshold_small: AgglomerativeClustering (exact, high quality)
+    - threshold_small < n <= threshold_large: HDBSCAN (fast, scalable)
+    - n > threshold_large: Agglomerative with kNN connectivity (memory efficient)
 
     Args:
         features: Feature array [n_samples, feature_dim]
         n_clusters: Target number of clusters (for agglomerative)
         similarity_threshold: Similarity threshold (for agglomerative)
         min_cluster_size: Minimum cluster size (for HDBSCAN)
+        threshold_small: Use agglomerative below this sample count
+        threshold_large: Use HDBSCAN below this (if available), two-stage above
 
     Returns:
         Cluster labels [n_samples]
@@ -864,18 +868,18 @@ def cluster_samples_adaptive(
     n_samples = len(features)
 
     if n_clusters is not None:
-        if n_samples <= 5000:
+        if n_samples <= threshold_small:
             logger.info(f"Using AgglomerativeClustering (explicit n_clusters={n_clusters})")
             return cluster_samples(features, n_clusters, similarity_threshold)
         logger.info(f"Using two-stage clustering (explicit n_clusters={n_clusters})")
         return _cluster_samples_two_stage(features, n_clusters, similarity_threshold)
 
-    if n_samples <= 5000:
+    if n_samples <= threshold_small:
         # Use exact AgglomerativeClustering for small datasets
         logger.info(f"Using AgglomerativeClustering for {n_samples} samples")
         return cluster_samples(features, None, similarity_threshold)
 
-    if n_samples <= 50000 and HAS_HDBSCAN:
+    if n_samples <= threshold_large and HAS_HDBSCAN:
         # Use HDBSCAN for medium datasets
         logger.info(f"Using HDBSCAN for {n_samples} samples")
         return cluster_samples_hdbscan(features, min_cluster_size=min_cluster_size)
@@ -1175,6 +1179,8 @@ class SpeakerClustering:
                 n_clusters=self.config.n_clusters,
                 similarity_threshold=self.config.similarity_threshold,
                 min_cluster_size=self.config.hdbscan_min_cluster_size,
+                threshold_small=self.config.adaptive_threshold_small,
+                threshold_large=self.config.adaptive_threshold_large,
             )
         elif self.config.method == "hdbscan" and HAS_HDBSCAN:
             labels = cluster_samples_hdbscan(

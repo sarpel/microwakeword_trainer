@@ -105,6 +105,7 @@ class EvaluationMetrics:
             self.fp_at_threshold[cutoff] += int(fp_all[i])
             self.tn_at_threshold[cutoff] += int(tn_all[i])
             self.fn_at_threshold[cutoff] += int(fn_all[i])
+
     def compute_metrics(self) -> dict[str, float]:
         """Compute all metrics from accumulated predictions.
 
@@ -195,9 +196,9 @@ class Trainer:
         self.steps_per_epoch = training.get("steps_per_epoch", 1000)  # For mining epoch calculation
 
         # Class weights (positive upweighted to compensate for class imbalance)
-        self.positive_weights = training.get("positive_class_weight", [10.0, 10.0])
-        self.negative_weights = training.get("negative_class_weight", [1.0, 1.0])
-        self.hard_negative_weights = training.get("hard_negative_class_weight", [1.5, 2.0])
+        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
+        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
+        self.hard_negative_weights = training.get("hard_negative_class_weight", [40.0, 40.0])
 
         # Ensure all per-phase lists have the same length as training_steps_list
         n_phases = len(self.training_steps_list)
@@ -243,7 +244,7 @@ class Trainer:
         self.prefetch_buffer = performance.get("prefetch_buffer", 12)
         self.use_tfdata = performance.get("use_tfdata", True)
         self.log_throughput = performance.get("log_throughput", True)
-        self.async_mining = performance.get('async_mining', False)
+        self.async_mining = performance.get("async_mining", False)
         self.spec_augment_backend = performance.get("spec_augment_backend", "tf")
         self.log_throughput_interval = int(performance.get("log_throughput_interval", 1000) or 1000)
         self.tensorboard_writer: tf.summary.SummaryWriter | None = None
@@ -356,7 +357,9 @@ class Trainer:
                     mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
                     output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
                 )
-                self.logger.log_info(f"Async hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}")
+                self.logger.log_info(
+                    f"Async hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}"
+                )
             else:
                 # Use synchronous miner
                 self.hard_negative_miner = HardExampleMiner(
@@ -365,7 +368,9 @@ class Trainer:
                     mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
                     output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
                 )
-                self.logger.log_info(f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}")
+                self.logger.log_info(
+                    f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}"
+                )
         # Check for EMA configuration
         training_cfg = config.get("training", {})
         ema_decay = training_cfg.get("ema_decay")
@@ -884,30 +889,28 @@ class Trainer:
         for idx in top_indices:
             epoch_entry["false_predictions"].append({"index": int(idx), "score": float(y_scores[idx]), "true_label": "negative"})
 
-        # Append to log file
-        log_file_path = hn_config.get("log_file", "logs/false_predictions.json")
-        log_file = Path(log_file_path)
-        log_file.parent.mkdir(parents=True, exist_ok=True)
+        # Write per-epoch log file (atomic, no race conditions)
+        log_dir = Path(hn_config.get("log_file", "logs/false_predictions.json")).parent
+        log_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Read existing log if it exists
-            if log_file.exists():
-                with open(log_file, "r") as f:
-                    log_data = json.load(f)
-            else:
-                log_data = {
-                    "metadata": {"created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "model_checkpoint": str(self.best_weights_path or "unknown"), "fp_threshold": fp_threshold},
-                    "epochs": {},
+            # Write each epoch to its own file (atomic operation)
+            epoch_log_path = log_dir / f"epoch_{epoch:04d}_false_predictions.json"
+            with open(epoch_log_path, "w") as f:
+                json.dump(epoch_entry, f, indent=2)
+
+            # Update metadata if needed (on first epoch only for simplicity)
+            metadata_path = log_dir / "metadata.json"
+            if not metadata_path.exists():
+                metadata = {
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "model_checkpoint": str(self.best_weights_path or "unknown"),
+                    "fp_threshold": fp_threshold,
                 }
+                with open(metadata_path, "w") as f:
+                    json.dump(metadata, f, indent=2)
 
-            # Add this epoch's data
-            log_data["epochs"][str(epoch)] = epoch_entry
-
-            # Write updated log
-            with open(log_file, "w") as f:
-                json.dump(log_data, f, indent=2)
-
-            self.logger.log_info(f"Epoch {epoch}: Logged {len(top_indices)} false predictions to {log_file_path}")
+            self.logger.log_info(f"Epoch {epoch}: Logged {len(top_indices)} false predictions to {epoch_log_path}")
 
         except Exception as e:
             self.logger.log_warning(f"Failed to write false predictions log: {e}")
@@ -918,24 +921,16 @@ class Trainer:
         val_data_factory,
         mining_data_factory=None,
         test_data_factory=None,
-        input_shape: tuple[int, ...] | None = None,
-    ) -> tf.keras.Model:
-        """Execute full step-based training loop.
+    ) -> None:
+        """Main training loop.
 
         Args:
-            train_data_factory: Callable that returns a generator yielding
-                (features, labels, weights) tuples.  Passed as a factory so the
-                generator can be restarted when exhausted.
-            val_data_factory: Same pattern for validation data.
-            input_shape: Input feature shape. If None, uses shape calculated from
-                hardware.clip_duration_ms and hardware.window_step_ms in config.
-
-        Returns:
-            Trained model
+            train_data_factory: Factory for training dataset
+            val_data_factory: Factory for validation dataset
+            mining_data_factory: Optional factory for mining dataset
+            test_data_factory: Optional factory for test dataset
         """
-        # Use calculated input shape from config if not provided
-        if input_shape is None:
-            input_shape = self.input_shape
+        input_shape = self.input_shape
 
         self.logger.log_info("Building model...")
         self.model = self._build_model(input_shape)
@@ -1157,7 +1152,7 @@ class Trainer:
 
             log_dir = self.config.get("performance", {}).get("tensorboard_log_dir", "./logs")
             test_feature_store_path = os.path.join(self.config.get("paths", {}).get("processed_dir", "./data/processed"), "test")
-            evaluator = TestEvaluator(self.model, self.config, log_dir)
+            evaluator = TestEvaluator(self.model, self.config, str(log_dir))
             evaluator.evaluate(test_data_factory, test_feature_store_path=test_feature_store_path)
             self.logger.log_info("Running held-out test evaluation...")
             test_metrics = self.validate(test_data_factory)
@@ -1225,10 +1220,7 @@ def train(config: dict) -> tf.keras.Model:
                 "seed": training_cfg.get("split_seed", 42),
             }
 
-        pipeline = OptimizedDataPipeline(
-            dataset, config, max_time_frames=max_time_frames,
-            spec_augment_config=spec_augment_config
-        )
+        pipeline = OptimizedDataPipeline(dataset, config, max_time_frames=max_time_frames, spec_augment_config=spec_augment_config)
         shuffle_seed = int(config.get("training", {}).get("split_seed", 42))
         train_ds = pipeline.create_training_pipeline(shuffle_seed=shuffle_seed)
         val_ds = pipeline.create_validation_pipeline()
@@ -1248,31 +1240,6 @@ def train(config: dict) -> tf.keras.Model:
 
         def test_factory():
             for features, labels, _, _ in test_ds:
-                labels_int = tf.cast(labels, tf.int32)
-                metadata = {"raw_labels": labels_int.numpy().tolist()}
-                yield features, labels_int, metadata
-        from src.data.tfdata_pipeline import OptimizedDataPipeline
-
-        pipeline = OptimizedDataPipeline(dataset, config, max_time_frames=max_time_frames)
-        shuffle_seed = int(config.get("training", {}).get("split_seed", 42))
-        train_ds = pipeline.create_training_pipeline(shuffle_seed=shuffle_seed)
-        val_ds = pipeline.create_validation_pipeline()
-        test_ds = pipeline.create_validation_pipeline()
-
-        def train_factory():
-            for features, labels in train_ds:
-                labels_int = tf.cast(labels, tf.int32)
-                sample_weights = tf.ones(tf.shape(labels_int)[0], dtype=tf.float32)
-                is_hard_neg = tf.zeros(tf.shape(labels_int)[0], dtype=tf.bool)
-                yield features, labels_int, sample_weights, is_hard_neg
-
-        def val_factory():
-            for features, labels in val_ds:
-                labels_int = tf.cast(labels, tf.int32)
-                yield features, labels_int, None
-
-        def test_factory():
-            for features, labels in test_ds:
                 labels_int = tf.cast(labels, tf.int32)
                 metadata = {"raw_labels": labels_int.numpy().tolist()}
                 yield features, labels_int, metadata

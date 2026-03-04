@@ -19,9 +19,9 @@
 
 **Rule-4:** When in need to find a suitable value for a configuration, check @docs/my_environment.md file for trained model's working conditions, it may give you hints.
 
-echo "Fast Apply: IMPORTANT: Use \`edit_file\` over \`str_replace\` or full file writes. It works with partial code snippets—no need for full file content.
+Fast Apply: IMPORTANT: Use `edit_file` over `str_replace` or full file writes. It works with partial code snippets—no need for full file content.
 
-Warp Grep: warp-grep is a subagent that takes in a search string and tries to find relevant context. Best practice is to use it at the beginning of codebase explorations to fast track finding relevant files/lines. Do not use it to pin point keywords, but use it for broader semantic queries. \"Find the XYZ flow\", \"How does XYZ work\", \"Where is XYZ handled?\", \"Where is <error message> coming from?\"" >> AGENTS.md
+Warp Grep: warp-grep is a subagent that takes in a search string and tries to find relevant context. Best practice is to use it at the beginning of codebase explorations to fast track finding relevant files/lines. Do not use it to pin point keywords, but use it for broader semantic queries. "Find the XYZ flow", "How does XYZ work", "Where is XYZ handled?", "Where is <error message> coming from?"
 
 
 ## Overview
@@ -340,6 +340,21 @@ Configuration Files (MUST STAY SYNCED):
 - `config/presets/fast_test.yaml` - Quick testing preset
 - `config/presets/standard.yaml` - Production training preset
 - `config/presets/max_quality.yaml` - Maximum quality preset
+
+### Developer Workflow
+
+When adding a new configuration field:
+1. Add field to the appropriate dataclass in `config/loader.py`
+2. Add the field with appropriate default to all three preset YAML files
+3. If the field requires validation, add checks in the dataclass `__post_init__` method
+4. Update documentation in `docs/GUIDE.md` if applicable
+
+### User Workflow
+
+Users can override any config value using a custom YAML file:
+```bash
+mww-train --config config/presets/standard.yaml --custom my_overrides.yaml
+```
 
 ### Anti-Patterns
 

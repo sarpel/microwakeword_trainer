@@ -43,9 +43,9 @@ training:
   steps_per_epoch: 1000  # Approximate steps per epoch for mining calculations
 
   # Class weights - hard negatives get higher weight to reduce false accepts
-  positive_class_weight: [10.0, 10.0]
-  negative_class_weight: [1.0, 1.0]
-  hard_negative_class_weight: [1.5, 2.0]
+  positive_class_weight: [1.0, 1.0]
+  negative_class_weight: [20.0, 20.0]
+  hard_negative_class_weight: [40.0, 40.0]
 
   # SpecAugment disabled (using full audio augmentation)
   time_mask_max_size: [0, 0]

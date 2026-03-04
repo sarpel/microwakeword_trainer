@@ -7,6 +7,8 @@ Compatible with ESPHome - only affects training speed, not model export.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -75,6 +77,25 @@ class OptimizedDataPipeline:
         clip_duration_ms = hardware.get("clip_duration_ms", 1000)
         window_step_ms = hardware.get("window_step_ms", 10)
         return int(clip_duration_ms / window_step_ms)
+
+    def _resolve_cache_path(self, resolved_cache_dir: str, cache_name: str) -> Path:
+        cache_root = Path(resolved_cache_dir)
+        if cache_root.suffix:
+            cache_root.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            cache_root.mkdir(parents=True, exist_ok=True)
+
+        cache_path = cache_root / cache_name
+        lockfiles = list(cache_root.glob(f"{cache_path.name}_*.lockfile"))
+        if lockfiles:
+            unique_name = f"{cache_name}_{os.getpid()}_{int(time.time())}"
+            cache_path = cache_root / unique_name
+            logger.warning(
+                "Detected existing tf.data cache lockfile %s; using unique cache path %s",
+                lockfiles[0],
+                cache_path,
+            )
+        return cache_path
 
     def _generator_factory(
         self,
@@ -151,11 +172,7 @@ class OptimizedDataPipeline:
         # Cache first (before shuffle for proper training behavior)
         resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         if resolved_cache_dir:
-            cache_path = Path(resolved_cache_dir)
-            if cache_path.suffix:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-            else:
-                cache_path.mkdir(parents=True, exist_ok=True)
+            cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_train")
             ds = ds.cache(str(cache_path))
             logger.info(f"Using disk cache: {cache_path}")
         else:
@@ -173,6 +190,14 @@ class OptimizedDataPipeline:
                 time_mask_count = self.spec_augment_config.get("time_mask_count", 2)
                 freq_mask_max_size = self.spec_augment_config.get("freq_mask_max_size", 10)
                 freq_mask_count = self.spec_augment_config.get("freq_mask_count", 2)
+                if isinstance(time_mask_max_size, (list, tuple)):
+                    time_mask_max_size = time_mask_max_size[0] if time_mask_max_size else 0
+                if isinstance(time_mask_count, (list, tuple)):
+                    time_mask_count = time_mask_count[0] if time_mask_count else 0
+                if isinstance(freq_mask_max_size, (list, tuple)):
+                    freq_mask_max_size = freq_mask_max_size[0] if freq_mask_max_size else 0
+                if isinstance(freq_mask_count, (list, tuple)):
+                    freq_mask_count = freq_mask_count[0] if freq_mask_count else 0
                 seed = self.spec_augment_config.get("seed")
 
                 def apply_spec_augment(features, labels, sample_weights, is_hard_neg):
@@ -233,11 +258,7 @@ class OptimizedDataPipeline:
         # Cache (no shuffle for validation)
         resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         if resolved_cache_dir:
-            cache_path = Path(resolved_cache_dir)
-            if cache_path.suffix:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-            else:
-                cache_path.mkdir(parents=True, exist_ok=True)
+            cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_val")
             ds = ds.cache(str(cache_path))
         else:
             ds = ds.cache()

@@ -87,9 +87,13 @@ def filter_epochs_by_min_epoch(log_data: dict[str, Any], min_epoch: int) -> dict
     epochs = log_data.get("epochs", {})
 
     for epoch_str, epoch_data in epochs.items():
-        epoch_num = int(epoch_str)
-        if epoch_num >= min_epoch:
-            filtered[epoch_num] = epoch_data
+        try:
+            epoch_num = int(epoch_str)
+            if epoch_num >= min_epoch:
+                filtered[epoch_num] = epoch_data
+        except ValueError:
+            console.print(f"[yellow]Warning: Skipping invalid epoch key '{epoch_str}' (not an integer)[/yellow]")
+            continue
 
     return filtered
 
@@ -147,10 +151,14 @@ def deduplicate_by_hash(
         task = progress.add_task("Computing file hashes...", total=len(predictions))
 
         for pred in predictions:
-            # Get file path - for now we use a placeholder since indices don't map to paths
-            # In a real implementation, you'd need to store paths in the JSON log
-            file_idx = pred.get("index", 0)
-            file_path = dataset_dir / f"negative_sample_{file_idx}.wav"
+            # Check if prediction contains path information
+            file_path_str = pred.get("file_path") or pred.get("path")
+            if not file_path_str:
+                console.print("[red]Error: Deduplication requires file_path or path in prediction log[/red]")
+                console.print("[yellow]Regenerate logs with path information to enable deduplication[/yellow]")
+                raise ValueError("Prediction log missing 'file_path' or 'path' field")
+
+            file_path = Path(file_path_str)
 
             if not file_path.exists():
                 progress.advance(task)
@@ -360,11 +368,9 @@ Examples:
 
         # Deduplicate if requested
         if args.deduplicate:
-            console.print("[bold blue]Deduplicating by file hash...[/bold blue]")
-            # Note: This requires mapping indices to actual file paths
-            # For now, we'll just pass through since we don't have paths in the log
+            console.print("[bold red]Deduplication is disabled until prediction logs include file paths[/bold red]")
+            console.print("[yellow]Ignoring --deduplicate flag. Regenerate logs with paths to enable deduplication.[/yellow]")
             unique_predictions = predictions
-            console.print(f"Unique predictions: {len(unique_predictions)}")
         else:
             unique_predictions = predictions
 

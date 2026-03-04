@@ -196,11 +196,6 @@ class TestBatchSpecAugmentTF:
 
         result_np = result.numpy()
 
-        # Check that samples have different masked regions
-        # If masks are per-sample, different samples should have different zero patterns
-        sample_0_zeros = set(zip(*np.where(result_np[0] == 0)))
-        sample_1_zeros = set(zip(*np.where(result_np[1] == 0)))
-
         # Different samples should generally have different masks
         # (though by chance they could be similar, this is unlikely with random seeds)
         # We just verify that at least some samples differ
@@ -239,8 +234,16 @@ class TestBatchSpecAugmentTF:
         # Results should be identical (same seed)
         np.testing.assert_array_almost_equal(result1.numpy(), result2.numpy(), decimal=5)
 
-        # Verify the function is traced by checking it's a ConcreteFunction
-        assert hasattr(batch_spec_augment_tf, "function_spec") or True  # Just verify it runs
+        # Verify the function is traced and can be converted to ConcreteFunction
+        concrete_fn = batch_spec_augment_tf.get_concrete_function(
+            batch,
+            time_mask_max_size=10,
+            time_mask_count=2,
+            freq_mask_max_size=5,
+            freq_mask_count=2,
+            seed=42,
+        )
+        assert concrete_fn is not None, "batch_spec_augment_tf should be convertible to ConcreteFunction"
 
     def test_batch_spec_augment_different_batch_sizes(self):
         """Test batch_spec_augment_tf handles different batch sizes."""

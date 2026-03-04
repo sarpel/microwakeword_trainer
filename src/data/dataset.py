@@ -1018,6 +1018,9 @@ class WakeWordDataset:
             try:
                 store.close()
             except (ValueError, RuntimeError) as e:
+                message = str(e).lower()
+                if "mmap closed" in message or "invalid" in message:
+                    return
                 logger.warning(f"Feature store close failed: {e}")
 
     def train_generator_factory(self, max_time_frames: Optional[int] = None):

@@ -58,10 +58,14 @@ class AsyncHardExampleMiner:
             data_generator: Generator yielding (features, labels, weights) tuples
             epoch: Current training epoch
         """
-        result = self._miner.mine_from_dataset(model, data_generator, epoch)
-        with self._lock:
-            self._result = result
-            self._is_running = False
+        try:
+            result = self._miner.mine_from_dataset(model, data_generator, epoch)
+        except Exception:
+            result = None
+        finally:
+            with self._lock:
+                self._result = result
+                self._is_running = False
 
     def start_mining(
         self,
@@ -76,17 +80,16 @@ class AsyncHardExampleMiner:
             data_generator: Generator yielding (features, labels, weights) tuples
             epoch: Current training epoch
         """
-        if self._is_running:
-            raise RuntimeError("Mining is already in progress")
+        # Reset result and claim lock before cloning
+        with self._lock:
+            if self._is_running:
+                raise RuntimeError("Mining is already in progress")
+            self._result = None
+            self._is_running = True
 
         # Clone model to avoid sharing training model with thread
         cloned_model = tf.keras.models.clone_model(model)
         cloned_model.set_weights(model.get_weights())
-
-        # Reset result
-        with self._lock:
-            self._result = None
-            self._is_running = True
 
         # Start background thread
         self._thread = threading.Thread(

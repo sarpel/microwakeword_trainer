@@ -11,7 +11,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 import numpy as np
 
@@ -132,10 +132,13 @@ class HardNegativeMiner:
 
         # Copy to hard negative directory
         mined_paths = []
+        # Pre-compute existing hashes to avoid repeated scanning
+        dest_hashes = self._get_existing_hashes(self.hard_negative_dir)
         for audio_path, score in hard_negatives:
             try:
-                dest_path = self._copy_to_hard_negatives(audio_path, score)
-                mined_paths.append(dest_path)
+                dest_path = self._copy_to_hard_negatives(audio_path, score, dest_hashes=dest_hashes)
+                if dest_path is not None:  # Skip duplicates
+                    mined_paths.append(dest_path)
             except Exception as e:
                 logger.warning(f"Failed to copy {audio_path}: {e}")
 
@@ -235,16 +238,20 @@ class HardNegativeMiner:
         audio_path: Path,
         score: float,
         use_mined_subdir: bool = False,
-    ) -> Path:
+        dest_hashes: Optional[set[str]] = None,
+        user_hashes: Optional[set[str]] = None,
+    ) -> Optional[Path]:
         """Copy audio file to hard negative directory.
 
         Args:
             audio_path: Source audio path
             score: Model score (used in filename)
             use_mined_subdir: If True, copy to mined/ subdirectory
+            dest_hashes: Pre-computed hashes of destination directory (optional)
+            user_hashes: Pre-computed hashes of user subdirectory (optional)
 
         Returns:
-            Destination path
+            Destination path, or None if file is a duplicate
         """
         import uuid
 
@@ -259,21 +266,23 @@ class HardNegativeMiner:
         if self.config.deduplicate_by_hash:
             file_hash = self._compute_file_hash(audio_path)
 
-            # Check against existing files in destination
-            existing_hashes = self._get_existing_hashes(dest_dir)
-            if file_hash in existing_hashes:
-                logger.debug(f"Skipping duplicate (hash match): {audio_path.name}")
-                # Return path to existing directory to signal duplicate
-                return dest_dir
+            # Check against pre-computed existing hashes for destination
+            if dest_hashes is None:
+                dest_hashes = self._get_existing_hashes(dest_dir)
 
-            # Also check user subdirectory if copying to mined
+            if file_hash in dest_hashes:
+                logger.debug(f"Skipping duplicate (hash match): {audio_path.name}")
+                return None  # Signal no new file added
+
+            # Also check user subdirectory hashes if copying to mined
             if use_mined_subdir:
-                user_dir = self.hard_negative_dir / "user"
-                if user_dir.exists():
-                    user_hashes = self._get_existing_hashes(user_dir)
-                    if file_hash in user_hashes:
-                        logger.debug(f"Skipping duplicate of user file: {audio_path.name}")
-                        return dest_dir
+                if user_hashes is None:
+                    user_dir = self.hard_negative_dir / "user"
+                    user_hashes = self._get_existing_hashes(user_dir) if user_dir.exists() else set()
+
+                if file_hash in user_hashes:
+                    logger.debug(f"Skipping duplicate of user file: {audio_path.name}")
+                    return None  # Signal no new file added
 
         # Create filename with score and unique suffix to prevent collisions
         base_name = audio_path.stem

@@ -97,8 +97,8 @@ performance:
   max_memory_gb: 32
   inter_op_parallelism: 16
   intra_op_parallelism: 16
-  enable_profiling: true
-  profile_every_n_steps: 100
+  enable_profiling: false
+  profile_every_n_steps: 1000
   profile_output_dir: "./profiles"
   tensorboard_enabled: true
   tensorboard_log_dir: "./logs"

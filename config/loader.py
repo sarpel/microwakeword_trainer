@@ -234,8 +234,13 @@ class HardNegativeMiningConfig:
             raise ValueError(f"max_samples must be positive, got {self.max_samples}")
         if self.mining_interval_epochs <= 0:
             raise ValueError(f"mining_interval_epochs must be positive, got {self.mining_interval_epochs}")
+        if not isinstance(self.min_epochs_before_mining, int) or self.min_epochs_before_mining <= 0:
+            raise ValueError(f"min_epochs_before_mining must be a positive integer, got {self.min_epochs_before_mining}")
+        if not isinstance(self.top_k_per_epoch, int) or self.top_k_per_epoch <= 0:
+            raise ValueError(f"top_k_per_epoch must be a positive integer, got {self.top_k_per_epoch}")
         if self.collection_mode not in ("log_only", "mine_immediately"):
             raise ValueError(f"collection_mode must be 'log_only' or 'mine_immediately', got {self.collection_mode}")
+
 
 @dataclass
 class ExportConfig:
