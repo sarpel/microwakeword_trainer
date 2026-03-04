@@ -14,6 +14,7 @@ import numpy as np
 import tensorflow as tf
 
 from src.data.dataset import WakeWordDataset
+from src.data.spec_augment_tf import batch_spec_augment_tf
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class OptimizedDataPipeline:
         config: dict,
         batch_size: int | None = None,
         max_time_frames: int | None = None,
+        spec_augment_config: dict | None = None,
     ):
         """Initialize optimized pipeline.
 
@@ -58,6 +60,7 @@ class OptimizedDataPipeline:
         self.config = config
         self.batch_size = batch_size or config.get("training", {}).get("batch_size", 128)
         self.max_time_frames = max_time_frames or self._calculate_max_frames()
+        self.spec_augment_config = spec_augment_config or {}
 
         # Performance settings
         self.autotune = tf.data.AUTOTUNE
@@ -76,14 +79,14 @@ class OptimizedDataPipeline:
     def _generator_factory(
         self,
         split: str = "train",
-    ) -> Callable[[], Iterator[tuple[np.ndarray, np.ndarray]]]:
+    ) -> Callable[[], Iterator[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]]:
         """Create generator factory for tf.data.Dataset.
 
         Args:
             split: 'train' or 'val'
 
         Returns:
-            Generator function
+            Generator function that yields (features, labels, sample_weights, is_hard_neg)
         """
 
         def generator():
@@ -98,7 +101,11 @@ class OptimizedDataPipeline:
                     continue
                 features = batch[0]
                 labels = batch[1]
-                yield features, labels
+                # Yield 4-tuple: (features, labels, sample_weights, is_hard_neg)
+                batch_size = features.shape[0]
+                sample_weights = np.ones(batch_size, dtype=np.float32)
+                is_hard_neg = np.zeros(batch_size, dtype=np.bool_)
+                yield features, labels, sample_weights, is_hard_neg
 
         return generator
 
@@ -132,6 +139,8 @@ class OptimizedDataPipeline:
         output_signature = (
             tf.TensorSpec(shape=(None, self.max_time_frames, 40), dtype=tf.float32),
             tf.TensorSpec(shape=(None,), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.bool),
         )
 
         ds = tf.data.Dataset.from_generator(
@@ -155,6 +164,30 @@ class OptimizedDataPipeline:
 
         # Shuffle for training (after cache to reshuffle each epoch)
         ds = ds.shuffle(buffer_size=shuffle_buffer, seed=shuffle_seed, reshuffle_each_iteration=True)
+
+        # Apply SpecAugment if enabled (TF backend)
+        if self.spec_augment_config.get("enabled", False):
+            backend = self.spec_augment_config.get("backend", "cupy")
+            if backend == "tf":
+                time_mask_max_size = self.spec_augment_config.get("time_mask_max_size", 10)
+                time_mask_count = self.spec_augment_config.get("time_mask_count", 2)
+                freq_mask_max_size = self.spec_augment_config.get("freq_mask_max_size", 10)
+                freq_mask_count = self.spec_augment_config.get("freq_mask_count", 2)
+                seed = self.spec_augment_config.get("seed")
+
+                def apply_spec_augment(features, labels, sample_weights, is_hard_neg):
+                    augmented_features = batch_spec_augment_tf(
+                        features,
+                        time_mask_max_size=time_mask_max_size,
+                        time_mask_count=time_mask_count,
+                        freq_mask_max_size=freq_mask_max_size,
+                        freq_mask_count=freq_mask_count,
+                        seed=seed,
+                    )
+                    return augmented_features, labels, sample_weights, is_hard_neg
+
+                ds = ds.map(apply_spec_augment, num_parallel_calls=self.autotune)
+                logger.info(f"SpecAugment (TF backend) enabled: time_masks={time_mask_count}@{time_mask_max_size}, freq_masks={freq_mask_count}@{freq_mask_max_size}")
 
         # No extra batching (generator already yields full batches)
 
@@ -188,6 +221,8 @@ class OptimizedDataPipeline:
         output_signature = (
             tf.TensorSpec(shape=(None, self.max_time_frames, 40), dtype=tf.float32),
             tf.TensorSpec(shape=(None,), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.bool),
         )
 
         ds = tf.data.Dataset.from_generator(

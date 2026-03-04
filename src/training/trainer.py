@@ -29,6 +29,7 @@ from src.data.spec_augment_gpu import batch_spec_augment_gpu
 from src.evaluation.metrics import MetricsCalculator
 from src.model.architecture import build_model
 from src.training.miner import HardExampleMiner
+from src.training.async_miner import AsyncHardExampleMiner
 from src.training.profiler import TrainingProfiler
 from src.training.rich_logger import RichTrainingLogger
 from src.utils.terminal_logger import TerminalLogger
@@ -242,6 +243,8 @@ class Trainer:
         self.prefetch_buffer = performance.get("prefetch_buffer", 12)
         self.use_tfdata = performance.get("use_tfdata", True)
         self.log_throughput = performance.get("log_throughput", True)
+        self.async_mining = performance.get('async_mining', False)
+        self.spec_augment_backend = performance.get("spec_augment_backend", "tf")
         self.log_throughput_interval = int(performance.get("log_throughput_interval", 1000) or 1000)
         self.tensorboard_writer: tf.summary.SummaryWriter | None = None
 
@@ -341,27 +344,28 @@ class Trainer:
         self.hard_negative_mining_enabled = hn_config.get("enabled", False)
         self.hn_config = hn_config  # Store config for collection mode access
         self.hard_negative_miner: HardExampleMiner | None = None
+        self._async_miner: AsyncHardExampleMiner | None = None  # Async miner instance
         self.false_predictions_log: list[dict] = []  # In-memory log for current epoch
         if self.hard_negative_mining_enabled:
-            self.hard_negative_miner = HardExampleMiner(
-                fp_threshold=hn_config.get("fp_threshold", 0.8),
-                max_samples=hn_config.get("max_samples", 5000),
-                mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
-                output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
-            )
             collection_mode = hn_config.get("collection_mode", "log_only")
-            self.logger.log_info(f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}")
-        hn_config = config.get("hard_negative_mining", {})
-        self.hard_negative_mining_enabled = hn_config.get("enabled", False)
-        self.hard_negative_miner: HardExampleMiner | None = None
-        if self.hard_negative_mining_enabled:
-            self.hard_negative_miner = HardExampleMiner(
-                fp_threshold=hn_config.get("fp_threshold", 0.8),
-                max_samples=hn_config.get("max_samples", 5000),
-                mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
-                output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
-            )
-            self.logger.log_info(f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}")
+            if self.async_mining and collection_mode == "mine_immediately":
+                # Use async miner for non-blocking background mining
+                self._async_miner = AsyncHardExampleMiner(
+                    fp_threshold=hn_config.get("fp_threshold", 0.8),
+                    max_samples=hn_config.get("max_samples", 5000),
+                    mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
+                    output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
+                )
+                self.logger.log_info(f"Async hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}")
+            else:
+                # Use synchronous miner
+                self.hard_negative_miner = HardExampleMiner(
+                    fp_threshold=hn_config.get("fp_threshold", 0.8),
+                    max_samples=hn_config.get("max_samples", 5000),
+                    mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
+                    output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
+                )
+                self.logger.log_info(f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}")
         # Check for EMA configuration
         training_cfg = config.get("training", {})
         ema_decay = training_cfg.get("ema_decay")
@@ -980,7 +984,8 @@ class Trainer:
                         raise RuntimeError("train_data_factory() returned an empty generator after restart. Cannot continue training without batches.") from exc
 
                 # Apply SpecAugment if enabled (GPU-accelerated, requires numpy)
-                if self.spec_augment_enabled:
+                # Skip if using TF-native SpecAugment in pipeline
+                if self.spec_augment_enabled and self.spec_augment_backend != "tf":
                     phase_settings = self._get_current_phase_settings(step)
                     current_phase = phase_settings["phase"]
                     if self.time_mask_count[current_phase] > 0 or self.freq_mask_count[current_phase] > 0:
@@ -1075,32 +1080,50 @@ class Trainer:
                         self._save_checkpoint(val_metrics, is_best, reason)
 
                     # Hard negative mining or logging (based on collection_mode)
-                    if self.hard_negative_miner and advanced_due and step % self.eval_advanced_step_interval == 0:
+                    if advanced_due and step % self.eval_advanced_step_interval == 0:
                         approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
-                        if approx_epoch > 0 and approx_epoch % self.hard_negative_miner.mining_interval_epochs == 0 and approx_epoch != getattr(self, "_last_mined_epoch", -1):
-                            collection_mode = self.hn_config.get("collection_mode", "log_only")
+                        collection_mode = self.hn_config.get("collection_mode", "log_only")
+                        mining_interval = self.hn_config.get("mining_interval_epochs", 5)
 
+                        if approx_epoch > 0 and approx_epoch % mining_interval == 0 and approx_epoch != getattr(self, "_last_mined_epoch", -1):
                             if collection_mode == "log_only":
                                 # Log false predictions to JSON for post-training mining
                                 self._log_false_predictions_to_json(approx_epoch)
                                 self._last_mined_epoch = approx_epoch
                             elif collection_mode == "mine_immediately":
-                                # Traditional mining: copy files immediately
-                                self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
-                                try:
-                                    mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
-                                    mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
-                                    self.logger.log_mining(
-                                        f"Completed at epoch {approx_epoch}",
-                                        count=mining_result["num_hard_negatives"],
-                                    )
-                                    self._last_mined_epoch = approx_epoch
-                                except OSError as e:
-                                    self.logger.log_warning(f"Hard negative mining failed (IOError): {e}")
-                                except RuntimeError as e:
-                                    self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
-                                except Exception:
-                                    raise
+                                if self.async_mining and self._async_miner is not None:
+                                    # Async mining path
+                                    if not self._async_miner.is_mining():
+                                        # Start async mining
+                                        self.logger.log_mining(f"Starting async mining at epoch {approx_epoch}...")
+                                        mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
+                                        self._async_miner.start_mining(self.model, mining_source_factory, approx_epoch)
+                                    else:
+                                        # Poll for results
+                                        mining_result = self._async_miner.get_result()
+                                        if mining_result is not None:
+                                            self.logger.log_mining(
+                                                f"Completed async mining at epoch {approx_epoch}",
+                                                count=mining_result["num_hard_negatives"],
+                                            )
+                                            self._last_mined_epoch = approx_epoch
+                                elif self.hard_negative_miner is not None:
+                                    # Synchronous mining path
+                                    self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
+                                    try:
+                                        mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
+                                        mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
+                                        self.logger.log_mining(
+                                            f"Completed at epoch {approx_epoch}",
+                                            count=mining_result["num_hard_negatives"],
+                                        )
+                                        self._last_mined_epoch = approx_epoch
+                                    except OSError as e:
+                                        self.logger.log_warning(f"Hard negative mining failed (IOError): {e}")
+                                    except RuntimeError as e:
+                                        self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
+                                    except Exception:
+                                        raise
                         # (duplicate mining block removed)
 
                     # Resume progress bar
@@ -1109,6 +1132,11 @@ class Trainer:
             if self.tensorboard_writer is not None:
                 self.tensorboard_writer.flush()
                 self.tensorboard_writer.close()
+            # Wait for async miner to complete if running
+            if self._async_miner is not None and self._async_miner.is_mining():
+                self.logger.log_info("Waiting for async hard negative mining to complete...")
+                self._async_miner.wait_for_completion()
+                self.logger.log_info("Async hard negative mining completed")
 
         # Training complete
         total_time = time.time() - start_time
@@ -1181,6 +1209,48 @@ def train(config: dict) -> tf.keras.Model:
         benchmark_pipeline(dataset, config, n_batches=100)
 
     if use_tfdata:
+        from src.data.tfdata_pipeline import OptimizedDataPipeline
+
+        # Build SpecAugment config to pass to pipeline
+        training_cfg = config.get("training", {})
+        spec_augment_config = None
+        if trainer.spec_augment_backend == "tf":
+            spec_augment_config = {
+                "enabled": trainer.spec_augment_enabled,
+                "backend": "tf",
+                "time_mask_max_size": training_cfg.get("time_mask_max_size", [0, 0]),
+                "time_mask_count": training_cfg.get("time_mask_count", [0, 0]),
+                "freq_mask_max_size": training_cfg.get("freq_mask_max_size", [0, 0]),
+                "freq_mask_count": training_cfg.get("freq_mask_count", [0, 0]),
+                "seed": training_cfg.get("split_seed", 42),
+            }
+
+        pipeline = OptimizedDataPipeline(
+            dataset, config, max_time_frames=max_time_frames,
+            spec_augment_config=spec_augment_config
+        )
+        shuffle_seed = int(config.get("training", {}).get("split_seed", 42))
+        train_ds = pipeline.create_training_pipeline(shuffle_seed=shuffle_seed)
+        val_ds = pipeline.create_validation_pipeline()
+        test_ds = pipeline.create_validation_pipeline()
+
+        # Pipeline already yields 4-tuples (features, labels, sample_weights, is_hard_neg)
+        # Just need to cast labels to int32
+        def train_factory():
+            for features, labels, sample_weights, is_hard_neg in train_ds:
+                labels_int = tf.cast(labels, tf.int32)
+                yield features, labels_int, sample_weights, is_hard_neg
+
+        def val_factory():
+            for features, labels, _, _ in val_ds:
+                labels_int = tf.cast(labels, tf.int32)
+                yield features, labels_int, None
+
+        def test_factory():
+            for features, labels, _, _ in test_ds:
+                labels_int = tf.cast(labels, tf.int32)
+                metadata = {"raw_labels": labels_int.numpy().tolist()}
+                yield features, labels_int, metadata
         from src.data.tfdata_pipeline import OptimizedDataPipeline
 
         pipeline = OptimizedDataPipeline(dataset, config, max_time_frames=max_time_frames)
