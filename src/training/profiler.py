@@ -1,6 +1,7 @@
 """Training profiler for performance monitoring and bottleneck detection using cProfile."""
 
 import cProfile
+import logging
 import os
 import pstats
 import time
@@ -173,3 +174,103 @@ class TrainingProfiler:
         stats.print_callers(10)
 
         print(f"\nProfile saved to: {self.output_dir}/{name}_*.prof")
+
+
+class TFProfiler:
+    """TensorFlow Profiler wrapper for GPU kernel traces and memory analysis.
+
+    Captures op-level GPU/CPU timing, memory allocation, and kernel traces
+    viewable in TensorBoard's Profile tab.
+
+    Example:
+        >>> tf_profiler = TFProfiler(log_dir="./logs")
+        >>> tf_profiler.start_trace(step=1000)
+        >>> # ... run training steps ...
+        >>> tf_profiler.stop_trace()
+    """
+
+    def __init__(self, log_dir: str = "./logs", warmup_steps: int = 2, active_steps: int = 5):
+        """Initialize TF Profiler.
+
+        Args:
+            log_dir: TensorBoard log directory for profile output.
+            warmup_steps: Steps to skip before recording (GPU warm-up).
+            active_steps: Number of steps to actually profile.
+        """
+        self.log_dir = log_dir
+        self.warmup_steps = warmup_steps
+        self.active_steps = active_steps
+        self._tracing = False
+        self._logger = logging.getLogger(__name__)
+
+    def start_trace(self, step: int | None = None) -> None:
+        """Start TF Profiler trace.
+
+        Args:
+            step: Current training step (used for output directory naming).
+        """
+        try:
+            import tensorflow as tf
+            profile_dir = os.path.join(self.log_dir, "plugins", "profile")
+            os.makedirs(profile_dir, exist_ok=True)
+            options = tf.profiler.experimental.ProfilerOptions(
+                host_tracer_level=2,
+                python_tracer_level=1,
+                device_tracer_level=1,
+            )
+            tf.profiler.experimental.start(self.log_dir, options=options)
+            self._tracing = True
+            self._logger.info(f"TF Profiler started at step {step}")
+        except Exception as e:
+            self._logger.warning(f"TF Profiler start failed: {e}")
+            self._tracing = False
+
+    def stop_trace(self) -> None:
+        """Stop TF Profiler trace and flush results."""
+        if not self._tracing:
+            return
+        try:
+            import tensorflow as tf
+            tf.profiler.experimental.stop()
+            self._tracing = False
+            self._logger.info(f"TF Profiler trace saved to {self.log_dir}")
+        except Exception as e:
+            self._logger.warning(f"TF Profiler stop failed: {e}")
+            self._tracing = False
+
+    @contextmanager
+    def trace(self, step: int | None = None):
+        """Context manager for TF Profiler trace.
+
+        Args:
+            step: Current training step.
+
+        Yields:
+            None
+        """
+        self.start_trace(step=step)
+        try:
+            yield
+        finally:
+            self.stop_trace()
+
+    def get_gpu_memory_info(self) -> dict[str, float]:
+        """Get current GPU memory usage.
+
+        Returns:
+            Dict with peak_bytes, current_bytes, and available_bytes (all in MB).
+        """
+        try:
+            import tensorflow as tf
+            gpus = tf.config.list_physical_devices("GPU")
+            if not gpus:
+                return {"peak_mb": 0.0, "current_mb": 0.0}
+
+            # TF memory info from the first visible GPU
+            mem_info = tf.config.experimental.get_memory_info("GPU:0")
+            return {
+                "peak_mb": mem_info.get("peak", 0) / (1024 * 1024),
+                "current_mb": mem_info.get("current", 0) / (1024 * 1024),
+            }
+        except Exception:
+            return {"peak_mb": 0.0, "current_mb": 0.0}

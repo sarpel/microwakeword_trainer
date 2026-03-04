@@ -64,6 +64,14 @@ class OptimizedDataPipeline:
         self.max_time_frames = max_time_frames or self._calculate_max_frames()
         self.spec_augment_config = spec_augment_config or {}
 
+        training_cfg = config.get("training", {})
+        self.training_steps = training_cfg.get("training_steps", [20000])
+        self.phase_boundaries: list[int] = []
+        cumulative = 0
+        for steps in self.training_steps:
+            cumulative += int(steps)
+            self.phase_boundaries.append(cumulative)
+
         # Performance settings
         self.autotune = tf.data.AUTOTUNE
         self.prefetch_buffer = config.get("performance", {}).get("prefetch_buffer", 2)
@@ -126,6 +134,7 @@ class OptimizedDataPipeline:
                 batch_size = features.shape[0]
                 sample_weights = np.ones(batch_size, dtype=np.float32)
                 is_hard_neg = np.zeros(batch_size, dtype=np.bool_)
+                # Class weights are applied in TF pipeline below (SpecAugment path)
                 yield features, labels, sample_weights, is_hard_neg
 
         return generator
@@ -182,7 +191,7 @@ class OptimizedDataPipeline:
         # Shuffle for training (after cache to reshuffle each epoch)
         ds = ds.shuffle(buffer_size=shuffle_buffer, seed=shuffle_seed, reshuffle_each_iteration=True)
 
-        # Apply SpecAugment if enabled (TF backend)
+        # Apply SpecAugment if enabled (TF backend) and compute class weights in-pipeline
         if self.spec_augment_config.get("enabled", False):
             backend = self.spec_augment_config.get("backend", "cupy")
             if backend == "tf":
@@ -190,29 +199,93 @@ class OptimizedDataPipeline:
                 time_mask_count = self.spec_augment_config.get("time_mask_count", 2)
                 freq_mask_max_size = self.spec_augment_config.get("freq_mask_max_size", 10)
                 freq_mask_count = self.spec_augment_config.get("freq_mask_count", 2)
-                if isinstance(time_mask_max_size, (list, tuple)):
-                    time_mask_max_size = time_mask_max_size[0] if time_mask_max_size else 0
-                if isinstance(time_mask_count, (list, tuple)):
-                    time_mask_count = time_mask_count[0] if time_mask_count else 0
-                if isinstance(freq_mask_max_size, (list, tuple)):
-                    freq_mask_max_size = freq_mask_max_size[0] if freq_mask_max_size else 0
-                if isinstance(freq_mask_count, (list, tuple)):
-                    freq_mask_count = freq_mask_count[0] if freq_mask_count else 0
                 seed = self.spec_augment_config.get("seed")
 
-                def apply_spec_augment(features, labels, sample_weights, is_hard_neg):
+                # Ensure per-phase lists
+                if not isinstance(time_mask_max_size, (list, tuple)):
+                    time_mask_max_size = [int(time_mask_max_size)]
+                if not isinstance(time_mask_count, (list, tuple)):
+                    time_mask_count = [int(time_mask_count)]
+                if not isinstance(freq_mask_max_size, (list, tuple)):
+                    freq_mask_max_size = [int(freq_mask_max_size)]
+                if not isinstance(freq_mask_count, (list, tuple)):
+                    freq_mask_count = [int(freq_mask_count)]
+
+                phase_boundaries = tf.constant(self.phase_boundaries, dtype=tf.int64)
+                tmask_max = tf.constant(time_mask_max_size, dtype=tf.int32)
+                tmask_cnt = tf.constant(time_mask_count, dtype=tf.int32)
+                fmask_max = tf.constant(freq_mask_max_size, dtype=tf.int32)
+                fmask_cnt = tf.constant(freq_mask_count, dtype=tf.int32)
+
+                training_cfg = self.config.get("training", {})
+                pos_w = tf.constant(training_cfg.get("positive_class_weight", [1.0]), dtype=tf.float32)
+                neg_w = tf.constant(training_cfg.get("negative_class_weight", [20.0]), dtype=tf.float32)
+                hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [40.0]), dtype=tf.float32)
+
+                counter = tf.data.experimental.Counter()
+                ds = tf.data.Dataset.zip((counter, ds))
+
+                def apply_spec_augment(step, features, labels, sample_weights, is_hard_neg):
+                    # Phase index from step and boundaries
+                    phase = tf.reduce_sum(tf.cast(step >= phase_boundaries, tf.int32))
+                    phase = tf.minimum(phase, tf.shape(tmask_max)[0] - 1)
+
+                    tmax = tf.gather(tmask_max, phase)
+                    tcnt = tf.gather(tmask_cnt, phase)
+                    fmax = tf.gather(fmask_max, phase)
+                    fcnt = tf.gather(fmask_cnt, phase)
+
                     augmented_features = batch_spec_augment_tf(
                         features,
-                        time_mask_max_size=time_mask_max_size,
-                        time_mask_count=time_mask_count,
-                        freq_mask_max_size=freq_mask_max_size,
-                        freq_mask_count=freq_mask_count,
+                        time_mask_max_size=tmax,
+                        time_mask_count=tcnt,
+                        freq_mask_max_size=fmax,
+                        freq_mask_count=fcnt,
                         seed=seed,
                     )
-                    return augmented_features, labels, sample_weights, is_hard_neg
 
-                ds = ds.map(apply_spec_augment, num_parallel_calls=self.autotune)
-                logger.info(f"SpecAugment (TF backend) enabled: time_masks={time_mask_count}@{time_mask_max_size}, freq_masks={freq_mask_count}@{freq_mask_max_size}")
+                    # Class weights in pipeline
+                    phase_w = tf.minimum(phase, tf.shape(pos_w)[0] - 1)
+                    pw = tf.gather(pos_w, phase_w)
+                    nw = tf.gather(neg_w, phase_w)
+                    hw = tf.gather(hn_w, phase_w)
+                    labels_int = tf.cast(labels, tf.int32)
+                    is_hn = tf.cast(is_hard_neg, tf.bool)
+                    weighted = tf.where(labels_int == 1, pw, tf.where(is_hn, hw, nw))
+
+                    return augmented_features, labels, tf.cast(weighted, tf.float32), is_hard_neg
+
+                ds = ds.map(apply_spec_augment, num_parallel_calls=self.autotune, deterministic=False)
+                logger.info(f"SpecAugment (TF backend) enabled with staged schedule: time_masks={time_mask_count}@{time_mask_max_size}, freq_masks={freq_mask_count}@{freq_mask_max_size}")
+                options = tf.data.Options()
+                options.experimental_deterministic = False
+                ds = ds.with_options(options)
+        else:
+            # No SpecAugment: still apply class weights as first-class input
+            training_cfg = self.config.get("training", {})
+            pos_w = tf.constant(training_cfg.get("positive_class_weight", [1.0]), dtype=tf.float32)
+            neg_w = tf.constant(training_cfg.get("negative_class_weight", [20.0]), dtype=tf.float32)
+            hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [40.0]), dtype=tf.float32)
+            phase_boundaries = tf.constant(self.phase_boundaries, dtype=tf.int64)
+
+            counter = tf.data.experimental.Counter()
+            ds = tf.data.Dataset.zip((counter, ds))
+
+            def apply_weights(step, features, labels, sample_weights, is_hard_neg):
+                phase = tf.reduce_sum(tf.cast(step >= phase_boundaries, tf.int32))
+                phase = tf.minimum(phase, tf.shape(pos_w)[0] - 1)
+                pw = tf.gather(pos_w, phase)
+                nw = tf.gather(neg_w, phase)
+                hw = tf.gather(hn_w, phase)
+                labels_int = tf.cast(labels, tf.int32)
+                is_hn = tf.cast(is_hard_neg, tf.bool)
+                weighted = tf.where(labels_int == 1, pw, tf.where(is_hn, hw, nw))
+                return features, labels, tf.cast(weighted, tf.float32), is_hard_neg
+
+            ds = ds.map(apply_weights, num_parallel_calls=self.autotune, deterministic=False)
+            options = tf.data.Options()
+            options.experimental_deterministic = False
+            ds = ds.with_options(options)
 
         # No extra batching (generator already yields full batches)
 

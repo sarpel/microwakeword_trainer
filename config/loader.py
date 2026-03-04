@@ -60,6 +60,7 @@ class TrainingConfig:
     batch_size: int = 128
     eval_step_interval: int = 500
     eval_basic_step_interval: int = 1000
+    materialize_metrics_interval: int = 1000
     eval_advanced_step_interval: int = 5000
     eval_confusion_matrix_interval: int = 5000
     eval_checkpoints_interval: int = 5000
@@ -165,6 +166,8 @@ class PerformanceConfig:
     enable_profiling: bool = True
     profile_every_n_steps: int = 100
     profile_output_dir: str = "./profiles"
+    tf_profile_start_step: int = 0  # Step to start TF Profiler GPU trace (0 = disabled)
+    gpu_memory_log_interval: int = 0  # Log GPU memory every N steps (0 = disabled)
     # TensorBoard
     tensorboard_enabled: bool = True
     tensorboard_log_dir: str = "./logs"

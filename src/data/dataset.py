@@ -579,6 +579,39 @@ class WakeWordDataset:
             return len(self.feature_store)
         return 0
 
+    def get_label_distribution(self, split: str = "train") -> dict[int, int]:
+        """Count samples per label class in a split.
+
+        Labels: 0=negative, 1=positive, 2=hard_negative.
+
+        Args:
+            split: Data split name ('train', 'val', 'test').
+
+        Returns:
+            Dict mapping label int to sample count.
+        """
+        split_name = self._normalize_split_name(split)
+        store_path = self.data_path / split_name
+        if not store_path.exists():
+            return {}
+        store = FeatureStore(store_path)
+        try:
+            readonly = True
+            disable_mmap = False
+            if self._config is not None:
+                readonly = bool(self._config.get("performance", {}).get("mmap_readonly", True))
+                disable_mmap = bool(self._config.get("performance", {}).get("disable_mmap", False))
+            store.open(readonly=readonly, disable_mmap=disable_mmap)
+            counts: dict[int, int] = {}
+            for idx in range(len(store)):
+                _, label = store.get(idx)
+                counts[label] = counts.get(label, 0) + 1
+            store.close()
+            return counts
+        except (FileNotFoundError, PermissionError, OSError, IOError) as e:
+            logger.warning(f"Could not read label distribution for {split_name}: {e}")
+            return {}
+
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, int]:
         """Get item by index.
 
@@ -825,6 +858,9 @@ class WakeWordDataset:
         positive_dir = paths_cfg.get("positive_dir")
         negative_dir = paths_cfg.get("negative_dir")
         hard_negative_dir = paths_cfg.get("hard_negative_dir")
+        hn_cfg = cfg.get("hard_negative_mining", {})
+        mined_subdir = hn_cfg.get("mined_subdirectory", "mined")
+        include_mined = bool(hn_cfg.get("enable_post_training_mining", True))
         processed_dir = paths_cfg.get("processed_dir", "./data/processed")
 
         # Extract hardware config for feature extraction
@@ -873,10 +909,17 @@ class WakeWordDataset:
         if abs(split_sum - 1.0) > 1e-6:
             raise ValueError(f"training split ratios must sum to 1.0, got {split_sum:.6f}")
 
+        # Merge mined hard negatives into hard_negative_dir when enabled
+        hard_negative_path = Path(hard_negative_dir) if hard_negative_dir else None
+        if include_mined and hard_negative_path is not None:
+            mined_path = hard_negative_path / mined_subdir
+            if mined_path.exists():
+                # Ensure mined directory is included in hard negative discovery
+                logger.info(f"Including mined hard negatives from {mined_path}")
         clips_config = ClipsLoaderConfig(
             positive_dir=Path(positive_dir) if positive_dir else None,
             negative_dir=Path(negative_dir) if negative_dir else None,
-            hard_negative_dir=Path(hard_negative_dir) if hard_negative_dir else None,
+            hard_negative_dir=hard_negative_path if hard_negative_path else None,
             train_split=train_split,
             val_split=val_split,
             test_split=test_split,

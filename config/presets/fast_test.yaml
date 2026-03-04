@@ -35,6 +35,12 @@ training:
   learning_rates: [0.001, 0.0001]
   batch_size: 32
   eval_step_interval: 200
+  eval_basic_step_interval: 1000
+  materialize_metrics_interval: 1000
+  eval_advanced_step_interval: 5000
+  eval_confusion_matrix_interval: 5000
+  eval_checkpoints_interval: 5000
+  eval_log_every_step: true
   steps_per_epoch: 100  # Approximate steps per epoch for mining calculations (smaller for fast test)
 
   # Class weights
@@ -57,6 +63,7 @@ training:
   train_split: 0.8
   val_split: 0.1
   test_split: 0.1
+  split_seed: 42                # RNG seed for reproducible train/val/test split
   strict_content_hash_leakage_check: true
 
   # Optimizer and loss parameters
@@ -64,6 +71,8 @@ training:
   label_smoothing: 0.0
   gradient_clipnorm: null
   ema_decay: null
+  random_seed: null              # Set an integer for reproducible runs (null = non-deterministic)
+  auto_tune_on_poor_fah: false   # If true, run mww-autotune automatically after training if final FAH > target_minimization
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -150,6 +159,8 @@ performance:
   enable_profiling: false
   profile_every_n_steps: 100
   profile_output_dir: "./profiles"
+  tf_profile_start_step: 0      # Disabled for fast test
+  gpu_memory_log_interval: 0    # Disabled for fast test
 
   # TensorBoard disabled for speed
   tensorboard_enabled: true
@@ -192,10 +203,6 @@ speaker_clustering:
 # HARD NEGATIVE MINING (Disabled for fast test)
 # ─────────────────────────────────────────────────────────────────
 hard_negative_mining:
-  enabled: false
-  fp_threshold: 0.8
-  max_samples: 5000
-  mining_interval_epochs: 5
   # NEW - Collection Phase (during training)
   collection_mode: "log_only"           # "log_only" | "mine_immediately"
   log_predictions: true
@@ -283,4 +290,3 @@ evaluation:
   plateau_window_evals: 5
   plateau_min_delta: 0.001
   plateau_slope_eps: 0.0001
-

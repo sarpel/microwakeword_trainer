@@ -234,10 +234,10 @@ class RichTrainingLogger:
 
         self.console.print(table)
 
-    def log_confusion_matrix(self, tp: int, fp: int, tn: int, fn: int) -> None:
-        """Display a confusion matrix table at threshold=0.5."""
+    def log_confusion_matrix(self, tp: int, fp: int, tn: int, fn: int, threshold: float = 0.5) -> None:
+        """Display a confusion matrix table."""
         table = Table(
-            title="Confusion Matrix (threshold=0.5)",
+            title=f"Confusion Matrix (threshold={threshold:.2f})",
             show_header=True,
             header_style="bold",
         )
@@ -259,6 +259,34 @@ class RichTrainingLogger:
         total = tp + fp + tn + fn
         table.add_section()
         table.add_row("Total", "", f"[bold]{total:,}[/bold]")
+
+        self.console.print(table)
+
+    def log_per_class_analysis(self, tp: int, fp: int, tn: int, fn: int, threshold: float) -> None:
+        """Display per-class error rates at the given threshold."""
+        pos_total = tp + fn
+        neg_total = tn + fp
+        pos_recall = tp / pos_total if pos_total > 0 else 0.0
+        neg_rejection = tn / neg_total if neg_total > 0 else 0.0
+        pos_miss_rate = fn / pos_total if pos_total > 0 else 0.0
+        neg_fa_rate = fp / neg_total if neg_total > 0 else 0.0
+
+        table = Table(
+            title=f"Per-Class Analysis (threshold={threshold:.2f})",
+            show_header=True,
+            header_style="bold",
+        )
+        table.add_column("Class", style="bold")
+        table.add_column("Metric", justify="left")
+        table.add_column("Value", justify="right")
+
+        table.add_row("Positive", "Recall (hit rate)", f"[green]{pos_recall:.4f}[/green]")
+        table.add_row("Positive", "Miss rate", f"[red]{pos_miss_rate:.4f}[/red]")
+        table.add_row("Positive", "Samples", f"{pos_total:,}")
+        table.add_section()
+        table.add_row("Negative", "Rejection rate", f"[green]{neg_rejection:.4f}[/green]")
+        table.add_row("Negative", "False alarm rate", f"[red]{neg_fa_rate:.4f}[/red]")
+        table.add_row("Negative", "Samples", f"{neg_total:,}")
 
         self.console.print(table)
 

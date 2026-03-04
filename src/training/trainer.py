@@ -10,6 +10,7 @@ Step-based training loop with:
 
 import json
 import os
+import sys
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -30,8 +31,9 @@ from src.evaluation.metrics import MetricsCalculator
 from src.model.architecture import build_model
 from src.training.miner import HardExampleMiner
 from src.training.async_miner import AsyncHardExampleMiner
-from src.training.profiler import TrainingProfiler
+from src.training.profiler import TrainingProfiler, TFProfiler
 from src.training.rich_logger import RichTrainingLogger
+from src.utils.performance import get_system_info
 from src.utils.terminal_logger import TerminalLogger
 
 
@@ -65,11 +67,19 @@ class EvaluationMetrics:
         self.all_y_true: list = []
         self.all_y_scores: list = []
 
-        # Per-threshold metrics
-        self.tp_at_threshold: dict[float, int] = dict.fromkeys(self.cutoffs, 0)
-        self.fp_at_threshold: dict[float, int] = dict.fromkeys(self.cutoffs, 0)
-        self.tn_at_threshold: dict[float, int] = dict.fromkeys(self.cutoffs, 0)
-        self.fn_at_threshold: dict[float, int] = dict.fromkeys(self.cutoffs, 0)
+        # Per-threshold counts stored as numpy arrays (indexed by cutoff position).
+        # Using arrays avoids 101-iteration Python loops during accumulation.
+        n = len(self.cutoffs)
+        self._tp_arr = np.zeros(n, dtype=np.int64)
+        self._fp_arr = np.zeros(n, dtype=np.int64)
+        self._tn_arr = np.zeros(n, dtype=np.int64)
+        self._fn_arr = np.zeros(n, dtype=np.int64)
+
+        # Backward-compatible dict views for tests/consumers
+        self.tp_at_threshold: dict[float, int] = {cutoff: 0 for cutoff in self.cutoffs}
+        self.fp_at_threshold: dict[float, int] = {cutoff: 0 for cutoff in self.cutoffs}
+        self.tn_at_threshold: dict[float, int] = {cutoff: 0 for cutoff in self.cutoffs}
+        self.fn_at_threshold: dict[float, int] = {cutoff: 0 for cutoff in self.cutoffs}
 
     def update(self, y_true: np.ndarray, y_scores: np.ndarray) -> None:
         """Update metrics with batch predictions.
@@ -85,26 +95,28 @@ class EvaluationMetrics:
         self.all_y_true.extend(y_true_flat.tolist())
         self.all_y_scores.extend(y_scores_flat.tolist())
 
-        # Vectorized update of per-threshold metrics using numpy broadcasting
-        cutoffs_arr = np.array(self.cutoffs).reshape(-1, 1)  # [101, 1]
-        y_true_all = y_true_flat.reshape(1, -1)  # [1, N]
-        y_scores_all = y_scores_flat.reshape(1, -1)  # [1, N]
+        # Vectorized update across all thresholds using numpy broadcasting
+        cutoffs_arr = np.array(self.cutoffs, dtype=np.float32).reshape(-1, 1)  # [101, 1]
+        y_true_2d = y_true_flat.reshape(1, -1)  # [1, N]
+        y_scores_2d = y_scores_flat.reshape(1, -1)  # [1, N]
 
-        # Broadcast: [101, 1] >= [1, N] -> [101, N]
-        y_pred_all = (y_scores_all >= cutoffs_arr).astype(np.int32)
+        # [101, N] boolean masks — no dtype cast needed
+        y_pred_2d = y_scores_2d >= cutoffs_arr
+        pos_mask = y_true_2d == 1
+        neg_mask = ~pos_mask
 
-        # Compute all metrics at once along axis=1 (samples)
-        tp_all = np.sum((y_pred_all == 1) & (y_true_all == 1), axis=1)
-        fp_all = np.sum((y_pred_all == 1) & (y_true_all == 0), axis=1)
-        tn_all = np.sum((y_pred_all == 0) & (y_true_all == 0), axis=1)
-        fn_all = np.sum((y_pred_all == 0) & (y_true_all == 1), axis=1)
+        # Vectorized sum along axis=1 (samples) — replaces 101-iteration Python dict loop
+        self._tp_arr += np.sum(y_pred_2d & pos_mask, axis=1)
+        self._fp_arr += np.sum(y_pred_2d & neg_mask, axis=1)
+        self._tn_arr += np.sum(~y_pred_2d & neg_mask, axis=1)
+        self._fn_arr += np.sum(~y_pred_2d & pos_mask, axis=1)
 
-        # Update storage dicts
+        # Keep dict views in sync
         for i, cutoff in enumerate(self.cutoffs):
-            self.tp_at_threshold[cutoff] += int(tp_all[i])
-            self.fp_at_threshold[cutoff] += int(fp_all[i])
-            self.tn_at_threshold[cutoff] += int(tn_all[i])
-            self.fn_at_threshold[cutoff] += int(fn_all[i])
+            self.tp_at_threshold[cutoff] = int(self._tp_arr[i])
+            self.fp_at_threshold[cutoff] = int(self._fp_arr[i])
+            self.tn_at_threshold[cutoff] = int(self._tn_arr[i])
+            self.fn_at_threshold[cutoff] = int(self._fn_arr[i])
 
     def compute_metrics(self) -> dict[str, float]:
         """Compute all metrics from accumulated predictions.
@@ -125,31 +137,22 @@ class EvaluationMetrics:
             ambient_duration_hours=self.ambient_duration_hours,
         )
 
-        # Get basic metrics using default threshold 0.5
+        # Get basic metrics using default threshold
         metrics = calc.compute_all_metrics(
             ambient_duration_hours=self.ambient_duration_hours,
             threshold=self.default_threshold,
         )
 
         # Add per-threshold metrics for backward compatibility (ROC/PR curves)
-        for cutoff in self.cutoffs:
-            tp = self.tp_at_threshold[cutoff]
-            fp = self.fp_at_threshold[cutoff]
-            tn = self.tn_at_threshold[cutoff]
-            fn = self.fn_at_threshold[cutoff]
-
+        for i, cutoff in enumerate(self.cutoffs):
+            tp = int(self._tp_arr[i])
+            fp = int(self._fp_arr[i])
+            tn = int(self._tn_arr[i])
+            fn = int(self._fn_arr[i])
             total = tp + fp + tn + fn
-            if total > 0:
-                acc = (tp + tn) / total
-            else:
-                acc = 0
-
-            prec_denom = tp + fp
-            rec_denom = tp + fn
-
-            metrics[f"precision_{cutoff:.2f}"] = tp / prec_denom if prec_denom > 0 else 0
-            metrics[f"recall_{cutoff:.2f}"] = tp / rec_denom if rec_denom > 0 else 0
-            metrics[f"accuracy_{cutoff:.2f}"] = acc
+            metrics[f"precision_{cutoff:.2f}"] = tp / (tp + fp) if (tp + fp) > 0 else 0
+            metrics[f"recall_{cutoff:.2f}"] = tp / (tp + fn) if (tp + fn) > 0 else 0
+            metrics[f"accuracy_{cutoff:.2f}"] = (tp + tn) / total if total > 0 else 0
 
         return metrics
 
@@ -157,10 +160,21 @@ class EvaluationMetrics:
         """Reset all accumulated metrics."""
         self.all_y_true = []
         self.all_y_scores = []
-        self.tp_at_threshold = dict.fromkeys(self.cutoffs, 0)
-        self.fp_at_threshold = dict.fromkeys(self.cutoffs, 0)
-        self.tn_at_threshold = dict.fromkeys(self.cutoffs, 0)
-        self.fn_at_threshold = dict.fromkeys(self.cutoffs, 0)
+        n = len(self.cutoffs)
+        self._tp_arr = np.zeros(n, dtype=np.int64)
+        self._fp_arr = np.zeros(n, dtype=np.int64)
+        self._tn_arr = np.zeros(n, dtype=np.int64)
+        self._fn_arr = np.zeros(n, dtype=np.int64)
+        self.tp_at_threshold = {cutoff: 0 for cutoff in self.cutoffs}
+        self.fp_at_threshold = {cutoff: 0 for cutoff in self.cutoffs}
+        self.tn_at_threshold = {cutoff: 0 for cutoff in self.cutoffs}
+        self.fn_at_threshold = {cutoff: 0 for cutoff in self.cutoffs}
+
+    def get_counts_at_threshold(self, threshold: float) -> tuple[int, int, int, int]:
+        """Return (tp, fp, tn, fn) counts at the nearest stored cutoff to threshold."""
+        cutoffs_arr = np.array(self.cutoffs)
+        idx = int(np.argmin(np.abs(cutoffs_arr - threshold)))
+        return int(self._tp_arr[idx]), int(self._fp_arr[idx]), int(self._tn_arr[idx]), int(self._fn_arr[idx])
 
 
 # Backward-compatible alias
@@ -179,6 +193,7 @@ class Trainer:
         self.config = config
         self.model: tf.keras.Model | None = None
         self.profiler: TrainingProfiler | None = None
+        self.tf_profiler: TFProfiler | None = None
 
         # Extract training config
         training = config.get("training", {})
@@ -187,6 +202,9 @@ class Trainer:
         self.batch_size = training.get("batch_size", 128)
         self.eval_step_interval = training.get("eval_step_interval", 500)
         self.eval_basic_step_interval = training.get("eval_basic_step_interval", 1000)
+        self.materialize_metrics_interval = int(training.get("materialize_metrics_interval", self.eval_basic_step_interval) or self.eval_basic_step_interval)
+        if self.materialize_metrics_interval <= 0:
+            self.materialize_metrics_interval = self.eval_basic_step_interval
         self.eval_advanced_step_interval = training.get("eval_advanced_step_interval", 5000)
         self.eval_confusion_matrix_interval = training.get("eval_confusion_matrix_interval", 5000)
         self.eval_checkpoints_interval = training.get("eval_checkpoints_interval", 5000)
@@ -195,6 +213,16 @@ class Trainer:
         self._last_advanced_eval_step = 0
         self.steps_per_epoch = training.get("steps_per_epoch", 1000)  # For mining epoch calculation
 
+        # Seed control for reproducibility
+        self.random_seed = training.get("random_seed", None)
+        if self.random_seed is not None:
+            import random
+
+            random.seed(int(self.random_seed))
+            np.random.seed(int(self.random_seed))
+            tf.random.set_seed(int(self.random_seed))
+            os.environ["TF_DETERMINISTIC_OPS"] = "1"
+            self.logger.log_info(f"Reproducibility: random_seed={self.random_seed} applied (Python, NumPy, TensorFlow, TF_DETERMINISTIC_OPS=1)")
         # Class weights (positive upweighted to compensate for class imbalance)
         self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
         self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
@@ -247,6 +275,8 @@ class Trainer:
         self.async_mining = performance.get("async_mining", False)
         self.spec_augment_backend = performance.get("spec_augment_backend", "tf")
         self.log_throughput_interval = int(performance.get("log_throughput_interval", 1000) or 1000)
+        self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 100) or 0)
+        self.gpu_memory_log_interval = int(performance.get("gpu_memory_log_interval", 1000) or 0)
         self.tensorboard_writer: tf.summary.SummaryWriter | None = None
 
         # Rich terminal logger
@@ -270,6 +300,14 @@ class Trainer:
             self.ambient_duration_hours = eval_ambient
             self.logger.log_info(f"FAH calculation overridden by evaluation config: {self.ambient_duration_hours:.2f} hours of ambient audio")
 
+        # Scale ambient duration for validation split so FAH is comparable to test evaluation.
+        # Without scaling, validation FAH divides by the FULL ambient hours but only sees
+        # val_split fraction of the negative data, understating FAH by ~1/val_split.
+        self.val_split = float(training.get("val_split", 0.1))
+        self.val_ambient_duration_hours = self.ambient_duration_hours * self.val_split
+        if self.val_ambient_duration_hours > 0:
+            self.logger.log_info(f"Validation FAH uses scaled duration: {self.val_ambient_duration_hours:.2f}h (full={self.ambient_duration_hours:.2f}h × val_split={self.val_split})")
+
         # Apply threading config
         if self.inter_op_parallelism > 0:
             tf.config.threading.set_inter_op_parallelism_threads(self.inter_op_parallelism)
@@ -285,6 +323,7 @@ class Trainer:
         self.best_fah = float("inf")
         self.best_recall = 0.0
         self.best_weights_path: str | None = None
+        self._last_assigned_lr: float | None = None  # Guard redundant LR assigns
 
         # SpecAugment warning flag to prevent log flooding
         self._spec_augment_warning_shown = False
@@ -306,12 +345,12 @@ class Trainer:
         )
         self.val_metrics = TrainingMetrics(
             cutoffs=self._get_cutoffs(),
-            ambient_duration_hours=self.ambient_duration_hours,
+            ambient_duration_hours=self.val_ambient_duration_hours,
             default_threshold=default_threshold,
         )
 
         # TensorBoard metric selection (keep focused, high-signal metrics)
-        self._tb_train_metric_keys = ["loss", "precision", "recall", "auc"]
+        self._tb_train_metric_keys = ["loss", "precision", "recall", "auc", "step_time_ms", "data_loading_ms", "spec_augment_ms", "train_step_ms"]
         self._tb_val_metric_keys = [
             "precision",
             "recall",
@@ -347,6 +386,7 @@ class Trainer:
         self.hard_negative_miner: HardExampleMiner | None = None
         self._async_miner: AsyncHardExampleMiner | None = None  # Async miner instance
         self.false_predictions_log: list[dict] = []  # In-memory log for current epoch
+        self._mined_hard_negatives_loaded = False
         if self.hard_negative_mining_enabled:
             collection_mode = hn_config.get("collection_mode", "log_only")
             if self.async_mining and collection_mode == "mine_immediately":
@@ -371,11 +411,31 @@ class Trainer:
                 self.logger.log_info(
                     f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}"
                 )
+        # Load mined hard negatives (if enabled) before training
+        if self.hard_negative_mining_enabled and self.hn_config.get("enable_post_training_mining", True):
+            try:
+                paths_cfg = config.get("paths", {})
+                hard_neg_dir = Path(paths_cfg.get("hard_negative_dir", "./dataset/hard_negative"))
+                mined_dir = hard_neg_dir / self.hn_config.get("mined_subdirectory", "mined")
+                if mined_dir.exists():
+                    self.logger.log_info(f"Found mined hard negatives in {mined_dir}")
+                self._mined_hard_negatives_loaded = True
+            except Exception as e:
+                self.logger.log_warning(f"Failed to load mined hard negatives: {e}")
         # Check for EMA configuration
         training_cfg = config.get("training", {})
         ema_decay = training_cfg.get("ema_decay")
         if ema_decay is not None:
             self.logger.log_info(f"EMA configured with decay={ema_decay} (will be applied during optimizer creation)")
+
+        # Pre-compute phase boundaries for fast lookup
+        self._phase_boundaries: list[int] = []
+        cumulative = 0
+        for steps in self.training_steps_list:
+            cumulative += steps
+            self._phase_boundaries.append(cumulative)
+        self._cached_phase: int = -1
+        self._cached_phase_settings: dict[str, Any] = {}
 
     def _get_cutoffs(self) -> list[float]:
         """Generate cutoff thresholds for evaluation metrics."""
@@ -385,34 +445,28 @@ class Trainer:
         return np.linspace(0.0, 1.0, n_thresholds).tolist()
 
     def _get_current_phase_settings(self, step: int) -> dict[str, Any]:
-        """Get training settings for current step.
-
-        Args:
-            step: Current training step
-
-        Returns:
-            Dictionary with learning_rate and class weights for current phase
-        """
-        # Calculate cumulative steps per phase
-        cumulative_steps = 0
+        """Get training settings for current step (cached per phase)."""
+        # Fast phase lookup via pre-computed boundaries
         current_phase = 0
-
-        for i, phase_steps in enumerate(self.training_steps_list):
-            if step < cumulative_steps + phase_steps:
+        for i, boundary in enumerate(self._phase_boundaries):
+            if step < boundary:
                 current_phase = i
                 break
-            cumulative_steps += phase_steps
         else:
-            # If beyond total steps, use last phase
             current_phase = len(self.training_steps_list) - 1
 
-        return {
+        if current_phase == self._cached_phase:
+            return self._cached_phase_settings
+
+        self._cached_phase = current_phase
+        self._cached_phase_settings = {
             "phase": current_phase,
             "learning_rate": self.learning_rates[current_phase],
             "positive_weight": self.positive_weights[current_phase],
             "negative_weight": self.negative_weights[current_phase],
             "hard_negative_weight": self.hard_negative_weights[current_phase],
         }
+        return self._cached_phase_settings
 
     def _log_tensorboard_metrics(
         self,
@@ -585,31 +639,20 @@ class Trainer:
         negative_weight: float,
         hard_negative_weight: float,
         is_hard_negative: np.ndarray | None = None,
-    ) -> np.ndarray:
-        """Apply class weights to sample weights.
-
-        Args:
-            y_true: Ground truth labels (1=positive, 0=negative)
-            sample_weights: Existing sample weights
-            positive_weight: Weight for positive class
-            negative_weight: Weight for regular negative samples
-            hard_negative_weight: Weight for hard negative samples (false positives)
-            is_hard_negative: Optional boolean array indicating hard negative samples
-
-        Returns:
-            Combined weights
-        """
+    ) -> tf.Tensor:
+        """Apply class weights to sample weights (GPU-accelerated)."""
+        y_true_t = tf.cast(tf.constant(y_true), tf.float32)
+        sw_t = tf.cast(tf.constant(sample_weights), tf.float32)
         if is_hard_negative is not None:
-            # Three-class weighting: positive, hard_negative, regular_negative
-            class_weights = np.where(
-                y_true == 1,
+            hn_t = tf.cast(tf.constant(is_hard_negative), tf.bool)
+            class_weights = tf.where(
+                y_true_t == 1,
                 positive_weight,
-                np.where(is_hard_negative, hard_negative_weight, negative_weight),
+                tf.where(hn_t, hard_negative_weight, negative_weight),
             )
         else:
-            # Binary weighting: positive vs negative (hard negatives get negative_weight)
-            class_weights = np.where(y_true == 1, positive_weight, negative_weight)
-        return sample_weights * class_weights
+            class_weights = tf.where(y_true_t == 1, positive_weight, negative_weight)
+        return sw_t * class_weights
 
     def _is_best_model(self, metrics: dict[str, float], target_fah: float, target_recall: float) -> tuple[bool, str]:
         """Determine if current model is best based on two-priority checkpoint selection.
@@ -631,9 +674,10 @@ class Trainer:
         else:
             # Fallback: estimate FAH based on FP
             fp = metrics.get("fp", 0)
-            fah = fp / max(self.ambient_duration_hours, 0.001) if self.ambient_duration_hours > 0 else float("inf")
+            fah = fp / max(self.val_ambient_duration_hours, 0.001) if self.val_ambient_duration_hours > 0 else float("inf")
 
-        current_recall = metrics.get("recall", 0)
+        # Prefer operating-point recall (target FAH) if present
+        current_recall = metrics.get("operating_recall", metrics.get("recall", 0))
 
         # Case 1: Achieved target FAH and improved recall
         if fah <= target_fah and current_recall > self.best_recall:
@@ -680,12 +724,57 @@ class Trainer:
                 self.best_fah = metrics.get("ambient_false_positives_per_hour", float("inf"))
             else:
                 fp = metrics.get("fp", 0)
-                self.best_fah = fp / max(self.ambient_duration_hours, 0.001) if self.ambient_duration_hours > 0 else float("inf")
+                self.best_fah = fp / max(self.val_ambient_duration_hours, 0.001) if self.val_ambient_duration_hours > 0 else float("inf")
             self.best_recall = metrics.get("recall", 0)
 
         # Save periodic checkpoint
         checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_step_{self.current_step}.weights.h5")
         self.model.save_weights(checkpoint_path)
+
+    def _write_run_metadata(self) -> None:
+        """Write run_metadata.json to checkpoint dir for reproducibility tracking."""
+        import hashlib
+        import json as _json
+        import platform
+
+        # Git commit hash (best-effort)
+        git_commit = "unknown"
+        try:
+            import subprocess
+
+            result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                git_commit = result.stdout.strip()
+        except Exception:
+            pass
+
+        # Stable config hash (ignore run-time-only fields)
+        try:
+            config_str = _json.dumps(self.config, sort_keys=True, default=str)
+            config_hash = hashlib.sha256(config_str.encode()).hexdigest()[:12]
+        except Exception:
+            config_hash = "unknown"
+
+        metadata = {
+            "run_timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "git_commit": git_commit,
+            "config_hash": config_hash,
+            "random_seed": self.random_seed,
+            "python_version": platform.python_version(),
+            "total_steps": sum(self.training_steps_list),
+            "batch_size": self.batch_size,
+            "learning_rates": self.learning_rates,
+            "training_steps": self.training_steps_list,
+        }
+
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        meta_path = os.path.join(self.checkpoint_dir, "run_metadata.json")
+        try:
+            with open(meta_path, "w") as f:
+                _json.dump(metadata, f, indent=2)
+            self.logger.log_info(f"Run metadata written to {meta_path}")
+        except Exception as exc:
+            self.logger.log_warning(f"Could not write run metadata: {exc}")
 
     def train_step(
         self,
@@ -695,6 +784,11 @@ class Trainer:
         is_hard_negative: np.ndarray | None = None,
     ) -> dict[str, float]:
         """Execute single training step.
+
+        Materialization policy:
+        - Keep training step TF-only; no .numpy() calls in hot path.
+        - Scalars may be materialized only at logging intervals.
+        - Validation owns numpy conversion for metrics.
 
         Args:
             train_fingerprints: Input features
@@ -709,21 +803,17 @@ class Trainer:
         # Get current phase settings
         phase_settings = self._get_current_phase_settings(self.current_step)
 
-        # Update learning rate
+        # Update learning rate only when it changes (avoid per-step GPU sync)
+        current_lr = phase_settings["learning_rate"]
         optimizer = self.model.optimizer
         if optimizer is None:
             raise RuntimeError("Model optimizer is not set")
-        optimizer.learning_rate.assign(phase_settings["learning_rate"])
+        if current_lr != self._last_assigned_lr:
+            optimizer.learning_rate.assign(current_lr)
+            self._last_assigned_lr = current_lr
 
-        # Apply class weights
-        combined_weights = self._apply_class_weights(
-            train_ground_truth,
-            train_sample_weights,
-            phase_settings["positive_weight"],
-            phase_settings["negative_weight"],
-            phase_settings["hard_negative_weight"],
-            is_hard_negative,
-        )
+        # Class weights are applied in the data pipeline (first-class input)
+        combined_weights = train_sample_weights
 
         # Train on batch
         result = self.model.train_on_batch(
@@ -773,26 +863,37 @@ class Trainer:
         batch_count = 0
         score_samples: list[float] = []
         score_sample_limit = 2000
+        all_scores: list[tf.Tensor] = []
+        all_labels: list[tf.Tensor] = []
+
         for batch in iterator:
             if not isinstance(batch, tuple) or len(batch) != 3:
                 raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
             fingerprints, ground_truth, _ = batch
-            # Get predictions
-            predictions = self.model(fingerprints, training=False).numpy()
+            # Get predictions (TF-only; materialize once at end)
+            predictions = self.model(fingerprints, training=False)
 
             # Handle both binary [N] and multi-class [N, C] output shapes.
             # For multi-class (softmax), column 1 is the positive-class probability.
             if predictions.ndim == 2 and predictions.shape[1] > 1:
                 scores = predictions[:, 1]
             else:
-                scores = predictions.flatten()
+                scores = tf.reshape(predictions, [-1])
 
-            # Update metrics
-            self.val_metrics.update(ground_truth, scores)
+            all_scores.append(scores)
+            all_labels.append(tf.cast(ground_truth, tf.int32))
             batch_count += 1
-            if len(score_samples) < score_sample_limit:
-                needed = score_sample_limit - len(score_samples)
-                score_samples.extend(scores[:needed].tolist())
+
+        if all_scores:
+            scores_all = tf.concat(all_scores, axis=0)
+            labels_all = tf.concat(all_labels, axis=0)
+            scores_np = scores_all.numpy()
+            labels_np = labels_all.numpy()
+            self.val_metrics.update(labels_np, scores_np)
+
+            if score_sample_limit > 0:
+                sample_count = min(score_sample_limit, scores_np.shape[0])
+                score_samples = scores_np[:sample_count].tolist()
 
         metrics = self.val_metrics.compute_metrics()
         if self.val_metrics.all_y_true:
@@ -812,22 +913,25 @@ class Trainer:
             metrics["score_max"] = float(np.max(scores_arr))
             metrics["score_sample_count"] = float(scores_arr.shape[0])
 
-        if self.ambient_duration_hours > 0 and self.eval_target_fah > 0:
+        if self.val_ambient_duration_hours > 0 and self.eval_target_fah > 0:
             calc = MetricsCalculator(
                 y_true=np.array(self.val_metrics.all_y_true),
                 y_score=np.array(self.val_metrics.all_y_scores),
-                ambient_duration_hours=self.ambient_duration_hours,
+                ambient_duration_hours=self.val_ambient_duration_hours,
             )
             recall_at_fah, threshold_at_fah, _ = calc.compute_recall_at_target_fah(
-                ambient_duration_hours=self.ambient_duration_hours,
+                ambient_duration_hours=self.val_ambient_duration_hours,
                 target_fah=self.eval_target_fah,
                 n_thresholds=len(self.val_metrics.cutoffs),
             )
             metrics["recall_at_target_fah"] = float(recall_at_fah)
             metrics["threshold_for_target_fah"] = float(threshold_at_fah)
+            metrics["operating_threshold"] = float(threshold_at_fah)
+            metrics["operating_recall"] = float(recall_at_fah)
+            metrics["operating_target_fah"] = float(self.eval_target_fah)
 
             fah_at_recall, threshold_at_recall, _ = calc.compute_fah_at_target_recall(
-                ambient_duration_hours=self.ambient_duration_hours,
+                ambient_duration_hours=self.val_ambient_duration_hours,
                 target_recall=self.eval_target_recall,
                 n_thresholds=len(self.val_metrics.cutoffs),
             )
@@ -921,7 +1025,8 @@ class Trainer:
         val_data_factory,
         mining_data_factory=None,
         test_data_factory=None,
-    ) -> None:
+        input_shape: tuple[int, ...] | None = None,
+    ) -> tf.keras.Model:
         """Main training loop.
 
         Args:
@@ -930,7 +1035,7 @@ class Trainer:
             mining_data_factory: Optional factory for mining dataset
             test_data_factory: Optional factory for test dataset
         """
-        input_shape = self.input_shape
+        input_shape = self.input_shape if input_shape is None else input_shape
 
         self.logger.log_info("Building model...")
         self.model = self._build_model(input_shape)
@@ -938,9 +1043,16 @@ class Trainer:
         _ = self.model(tf.zeros((1, *input_shape), dtype=tf.float32), training=False)
         self.model.summary(print_fn=self.logger.console.print)
 
-        # Setup profiler
+        # Setup cProfile profiler
         if self.enable_profiling:
             self.profiler = TrainingProfiler(self.profile_output_dir)
+
+        # Setup TF Profiler (GPU kernel/memory traces for TensorBoard)
+        if self.tf_profile_start_step > 0 and self.tensorboard_enabled:
+            self.tf_profiler = TFProfiler(log_dir=self.tensorboard_log_dir)
+
+        # Write run metadata for reproducibility tracking
+        self._write_run_metadata()
 
         # Calculate total training steps
         total_steps = sum(self.training_steps_list)
@@ -966,18 +1078,23 @@ class Trainer:
         try:
             for step in range(1, total_steps + 1):
                 self.current_step = step
+                step_start = time.perf_counter()
+                _t0 = step_start
 
                 # Get training batch
+                _t_data_end = step_start  # fallback; overwritten on success
                 try:
                     train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
+                    _t_data_end = time.perf_counter()
                 except StopIteration:
                     # Restart by calling the factory again
                     train_data_generator = train_data_factory()
                     try:
                         train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
+                        _t_data_end = time.perf_counter()
                     except StopIteration as exc:
                         raise RuntimeError("train_data_factory() returned an empty generator after restart. Cannot continue training without batches.") from exc
-
+                _t_aug_start = time.perf_counter()
                 # Apply SpecAugment if enabled (GPU-accelerated, requires numpy)
                 # Skip if using TF-native SpecAugment in pipeline
                 if self.spec_augment_enabled and self.spec_augment_backend != "tf":
@@ -1000,12 +1117,23 @@ class Trainer:
                             if not self._spec_augment_warning_shown:
                                 self.logger.log_warning(f"SpecAugment skipped: {e}")
                                 self._spec_augment_warning_shown = True
-                # Profile data loading if enabled
+                _t_aug_end = time.perf_counter()
+                # Profile train_step with cProfile when enabled
+                _t_train_start = time.perf_counter()
                 if self.profiler and step % self.profile_every_n == 0:
-                    with self.profiler.profile_section(f"step_{step}"):
+                    with self.profiler.profile_section(f"full_step_{step}"):
                         train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg)
                 else:
                     train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg)
+                _t_train_end = time.perf_counter()
+                materialize_due = step % self.materialize_metrics_interval == 0
+                if not materialize_due:
+                    loss_value = float(train_metrics.get("loss", 0.0))
+                    train_metrics = {"loss": loss_value}
+                train_metrics["step_time_ms"] = (time.perf_counter() - step_start) * 1000
+                train_metrics["data_loading_ms"] = (_t_data_end - _t0) * 1000
+                train_metrics["spec_augment_ms"] = (_t_aug_end - _t_aug_start) * 1000
+                train_metrics["train_step_ms"] = (_t_train_end - _t_train_start) * 1000
 
                 if self.log_throughput and step % self.log_throughput_interval == 0:
                     now = time.time()
@@ -1028,10 +1156,27 @@ class Trainer:
                 if self.eval_log_every_step or step % self.eval_basic_step_interval == 0:
                     self.logger.update_step(progress, progress_task, step, train_metrics, phase_settings_display)
 
-                if self.tensorboard_writer is not None:
+                if self.tensorboard_writer is not None and step % self.eval_basic_step_interval == 0:
                     self._log_tensorboard_metrics("train", train_metrics, step, self._tb_train_metric_keys)
                     with self.tensorboard_writer.as_default():
                         tf.summary.scalar("train/learning_rate", float(phase_settings_display["learning_rate"]), step=step)
+
+                # Log GPU memory + utilization to TensorBoard
+                if self.tensorboard_writer is not None and self.gpu_memory_log_interval > 0 and step % self.gpu_memory_log_interval == 0 and self.tf_profiler is not None:
+                    mem = self.tf_profiler.get_gpu_memory_info()
+                    sys_info = get_system_info()
+                    gpu_info = sys_info.get("gpu", {}) if isinstance(sys_info, dict) else {}
+                    gpu_load = float(gpu_info.get("load_percent", 0.0)) if isinstance(gpu_info, dict) else 0.0
+                    with self.tensorboard_writer.as_default():
+                        tf.summary.scalar("gpu/peak_memory_mb", mem["peak_mb"], step=step)
+                        tf.summary.scalar("gpu/current_memory_mb", mem["current_mb"], step=step)
+                        tf.summary.scalar("gpu/utilization_percent", gpu_load, step=step)
+
+                # Start TF Profiler trace (fires once, captures a short window)
+                if self.tf_profiler is not None and step == self.tf_profile_start_step:
+                    self.tf_profiler.start_trace(step=step)
+                elif self.tf_profiler is not None and self.tf_profiler._tracing and step == self.tf_profile_start_step + self.tf_profiler.warmup_steps + self.tf_profiler.active_steps:
+                    self.tf_profiler.stop_trace()
 
                 # Detect and announce phase transitions
                 current_phase = phase_settings_display["phase"]
@@ -1060,11 +1205,9 @@ class Trainer:
 
                     if advanced_due:
                         if self.eval_confusion_matrix_interval and step % self.eval_confusion_matrix_interval == 0:
-                            tp = self.val_metrics.tp_at_threshold.get(0.5, 0)
-                            fp = self.val_metrics.fp_at_threshold.get(0.5, 0)
-                            tn = self.val_metrics.tn_at_threshold.get(0.5, 0)
-                            fn = self.val_metrics.fn_at_threshold.get(0.5, 0)
-                            self.logger.log_confusion_matrix(tp, fp, tn, fn)
+                            tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
+                            self.logger.log_confusion_matrix(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
+                            self.logger.log_per_class_analysis(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
 
                     if self.tensorboard_writer is not None:
                         self._log_tensorboard_metrics("val", val_metrics, step, self._tb_val_metric_keys)
@@ -1157,11 +1300,9 @@ class Trainer:
             self.logger.log_info("Running held-out test evaluation...")
             test_metrics = self.validate(test_data_factory)
             self.logger.log_validation_results(test_metrics, total_steps, total_steps)
-            tp = self.val_metrics.tp_at_threshold.get(0.5, 0)
-            fp = self.val_metrics.fp_at_threshold.get(0.5, 0)
-            tn = self.val_metrics.tn_at_threshold.get(0.5, 0)
-            fn = self.val_metrics.fn_at_threshold.get(0.5, 0)
-            self.logger.log_confusion_matrix(tp, fp, tn, fn)
+            tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
+            self.logger.log_confusion_matrix(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
+            self.logger.log_per_class_analysis(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
 
         return self.model
 
@@ -1195,6 +1336,23 @@ def train(config: dict) -> tf.keras.Model:
     dataset.build()
 
     trainer = Trainer(config)
+
+    # Validate dataset class distribution
+    _LABEL_NAMES = {0: "negative", 1: "positive", 2: "hard_negative"}
+    for split_name in ["train", "val", "test"]:
+        dist = dataset.get_label_distribution(split_name)
+        if not dist:
+            if split_name == "train":
+                raise RuntimeError(f"No samples found in {split_name} split!")
+            continue
+        dist_str = ", ".join(f"{_LABEL_NAMES.get(k, f'label_{k}')}={v}" for k, v in sorted(dist.items()))
+        trainer.logger.log_info(f"Dataset {split_name}: {dist_str} (total={sum(dist.values())})")
+        pos_count = dist.get(1, 0)
+        neg_count = dist.get(0, 0) + dist.get(2, 0)
+        if pos_count == 0 and split_name == "train":
+            raise RuntimeError("No positive samples in training set!")
+        if pos_count > 0 and neg_count / pos_count < 5.0 and split_name == "train":
+            trainer.logger.log_warning(f"Low negative:positive ratio ({neg_count / pos_count:.1f}:1) in {split_name} — recommend at least 5:1")
     performance = config.get("performance", {})
     use_tfdata = performance.get("use_tfdata", True)
     if performance.get("benchmark_pipeline", False):
@@ -1259,6 +1417,32 @@ def train(config: dict) -> tf.keras.Model:
             test_data_factory=dataset.test_generator_factory(max_time_frames=max_time_frames),
             input_shape=input_shape,
         )
+    # Auto-tune post-training if configured and final FAH > target
+    training_cfg = config.get("training", {})
+    auto_tune = training_cfg.get("auto_tune_on_poor_fah", False)
+    if auto_tune and trainer.best_fah > trainer.target_minimization:
+        trainer.logger.log_info(f"auto_tune_on_poor_fah: final FAH={trainer.best_fah:.3f} > target={trainer.target_minimization:.3f} — launching mww-autotune")
+        import subprocess
+
+        checkpoint = trainer.best_weights_path or os.path.join(trainer.checkpoint_dir, "best_weights.weights.h5")
+        config_arg = training_cfg.get("_config_preset", "standard")
+        cmd = [
+            sys.executable,
+            "-m",
+            "src.tuning.cli",
+            "--checkpoint",
+            checkpoint,
+            "--config",
+            config_arg,
+            "--target-fah",
+            str(trainer.target_minimization),
+        ]
+        try:
+            subprocess.run(cmd, check=True)  # noqa: S603
+        except subprocess.CalledProcessError as e:
+            trainer.logger.log_warning(f"Auto-tune finished with non-zero exit ({e.returncode}) — see above for details")
+        except Exception as e:
+            trainer.logger.log_warning(f"Auto-tune failed: {e}")
     return model
 
 
