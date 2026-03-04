@@ -18,7 +18,6 @@ from rich.table import Table
 from rich.tree import Tree
 
 from config.loader import ConfigLoader, load_full_config
-from src.data.clustering import SpeakerClustering
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -48,7 +47,7 @@ def discover_audio_files(audio_dir: Path) -> list[Path]:
 
 def analyze_clusters(
     audio_paths: list[Path],
-    clusterer: SpeakerClustering,
+    clusterer: Any,
     config: Any,
 ) -> tuple[dict[str, Any], dict[int, list[Path]]]:
     """Analyze clusters and return detailed statistics."""
@@ -316,6 +315,8 @@ Output files (per dataset):
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    from src.data.clustering import SpeakerClustering
 
     clusterer = SpeakerClustering(cluster_config)
     all_reports: list[Path] = []

@@ -218,6 +218,15 @@ class RichTrainingLogger:
             ("gain_auc_pr_per_1k_steps", "AUC-PR Gain / 1k steps", ".4f"),
             ("gain_recall_at_target_fah_per_1k_steps", "Recall@TargetFAH Gain / 1k steps", ".4f"),
             ("gain_fah_at_target_recall_per_1k_steps", "FAH@TargetRecall Gain / 1k steps", ".4f"),
+            ("val_positive_count", "Val Positives", ".0f"),
+            ("val_negative_count", "Val Negatives", ".0f"),
+            ("val_total_count", "Val Total", ".0f"),
+            ("score_min", "Score Min", ".4f"),
+            ("score_p05", "Score P05", ".4f"),
+            ("score_p50", "Score P50", ".4f"),
+            ("score_p95", "Score P95", ".4f"),
+            ("score_max", "Score Max", ".4f"),
+            ("score_sample_count", "Score Sample Count", ".0f"),
         ]
         for key, label, fmt in optional_metrics:
             if key in metrics and metrics[key] is not None:

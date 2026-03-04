@@ -15,13 +15,6 @@ from typing import TYPE_CHECKING, Callable, List, Optional
 
 import numpy as np
 
-import shutil
-from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Optional
-
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -43,6 +36,8 @@ class HardNegativeMiningConfig:
     fp_threshold: float = 0.8
     max_samples: int = 5000
     mining_interval_epochs: int = 5
+    mined_subdirectory: str = "mined"
+    deduplicate_by_hash: bool = True
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -52,6 +47,8 @@ class HardNegativeMiningConfig:
             raise ValueError(f"max_samples must be positive, got {self.max_samples}")
         if self.mining_interval_epochs <= 0:
             raise ValueError(f"mining_interval_epochs must be positive, got {self.mining_interval_epochs}")
+        if self.mined_subdirectory.strip() == "":
+            raise ValueError("mined_subdirectory must be a non-empty string")
 
 
 class HardNegativeMiner:
@@ -207,8 +204,8 @@ class HardNegativeMiner:
             Hex digest of file hash
         """
         hash_md5 = hashlib.md5()
-        with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(chunk_size), b''):
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(chunk_size), b""):
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
 
@@ -225,12 +222,12 @@ class HardNegativeMiner:
             return set()
 
         existing_hashes = set()
-        for wav_file in directory.glob('*.wav'):
+        for wav_file in directory.glob("*.wav"):
             try:
                 file_hash = self._compute_file_hash(wav_file)
                 existing_hashes.add(file_hash)
             except Exception as e:
-                logger.warning(f'Failed to hash {wav_file}: {e}')
+                logger.warning(f"Failed to hash {wav_file}: {e}")
         return existing_hashes
 
     def _copy_to_hard_negatives(
@@ -265,57 +262,30 @@ class HardNegativeMiner:
             # Check against existing files in destination
             existing_hashes = self._get_existing_hashes(dest_dir)
             if file_hash in existing_hashes:
-                logger.debug(f'Skipping duplicate (hash match): {audio_path.name}')
-                # Return path to existing file
-                return dest_dir  # Caller will handle this
+                logger.debug(f"Skipping duplicate (hash match): {audio_path.name}")
+                # Return path to existing directory to signal duplicate
+                return dest_dir
 
             # Also check user subdirectory if copying to mined
             if use_mined_subdir:
-                user_dir = self.hard_negative_dir / 'user'
+                user_dir = self.hard_negative_dir / "user"
                 if user_dir.exists():
                     user_hashes = self._get_existing_hashes(user_dir)
                     if file_hash in user_hashes:
-                        logger.debug(f'Skipping duplicate of user file: {audio_path.name}')
+                        logger.debug(f"Skipping duplicate of user file: {audio_path.name}")
                         return dest_dir
 
         # Create filename with score and unique suffix to prevent collisions
         base_name = audio_path.stem
         unique_suffix = uuid.uuid4().hex[:8]
-        new_name = f'{base_name}_score{score:.3f}_{unique_suffix}.wav'
+        new_name = f"{base_name}_score{score:.3f}_{unique_suffix}.wav"
         dest_path = dest_dir / new_name
 
         # Handle potential collision (should be rare with uuid)
         while dest_path.exists():
             unique_suffix = uuid.uuid4().hex[:8]
-            new_name = f'{base_name}_score{score:.3f}_{unique_suffix}.wav'
-            dest_path = dest_dir / new_name
-
-        # Copy file
-        shutil.copy2(audio_path, dest_path)
-
-        return dest_path
-        """Copy audio file to hard negative directory.
-
-        Args:
-            audio_path: Source audio path
-            score: Model score (used in filename)
-
-        Returns:
-            Destination path
-        """
-        import uuid
-
-        # Create filename with score and unique suffix to prevent collisions
-        base_name = audio_path.stem
-        unique_suffix = uuid.uuid4().hex[:8]
-        new_name = f"{base_name}_score{score:.3f}_{unique_suffix}.wav"
-        dest_path = self.hard_negative_dir / new_name
-
-        # Handle potential collision (should be rare with uuid)
-        while dest_path.exists():
-            unique_suffix = uuid.uuid4().hex[:8]
             new_name = f"{base_name}_score{score:.3f}_{unique_suffix}.wav"
-            dest_path = self.hard_negative_dir / new_name
+            dest_path = dest_dir / new_name
 
         # Copy file
         shutil.copy2(audio_path, dest_path)

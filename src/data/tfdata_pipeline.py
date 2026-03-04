@@ -7,6 +7,7 @@ Compatible with ESPHome - only affects training speed, not model export.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Callable, Iterator
 
 import numpy as np
@@ -141,8 +142,13 @@ class OptimizedDataPipeline:
         # Cache first (before shuffle for proper training behavior)
         resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         if resolved_cache_dir:
-            ds = ds.cache(resolved_cache_dir)
-            logger.info(f"Using disk cache: {resolved_cache_dir}")
+            cache_path = Path(resolved_cache_dir)
+            if cache_path.suffix:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                cache_path.mkdir(parents=True, exist_ok=True)
+            ds = ds.cache(str(cache_path))
+            logger.info(f"Using disk cache: {cache_path}")
         else:
             ds = ds.cache()
             logger.info("Using memory cache")
@@ -192,7 +198,12 @@ class OptimizedDataPipeline:
         # Cache (no shuffle for validation)
         resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         if resolved_cache_dir:
-            ds = ds.cache(resolved_cache_dir)
+            cache_path = Path(resolved_cache_dir)
+            if cache_path.suffix:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                cache_path.mkdir(parents=True, exist_ok=True)
+            ds = ds.cache(str(cache_path))
         else:
             ds = ds.cache()
 

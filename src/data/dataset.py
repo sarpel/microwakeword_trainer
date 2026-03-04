@@ -785,7 +785,6 @@ class WakeWordDataset:
         manifest_path = Path(processed_dir) / "cache_manifest.json"
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
-        return {self._file_content_hash(Path(sample.path)) for sample in samples}
 
     def _extract_features_to_store(self, samples: List[Any], store_dir: Path, frontend: Any, sample_rate: int, split_name: str, mel_bins: int) -> int:
         logger.info(f"Extracting features for {len(samples)} {split_name} clips...")

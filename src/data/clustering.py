@@ -45,6 +45,28 @@ try:
     import torch
     import torchaudio
 
+    try:
+        import inspect
+
+        import huggingface_hub
+
+        if "use_auth_token" not in inspect.signature(huggingface_hub.hf_hub_download).parameters:
+            _orig_hf_hub_download = huggingface_hub.hf_hub_download
+
+            def _hf_hub_download_compat(*args, use_auth_token=None, **kwargs):
+                if use_auth_token is not None and "token" not in kwargs:
+                    kwargs["token"] = use_auth_token
+                kwargs.setdefault("token", False)
+                kwargs.setdefault("local_files_only", False)
+                return _orig_hf_hub_download(*args, **kwargs)
+
+            huggingface_hub.hf_hub_download = _hf_hub_download_compat
+    except Exception:
+        pass
+
+    if not hasattr(torchaudio, "list_audio_backends"):
+        torchaudio.list_audio_backends = lambda: [""]
+
     # SpeechBrain for speaker embeddings (ECAPA-TDNN)
     from speechbrain.pretrained import EncoderClassifier
     from torch.utils.data import DataLoader, Dataset
@@ -96,9 +118,9 @@ def extract_speaker_embeddings(
     if batch_size is not None and batch_size < 1:
         raise ValueError(f"batch_size must be >= 1, got {batch_size}")
     if not HAS_SPEECHBRAIN or not HAS_SKLEARN:
-        raise ImportError("speechbrain and sklearn are required for speaker clustering. " "Install: pip install speechbrain torch scikit-learn")
+        raise ImportError("speechbrain and sklearn are required for speaker clustering. Install: pip install speechbrain torch scikit-learn")
     if not HAS_LIBROSA:
-        raise ImportError("librosa is required to load audio for speaker clustering. " "Install: pip install librosa")
+        raise ImportError("librosa is required to load audio for speaker clustering. Install: pip install librosa")
 
     import tempfile
 
@@ -493,7 +515,7 @@ def cluster_by_speaker(
         all_split_paths = set(train_paths) | set(test_paths)
         missing_paths = all_split_paths - set(path_to_idx.keys())
         if missing_paths:
-            raise ValueError(f"Found {len(missing_paths)} paths in train/test split that are missing " f"from audio_paths. First few missing: {list(missing_paths)[:5]}")
+            raise ValueError(f"Found {len(missing_paths)} paths in train/test split that are missing from audio_paths. First few missing: {list(missing_paths)[:5]}")
 
         train_indices = [path_to_idx[p] for p in train_paths]
         test_indices = [path_to_idx[p] for p in test_paths]
@@ -657,7 +679,7 @@ def collate_audio_batch(batch: List[tuple]) -> torch.Tensor:
         RuntimeError: If PyTorch is not available or batch is empty
     """
     if not HAS_SPEECHBRAIN:
-        raise RuntimeError("PyTorch is required for collate_audio_batch. " "Please install PyTorch or disable features that use this function.")
+        raise RuntimeError("PyTorch is required for collate_audio_batch. Please install PyTorch or disable features that use this function.")
 
     if not batch:
         return torch.empty((0, 0))
@@ -781,7 +803,7 @@ def cluster_samples_hdbscan(
         Cluster labels [n_samples]. Noise points labeled as -1.
     """
     if not HAS_HDBSCAN:
-        raise ImportError("hdbscan is required for large dataset clustering. " "Install: pip install hdbscan")
+        raise ImportError("hdbscan is required for large dataset clustering. Install: pip install hdbscan")
 
     if features.size == 0 or len(features) == 0:
         return np.array([], dtype=int)
@@ -841,21 +863,27 @@ def cluster_samples_adaptive(
     """
     n_samples = len(features)
 
+    if n_clusters is not None:
+        if n_samples <= 5000:
+            logger.info(f"Using AgglomerativeClustering (explicit n_clusters={n_clusters})")
+            return cluster_samples(features, n_clusters, similarity_threshold)
+        logger.info(f"Using two-stage clustering (explicit n_clusters={n_clusters})")
+        return _cluster_samples_two_stage(features, n_clusters, similarity_threshold)
+
     if n_samples <= 5000:
         # Use exact AgglomerativeClustering for small datasets
         logger.info(f"Using AgglomerativeClustering for {n_samples} samples")
-        return cluster_samples(features, n_clusters, similarity_threshold)
+        return cluster_samples(features, None, similarity_threshold)
 
-    elif n_samples <= 50000 and HAS_HDBSCAN:
+    if n_samples <= 50000 and HAS_HDBSCAN:
         # Use HDBSCAN for medium datasets
         logger.info(f"Using HDBSCAN for {n_samples} samples")
         return cluster_samples_hdbscan(features, min_cluster_size=min_cluster_size)
 
-    else:
-        # For large datasets, use k-means as coarse clustering
-        # then agglomerative within each coarse cluster
-        logger.info(f"Using two-stage clustering for {n_samples} samples")
-        return _cluster_samples_two_stage(features, n_clusters, similarity_threshold)
+    # For large datasets, use k-means as coarse clustering
+    # then agglomerative within each coarse cluster
+    logger.info(f"Using two-stage clustering for {n_samples} samples")
+    return _cluster_samples_two_stage(features, None, similarity_threshold)
 
 
 def _cluster_samples_two_stage(
@@ -986,7 +1014,7 @@ class SpeakerClustering:
 
         if self._classifier is None or model_changed or device_changed:
             if not HAS_SPEECHBRAIN:
-                raise ImportError("speechbrain is required for speaker clustering. " "Install: pip install speechbrain torch")
+                raise ImportError("speechbrain is required for speaker clustering. Install: pip install speechbrain torch")
 
             sanitized_name = self.config.embedding_model.replace("/", "_")
             savedir = os.path.join(tempfile.gettempdir(), f"speechbrain_embeddings_{sanitized_name}")
@@ -996,6 +1024,7 @@ class SpeakerClustering:
                 source=self.config.embedding_model,
                 savedir=savedir,
                 run_opts={"device": device},
+                pymodule_file="README.md",
             )
             self._classifier.eval()
             self._model_device = device
@@ -1063,7 +1092,7 @@ class SpeakerClustering:
     ) -> np.ndarray:
         """Extract embeddings using the cached model."""
         if not HAS_SPEECHBRAIN or not HAS_SKLEARN:
-            raise ImportError("speechbrain and sklearn are required. " "Install: pip install speechbrain torch scikit-learn")
+            raise ImportError("speechbrain and sklearn are required. Install: pip install speechbrain torch scikit-learn")
 
         if not HAS_LIBROSA:
             raise ImportError("librosa is required. Install: pip install librosa")
@@ -1118,7 +1147,7 @@ class SpeakerClustering:
             with torch.no_grad():
                 with amp_context():
                     embedding = classifier.encode_batch(audio_tensor)
-                embedding = embedding.squeeze(1).cpu().numpy()
+                embedding = embedding.squeeze(1).float().cpu().numpy()
                 embeddings.append(embedding)
 
             # Periodic cleanup

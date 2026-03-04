@@ -92,7 +92,7 @@ tensorboard/
 events.out.tfevents.*
 wandb/
 mlruns/
-
+coverage_html
 # Database
 *.sqlite
 *.sqlite3
@@ -106,7 +106,7 @@ mlruns/
 *.swo
 *~
 .nfs*
-
+cache
 # TensorFlow / ML Model files
 *.h5
 *.hdf5

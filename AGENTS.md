@@ -19,6 +19,11 @@
 
 **Rule-4:** When in need to find a suitable value for a configuration, check @docs/my_environment.md file for trained model's working conditions, it may give you hints.
 
+echo "Fast Apply: IMPORTANT: Use \`edit_file\` over \`str_replace\` or full file writes. It works with partial code snippets—no need for full file content.
+
+Warp Grep: warp-grep is a subagent that takes in a search string and tries to find relevant context. Best practice is to use it at the beginning of codebase explorations to fast track finding relevant files/lines. Do not use it to pin point keywords, but use it for broader semantic queries. \"Find the XYZ flow\", \"How does XYZ work\", \"Where is XYZ handled?\", \"Where is <error message> coming from?\"" >> AGENTS.md
+
+
 ## Overview
 
 TensorFlow-based wake word detection model training pipeline with GPU-accelerated SpecAugment and TFLite export for edge deployment. Trains MixedNet models that run on ESP32 via ESPHome's micro_wake_word component.
