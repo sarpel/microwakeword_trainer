@@ -4,7 +4,6 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 import tensorflow as tf
 
@@ -48,7 +47,7 @@ class TestAsyncHardExampleMiner:
         miner = AsyncHardExampleMiner()
 
         # Verify lock exists and is a Lock (threading.Lock is a factory function)
-        assert hasattr(miner, '_lock')
+        assert hasattr(miner, "_lock")
         assert miner._lock is not None
 
         # Test that lock can be acquired (duck typing for lock interface)
@@ -57,8 +56,8 @@ class TestAsyncHardExampleMiner:
             pass
 
         # Verify lock has acquire/release methods
-        assert hasattr(miner._lock, 'acquire')
-        assert hasattr(miner._lock, 'release')
+        assert hasattr(miner._lock, "acquire")
+        assert hasattr(miner._lock, "release")
         assert callable(miner._lock.acquire)
         assert callable(miner._lock.release)
 

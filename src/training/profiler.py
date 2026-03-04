@@ -211,6 +211,7 @@ class TFProfiler:
         """
         try:
             import tensorflow as tf
+
             profile_dir = os.path.join(self.log_dir, "plugins", "profile")
             os.makedirs(profile_dir, exist_ok=True)
             options = tf.profiler.experimental.ProfilerOptions(
@@ -231,6 +232,7 @@ class TFProfiler:
             return
         try:
             import tensorflow as tf
+
             tf.profiler.experimental.stop()
             self._tracing = False
             self._logger.info(f"TF Profiler trace saved to {self.log_dir}")
@@ -262,6 +264,7 @@ class TFProfiler:
         """
         try:
             import tensorflow as tf
+
             gpus = tf.config.list_physical_devices("GPU")
             if not gpus:
                 return {"peak_mb": 0.0, "current_mb": 0.0}

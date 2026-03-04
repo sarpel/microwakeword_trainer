@@ -1,7 +1,6 @@
 """Unit tests for vectorized metrics in EvaluationMetrics."""
 
 import numpy as np
-import pytest
 
 from src.training.trainer import EvaluationMetrics
 
@@ -53,10 +52,10 @@ class TestVectorizedMetrics:
         metrics_vectorized.update(y_true, y_scores)
 
         # Manual loop-based computation
-        loop_tp = {c: 0 for c in cutoffs}
-        loop_fp = {c: 0 for c in cutoffs}
-        loop_tn = {c: 0 for c in cutoffs}
-        loop_fn = {c: 0 for c in cutoffs}
+        loop_tp = dict.fromkeys(cutoffs, 0)
+        loop_fp = dict.fromkeys(cutoffs, 0)
+        loop_tn = dict.fromkeys(cutoffs, 0)
+        loop_fn = dict.fromkeys(cutoffs, 0)
 
         for cutoff in cutoffs:
             y_pred = (y_scores >= cutoff).astype(np.int32)

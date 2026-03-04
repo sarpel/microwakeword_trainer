@@ -25,7 +25,6 @@ import sys
 import time
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -232,7 +231,7 @@ def step_evaluate(tflite_path: Path, config: str, override: str | None) -> dict:
             json_str = json_str[idx:]
         return json.loads(json_str)
     except (json.JSONDecodeError, ValueError):
-        print(f"  ⚠ Could not parse evaluation output — skipping quality gate")
+        print("  ⚠ Could not parse evaluation output — skipping quality gate")
         return {}
 
 
@@ -245,7 +244,7 @@ def step_gate(metrics: dict, target_fah: float, target_recall: float) -> bool:
     fah = metrics.get("ambient_false_positives_per_hour", metrics.get("fah", None))
     recall = metrics.get("recall", metrics.get("recall_at_target_fah", None))
 
-    print(f"\n  Quality gate:")
+    print("\n  Quality gate:")
     print(f"    FAH    : {fah}  (target ≤ {target_fah})")
     print(f"    Recall : {recall}  (target ≥ {target_recall})")
 

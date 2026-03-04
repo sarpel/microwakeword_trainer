@@ -29,9 +29,9 @@ from tensorflow import keras
 from src.data.spec_augment_gpu import batch_spec_augment_gpu
 from src.evaluation.metrics import MetricsCalculator
 from src.model.architecture import build_model
-from src.training.miner import HardExampleMiner
 from src.training.async_miner import AsyncHardExampleMiner
-from src.training.profiler import TrainingProfiler, TFProfiler
+from src.training.miner import HardExampleMiner
+from src.training.profiler import TFProfiler, TrainingProfiler
 from src.training.rich_logger import RichTrainingLogger
 from src.utils.performance import get_system_info
 from src.utils.terminal_logger import TerminalLogger
@@ -76,10 +76,10 @@ class EvaluationMetrics:
         self._fn_arr = np.zeros(n, dtype=np.int64)
 
         # Backward-compatible dict views for tests/consumers
-        self.tp_at_threshold: dict[float, int] = {cutoff: 0 for cutoff in self.cutoffs}
-        self.fp_at_threshold: dict[float, int] = {cutoff: 0 for cutoff in self.cutoffs}
-        self.tn_at_threshold: dict[float, int] = {cutoff: 0 for cutoff in self.cutoffs}
-        self.fn_at_threshold: dict[float, int] = {cutoff: 0 for cutoff in self.cutoffs}
+        self.tp_at_threshold: dict[float, int] = dict.fromkeys(self.cutoffs, 0)
+        self.fp_at_threshold: dict[float, int] = dict.fromkeys(self.cutoffs, 0)
+        self.tn_at_threshold: dict[float, int] = dict.fromkeys(self.cutoffs, 0)
+        self.fn_at_threshold: dict[float, int] = dict.fromkeys(self.cutoffs, 0)
 
     def update(self, y_true: np.ndarray, y_scores: np.ndarray) -> None:
         """Update metrics with batch predictions.
@@ -165,10 +165,10 @@ class EvaluationMetrics:
         self._fp_arr = np.zeros(n, dtype=np.int64)
         self._tn_arr = np.zeros(n, dtype=np.int64)
         self._fn_arr = np.zeros(n, dtype=np.int64)
-        self.tp_at_threshold = {cutoff: 0 for cutoff in self.cutoffs}
-        self.fp_at_threshold = {cutoff: 0 for cutoff in self.cutoffs}
-        self.tn_at_threshold = {cutoff: 0 for cutoff in self.cutoffs}
-        self.fn_at_threshold = {cutoff: 0 for cutoff in self.cutoffs}
+        self.tp_at_threshold = dict.fromkeys(self.cutoffs, 0)
+        self.fp_at_threshold = dict.fromkeys(self.cutoffs, 0)
+        self.tn_at_threshold = dict.fromkeys(self.cutoffs, 0)
+        self.fn_at_threshold = dict.fromkeys(self.cutoffs, 0)
 
     def get_counts_at_threshold(self, threshold: float) -> tuple[int, int, int, int]:
         """Return (tp, fp, tn, fn) counts at the nearest stored cutoff to threshold."""

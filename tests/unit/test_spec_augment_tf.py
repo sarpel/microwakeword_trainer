@@ -1,7 +1,6 @@
 """Unit tests for TensorFlow-native SpecAugment implementation."""
 
 import numpy as np
-import pytest
 import tensorflow as tf
 
 from src.data.spec_augment_tf import batch_spec_augment_tf, spec_augment_tf
