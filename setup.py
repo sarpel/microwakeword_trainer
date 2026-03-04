@@ -60,6 +60,7 @@ setup(
             "mww-autotune=src.tuning.cli:main",
             "mww-cluster-analyze=src.tools.cluster_analyze:main",
             "mww-cluster-apply=src.tools.cluster_apply:main",
+            "mww-mine-hard-negatives=src.tools.mine_hard_negatives:main",
         ],
     },
 )

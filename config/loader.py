@@ -151,6 +151,8 @@ class PerformanceConfig:
     """Performance and resource configuration."""
 
     gpu_only: bool = False
+    spec_augment_backend: str = "tf"
+    async_mining: bool = False
     mixed_precision: bool = True
     num_workers: int = 16
     num_threads_per_worker: int = 2
@@ -213,7 +215,27 @@ class HardNegativeMiningConfig:
     fp_threshold: float = 0.8
     max_samples: int = 5000
     mining_interval_epochs: int = 5
+    # NEW - Collection Phase (during training)
+    collection_mode: str = "log_only"  # "log_only" | "mine_immediately"
+    log_predictions: bool = True
+    log_file: str = "logs/false_predictions.json"
+    # NEW - Mining Phase (post-training)
+    enable_post_training_mining: bool = True
+    mined_subdirectory: str = "mined"
+    min_epochs_before_mining: int = 10
+    top_k_per_epoch: int = 100
+    deduplicate_by_hash: bool = True
 
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        if not 0.0 <= self.fp_threshold <= 1.0:
+            raise ValueError(f"fp_threshold must be between 0.0 and 1.0, got {self.fp_threshold}")
+        if self.max_samples <= 0:
+            raise ValueError(f"max_samples must be positive, got {self.max_samples}")
+        if self.mining_interval_epochs <= 0:
+            raise ValueError(f"mining_interval_epochs must be positive, got {self.mining_interval_epochs}")
+        if self.collection_mode not in ("log_only", "mine_immediately"):
+            raise ValueError(f"collection_mode must be 'log_only' or 'mine_immediately', got {self.collection_mode}")
 
 @dataclass
 class ExportConfig:

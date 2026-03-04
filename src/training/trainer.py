@@ -9,15 +9,17 @@ Step-based training loop with:
 """
 
 import os
+import json
+import time
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 # XLA JIT compilation: let TF decide (don't disable)
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
-import time
-from collections.abc import Iterable
-from pathlib import Path
-from typing import Any
+
 
 import numpy as np
 import tensorflow as tf
@@ -331,6 +333,20 @@ class Trainer:
         # Hard negative mining
         hn_config = config.get("hard_negative_mining", {})
         self.hard_negative_mining_enabled = hn_config.get("enabled", False)
+        self.hn_config = hn_config  # Store config for collection mode access
+        self.hard_negative_miner: HardExampleMiner | None = None
+        self.false_predictions_log: list[dict] = []  # In-memory log for current epoch
+        if self.hard_negative_mining_enabled:
+            self.hard_negative_miner = HardExampleMiner(
+                fp_threshold=hn_config.get("fp_threshold", 0.8),
+                max_samples=hn_config.get("max_samples", 5000),
+                mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
+                output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
+            )
+            collection_mode = hn_config.get("collection_mode", "log_only")
+            self.logger.log_info(f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}")
+        hn_config = config.get("hard_negative_mining", {})
+        self.hard_negative_mining_enabled = hn_config.get("enabled", False)
         self.hard_negative_miner: HardExampleMiner | None = None
         if self.hard_negative_mining_enabled:
             self.hard_negative_miner = HardExampleMiner(
@@ -340,9 +356,11 @@ class Trainer:
                 output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
             )
             self.logger.log_info(f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}")
-
-        if training.get("ema_decay") is not None:
-            self.logger.log_warning("training.ema_decay is configured but EMA is not implemented yet; value will be ignored")
+        # Check for EMA configuration
+        training_cfg = config.get("training", {})
+        ema_decay = training_cfg.get("ema_decay")
+        if ema_decay is not None:
+            self.logger.log_info(f"EMA configured with decay={ema_decay} (will be applied during optimizer creation)")
 
     def _get_cutoffs(self) -> list[float]:
         """Generate cutoff thresholds for evaluation metrics."""
@@ -517,6 +535,12 @@ class Trainer:
             learning_rate=phase_settings["learning_rate"],
             clipnorm=training.get("gradient_clipnorm"),
         )
+
+        # Apply EMA if configured
+        ema_decay = training.get("ema_decay")
+        if ema_decay is not None:
+            optimizer = keras.optimizers.experimental.EMA(optimizer, ema_momentum=float(ema_decay), ema_overwrite_frequency=1)
+            self.logger.log_info(f"EMA enabled with decay={ema_decay}")
 
         model.compile(
             optimizer=optimizer,
@@ -774,6 +798,87 @@ class Trainer:
 
         return metrics
 
+    def _log_false_predictions_to_json(self, epoch: int) -> None:
+        """Log false positive predictions to JSON file for post-training mining.
+
+        This method reads the validation metrics collected during validate(),
+        identifies false positives (negative samples with high scores), and logs
+        them to a JSON file for later mining.
+
+        Args:
+            epoch: Current training epoch
+        """
+        if not self.hard_negative_mining_enabled:
+            return
+
+        hn_config = self.hn_config
+        if not hn_config.get("log_predictions", True):
+            return
+
+        # Get threshold for false positives
+        fp_threshold = hn_config.get("fp_threshold", 0.8)
+
+        # Access validation data from metrics accumulator
+        if not hasattr(self.val_metrics, "all_y_true") or not hasattr(self.val_metrics, "all_y_scores"):
+            self.logger.log_warning("Cannot log false predictions: validation metrics not available")
+            return
+
+        y_true = np.array(self.val_metrics.all_y_true)
+        y_scores = np.array(self.val_metrics.all_y_scores)
+
+        # Find false positives: negative samples (label=0) with high scores
+        false_positive_mask = (y_true == 0) & (y_scores >= fp_threshold)
+        false_positive_indices = np.where(false_positive_mask)[0]
+
+        if len(false_positive_indices) == 0:
+            self.logger.log_info(f"Epoch {epoch}: No false positives found above threshold {fp_threshold}")
+            return
+
+        # Build log entry for this epoch
+        epoch_entry = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "epoch": epoch,
+            "fp_threshold": fp_threshold,
+            "total_val_samples": len(y_true),
+            "false_positive_count": int(len(false_positive_indices)),
+            "false_predictions": [],
+        }
+
+        # Log top false positives by score
+        top_k = hn_config.get("top_k_per_epoch", 100)
+        top_indices = false_positive_indices[np.argsort(y_scores[false_positive_indices])[-top_k:][::-1]]
+
+        for idx in top_indices:
+            epoch_entry["false_predictions"].append({"index": int(idx), "score": float(y_scores[idx]), "true_label": "negative"})
+
+        # Append to log file
+        log_file_path = hn_config.get("log_file", "logs/false_predictions.json")
+        log_file = Path(log_file_path)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Read existing log if it exists
+            if log_file.exists():
+                with open(log_file, "r") as f:
+                    log_data = json.load(f)
+            else:
+                log_data = {
+                    "metadata": {"created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "model_checkpoint": str(self.best_weights_path or "unknown"), "fp_threshold": fp_threshold},
+                    "epochs": {},
+                }
+
+            # Add this epoch's data
+            log_data["epochs"][str(epoch)] = epoch_entry
+
+            # Write updated log
+            with open(log_file, "w") as f:
+                json.dump(log_data, f, indent=2)
+
+            self.logger.log_info(f"Epoch {epoch}: Logged {len(top_indices)} false predictions to {log_file_path}")
+
+        except Exception as e:
+            self.logger.log_warning(f"Failed to write false predictions log: {e}")
+
     def train(
         self,
         train_data_factory,
@@ -940,24 +1045,34 @@ class Trainer:
                         is_best, reason = self._is_best_model(val_metrics, self.target_minimization, self.best_recall)
                         self._save_checkpoint(val_metrics, is_best, reason)
 
+                    # Hard negative mining or logging (based on collection_mode)
                     if self.hard_negative_miner and advanced_due and step % self.eval_advanced_step_interval == 0:
                         approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
                         if approx_epoch > 0 and approx_epoch % self.hard_negative_miner.mining_interval_epochs == 0 and approx_epoch != getattr(self, "_last_mined_epoch", -1):
-                            self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
-                            try:
-                                mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
-                                mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
-                                self.logger.log_mining(
-                                    f"Completed at epoch {approx_epoch}",
-                                    count=mining_result["num_hard_negatives"],
-                                )
+                            collection_mode = self.hn_config.get("collection_mode", "log_only")
+
+                            if collection_mode == "log_only":
+                                # Log false predictions to JSON for post-training mining
+                                self._log_false_predictions_to_json(approx_epoch)
                                 self._last_mined_epoch = approx_epoch
-                            except OSError as e:
-                                self.logger.log_warning(f"Hard negative mining failed (IOError): {e}")
-                            except RuntimeError as e:
-                                self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
-                            except Exception:
-                                raise
+                            elif collection_mode == "mine_immediately":
+                                # Traditional mining: copy files immediately
+                                self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
+                                try:
+                                    mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
+                                    mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
+                                    self.logger.log_mining(
+                                        f"Completed at epoch {approx_epoch}",
+                                        count=mining_result["num_hard_negatives"],
+                                    )
+                                    self._last_mined_epoch = approx_epoch
+                                except OSError as e:
+                                    self.logger.log_warning(f"Hard negative mining failed (IOError): {e}")
+                                except RuntimeError as e:
+                                    self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
+                                except Exception:
+                                    raise
+                        # (duplicate mining block removed)
 
                     # Resume progress bar
                     progress.start()

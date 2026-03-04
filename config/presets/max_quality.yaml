@@ -17,6 +17,7 @@ training:
   training_steps: [40000, 25000, 10000]
   learning_rates: [0.001, 0.0001, 0.00005]
   batch_size: 128
+  split_seed: 42
   eval_step_interval: 1000
   eval_basic_step_interval: 1000
   eval_advanced_step_interval: 5000
@@ -24,18 +25,15 @@ training:
   eval_checkpoints_interval: 5000
   eval_log_every_step: true
   steps_per_epoch: 1000
-  label_smoothing: 0.02
-  gradient_clipnorm: 1.0
-  ema_decay: 0.999
-  positive_class_weight: [1.0, 1.0, 1.0]
-  negative_class_weight: [12.0, 15.0, 18.0]
-  hard_negative_class_weight: [25.0, 30.0, 35.0]
+  positive_class_weight: [10.0, 10.0, 10.0]
+  negative_class_weight: [1.0, 1.0, 1.0]
+  hard_negative_class_weight: [1.5, 2.0, 2.5]
   time_mask_max_size: [8, 6, 4]
   time_mask_count: [2, 2, 1]
   freq_mask_max_size: [4, 3, 2]
   freq_mask_count: [2, 2, 1]
   minimization_metric: "ambient_false_positives_per_hour"
-  target_minimization: 0.1
+  target_minimization: 0.2
   maximization_metric: "average_viable_recall"
   ambient_duration_hours: 28.75
   train_split: 0.8
@@ -43,6 +41,9 @@ training:
   test_split: 0.1
   strict_content_hash_leakage_check: true
   optimizer: "adam"
+  label_smoothing: 0.0
+  gradient_clipnorm: null
+  ema_decay: null
 model:
   architecture: "mixednet"
   first_conv_filters: 32
@@ -60,8 +61,8 @@ augmentation:
   PitchShift: 0.20
   BandStopFilter: 0.20
   AddColorNoise: 0.25
-  Gain: 1.0
   AddBackgroundNoiseFromFile: 0.75
+  Gain: 1.0
   ApplyImpulseResponse: 0.60
   background_min_snr_db: -10.0
   background_max_snr_db: 20.0
@@ -74,7 +75,7 @@ augmentation:
   pitch_shift_min_semitones: -3.0
   pitch_shift_max_semitones: 3.0
   band_stop_min_center_freq: 80.0
-  band_stop_max_center_freq: 6000.0
+  band_stop_max_center_freq: 7000.0
   band_stop_min_bandwidth_fraction: 0.5
   band_stop_max_bandwidth_fraction: 1.99
   gain_min_db: -6.0
@@ -83,33 +84,38 @@ augmentation:
   color_noise_max_snr_db: 20.0
   impulse_paths: ["./dataset/rirs"]
   background_paths: ["./dataset/background"]
-  augmentation_duration_s: 3.2
+#  augmentation_duration_s: 3.2
 performance:
   gpu_only: true
   mixed_precision: true
+  spec_augment_backend: "tf"
+  async_mining: true
   num_workers: 16
   num_threads_per_worker: 2
-  prefetch_factor: 8
+  prefetch_factor: 12
   pin_memory: true
   max_memory_gb: 32
   inter_op_parallelism: 16
   intra_op_parallelism: 16
-  enable_profiling: false
+  enable_profiling: true
   profile_every_n_steps: 100
   profile_output_dir: "./profiles"
   tensorboard_enabled: true
   tensorboard_log_dir: "./logs"
-  prefetch_buffer: null  # null = tf.data.AUTOTUNE (dynamic optimization)
+  prefetch_buffer: 12
+  use_tfdata: true
+  tfdata_cache_dir: ./cache/tfdata
+  mmap_readonly: true
   tfdata_prefetch_to_device: true
   tfdata_prefetch_device: "/GPU:0"
   benchmark_pipeline: false
   log_throughput: true
-  log_throughput_interval: 1000
+  log_throughput_interval: 100
   disable_mmap: false
 speaker_clustering:
   enabled: true
   method: "adaptive"
-  embedding_model: "speechbrain/ecapa-tdnn-voxceleb"
+  embedding_model: "speechbrain/spkrec-ecapa-voxceleb"
   similarity_threshold: 0.68
   n_clusters: null
   leakage_audit_enabled: true
@@ -128,10 +134,20 @@ hard_negative_mining:
   fp_threshold: 0.75
   max_samples: 15000
   mining_interval_epochs: 5
+  # NEW - Collection Phase (during training)
+  collection_mode: "log_only"           # "log_only" | "mine_immediately"
+  log_predictions: true
+  log_file: "logs/false_predictions.json"
+  # NEW - Mining Phase (post-training)
+  enable_post_training_mining: true
+  mined_subdirectory: "mined"
+  min_epochs_before_mining: 10
+  top_k_per_epoch: 100
+  deduplicate_by_hash: true
 export:
   wake_word: "Hey Katya"
   author: "Sarpel GURAY"
-  website: "https://github.com/sarpel/microwakeword-training-platform"
+  website: "https://github.com/sarpel/microwakeword-trainer"
   trained_languages: ["en"]
   quantize: true
   inference_input_type: "int8"
@@ -164,10 +180,15 @@ quality:
   dnsmos_min_ovrl: 2.0
   dnsmos_min_sig: 2.5
   dnsmos_cache_dir: "~/.cache/dnsmos"
-
 evaluation:
   default_threshold: 0.97
   n_thresholds: 101
-  max_fah: 0.5
+  max_fah: 1.0
   warmup_runs: 10
   n_latency_runs: 100
+  target_fah: 0.3
+  target_recall: 0.90
+  gain_window_steps: 1000
+  plateau_window_evals: 5
+  plateau_min_delta: 0.001
+  plateau_slope_eps: 0.0001

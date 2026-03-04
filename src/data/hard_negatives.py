@@ -6,7 +6,15 @@ Provides:
 - integrate_hard_negative_mining: Helper to add mining to training loop
 """
 
+import hashlib
 import logging
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, List, Optional
+
+import numpy as np
+
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -188,7 +196,104 @@ class HardNegativeMiner:
 
         return float(score)
 
-    def _copy_to_hard_negatives(self, audio_path: Path, score: float) -> Path:
+    def _compute_file_hash(self, file_path: Path, chunk_size: int = 8192) -> str:
+        """Compute MD5 hash of a file for deduplication.
+
+        Args:
+            file_path: Path to the file
+            chunk_size: Size of chunks to read
+
+        Returns:
+            Hex digest of file hash
+        """
+        hash_md5 = hashlib.md5()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(chunk_size), b''):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+
+    def _get_existing_hashes(self, directory: Path) -> set[str]:
+        """Get hashes of all existing .wav files in directory.
+
+        Args:
+            directory: Directory to scan
+
+        Returns:
+            Set of file hashes
+        """
+        if not directory.exists():
+            return set()
+
+        existing_hashes = set()
+        for wav_file in directory.glob('*.wav'):
+            try:
+                file_hash = self._compute_file_hash(wav_file)
+                existing_hashes.add(file_hash)
+            except Exception as e:
+                logger.warning(f'Failed to hash {wav_file}: {e}')
+        return existing_hashes
+
+    def _copy_to_hard_negatives(
+        self,
+        audio_path: Path,
+        score: float,
+        use_mined_subdir: bool = False,
+    ) -> Path:
+        """Copy audio file to hard negative directory.
+
+        Args:
+            audio_path: Source audio path
+            score: Model score (used in filename)
+            use_mined_subdir: If True, copy to mined/ subdirectory
+
+        Returns:
+            Destination path
+        """
+        import uuid
+
+        # Determine destination directory
+        if use_mined_subdir and self.config.mined_subdirectory:
+            dest_dir = self.hard_negative_dir / self.config.mined_subdirectory
+            dest_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            dest_dir = self.hard_negative_dir
+
+        # Check for duplicates if enabled
+        if self.config.deduplicate_by_hash:
+            file_hash = self._compute_file_hash(audio_path)
+
+            # Check against existing files in destination
+            existing_hashes = self._get_existing_hashes(dest_dir)
+            if file_hash in existing_hashes:
+                logger.debug(f'Skipping duplicate (hash match): {audio_path.name}')
+                # Return path to existing file
+                return dest_dir  # Caller will handle this
+
+            # Also check user subdirectory if copying to mined
+            if use_mined_subdir:
+                user_dir = self.hard_negative_dir / 'user'
+                if user_dir.exists():
+                    user_hashes = self._get_existing_hashes(user_dir)
+                    if file_hash in user_hashes:
+                        logger.debug(f'Skipping duplicate of user file: {audio_path.name}')
+                        return dest_dir
+
+        # Create filename with score and unique suffix to prevent collisions
+        base_name = audio_path.stem
+        unique_suffix = uuid.uuid4().hex[:8]
+        new_name = f'{base_name}_score{score:.3f}_{unique_suffix}.wav'
+        dest_path = dest_dir / new_name
+
+        # Handle potential collision (should be rare with uuid)
+        while dest_path.exists():
+            unique_suffix = uuid.uuid4().hex[:8]
+            new_name = f'{base_name}_score{score:.3f}_{unique_suffix}.wav'
+            dest_path = dest_dir / new_name
+
+        # Copy file
+        shutil.copy2(audio_path, dest_path)
+
+        return dest_path
         """Copy audio file to hard negative directory.
 
         Args:

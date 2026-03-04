@@ -277,3 +277,74 @@ Before any change touching constants, shapes, dtypes, or timing:
 - Do NOT analyze the codebase before acting.
 - Do NOT think out loud.
 - WRITE THE CODE. NOTHING ELSE.
+
+
+## Configuration System Rules
+
+### IMPORTANT: When Adding New Config Variables
+
+When implementing a new configuration variable in the codebase, you MUST add it to ALL THREE preset files:
+
+1. `config/presets/fast_test.yaml`
+2. `config/presets/standard.yaml`
+3. `config/presets/max_quality.yaml`
+
+**Do NOT only add the config to the source code (config/loader.py).**
+
+### Why This Matters
+
+The preset files are the primary way users interact with the configuration system. If a config is only in the loader but not in the presets:
+- Users won't know the config exists
+- The config will use defaults which may not be appropriate
+- Documentation will be incomplete
+
+### Checklist for New Config Variables
+
+When adding a new config field to `config/loader.py`:
+
+- [ ] Add the field to the appropriate dataclass in `config/loader.py`
+- [ ] Add the field to `config/presets/fast_test.yaml` with appropriate default
+- [ ] Add the field to `config/presets/standard.yaml` with appropriate default
+- [ ] Add the field to `config/presets/max_quality.yaml` with appropriate default
+- [ ] Update `docs/GUIDE.md` with documentation for the new field
+- [ ] Update the relevant AGENTS.md file with notes about the config
+
+### Example
+
+If adding `ema_decay` to `TrainingConfig`:
+
+**In config/loader.py:**
+```python
+@dataclass
+class TrainingConfig:
+    # ... existing fields ...
+    ema_decay: float | None = None  # NEW
+```
+
+**In ALL THREE preset files:**
+```yaml
+training:
+  # ... existing fields ...
+  ema_decay: null  # or appropriate default
+```
+
+### Critical Paths
+
+Configuration Files (MUST STAY SYNCED):
+- `config/loader.py` - Source of truth for dataclass definitions
+- `config/presets/fast_test.yaml` - Quick testing preset
+- `config/presets/standard.yaml` - Production training preset
+- `config/presets/max_quality.yaml` - Maximum quality preset
+
+### Anti-Patterns
+
+- **DON'T** add config to loader.py without adding to preset files
+- **DON'T** add config to only one preset file
+- **DON'T** use different default values across presets without good reason
+
+### Notes for Agents
+
+- Always check all three preset files when modifying configs
+- The presets should have consistent structure (same sections/keys)
+- Only values should differ between presets, not structure
+

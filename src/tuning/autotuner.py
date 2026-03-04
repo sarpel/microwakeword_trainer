@@ -453,6 +453,70 @@ class AutoTuner:
 
         return model
 
+    def _load_mined_hard_negatives(self, hard_negative_dir: Path | None = None) -> list[Path]:
+        """Load mined hard negatives from the mined subdirectory.
+
+        Args:
+            hard_negative_dir: Base hard negative directory (defaults to config value)
+
+        Returns:
+            List of paths to mined hard negative files
+        """
+        paths_config = self.current_config.get('paths', {})
+        if hard_negative_dir is None:
+            hard_negative_dir = Path(paths_config.get('hard_negative_dir', './dataset/hard_negative'))
+
+        # Check for mined subdirectory
+        mined_dir = hard_negative_dir / 'mined'
+        if not mined_dir.exists():
+            # Try getting from config
+            hn_config = self.current_config.get('hard_negative_mining', {})
+            mined_subdir = hn_config.get('mined_subdirectory', 'mined')
+            mined_dir = hard_negative_dir / mined_subdir
+
+        if not mined_dir.exists():
+            logger.debug(f'Mined directory not found: {mined_dir}')
+            return []
+
+        # Get all wav files in mined directory
+        wav_files = list(mined_dir.rglob('*.wav'))
+        logger.info(f'Loaded {len(wav_files)} mined hard negatives from {mined_dir}')
+        return wav_files
+
+    def _integrate_mined_hard_negatives(
+        self,
+        dataset: Any,
+        mined_files: list[Path],
+    ) -> Any:
+        """Integrate mined hard negatives into the dataset.
+
+        Args:
+            dataset: The dataset to integrate into
+            mined_files: List of mined hard negative file paths
+
+        Returns:
+            Updated dataset
+        """
+        if not mined_files:
+            return dataset
+
+        # Update config to include mined files
+        hn_config = self.current_config.get('hard_negative_mining', {})
+        if hn_config.get('enable_post_training_mining', True):
+            # Increase hard negative weight to emphasize these examples
+            training = self.current_config.get('training', {})
+            hn_weights = training.get('hard_negative_class_weight', [40.0])
+            if isinstance(hn_weights, list):
+                # Increase the last phase weight
+                hn_weights[-1] = min(hn_weights[-1] * 1.5, 80.0)  # Cap at 80
+            else:
+                self.current_config['training']['hard_negative_class_weight'] = [
+                    hn_weights * 1.5 if isinstance(hn_weights, (int, float)) else 40.0
+                ]
+
+            logger.info(f'Integrated {len(mined_files)} mined hard negatives with increased weight')
+
+        return dataset
     def _run_fine_tuning_iteration(
         self,
         strategy: str,
@@ -477,6 +541,12 @@ class AutoTuner:
             if len(hard_features) > 0:
                 self.console.print(f"[yellow]⛏️  Mined {len(hard_features)} hard negatives[/]")
 
+        # Load and integrate mined hard negatives if available
+        if strategy == "fah_reduction":
+            mined_files = self._load_mined_hard_negatives()
+            if mined_files:
+                dataset = self._integrate_mined_hard_negatives(dataset, mined_files)
+                self.console.print(f"[yellow]📁 Loaded {len(mined_files)} pre-mined hard negatives[/]")
         # Short fine-tuning run
         hardware_cfg = self.current_config.get("hardware", {})
         clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)

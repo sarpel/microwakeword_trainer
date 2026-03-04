@@ -43,9 +43,9 @@ training:
   steps_per_epoch: 1000  # Approximate steps per epoch for mining calculations
 
   # Class weights - hard negatives get higher weight to reduce false accepts
-  positive_class_weight: [1.0, 1.0]
-  negative_class_weight: [20.0, 20.0]
-  hard_negative_class_weight: [40.0, 40.0]
+  positive_class_weight: [10.0, 10.0]
+  negative_class_weight: [1.0, 1.0]
+  hard_negative_class_weight: [1.5, 2.0]
 
   # SpecAugment disabled (using full audio augmentation)
   time_mask_max_size: [0, 0]
@@ -137,6 +137,8 @@ performance:
   # GPU if available, otherwise use CPU with good resources
   gpu_only: false
   mixed_precision: true
+  spec_augment_backend: "tf"
+  async_mining: false
 
   # Standard CPU resources
   num_workers: 12
@@ -199,6 +201,16 @@ hard_negative_mining:
   fp_threshold: 0.8
   max_samples: 5000
   mining_interval_epochs: 5
+  # NEW - Collection Phase (during training)
+  collection_mode: "log_only"           # "log_only" | "mine_immediately"
+  log_predictions: true
+  log_file: "logs/false_predictions.json"
+  # NEW - Mining Phase (post-training)
+  enable_post_training_mining: true
+  mined_subdirectory: "mined"
+  min_epochs_before_mining: 10
+  top_k_per_epoch: 100
+  deduplicate_by_hash: true
 
 # ─────────────────────────────────────────────────────────────────
 # EXPORT SETTINGS
@@ -275,3 +287,9 @@ evaluation:
   max_fah: 10.0               # Maximum FAH for average viable recall
   warmup_runs: 10             # Warmup runs for latency measurement
   n_latency_runs: 100         # Number of runs for latency measurement
+  target_fah: 0.5
+  target_recall: 0.95
+  gain_window_steps: 1000
+  plateau_window_evals: 5
+  plateau_min_delta: 0.001
+  plateau_slope_eps: 0.0001
