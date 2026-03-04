@@ -8,8 +8,8 @@ Step-based training loop with:
 - Integration with TrainingProfiler
 """
 
-import os
 import json
+import os
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -71,6 +71,138 @@ class EvaluationMetrics:
         self.fn_at_threshold: dict[float, int] = dict.fromkeys(self.cutoffs, 0)
 
     def update(self, y_true: np.ndarray, y_scores: np.ndarray) -> None:
+        """Update metrics with batch predictions.
+
+        Args:
+            y_true: Ground truth labels (0 or 1)
+            y_scores: Prediction scores (0 to 1)
+        """
+        # Flatten arrays to prevent broadcasting issues
+        y_true_flat = np.ravel(y_true)
+        y_scores_flat = np.ravel(y_scores)
+
+        self.all_y_true.extend(y_true_flat.tolist())
+        self.all_y_scores.extend(y_scores_flat.tolist())
+
+        # Vectorized update of per-threshold metrics using numpy broadcasting
+        cutoffs_arr = np.array(self.cutoffs).reshape(-1, 1)  # [101, 1]
+        y_true_all = y_true_flat.reshape(1, -1)  # [1, N]
+        y_scores_all = y_scores_flat.reshape(1, -1)  # [1, N]
+
+        # Broadcast: [101, 1] >= [1, N] -> [101, N]
+        y_pred_all = (y_scores_all >= cutoffs_arr).astype(np.int32)
+
+        # Compute all metrics at once along axis=1 (samples)
+        tp_all = np.sum((y_pred_all == 1) & (y_true_all == 1), axis=1)
+        fp_all = np.sum((y_pred_all == 1) & (y_true_all == 0), axis=1)
+        tn_all = np.sum((y_pred_all == 0) & (y_true_all == 0), axis=1)
+        fn_all = np.sum((y_pred_all == 0) & (y_true_all == 1), axis=1)
+
+        # Update storage dicts
+        for i, cutoff in enumerate(self.cutoffs):
+            self.tp_at_threshold[cutoff] += int(tp_all[i])
+            self.fp_at_threshold[cutoff] += int(fp_all[i])
+            self.tn_at_threshold[cutoff] += int(tn_all[i])
+            self.fn_at_threshold[cutoff] += int(fn_all[i])
+        """Update metrics with batch predictions.
+
+        Args:
+            y_true: Ground truth labels (0 or 1)
+            y_scores: Prediction scores (0 to 1)
+        """
+        # Flatten arrays to prevent broadcasting issues
+        y_true_flat = np.ravel(y_true)
+        y_scores_flat = np.ravel(y_scores)
+
+        self.all_y_true.extend(y_true_flat.tolist())
+        self.all_y_scores.extend(y_scores_flat.tolist())
+
+        # Vectorized update of per-threshold metrics using numpy broadcasting
+        cutoffs_arr = np.array(self.cutoffs).reshape(-1, 1)  # [101, 1]
+        y_true_all = y_true_flat.reshape(1, -1)  # [1, N]
+        y_scores_all = y_scores_flat.reshape(1, -1)  # [1, N]
+
+        # Broadcast: [101, 1] >= [1, N] -> [101, N]
+        y_pred_all = (y_scores_all >= cutoffs_arr).astype(np.int32)
+
+        # Compute all metrics at once along axis=1 (samples)
+        tp_all = np.sum((y_pred_all == 1) & (y_true_all == 1), axis=1)
+        fp_all = np.sum((y_pred_all == 1) & (y_true_all == 0), axis=1)
+        tn_all = np.sum((y_pred_all == 0) & (y_true_all == 0), axis=1)
+        fn_all = np.sum((y_pred_all == 0) & (y_true_all == 1), axis=1)
+
+        # Update storage dicts
+        for i, cutoff in enumerate(self.cutoffs):
+            self.tp_at_threshold[cutoff] += int(tp_all[i])
+            self.fp_at_threshold[cutoff] += int(fp_all[i])
+            self.tn_at_threshold[cutoff] += int(tn_all[i])
+            self.fn_at_threshold[cutoff] += int(fn_all[i])
+        """Update metrics with batch predictions.
+
+        Args:
+            y_true: Ground truth labels (0 or 1)
+            y_scores: Prediction scores (0 to 1)
+        """
+        # Flatten arrays to prevent broadcasting issues
+        y_true_flat = np.ravel(y_true)
+        y_scores_flat = np.ravel(y_scores)
+
+        self.all_y_true.extend(y_true_flat.tolist())
+        self.all_y_scores.extend(y_scores_flat.tolist())
+
+        # Vectorized update of per-threshold metrics using numpy broadcasting
+        cutoffs_arr = np.array(self.cutoffs).reshape(-1, 1)  # [101, 1]
+        y_true_all = y_true_flat.reshape(1, -1)  # [1, N]
+        y_scores_all = y_scores_flat.reshape(1, -1)  # [1, N]
+
+        # Broadcast: [101, 1] >= [1, N] -> [101, N]
+        y_pred_all = (y_scores_all >= cutoffs_arr).astype(np.int32)
+
+        # Compute all metrics at once along axis=1 (samples)
+        tp_all = np.sum((y_pred_all == 1) & (y_true_all == 1), axis=1)
+        fp_all = np.sum((y_pred_all == 1) & (y_true_all == 0), axis=1)
+        tn_all = np.sum((y_pred_all == 0) & (y_true_all == 0), axis=1)
+        fn_all = np.sum((y_pred_all == 0) & (y_true_all == 1), axis=1)
+
+        # Update storage dicts
+        for i, cutoff in enumerate(self.cutoffs):
+            self.tp_at_threshold[cutoff] += int(tp_all[i])
+            self.fp_at_threshold[cutoff] += int(fp_all[i])
+            self.tn_at_threshold[cutoff] += int(tn_all[i])
+            self.fn_at_threshold[cutoff] += int(fn_all[i])
+        """Update metrics with batch predictions.
+
+        Args:
+            y_true: Ground truth labels (0 or 1)
+            y_scores: Prediction scores (0 to 1)
+        """
+        # Flatten arrays to prevent broadcasting issues
+        y_true_flat = np.ravel(y_true)
+        y_scores_flat = np.ravel(y_scores)
+
+        self.all_y_true.extend(y_true_flat.tolist())
+        self.all_y_scores.extend(y_scores_flat.tolist())
+
+        # Vectorized update of per-threshold metrics using numpy broadcasting
+        cutoffs_arr = np.array(self.cutoffs).reshape(-1, 1)  # [101, 1]
+        y_true_all = y_true_flat.reshape(1, -1)  # [1, N]
+        y_scores_all = y_scores_flat.reshape(1, -1)  # [1, N]
+
+        # Broadcast: [101, 1] >= [1, N] -> [101, N]
+        y_pred_all = (y_scores_all >= cutoffs_arr).astype(np.int32)
+
+        # Compute all metrics at once along axis=1 (samples)
+        tp_all = np.sum((y_pred_all == 1) & (y_true_all == 1), axis=1)
+        fp_all = np.sum((y_pred_all == 1) & (y_true_all == 0), axis=1)
+        tn_all = np.sum((y_pred_all == 0) & (y_true_all == 0), axis=1)
+        fn_all = np.sum((y_pred_all == 0) & (y_true_all == 1), axis=1)
+
+        # Update storage dicts
+        for i, cutoff in enumerate(self.cutoffs):
+            self.tp_at_threshold[cutoff] += int(tp_all[i])
+            self.fp_at_threshold[cutoff] += int(fp_all[i])
+            self.tn_at_threshold[cutoff] += int(tn_all[i])
+            self.fn_at_threshold[cutoff] += int(fn_all[i])
         """Update metrics with batch predictions.
 
         Args:
@@ -187,10 +319,10 @@ class Trainer:
         self._last_advanced_eval_step = 0
         self.steps_per_epoch = training.get("steps_per_epoch", 1000)  # For mining epoch calculation
 
-        # Class weights (positive=1.0, negative=20.0, hard_negative=40.0 typical for wake word)
-        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
-        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
-        self.hard_negative_weights = training.get("hard_negative_class_weight", [40.0, 40.0])
+        # Class weights (positive upweighted to compensate for class imbalance)
+        self.positive_weights = training.get("positive_class_weight", [10.0, 10.0])
+        self.negative_weights = training.get("negative_class_weight", [1.0, 1.0])
+        self.hard_negative_weights = training.get("hard_negative_class_weight", [1.5, 2.0])
 
         # Ensure all per-phase lists have the same length as training_steps_list
         n_phases = len(self.training_steps_list)
@@ -204,9 +336,9 @@ class Trainer:
             return lst + [lst[-1]] * (n_phases - len(lst))
 
         self.learning_rates = _pad_or_trim(self.learning_rates, 0.0001)
-        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
-        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
-        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
+        self.positive_weights = _pad_or_trim(self.positive_weights, 10.0)
+        self.negative_weights = _pad_or_trim(self.negative_weights, 1.0)
+        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 2.0)
 
         # SpecAugment configuration (per-phase)
         self.time_mask_max_size = _pad_or_trim(training.get("time_mask_max_size", [0, 0]), 0)
@@ -755,6 +887,9 @@ class Trainer:
         if not isinstance(iterator, Iterable):
             raise ValueError("Trainer.validate() expected an iterable or generator from data_generator")
 
+        batch_count = 0
+        score_samples: list[float] = []
+        score_sample_limit = 2000
         for batch in iterator:
             if not isinstance(batch, tuple) or len(batch) != 3:
                 raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
@@ -771,8 +906,28 @@ class Trainer:
 
             # Update metrics
             self.val_metrics.update(ground_truth, scores)
+            batch_count += 1
+            if len(score_samples) < score_sample_limit:
+                needed = score_sample_limit - len(score_samples)
+                score_samples.extend(scores[:needed].tolist())
 
         metrics = self.val_metrics.compute_metrics()
+        if self.val_metrics.all_y_true:
+            y_true = np.array(self.val_metrics.all_y_true)
+            pos_count = int(np.sum(y_true == 1))
+            neg_count = int(np.sum(y_true == 0))
+            total_count = int(y_true.shape[0])
+            metrics["val_positive_count"] = float(pos_count)
+            metrics["val_negative_count"] = float(neg_count)
+            metrics["val_total_count"] = float(total_count)
+        if score_samples:
+            scores_arr = np.array(score_samples, dtype=np.float32)
+            metrics["score_min"] = float(np.min(scores_arr))
+            metrics["score_p05"] = float(np.percentile(scores_arr, 5))
+            metrics["score_p50"] = float(np.percentile(scores_arr, 50))
+            metrics["score_p95"] = float(np.percentile(scores_arr, 95))
+            metrics["score_max"] = float(np.max(scores_arr))
+            metrics["score_sample_count"] = float(scores_arr.shape[0])
 
         if self.ambient_duration_hours > 0 and self.eval_target_fah > 0:
             calc = MetricsCalculator(
