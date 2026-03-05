@@ -239,7 +239,7 @@ class TFProfiler:
 
     def step(self) -> None:
         """Call this each training step to manage tracing based on warmup/active steps."""
-        if not self._start_step:
+        if self._start_step is None:
             return
 
         self._step_counter += 1

@@ -1040,6 +1040,7 @@ class Trainer:
         mining_data_factory=None,
         test_data_factory=None,
         input_shape: tuple[int, ...] | None = None,
+        weights_path: str | None = None,
     ) -> tf.keras.Model:
         """Main training loop.
 
@@ -1048,6 +1049,7 @@ class Trainer:
             val_data_factory: Factory for validation dataset
             mining_data_factory: Optional factory for mining dataset
             test_data_factory: Optional factory for test dataset
+            weights_path: Optional path to model weights to load after building model (for fine-tuning)
         """
         input_shape = self.input_shape if input_shape is None else input_shape
 
@@ -1055,6 +1057,12 @@ class Trainer:
         self.model = self._build_model(input_shape)
         # Build model weights before summary so params are visible
         _ = self.model(tf.zeros((1, *input_shape), dtype=tf.float32), training=False)
+
+        # Load pre-trained weights if provided (for fine-tuning)
+        if weights_path is not None:
+            self.logger.log_info(f"Loading weights from: {weights_path}")
+            self.model.load_weights(weights_path)
+
         self.model.summary(print_fn=self.logger.console.print)
 
         # Setup cProfile profiler

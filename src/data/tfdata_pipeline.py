@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import os
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterator
@@ -67,6 +66,9 @@ class OptimizedDataPipeline:
 
         training_cfg = config.get("training", {})
         self.training_steps = training_cfg.get("training_steps", [20000])
+        # Guard against empty training_steps which would break downstream processing
+        if not self.training_steps:
+            raise ValueError("training_steps cannot be empty. Provide at least one training phase.")
         self.phase_boundaries: list[int] = []
         cumulative = 0
         for steps in self.training_steps:
@@ -517,8 +519,8 @@ def benchmark_pipeline(
             x = batch[0]
             y = batch[1]
         else:
-            x = batch
-            y = batch
+            logger.warning(f"Skipping invalid batch at index {_i}: expected tuple/list with " f"at least 2 elements (x, y), got {type(batch).__name__} " f"with shape={getattr(batch, 'shape', 'N/A')}")
+            continue
         # Simulate training step
         _ = tf.reduce_sum(x) + tf.reduce_sum(y)
     ds_time = time.time() - start

@@ -536,9 +536,8 @@ class AutoTuner:
         # Create trainer with micro-config
         trainer = Trainer(self.current_config)
 
-        # Load current model
+        # Load current model (for mining hard negatives)
         model = self._load_model()
-        trainer.model = model
 
         # Apply strategy
         if strategy == "fah_reduction":
@@ -562,11 +561,12 @@ class AutoTuner:
         max_time_frames = int(clip_duration_ms / window_step_ms)
         input_shape = (max_time_frames, mel_bins)
 
-        # Fine-tune for a few steps
+        # Fine-tune for a few steps (pass weights_path to load checkpoint after building model)
         tuned_model = trainer.train(
             train_data_factory=dataset.train_generator_factory(max_time_frames=max_time_frames),
             val_data_factory=dataset.val_generator_factory(max_time_frames=max_time_frames),
             input_shape=input_shape,
+            weights_path=self.checkpoint_path,
         )
 
         return tuned_model, self.current_config
@@ -676,6 +676,8 @@ class AutoTuner:
                     # Save best checkpoint
                     checkpoint_path = self._save_checkpoint(model, f"fah{self.state.current_fah:.3f}_rec{self.state.current_recall:.3f}")
                     self.state.best_checkpoint_path = checkpoint_path
+                    # Update checkpoint_path so next iteration loads from this tuned checkpoint
+                    self.checkpoint_path = checkpoint_path
                     self.console.print(f"[green]✅ Improvement! Saved: {checkpoint_path}[/]")
                 else:
                     self.no_improvement_count += 1
