@@ -128,12 +128,12 @@ def step_export(checkpoint: Path, config: str, output_dir: Path, model_name: str
 
     tflite_path = output_dir / f"{model_name}.tflite"
     if not tflite_path.exists():
-        # Try any .tflite in output dir
+        # Try any .tflite in output dir, pick the most recent
         candidates = list(output_dir.glob("*.tflite"))
         if not candidates:
             print(f"✗ No .tflite found in {output_dir}")
             sys.exit(1)
-        tflite_path = candidates[0]
+        tflite_path = max(candidates, key=lambda p: p.stat().st_mtime)
     return tflite_path
 
 
@@ -235,8 +235,18 @@ def step_evaluate(tflite_path: Path, config: str, override: str | None) -> dict:
         return {}
 
 
-def step_gate(metrics: dict, target_fah: float, target_recall: float) -> bool:
-    """Quality gate.  Returns True if model meets targets, False otherwise."""
+def step_gate(metrics: dict, target_fah: float, target_recall: float, strict_gate: bool = False) -> bool:
+    """Quality gate.  Returns True if model meets targets, False otherwise.
+
+    Args:
+        metrics: Dictionary of evaluation metrics
+        target_fah: Maximum acceptable FAH
+        target_recall: Minimum acceptable recall
+        strict_gate: If True, fail the gate when metrics are missing
+
+    Returns:
+        True if gate passed, False otherwise
+    """
     if not metrics:
         print("  ⚠ No metrics available — quality gate skipped (model will be promoted)")
         return True
@@ -249,6 +259,9 @@ def step_gate(metrics: dict, target_fah: float, target_recall: float) -> bool:
     print(f"    Recall : {recall}  (target ≥ {target_recall})")
 
     if fah is None or recall is None:
+        if strict_gate:
+            print("  ✗ Quality gate FAILED (strict mode: missing metrics)")
+            return False
         print("  ⚠ Missing FAH or recall metric — quality gate skipped")
         return True
 
@@ -299,6 +312,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-fah", type=float, default=0.5, help="Max FAH for quality gate (default: 0.5)")
     parser.add_argument("--target-recall", type=float, default=0.90, help="Min recall for quality gate (default: 0.90)")
     parser.add_argument("--data-dir", type=str, default=None, help="Data directory for representative dataset during export")
+    parser.add_argument("--strict-gate", action="store_true", help="Fail quality gate when metrics are missing (default: skip gate)")
     parser.add_argument("--skip-train", action="store_true", help="Skip training (use --checkpoint instead)")
     parser.add_argument("--checkpoint", type=str, default=None, help="Existing checkpoint to use (requires --skip-train)")
     parser.add_argument("--autotune", action="store_true", help="Run mww-autotune after training")
@@ -359,7 +373,7 @@ def main() -> None:  # noqa: C901
     metrics = step_evaluate(tflite_path, args.config, args.override)
 
     # ── 7. Quality gate ────────────────────────────────────────────────────
-    gate_passed = step_gate(metrics, args.target_fah, args.target_recall)
+    gate_passed = step_gate(metrics, args.target_fah, args.target_recall, strict_gate=args.strict_gate)
 
     elapsed = time.time() - start_time
     print(f"\n  Total pipeline time: {elapsed / 60:.1f} min")

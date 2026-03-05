@@ -108,13 +108,14 @@ def batch_spec_augment_tf(
     # Apply frequency masks - different mask for each sample in batch
     for i in range(freq_mask_count):
         # Per-sample random mask sizes (generate floats, scale to ints)
-        seed1 = tf.constant([seed if seed is not None else i, i], dtype=tf.int32) if seed is not None else counter + i
-        freq_mask_sizes_float = tf.random.stateless_uniform([batch_size], seed=seed1)
+        seed_base = seed if seed is not None else 0
+        seed1 = tf.stack([tf.cast(seed_base + i, tf.int32), tf.cast(i, tf.int32)])
+        freq_mask_sizes_float = tf.random.stateless_uniform([batch_size], seed=seed1)  # type: ignore[arg-type]
         freq_mask_sizes = tf.cast(freq_mask_sizes_float * tf.cast(freq_mask_max_size + 1, tf.float32), tf.int32)
 
         freq_mask_start_highs = tf.maximum(1, num_freq_bins - freq_mask_sizes + 1)
-        seed2 = tf.constant([seed if seed is not None else i + 1000, i], dtype=tf.int32) if seed is not None else counter + i + 1000
-        freq_mask_starts_float = tf.random.stateless_uniform([batch_size], seed=seed2)
+        seed2 = tf.stack([tf.cast(seed_base + i + 1000, tf.int32), tf.cast(i, tf.int32)])
+        freq_mask_starts_float = tf.random.stateless_uniform([batch_size], seed=seed2)  # type: ignore[arg-type]
         freq_mask_starts = tf.cast(freq_mask_starts_float * tf.cast(freq_mask_start_highs, tf.float32), tf.int32)
 
         # Build masks for each sample and apply
@@ -138,13 +139,14 @@ def batch_spec_augment_tf(
     # Apply time masks - different mask for each sample in batch
     for i in range(time_mask_count):
         # Per-sample random mask sizes (generate floats, scale to ints)
-        seed1 = tf.constant([seed if seed is not None else i + 2000, 0], dtype=tf.int32) if seed is not None else counter + i + 2000
-        time_mask_sizes_float = tf.random.stateless_uniform([batch_size], seed=seed1)
+        seed_base = seed if seed is not None else 0
+        seed1 = tf.stack([tf.cast(seed_base + i + 2000, tf.int32), tf.cast(0, tf.int32)])
+        time_mask_sizes_float = tf.random.stateless_uniform([batch_size], seed=seed1)  # type: ignore[arg-type]
         time_mask_sizes = tf.cast(time_mask_sizes_float * tf.cast(time_mask_max_size + 1, tf.float32), tf.int32)
 
         time_mask_start_highs = tf.maximum(1, num_time_frames - time_mask_sizes + 1)
-        seed2 = tf.constant([seed if seed is not None else i + 3000, 0], dtype=tf.int32) if seed is not None else counter + i + 3000
-        time_mask_starts_float = tf.random.stateless_uniform([batch_size], seed=seed2)
+        seed2 = tf.stack([tf.cast(seed_base + i + 3000, tf.int32), tf.cast(0, tf.int32)])
+        time_mask_starts_float = tf.random.stateless_uniform([batch_size], seed=seed2)  # type: ignore[arg-type]
         time_mask_starts = tf.cast(time_mask_starts_float * tf.cast(time_mask_start_highs, tf.float32), tf.int32)
 
         # Build masks for each sample and apply

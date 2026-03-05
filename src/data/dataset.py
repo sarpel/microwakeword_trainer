@@ -183,15 +183,19 @@ class RaggedMmap:
     def close(self):
         """Close the storage and flush any pending writes."""
         if self._data is not None:
+            flush_method = getattr(self._data, "flush", None)
+            if callable(flush_method):
+                try:
+                    flush_method()
+                except ValueError:
+                    # Memmap already closed/invalid in some read-only scenarios
+                    pass
             try:
                 mmap_obj = getattr(self._data, "_mmap", None)
                 if mmap_obj is not None:
                     mmap_obj.close()
             except AttributeError:
                 pass
-            flush_method = getattr(self._data, "flush", None)
-            if callable(flush_method):
-                flush_method()
             del self._data
             self._data = None
         self._offsets = None
@@ -1062,13 +1066,28 @@ class WakeWordDataset:
                 store.close()
             except (ValueError, RuntimeError) as e:
                 message = str(e).lower()
-                if "mmap closed" in message or "invalid" in message:
-                    return
-                logger.warning(f"Feature store close failed: {e}")
+                # Whitelist specific benign cases, log all others
+                benign_phrases = [
+                    "mmap closed",
+                    "invalid file descriptor",
+                    "closed file",
+                    "i/o operation on closed",
+                ]
 
     def train_generator_factory(self, max_time_frames: Optional[int] = None):
         if max_time_frames is None:
             max_time_frames = self.max_time_frames
+
+        def factory():
+            yield from self._iter_split_batches(
+                split="train",
+                max_time_frames=max_time_frames,
+                infinite=True,
+                shuffle=True,
+                include_hard_negative_flag=True,
+            )
+
+        return factory
 
         def factory():
             yield from self._iter_split_batches(

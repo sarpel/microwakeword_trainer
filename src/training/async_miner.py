@@ -58,9 +58,14 @@ class AsyncHardExampleMiner:
             data_generator: Generator yielding (features, labels, weights) tuples
             epoch: Current training epoch
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         try:
             result = self._miner.mine_from_dataset(model, data_generator, epoch)
-        except Exception:
+        except Exception as e:
+            logger.exception(f"Mining failed at epoch {epoch}: {e}")
             result = None
         finally:
             with self._lock:
@@ -80,16 +85,33 @@ class AsyncHardExampleMiner:
             data_generator: Generator yielding (features, labels, weights) tuples
             epoch: Current training epoch
         """
-        # Reset result and claim lock before cloning
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Check if already running before cloning
         with self._lock:
             if self._is_running:
                 raise RuntimeError("Mining is already in progress")
             self._result = None
-            self._is_running = True
 
         # Clone model to avoid sharing training model with thread
-        cloned_model = tf.keras.models.clone_model(model)
-        cloned_model.set_weights(model.get_weights())
+        # Do this outside the lock to prevent blocking training
+        try:
+            cloned_model = tf.keras.models.clone_model(model)
+            cloned_model.set_weights(model.get_weights())
+        except Exception as e:
+            logger.exception(f"Model cloning failed: {e}")
+            self._result = None
+            # Don't set _is_running, the thread won't start
+            return
+
+        # Claim lock after successful cloning, then start thread
+        with self._lock:
+            if self._is_running:
+                # Someone else started mining while we were cloning
+                return
+            self._is_running = True
 
         # Start background thread
         self._thread = threading.Thread(

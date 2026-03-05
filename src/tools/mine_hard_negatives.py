@@ -129,13 +129,13 @@ def collect_false_predictions(
 
 def deduplicate_by_hash(
     predictions: list[dict],
-    dataset_dir: Path,
+    dataset_dir: Path = Path("."),
 ) -> tuple[list[dict], dict[str, str]]:
     """Deduplicate predictions by file hash.
 
     Args:
         predictions: List of prediction entries
-        dataset_dir: Base directory for dataset (to resolve relative paths)
+        dataset_dir: Base directory for dataset (to resolve relative paths, unused currently)
 
     Returns:
         Tuple of (unique_predictions, hash_to_path mapping)
@@ -368,9 +368,14 @@ Examples:
 
         # Deduplicate if requested
         if args.deduplicate:
-            console.print("[bold red]Deduplication is disabled until prediction logs include file paths[/bold red]")
-            console.print("[yellow]Ignoring --deduplicate flag. Regenerate logs with paths to enable deduplication.[/yellow]")
-            unique_predictions = predictions
+            console.print("[bold blue]Deduplicating predictions by file hash...[/bold blue]")
+            try:
+                unique_predictions, _ = deduplicate_by_hash(predictions)
+                console.print(f"[green]Deduplicated {len(predictions)} -> {len(unique_predictions)} predictions[/green]")
+            except ValueError as e:
+                console.print(f"[red]Deduplication failed: {e}[/red]")
+                console.print("[yellow]Continuing without deduplication[/yellow]")
+                unique_predictions = predictions
         else:
             unique_predictions = predictions
 

@@ -505,11 +505,14 @@ class AutoTuner:
         if hn_config.get("enable_post_training_mining", True):
             # Increase hard negative weight to emphasize these examples
             training = self.current_config.get("training", {})
+            self.current_config.setdefault("training", {})
             hn_weights = training.get("hard_negative_class_weight", [40.0])
             if isinstance(hn_weights, list):
+                # Work on a copy to avoid mutating the original
+                hn_weights_copy = hn_weights.copy()
                 # Increase last phase weight
-                hn_weights[-1] = min(hn_weights[-1] * 1.5, 80.0)  # Cap at 80
-                new_hn_weights = hn_weights
+                hn_weights_copy[-1] = min(hn_weights_copy[-1] * 1.5, 80.0)  # Cap at 80
+                new_hn_weights = hn_weights_copy
             elif isinstance(hn_weights, (int, float)):
                 new_hn_weights = [min(hn_weights * 1.5, 80.0)]
             else:

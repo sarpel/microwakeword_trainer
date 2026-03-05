@@ -215,6 +215,7 @@ class Trainer:
 
         # Seed control for reproducibility
         self.random_seed = training.get("random_seed", None)
+        self._seed_applied = False
         if self.random_seed is not None:
             import random
 
@@ -222,7 +223,7 @@ class Trainer:
             np.random.seed(int(self.random_seed))
             tf.random.set_seed(int(self.random_seed))
             os.environ["TF_DETERMINISTIC_OPS"] = "1"
-            self.logger.log_info(f"Reproducibility: random_seed={self.random_seed} applied (Python, NumPy, TensorFlow, TF_DETERMINISTIC_OPS=1)")
+            self._seed_applied = True
         # Class weights (positive upweighted to compensate for class imbalance)
         self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
         self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
@@ -281,6 +282,10 @@ class Trainer:
 
         # Rich terminal logger
         self.logger = RichTrainingLogger()
+
+        # Log seed after logger is initialized
+        if self._seed_applied:
+            self.logger.log_info(f"Reproducibility: random_seed={self.random_seed} applied (Python, NumPy, TensorFlow, TF_DETERMINISTIC_OPS=1)")
 
         # Calculate input shape from hardware config
         hardware = config.get("hardware", {})
@@ -608,8 +613,17 @@ class Trainer:
         # Apply EMA if configured
         ema_decay = training.get("ema_decay")
         if ema_decay is not None:
-            optimizer = keras.optimizers.experimental.EMA(optimizer, ema_momentum=float(ema_decay), ema_overwrite_frequency=1)
-            self.logger.log_info(f"EMA enabled with decay={ema_decay}")
+            try:
+                # Try new Keras location first
+                optimizer = keras.optimizers.EMA(optimizer, ema_momentum=float(ema_decay), ema_overwrite_frequency=1)
+                self.logger.log_info(f"EMA enabled with decay={ema_decay}")
+            except AttributeError:
+                try:
+                    # Fallback to experimental
+                    optimizer = keras.optimizers.experimental.EMA(optimizer, ema_momentum=float(ema_decay), ema_overwrite_frequency=1)
+                    self.logger.log_info(f"EMA enabled with decay={ema_decay} (using experimental)")
+                except AttributeError:
+                    self.logger.log_warning(f"EMA not available in this Keras version, skipping EMA")
 
         model.compile(
             optimizer=optimizer,
@@ -1175,7 +1189,7 @@ class Trainer:
                 # Start TF Profiler trace (fires once, captures a short window)
                 if self.tf_profiler is not None and step == self.tf_profile_start_step:
                     self.tf_profiler.start_trace(step=step)
-                elif self.tf_profiler is not None and self.tf_profiler._tracing and step == self.tf_profile_start_step + self.tf_profiler.warmup_steps + self.tf_profiler.active_steps:
+                elif self.tf_profiler is not None and self.tf_profiler.is_tracing() and step == self.tf_profile_start_step + self.tf_profiler.warmup_steps + self.tf_profiler.active_steps:
                     self.tf_profiler.stop_trace()
 
                 # Detect and announce phase transitions

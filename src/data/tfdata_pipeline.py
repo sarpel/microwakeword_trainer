@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterator
@@ -120,11 +121,11 @@ class OptimizedDataPipeline:
 
         def generator():
             if split == "train":
-                factory = self.dataset.train_generator_factory(self.max_time_frames)
+                factory = self.dataset.train_generator_factory(self.max_time_frames)  # type: ignore[attr-defined]
             else:
                 factory = self.dataset.val_generator_factory(self.max_time_frames)
 
-            gen = factory()
+            gen = factory() if callable(factory) else factory
             for batch in gen:
                 if not isinstance(batch, tuple) or len(batch) < 2:
                     continue
@@ -189,6 +190,15 @@ class OptimizedDataPipeline:
             logger.info("Using memory cache")
 
         # Shuffle for training (after cache to reshuffle each epoch)
+        training_cfg = self.config.get("training", {})
+        deterministic_ops = os.environ.get("TF_DETERMINISTIC_OPS") == "1"
+        if deterministic_ops and training_cfg.get("random_seed") is None:
+            if shuffle_seed is None:
+                shuffle_seed = int(training_cfg.get("split_seed", 42))
+            tf.random.set_seed(int(shuffle_seed))
+            logger.info("Determinism enabled without random_seed; using shuffle_seed=%d for TF random seed", int(shuffle_seed))
+        elif shuffle_seed is None and deterministic_ops:
+            shuffle_seed = int(training_cfg.get("split_seed", 42))
         ds = ds.shuffle(buffer_size=shuffle_buffer, seed=shuffle_seed, reshuffle_each_iteration=True)
 
         # Apply SpecAugment if enabled (TF backend) and compute class weights in-pipeline
@@ -222,10 +232,11 @@ class OptimizedDataPipeline:
                 neg_w = tf.constant(training_cfg.get("negative_class_weight", [20.0]), dtype=tf.float32)
                 hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [40.0]), dtype=tf.float32)
 
-                counter = tf.data.experimental.Counter()
+                counter = tf.data.Dataset.counter()
                 ds = tf.data.Dataset.zip((counter, ds))
 
-                def apply_spec_augment(step, features, labels, sample_weights, is_hard_neg):
+                def apply_spec_augment(step, batch):
+                    features, labels, sample_weights, is_hard_neg = batch
                     # Phase index from step and boundaries
                     phase = tf.reduce_sum(tf.cast(step >= phase_boundaries, tf.int32))
                     phase = tf.minimum(phase, tf.shape(tmask_max)[0] - 1)
@@ -268,10 +279,11 @@ class OptimizedDataPipeline:
             hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [40.0]), dtype=tf.float32)
             phase_boundaries = tf.constant(self.phase_boundaries, dtype=tf.int64)
 
-            counter = tf.data.experimental.Counter()
+            counter = tf.data.Dataset.counter()
             ds = tf.data.Dataset.zip((counter, ds))
 
-            def apply_weights(step, features, labels, sample_weights, is_hard_neg):
+            def apply_weights(step, batch):
+                features, labels, sample_weights, is_hard_neg = batch
                 phase = tf.reduce_sum(tf.cast(step >= phase_boundaries, tf.int32))
                 phase = tf.minimum(phase, tf.shape(pos_w)[0] - 1)
                 pw = tf.gather(pos_w, phase)
@@ -475,8 +487,8 @@ def benchmark_pipeline(
 
     # Benchmark original generator
     logger.info("Benchmarking original generator...")
-    factory = dataset.train_generator_factory()
-    gen = factory()
+    factory = dataset.train_generator_factory()  # type: ignore[attr-defined]
+    gen = factory() if callable(factory) else factory
 
     start = time.time()
     for i, batch in enumerate(gen):
@@ -494,12 +506,19 @@ def benchmark_pipeline(
     # Benchmark tf.data pipeline
     logger.info("Benchmarking tf.data pipeline...")
     pipeline = OptimizedDataPipeline(dataset, config)
-    ds = pipeline.create_training_pipeline()
+    shuffle_seed = int(config.get("training", {}).get("split_seed", 42))
+    ds = pipeline.create_training_pipeline(shuffle_seed=shuffle_seed)
     ds_iter = iter(ds)
 
     start = time.time()
     for _i in range(n_batches):
-        x, y = next(ds_iter)
+        batch = next(ds_iter)
+        if isinstance(batch, (tuple, list)) and len(batch) >= 2:
+            x = batch[0]
+            y = batch[1]
+        else:
+            x = batch
+            y = batch
         # Simulate training step
         _ = tf.reduce_sum(x) + tf.reduce_sum(y)
     ds_time = time.time() - start

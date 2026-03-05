@@ -85,6 +85,8 @@ class TrainingConfig:
     test_split: float = 0.1
     split_seed: int = 42
     strict_content_hash_leakage_check: bool = True
+    random_seed: Optional[int] = None
+    auto_tune_on_poor_fah: bool = False
     # Optimizer and loss parameters (NEW)
     optimizer: str = "adam"  # Optimizer type (currently only "adam" supported)
     label_smoothing: float = 0.0  # Label smoothing for BinaryCrossentropy (0.0 = disabled)

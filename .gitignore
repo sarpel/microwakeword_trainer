@@ -168,7 +168,7 @@ yarn.lock
 *.ogg
 *.m4a
 *.aiff
-
+ci_export
 # Keep important source dirs from dataset/data exclusions
 !src/data/
 !src/config/

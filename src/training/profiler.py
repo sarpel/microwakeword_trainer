@@ -202,6 +202,8 @@ class TFProfiler:
         self.active_steps = active_steps
         self._tracing = False
         self._logger = logging.getLogger(__name__)
+        self._step_counter = 0
+        self._start_step: int | None = None
 
     def start_trace(self, step: int | None = None) -> None:
         """Start TF Profiler trace.
@@ -209,6 +211,15 @@ class TFProfiler:
         Args:
             step: Current training step (used for output directory naming).
         """
+        self._start_step = step
+        self._step_counter = 0
+        # Don't actually start tracing until warmup_steps are done
+        # The actual start is controlled by the caller checking steps
+        self._tracing = False
+        self._logger.info(f"TF Profiler armed at step {step} (warmup={self.warmup_steps}, active={self.active_steps})")
+
+    def _actually_start_trace(self) -> None:
+        """Internal method to actually start TF Profiler tracing."""
         try:
             import tensorflow as tf
 
@@ -221,10 +232,26 @@ class TFProfiler:
             )
             tf.profiler.experimental.start(self.log_dir, options=options)
             self._tracing = True
-            self._logger.info(f"TF Profiler started at step {step}")
+            self._logger.info("TF Profiler actually started")
         except Exception as e:
             self._logger.warning(f"TF Profiler start failed: {e}")
             self._tracing = False
+
+    def step(self) -> None:
+        """Call this each training step to manage tracing based on warmup/active steps."""
+        if not self._start_step:
+            return
+
+        self._step_counter += 1
+
+        # Start tracing after warmup_steps
+        if not self._tracing and self._step_counter > self.warmup_steps:
+            self._actually_start_trace()
+            return
+
+        # Stop tracing after warmup_steps + active_steps
+        if self._tracing and self._step_counter > self.warmup_steps + self.active_steps:
+            self.stop_trace()
 
     def stop_trace(self) -> None:
         """Stop TF Profiler trace and flush results."""
@@ -239,6 +266,14 @@ class TFProfiler:
         except Exception as e:
             self._logger.warning(f"TF Profiler stop failed: {e}")
             self._tracing = False
+
+    def is_tracing(self) -> bool:
+        """Check if TF Profiler is currently tracing.
+
+        Returns:
+            True if tracing is active, False otherwise.
+        """
+        return self._tracing
 
     @contextmanager
     def trace(self, step: int | None = None):
@@ -260,7 +295,7 @@ class TFProfiler:
         """Get current GPU memory usage.
 
         Returns:
-            Dict with peak_bytes, current_bytes, and available_bytes (all in MB).
+            Dict with peak_mb and current_mb (both in MB).
         """
         try:
             import tensorflow as tf
