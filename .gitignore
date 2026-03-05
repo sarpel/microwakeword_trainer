@@ -92,7 +92,7 @@ tensorboard/
 events.out.tfevents.*
 wandb/
 mlruns/
-coverage_html
+coverage_html/
 # Database
 *.sqlite
 *.sqlite3
@@ -106,7 +106,7 @@ coverage_html
 *.swo
 *~
 .nfs*
-cache
+cache/
 # TensorFlow / ML Model files
 *.h5
 *.hdf5
@@ -168,7 +168,7 @@ yarn.lock
 *.ogg
 *.m4a
 *.aiff
-ci_export
+ci_export/
 # Keep important source dirs from dataset/data exclusions
 !src/data/
 !src/config/
@@ -177,3 +177,4 @@ discarded
 dataset.tar
 key_katya_scripts.sh
 microwakeword_trainer.7z
+tuning

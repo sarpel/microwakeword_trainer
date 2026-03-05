@@ -198,6 +198,8 @@ speaker_clustering:
   use_adaptive_clustering: true
   hdbscan_min_cluster_size: 5
   hdbscan_min_samples: 3
+  adaptive_threshold_small: 5000
+  adaptive_threshold_large: 50000
 
 # ─────────────────────────────────────────────────────────────────
 # HARD NEGATIVE MINING (Disabled for fast test)
@@ -284,7 +286,7 @@ evaluation:
   # Target metrics for FAH/recall calculations
   target_fah: 0.5
   target_recall: 0.95
-  
+
   # Plateau detection for training monitoring
   gain_window_steps: 1000
   plateau_window_evals: 5

@@ -129,13 +129,11 @@ def collect_false_predictions(
 
 def deduplicate_by_hash(
     predictions: list[dict],
-    dataset_dir: Path = Path("."),
 ) -> tuple[list[dict], dict[str, str]]:
     """Deduplicate predictions by file hash.
 
     Args:
         predictions: List of prediction entries
-        dataset_dir: Base directory for dataset (to resolve relative paths, unused currently)
 
     Returns:
         Tuple of (unique_predictions, hash_to_path mapping)

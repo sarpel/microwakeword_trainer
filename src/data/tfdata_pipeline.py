@@ -264,6 +264,16 @@ class OptimizedDataPipeline:
                     hw = tf.gather(hn_w, phase_w)
                     labels_int = tf.cast(labels, tf.int32)
                     is_hn = tf.cast(is_hard_neg, tf.bool)
+                    class_weights = tf.where(labels_int == 1, pw, tf.where(is_hn, hw, nw))
+                    final_weights = tf.cast(class_weights, tf.float32) * tf.cast(sample_weights, tf.float32)
+
+                    return augmented_features, labels, final_weights, is_hard_neg
+                    phase_w = tf.minimum(phase, tf.shape(pos_w)[0] - 1)
+                    pw = tf.gather(pos_w, phase_w)
+                    nw = tf.gather(neg_w, phase_w)
+                    hw = tf.gather(hn_w, phase_w)
+                    labels_int = tf.cast(labels, tf.int32)
+                    is_hn = tf.cast(is_hard_neg, tf.bool)
                     weighted = tf.where(labels_int == 1, pw, tf.where(is_hn, hw, nw))
 
                     return augmented_features, labels, tf.cast(weighted, tf.float32), is_hard_neg
@@ -293,6 +303,17 @@ class OptimizedDataPipeline:
                 hw = tf.gather(hn_w, phase)
                 labels_int = tf.cast(labels, tf.int32)
                 is_hn = tf.cast(is_hard_neg, tf.bool)
+                class_weights = tf.where(labels_int == 1, pw, tf.where(is_hn, hw, nw))
+                final_weights = tf.cast(class_weights, tf.float32) * tf.cast(sample_weights, tf.float32)
+                return features, labels, final_weights, is_hard_neg
+                features, labels, sample_weights, is_hard_neg = batch
+                phase = tf.reduce_sum(tf.cast(step >= phase_boundaries, tf.int32))
+                phase = tf.minimum(phase, tf.shape(pos_w)[0] - 1)
+                pw = tf.gather(pos_w, phase)
+                nw = tf.gather(neg_w, phase)
+                hw = tf.gather(hn_w, phase)
+                labels_int = tf.cast(labels, tf.int32)
+                is_hn = tf.cast(is_hard_neg, tf.bool)
                 weighted = tf.where(labels_int == 1, pw, tf.where(is_hn, hw, nw))
                 return features, labels, tf.cast(weighted, tf.float32), is_hard_neg
 
@@ -304,6 +325,53 @@ class OptimizedDataPipeline:
         # No extra batching (generator already yields full batches)
 
         # Prefetch to GPU
+        ds = ds.prefetch(buffer_size=self.autotune)
+        if self.prefetch_to_device:
+            try:
+                ds = tf.data.experimental.prefetch_to_device(self.prefetch_device)(ds)
+                logger.info(f"Prefetching dataset to device: {self.prefetch_device}")
+            except Exception as e:
+                logger.warning(f"GPU prefetch disabled: {e}")
+
+        return ds
+
+    def create_test_pipeline(
+        self,
+        cache_dir: str | None = None,
+    ) -> tf.data.Dataset:
+        """Create optimized test data pipeline.
+
+        Similar to validation but uses test split.
+
+        Args:
+            cache_dir: Directory for disk cache
+
+        Returns:
+            tf.data.Dataset ready for testing
+        """
+        generator = self._generator_factory("test")
+
+        output_signature = (
+            tf.TensorSpec(shape=(None, self.max_time_frames, 40), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.bool),
+        )
+
+        ds = tf.data.Dataset.from_generator(
+            generator,
+            output_signature=output_signature,
+        )
+
+        # Cache
+        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
+        if resolved_cache_dir:
+            cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_test")
+            ds = ds.cache(str(cache_path))
+        else:
+            ds = ds.cache()
+
+        # Prefetch
         ds = ds.prefetch(buffer_size=self.autotune)
         if self.prefetch_to_device:
             try:

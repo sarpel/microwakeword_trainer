@@ -195,6 +195,9 @@ class Trainer:
         self.profiler: TrainingProfiler | None = None
         self.tf_profiler: TFProfiler | None = None
 
+        # Rich terminal logger - initialize early for seed logging
+        self.logger = RichTrainingLogger()
+
         # Extract training config
         training = config.get("training", {})
         self.training_steps_list = training.get("training_steps", [20000, 10000])
@@ -241,6 +244,9 @@ class Trainer:
             return lst + [lst[-1]] * (n_phases - len(lst))
 
         self.learning_rates = _pad_or_trim(self.learning_rates, 0.0001)
+        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
+        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
+        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
         self.positive_weights = _pad_or_trim(self.positive_weights, 10.0)
         self.negative_weights = _pad_or_trim(self.negative_weights, 1.0)
         self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 2.0)
@@ -279,9 +285,6 @@ class Trainer:
         self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 100) or 0)
         self.gpu_memory_log_interval = int(performance.get("gpu_memory_log_interval", 1000) or 0)
         self.tensorboard_writer: tf.summary.SummaryWriter | None = None
-
-        # Rich terminal logger
-        self.logger = RichTrainingLogger()
 
         # Log seed after logger is initialized
         if self._seed_applied:
@@ -610,20 +613,20 @@ class Trainer:
             clipnorm=training.get("gradient_clipnorm"),
         )
 
-        # Apply EMA if configured
+        # Apply EMA if configured - use native optimizer EMA support
         ema_decay = training.get("ema_decay")
         if ema_decay is not None:
-            try:
-                # Try new Keras location first
-                optimizer = keras.optimizers.EMA(optimizer, ema_momentum=float(ema_decay), ema_overwrite_frequency=1)
-                self.logger.log_info(f"EMA enabled with decay={ema_decay}")
-            except AttributeError:
-                try:
-                    # Fallback to experimental
-                    optimizer = keras.optimizers.experimental.EMA(optimizer, ema_momentum=float(ema_decay), ema_overwrite_frequency=1)
-                    self.logger.log_info(f"EMA enabled with decay={ema_decay} (using experimental)")
-                except AttributeError:
-                    self.logger.log_warning(f"EMA not available in this Keras version, skipping EMA")
+            optimizer_kwargs = {
+                "use_ema": True,
+                "ema_momentum": float(ema_decay),
+                "ema_overwrite_frequency": 1,
+            }
+            self.logger.log_info(f"EMA enabled with decay={ema_decay}")
+            optimizer = keras.optimizers.Adam(
+                learning_rate=phase_settings["learning_rate"],
+                clipnorm=training.get("gradient_clipnorm"),
+                **optimizer_kwargs,
+            )
 
         model.compile(
             optimizer=optimizer,
@@ -739,7 +742,7 @@ class Trainer:
             else:
                 fp = metrics.get("fp", 0)
                 self.best_fah = fp / max(self.val_ambient_duration_hours, 0.001) if self.val_ambient_duration_hours > 0 else float("inf")
-            self.best_recall = metrics.get("recall", 0)
+            self.best_recall = metrics.get("operating_recall", metrics.get("recall", 0))
 
         # Save periodic checkpoint
         checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_step_{self.current_step}.weights.h5")
@@ -826,8 +829,15 @@ class Trainer:
             optimizer.learning_rate.assign(current_lr)
             self._last_assigned_lr = current_lr
 
-        # Class weights are applied in the data pipeline (first-class input)
-        combined_weights = train_sample_weights
+        # Apply class weights (GPU-accelerated) - works for both tfdata and non-tfdata paths
+        combined_weights = self._apply_class_weights(
+            y_true=train_ground_truth,
+            sample_weights=train_sample_weights,
+            positive_weight=phase_settings["positive_weight"],
+            negative_weight=phase_settings["negative_weight"],
+            hard_negative_weight=phase_settings["hard_negative_weight"],
+            is_hard_negative=is_hard_negative,
+        )
 
         # Train on batch
         result = self.model.train_on_batch(
@@ -879,8 +889,27 @@ class Trainer:
         score_sample_limit = 2000
         all_scores: list[tf.Tensor] = []
         all_labels: list[tf.Tensor] = []
-
+        self._last_val_paths: list[str] = []  # Store sample paths for false prediction logging
         for batch in iterator:
+            if not isinstance(batch, tuple) or len(batch) != 3:
+                raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
+            fingerprints, ground_truth, metadata = batch
+            # Get predictions (TF-only; materialize once at end)
+            predictions = self.model(fingerprints, training=False)
+
+            # Handle both binary [N] and multi-class [N, C] output shapes.
+            # For multi-class (softmax), column 1 is the positive-class probability.
+            if predictions.ndim == 2 and predictions.shape[1] > 1:
+                scores = predictions[:, 1]
+            else:
+                scores = tf.reshape(predictions, [-1])
+
+            all_scores.append(scores)
+            all_labels.append(tf.cast(ground_truth, tf.int32))
+            # Collect sample paths from metadata if available
+            if isinstance(metadata, dict) and "file_path" in metadata:
+                self._last_val_paths.extend(metadata["file_path"] if isinstance(metadata["file_path"], list) else [metadata["file_path"]])
+            batch_count += 1
             if not isinstance(batch, tuple) or len(batch) != 3:
                 raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
             fingerprints, ground_truth, _ = batch
@@ -1005,6 +1034,8 @@ class Trainer:
         top_indices = false_positive_indices[np.argsort(y_scores[false_positive_indices])[-top_k:][::-1]]
 
         for idx in top_indices:
+            file_path = self._last_val_paths[idx] if hasattr(self, "_last_val_paths") and idx < len(self._last_val_paths) else None
+            epoch_entry["false_predictions"].append({"index": int(idx), "score": float(y_scores[idx]), "true_label": "negative", "file_path": file_path})
             epoch_entry["false_predictions"].append({"index": int(idx), "score": float(y_scores[idx]), "true_label": "negative"})
 
         # Write per-epoch log file (atomic, no race conditions)
@@ -1244,8 +1275,9 @@ class Trainer:
                         approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
                         collection_mode = self.hn_config.get("collection_mode", "log_only")
                         mining_interval = self.hn_config.get("mining_interval_epochs", 5)
+                        min_epochs_before_mining = int(self.hn_config.get("min_epochs_before_mining", 5) or 5)
 
-                        if approx_epoch > 0 and approx_epoch % mining_interval == 0 and approx_epoch != getattr(self, "_last_mined_epoch", -1):
+                        if approx_epoch >= min_epochs_before_mining and approx_epoch % mining_interval == 0 and approx_epoch != getattr(self, "_last_mined_epoch", -1):
                             if collection_mode == "log_only":
                                 # Log false predictions to JSON for post-training mining
                                 self._log_false_predictions_to_json(approx_epoch)
@@ -1404,7 +1436,7 @@ def train(config: dict) -> tf.keras.Model:
         shuffle_seed = int(config.get("training", {}).get("split_seed", 42))
         train_ds = pipeline.create_training_pipeline(shuffle_seed=shuffle_seed)
         val_ds = pipeline.create_validation_pipeline()
-        test_ds = pipeline.create_validation_pipeline()
+        test_ds = pipeline.create_test_pipeline()
 
         # Pipeline already yields 4-tuples (features, labels, sample_weights, is_hard_neg)
         # Just need to cast labels to int32

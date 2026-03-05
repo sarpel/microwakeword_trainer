@@ -25,6 +25,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 # Optional dependencies for embeddings and clustering
 try:
     from sklearn.cluster import AgglomerativeClustering
@@ -41,28 +43,10 @@ try:
 except ImportError:
     HAS_HDBSCAN = False
 
+
 try:
     import torch
     import torchaudio
-
-    try:
-        import inspect
-
-        import huggingface_hub
-
-        if "use_auth_token" not in inspect.signature(huggingface_hub.hf_hub_download).parameters:
-            _orig_hf_hub_download = huggingface_hub.hf_hub_download
-
-            def _hf_hub_download_compat(*args, use_auth_token=None, **kwargs):
-                if use_auth_token is not None and "token" not in kwargs:
-                    kwargs["token"] = use_auth_token
-                kwargs.setdefault("token", False)
-                kwargs.setdefault("local_files_only", False)
-                return _orig_hf_hub_download(*args, **kwargs)
-
-            huggingface_hub.hf_hub_download = _hf_hub_download_compat
-    except Exception:
-        pass
 
     if not hasattr(torchaudio, "list_audio_backends"):
         torchaudio.list_audio_backends = lambda: [""]
@@ -87,8 +71,6 @@ try:
 except ImportError:
     librosa = None  # type: ignore
     HAS_LIBROSA = False
-
-logger = logging.getLogger(__name__)
 
 
 def extract_speaker_embeddings(

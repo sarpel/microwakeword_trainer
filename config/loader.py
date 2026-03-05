@@ -210,6 +210,8 @@ class SpeakerClusteringConfig:
     use_adaptive_clustering: bool = True
     hdbscan_min_cluster_size: int = 5
     hdbscan_min_samples: int = 3
+    adaptive_threshold_small: int = 5000  # Use agglomerative below this
+    adaptive_threshold_large: int = 50000  # Use two-stage above this
 
 
 @dataclass

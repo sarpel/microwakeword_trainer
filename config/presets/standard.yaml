@@ -198,6 +198,8 @@ speaker_clustering:
   use_adaptive_clustering: true
   hdbscan_min_cluster_size: 5
   hdbscan_min_samples: 3
+  adaptive_threshold_small: 5000
+  adaptive_threshold_large: 50000
 
 # ─────────────────────────────────────────────────────────────────
 # HARD NEGATIVE MINING (Enabled for standard quality)

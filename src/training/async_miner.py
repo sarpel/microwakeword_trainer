@@ -110,16 +110,22 @@ class AsyncHardExampleMiner:
         with self._lock:
             if self._is_running:
                 # Someone else started mining while we were cloning
-                return
+                raise RuntimeError("Mining is already in progress (started during model cloning)")
             self._is_running = True
 
         # Start background thread
-        self._thread = threading.Thread(
-            target=self._mining_worker,
-            args=(cloned_model, data_generator, epoch),
-            daemon=False,
-        )
-        self._thread.start()
+        try:
+            self._thread = threading.Thread(
+                target=self._mining_worker,
+                args=(cloned_model, data_generator, epoch),
+                daemon=False,
+            )
+            self._thread.start()
+        except Exception as e:
+            with self._lock:
+                self._is_running = False
+            logger.exception(f"Failed to start mining thread: {e}")
+            raise
 
     def is_mining(self) -> bool:
         """Check if mining is currently running.

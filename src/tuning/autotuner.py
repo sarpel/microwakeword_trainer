@@ -504,8 +504,10 @@ class AutoTuner:
         hn_config = self.current_config.get("hard_negative_mining", {})
         if hn_config.get("enable_post_training_mining", True):
             # Increase hard negative weight to emphasize these examples
-            training = self.current_config.get("training", {})
-            self.current_config.setdefault("training", {})
+            training = self.current_config.get("training")
+            if training is None:
+                self.console.print("[yellow]Warning: No training config found, skipping weight adjustment[/]")
+                return dataset
             hn_weights = training.get("hard_negative_class_weight", [40.0])
             if isinstance(hn_weights, list):
                 # Work on a copy to avoid mutating the original
@@ -518,7 +520,7 @@ class AutoTuner:
             else:
                 new_hn_weights = [40.0]
 
-            self.current_config["training"]["hard_negative_class_weight"] = new_hn_weights
+            training["hard_negative_class_weight"] = new_hn_weights
 
             self.console.print(f"Integrated {len(mined_files)} mined hard negatives with increased weight")
 
@@ -546,13 +548,14 @@ class AutoTuner:
 
             if len(hard_features) > 0:
                 self.console.print(f"[yellow]⛏️  Mined {len(hard_features)} hard negatives[/]")
+        del model
+        tf.keras.backend.clear_session()
 
         # Load and integrate mined hard negatives if available
         if strategy == "fah_reduction":
             mined_files = self._load_mined_hard_negatives()
             if mined_files:
                 dataset = self._integrate_mined_hard_negatives(dataset, mined_files)
-                self.console.print(f"[yellow]📁 Loaded {len(mined_files)} pre-mined hard negatives[/]")
         # Short fine-tuning run
         hardware_cfg = self.current_config.get("hardware", {})
         clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)

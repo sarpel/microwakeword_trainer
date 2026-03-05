@@ -1073,21 +1073,15 @@ class WakeWordDataset:
                     "closed file",
                     "i/o operation on closed",
                 ]
+                is_benign = any(phrase in message for phrase in benign_phrases)
+                if not is_benign:
+                    import logging
+
+                    logging.warning(f"Error closing store: {e}")
 
     def train_generator_factory(self, max_time_frames: Optional[int] = None):
         if max_time_frames is None:
             max_time_frames = self.max_time_frames
-
-        def factory():
-            yield from self._iter_split_batches(
-                split="train",
-                max_time_frames=max_time_frames,
-                infinite=True,
-                shuffle=True,
-                include_hard_negative_flag=True,
-            )
-
-        return factory
 
         def factory():
             yield from self._iter_split_batches(

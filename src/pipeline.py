@@ -64,12 +64,12 @@ def step_train(config: str, override: str | None) -> Path:
     checkpoint_dir = Path("./checkpoints")
     best = checkpoint_dir / "best_weights.weights.h5"
     if not best.exists():
-        # Fallback: find the latest checkpoint
-        candidates = sorted(checkpoint_dir.glob("*.weights.h5"))
+        # Fallback: find the latest checkpoint (support both .weights.h5 and .ckpt formats)
+        candidates = sorted(checkpoint_dir.glob("*.weights.h5")) + sorted(checkpoint_dir.glob("*.ckpt.index"))
         if not candidates:
             print(f"✗ No checkpoint found in {checkpoint_dir}")
             sys.exit(1)
-        best = candidates[-1]
+        best = candidates[-1].parent / candidates[-1].stem.replace(".index", "") if candidates[-1].suffix == ".index" else candidates[-1]
     print(f"  Checkpoint: {best}")
     return best
 
@@ -96,8 +96,11 @@ def step_autotune(checkpoint: Path, config: str, override: str | None, target_fa
         cmd += ["--override", override]
     _run(cmd, "Auto-tuning model")
 
-    # Find tuned checkpoint
-    candidates = sorted(output_dir.glob("*.weights.h5"))
+    # Find tuned checkpoint - support both .weights.h5 and .ckpt formats
+    candidates = sorted(
+        [*output_dir.glob("*.weights.h5"), *output_dir.glob("*.ckpt"), *output_dir.glob("*.h5")],
+        key=lambda p: p.stat().st_mtime,
+    )
     if not candidates:
         print(f"  Warning: No tuned checkpoint found in {output_dir}; using original")
         return checkpoint
@@ -248,8 +251,8 @@ def step_gate(metrics: dict, target_fah: float, target_recall: float, strict_gat
         True if gate passed, False otherwise
     """
     if not metrics:
-        print("  ⚠ No metrics available — quality gate skipped (model will be promoted)")
-        return True
+        print("  ✗ No metrics available — quality gate FAILED")
+        return False
 
     fah = metrics.get("ambient_false_positives_per_hour", metrics.get("fah", None))
     recall = metrics.get("recall", metrics.get("recall_at_target_fah", None))
@@ -259,11 +262,8 @@ def step_gate(metrics: dict, target_fah: float, target_recall: float, strict_gat
     print(f"    Recall : {recall}  (target ≥ {target_recall})")
 
     if fah is None or recall is None:
-        if strict_gate:
-            print("  ✗ Quality gate FAILED (strict mode: missing metrics)")
-            return False
-        print("  ⚠ Missing FAH or recall metric — quality gate skipped")
-        return True
+        print("  ✗ Missing FAH or recall metric — quality gate FAILED")
+        return False
 
     passed = fah <= target_fah and recall >= target_recall
     if passed:
@@ -274,6 +274,22 @@ def step_gate(metrics: dict, target_fah: float, target_recall: float, strict_gat
 
 
 def step_promote(tflite_path: Path, promote_dir: Path, model_name: str) -> None:
+    """Copy model and manifest to the promote directory."""
+    promote_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy .tflite using model_name
+    dest_tflite = promote_dir / f"{model_name}.tflite"
+    shutil.copy2(tflite_path, dest_tflite)
+    print(f"  Copied: {dest_tflite}")
+
+    # Copy manifest.json if present
+    manifest = tflite_path.parent / "manifest.json"
+    if manifest.exists():
+        dest_manifest = promote_dir / f"{model_name}_manifest.json"
+        shutil.copy2(manifest, dest_manifest)
+        print(f"  Copied: {dest_manifest}")
+
+    print(f"✓ Model promoted to: {promote_dir}")
     """Copy model and manifest to the promote directory."""
     promote_dir.mkdir(parents=True, exist_ok=True)
 

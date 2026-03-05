@@ -492,15 +492,21 @@ Speaker clustering configuration for grouping audio samples by speaker identity.
 Uses AgglomerativeClustering with cosine distance. Two modes:
 - **Threshold-based** (default): Cluster count determined automatically from similarity threshold.
 - **Explicit n_clusters**: Fixed cluster count — best for short audio clips (1-3s wake words) where ECAPA-TDNN embeddings have low cosine similarity and threshold-based clustering over-fragments.
+- **Adaptive**: Automatically selects algorithm based on dataset size.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | true | Enable speaker clustering. |
-| `method` | string | `agglomerative` | Clustering method (`agglomerative` or `threshold`). `agglomerative` uses average linkage; `threshold` uses complete linkage (stricter). |
+| `method` | string | `agglomerative` | Clustering method (`agglomerative`, `hdbscan`, or `adaptive`). `agglomerative` uses average linkage; `adaptive` auto-selects based on dataset size. |
 | `embedding_model` | string | `speechbrain/ecapa-tdnn-voxceleb` | SpeechBrain ECAPA-TDNN model for embeddings. |
 | `similarity_threshold` | float | 0.72 | Cosine similarity threshold (0.0-1.0). Only used when `n_clusters` is null. |
 | `n_clusters` | int | null | Explicit number of clusters. Overrides `similarity_threshold` when set. Use when you know approximate speaker count. |
 | `leakage_audit_enabled` | bool | true | Enable train/val leakage detection. |
+| `use_adaptive_clustering` | bool | true | Auto-select algorithm based on dataset size. |
+| `hdbscan_min_cluster_size` | int | 5 | Minimum cluster size for HDBSCAN. |
+| `hdbscan_min_samples` | int | 3 | Minimum samples for HDBSCAN. |
+| `adaptive_threshold_small` | int | 5000 | Use agglomerative below this dataset size. |
+| `adaptive_threshold_large` | int | 50000 | Use two-stage clustering above this size. |
 
 **Example — threshold-based (auto cluster count):**
 ```yaml
@@ -522,6 +528,16 @@ speaker_clustering:
   leakage_audit_enabled: true
 ```
 
+**Example — adaptive clustering (auto-selects best algorithm):**
+```yaml
+speaker_clustering:
+  enabled: true
+  method: "adaptive"
+  use_adaptive_clustering: true
+  adaptive_threshold_small: 5000
+  adaptive_threshold_large: 50000
+```
+
 ### hard_negative_mining
 
 Hard negative mining configuration for finding difficult samples.
@@ -532,6 +548,12 @@ Hard negative mining configuration for finding difficult samples.
 | `fp_threshold` | float | 0.8 | False positive threshold for mining (0.0-1.0). |
 | `max_samples` | int | 5000 | Maximum hard negative samples to collect. |
 | `mining_interval_epochs` | int | 5 | Mine every N epochs. |
+| `collection_mode` | string | `"log_only"` | During training: `"log_only"` (log to JSON) or `"mine_immediately"` (copy files). |
+| `log_predictions` | bool | true | Log false predictions to JSON during training. |
+| `log_file` | string | `"logs/false_predictions.json"` | Path to log false predictions. |
+| `enable_post_training_mining` | bool | true | Enable post-training hard negative mining. |
+| `mined_subdirectory` | string | `"mined"` | Subdirectory name for mined hard negatives. |
+| `min_epochs_before_mining` | int | 10 | Minimum epochs before starting hard negative mining. |
 
 **Example:**
 ```yaml
@@ -540,6 +562,12 @@ hard_negative_mining:
   fp_threshold: 0.8
   max_samples: 5000
   mining_interval_epochs: 5
+  collection_mode: "log_only"
+  log_predictions: true
+  log_file: "logs/false_predictions.json"
+  enable_post_training_mining: true
+  mined_subdirectory: "mined"
+  min_epochs_before_mining: 10
 ```
 
 ### export

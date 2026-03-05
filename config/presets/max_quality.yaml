@@ -26,12 +26,12 @@ training:
   eval_checkpoints_interval: 5000
   eval_log_every_step: true
   steps_per_epoch: 1000
-  positive_class_weight: [5.0, 7.5, 10.0]
+  positive_class_weight: [10.0, 20.0, 30.0]
   negative_class_weight: [1.0, 1.0, 1.0]
-  hard_negative_class_weight: [2.5, 3.0, 4.5]
-  time_mask_max_size: [6, 4, 3]
+  hard_negative_class_weight: [5.0, 7.5, 10.0]
+  time_mask_max_size: [2, 4, 6]
   time_mask_count: [1, 1, 1]
-  freq_mask_max_size: [3, 2, 1]
+  freq_mask_max_size: [2, 4, 6]
   freq_mask_count: [1, 1, 1]
   minimization_metric: "ambient_false_positives_per_hour"
   target_minimization: 0.2
@@ -42,7 +42,7 @@ training:
   test_split: 0.1
   strict_content_hash_leakage_check: true
   optimizer: "adam"
-  label_smoothing: 0.05
+  label_smoothing: 0.00
   gradient_clipnorm: 1.0
   ema_decay: null
   random_seed: 42              # Set an integer for reproducible runs (null = non-deterministic)
@@ -64,9 +64,9 @@ augmentation:
   PitchShift: 0.20
   BandStopFilter: 0.20
   AddColorNoise: 0.25
-  AddBackgroundNoiseFromFile: 0.75
+  AddBackgroundNoiseFromFile: 0.35
   Gain: 1.0
-  ApplyImpulseResponse: 0.60
+  ApplyImpulseResponse: 0.30
   background_min_snr_db: -10.0
   background_max_snr_db: 20.0
   min_jitter_s: 0.15
@@ -109,7 +109,7 @@ performance:
   tensorboard_log_dir: "./logs"
   prefetch_buffer: 24
   use_tfdata: true
-  tfdata_cache_dir: ./cache/tfdata
+  tfdata_cache_dir: null  # Use RAM cache (64GB available) instead of disk
   mmap_readonly: true
   tfdata_prefetch_to_device: true
   tfdata_prefetch_device: "/GPU:0"
@@ -134,6 +134,8 @@ speaker_clustering:
   use_adaptive_clustering: true
   hdbscan_min_cluster_size: 5
   hdbscan_min_samples: 3
+  adaptive_threshold_small: 5000
+  adaptive_threshold_large: 50000
 hard_negative_mining:
   enabled: true
   fp_threshold: 0.75
