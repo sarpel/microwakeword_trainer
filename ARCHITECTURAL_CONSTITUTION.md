@@ -34,7 +34,7 @@
 - TFLite flatbuffer analysis: `okay_nabu.tflite` (58.85 KB, 55 ops)
 - ESPHome C++ runtime: `micro_wake_word.cpp` — op registration list
 - Official microWakeWord training notebook (Google Colab)
-- Last verified: 2025-02-25
+- Last verified: 2026-03-06
 
 ---
 
@@ -146,7 +146,7 @@ input_feature_shape = [spectrogram_frames, mel_bins]           = [100, 40]
 |---|---|
 | Shape | `[1, stride, 40]` = **`[1, 3, 40]`** |
 | Dtype | **`int8`** |
-| Quantization scale | `0.101961` |
+| Quantization scale | `0.10196078568696976` (26/255) |
 | Quantization zero_point | `-128` |
 
 ### Output Tensor
@@ -155,7 +155,7 @@ input_feature_shape = [spectrogram_frames, mel_bins]           = [100, 40]
 |---|---|
 | Shape | **`[1, 1]`** |
 | Dtype | **`uint8`** ← **NOT int8. NOT float32. UINT8.** |
-| Quantization scale | `0.003906` |
+| Quantization scale | `0.00390625` (1/256) |
 | Quantization zero_point | `0` |
 
 > ⛔ **THE OUTPUT DTYPE IS `uint8`. THIS IS NOT A TYPO. THIS IS NOT A DEFAULT.**
@@ -203,7 +203,7 @@ The representative dataset **must** include forced min/max boundary samples:
 
 ```python
 sample_fingerprints[0][0, 0] = 0.0   # Force minimum
-sample_fingerprints[0][0, 1] = 26.0  # Force maximum
+sample_fingerprints[0][0, 1] = 25.85  # Force maximum (actual range is ~25.85)
 ```
 
 > Without these boundary samples, the quantizer may clip the activation range
@@ -226,9 +226,11 @@ converter.inference_output_type = tf.uint8  # ← UINT8. ALWAYS. NON-NEGOTIABLE.
 
 > **IMMUTABLE. EXHAUSTIVE. VERIFIED FROM FLATBUFFER OP CODES.**
 >
-> The ESPHome TFLite Micro runtime registers exactly 14 op resolvers. Any op
+> The ESPHome TFLite Micro runtime registers exactly **20 op resolvers**. Any op
 > not in this list is **not registered** and will cause a fatal error at model
 > loading time on the device. There are no custom ops. All ops are BUILTIN.
+>
+
 
 ### ESPHome-Registered Op Resolvers (from `micro_wake_word.cpp`)
 
@@ -247,6 +249,12 @@ resolver.AddMean();
 resolver.AddFullyConnected();
 resolver.AddLogistic();
 resolver.AddQuantize();
+resolver.AddReshape();
+resolver.AddAveragePool2D();
+resolver.AddMaxPool2D();
+resolver.AddPad();
+resolver.AddPack();
+resolver.AddSplitV();
 ```
 
 ### Op Count Verification (from TFLite flatbuffers)
@@ -318,7 +326,7 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 | | okay_nabu |
 |---|---|
 | Subgraph 0 ops | 55 |
-| Subgraph 0 tensors | 95 |
+| Subgraph 0 tensors | 94 |
 | Subgraph 1 ops | 12 |
 | Subgraph 1 tensors | 12 |
 
@@ -352,7 +360,7 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 
 | Model | State bytes |
 |---|---|
-| okay_nabu | **3 520 bytes** |
+| okay_nabu | **3 472 bytes** |
 
 ### Ring Buffer Law
 
@@ -509,7 +517,7 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
   "micro": {
     "feature_step_size": 10,
     "sliding_window_size": 5,
-    "tensor_arena_size": 30000,
+    "tensor_arena_size": 26080,
     "minimum_esphome_version": "2024.7.0"
   }
 }

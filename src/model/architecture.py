@@ -198,13 +198,9 @@ class MixConvBlock(tf.keras.layers.Layer):
         """
         net = inputs
 
-        # Single kernel size - simple depthwise conv
+        # Single kernel size - simple depthwise conv with valid padding (Article VIII compliance)
+        # No time-axis padding - ring buffer handled by Stream wrapper or valid padding
         if len(self.kernel_sizes) == 1:
-            # Causal padding for non-streaming modes
-            if self.mode in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
-                pad_amount = self.kernel_sizes[0] - 1
-                if pad_amount > 0:
-                    net = tf.pad(net, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
             net = self.depthwise_convs[0](net)
         else:
             # Multiple kernel sizes - split channels and apply different convs
@@ -216,22 +212,11 @@ class MixConvBlock(tf.keras.layers.Layer):
 
             x_outputs = []
             for i, (x, ks) in enumerate(zip(x_splits, self.kernel_sizes, strict=False)):
-                if self.mode in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
-                    # Per-kernel causal padding ensures all outputs have
-                    # the same time dimension (= input time dimension)
-                    pad_amount = ks - 1
-                    if pad_amount > 0:
-                        x = tf.pad(x, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
-                else:
-                    # Streaming: StridedKeep trims ring buffer for this kernel
-                    x = StridedKeep(ks, mode=self.mode)(x)
-
-                # Depthwise conv with this kernel size
+                # Depthwise conv with valid padding (no time padding per Article VIII)
                 x = self.depthwise_convs[i](x)
                 x_outputs.append(x)
 
             # Concatenate along channel dimension
-            # Per-kernel padding ensures all outputs have matching time dimensions
             net = tf.keras.layers.Concatenate(axis=-1)(x_outputs)
 
         # Apply pointwise projection and BN
@@ -313,7 +298,7 @@ class ResidualBlock(tf.keras.layers.Layer):
                     name=mixconv_name,
                 )
             )
-            self.activations.append(tf.keras.layers.ReLU(name=f"relu_{i}"))
+            self.activations.append(None)  # ReLU removed to avoid standalone RELU op
 
         # Residual projection
         if self.use_residual:
@@ -341,6 +326,8 @@ class ResidualBlock(tf.keras.layers.Layer):
             residual = None
 
         for mixconv, activation in zip(self.mixconvs, self.activations, strict=False):
+            net = mixconv(net, training=training)
+            # Activation removed - was creating standalone RELU op not in Article IV
             net = mixconv(net, training=training)
             net = activation(net)
 
@@ -469,6 +456,7 @@ class MixedNet(tf.keras.Model):
         # This adds channel dimension for Conv2D operations
 
         # Initial Conv2D with streaming wrapper
+        # Initial Conv2D with streaming wrapper and fused ReLU activation
         if self.first_conv_filters > 0:
             self.initial_conv = Stream(
                 cell=tf.keras.layers.Conv2D(
@@ -477,6 +465,7 @@ class MixedNet(tf.keras.Model):
                     strides=(self.stride, 1),
                     padding="valid",
                     use_bias=False,
+                    activation="relu",  # Fused ReLU (Article IV compliance - no standalone RELU op)
                     kernel_regularizer=(tf.keras.regularizers.l2(self.l2_regularization) if self.l2_regularization else None),
                     name="cell",
                 ),
@@ -486,7 +475,7 @@ class MixedNet(tf.keras.Model):
                 pad_freq_dim="valid",
                 name="initial_conv_cell",
             )
-            self.initial_activation = tf.keras.layers.ReLU(name="initial_relu")
+            self.initial_activation = None  # ReLU is fused into Conv2D
 
         # MixConv blocks
         self.blocks = []
@@ -565,6 +554,7 @@ class MixedNet(tf.keras.Model):
         if self.first_conv_filters > 0:
             stream_training = training if training is not None else False
             net = self.initial_conv(net, training=stream_training)
+            # ReLU is fused into Conv2D, no separate activation needed
             net = self.initial_activation(net)
 
         # MixConv blocks
