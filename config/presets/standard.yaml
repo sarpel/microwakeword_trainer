@@ -1,0 +1,303 @@
+# ─────────────────────────────────────────────────────────────────
+# STANDARD PRESET - Balanced quality and speed
+# Use for: Production training with good quality/speed balance
+# ─────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────
+# HARDWARE PARAMETERS (IMMUTABLE)
+# ─────────────────────────────────────────────────────────────────
+hardware:
+  sample_rate_hz: 16000
+  mel_bins: 40
+  window_size_ms: 30
+  window_step_ms: 10
+  clip_duration_ms: 1000
+
+# ─────────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────────
+paths:
+  positive_dir: "${DATASET_DIR:-./dataset}/positive"
+  negative_dir: "${DATASET_DIR:-./dataset}/negative"
+  hard_negative_dir: "${DATASET_DIR:-./dataset}/hard_negative"
+  background_dir: "${DATASET_DIR:-./dataset}/background"
+  rir_dir: "${DATASET_DIR:-./dataset}/rirs"
+  processed_dir: "${DATA_DIR:-./data}/processed"
+  checkpoint_dir: "${CHECKPOINT_DIR:-./checkpoints}"
+  export_dir: "${MODEL_EXPORT_DIR:-./models/exported}"
+
+# ─────────────────────────────────────────────────────────────────
+# TRAINING PARAMETERS
+# ─────────────────────────────────────────────────────────────────
+training:
+  # Standard step-based training
+  training_steps: [20000, 10000]
+  learning_rates: [0.001, 0.0001]
+  batch_size: 128
+  eval_step_interval: 500
+  eval_basic_step_interval: 1000
+  materialize_metrics_interval: 1000
+  eval_advanced_step_interval: 5000
+  eval_confusion_matrix_interval: 5000
+  eval_checkpoints_interval: 5000
+  eval_log_every_step: true
+  steps_per_epoch: 1000  # Approximate steps per epoch for mining calculations
+
+  # Class weights - hard negatives get higher weight to reduce false accepts
+  positive_class_weight: [1.0, 1.0]
+  negative_class_weight: [20.0, 20.0]
+  hard_negative_class_weight: [40.0, 40.0]
+
+  # SpecAugment (spectrogram masking for regularization)
+  time_mask_max_size: [5, 3]
+  time_mask_count: [2, 1]
+  freq_mask_max_size: [3, 2]
+  freq_mask_count: [2, 1]
+
+  # Checkpoint selection
+  minimization_metric: "ambient_false_positives_per_hour"
+  target_minimization: 0.2
+  maximization_metric: "average_viable_recall"
+
+  # Hours of negative/background audio for FAH calculation
+  ambient_duration_hours: 10.0
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  split_seed: 42                # RNG seed for reproducible train/val/test split
+  strict_content_hash_leakage_check: true
+
+  # Optimizer and loss parameters
+  optimizer: "adam"
+  label_smoothing: 0.1
+  gradient_clipnorm: 5.0
+  ema_decay: null  # No EMA (requires implementation)
+  random_seed: null              # Set an integer for reproducible runs (null = non-deterministic)
+  auto_tune_on_poor_fah: false   # If true, run mww-autotune automatically after training if final FAH > target_minimization
+
+# ─────────────────────────────────────────────────────────────────
+# MIXEDNET ARCHITECTURE
+# ─────────────────────────────────────────────────────────────────
+model:
+  architecture: "mixednet"
+
+  # okay_nabu architecture (official ESPHome MWW)
+  first_conv_filters: 32
+  first_conv_kernel_size: 5
+  stride: 3
+  pointwise_filters: "64,64,64,64"
+  mixconv_kernel_sizes: "[5],[7,11],[9,15],[23]"
+  repeat_in_block: "1,1,1,1"
+  residual_connection: "0,0,1,1"
+
+  # Regularization
+  dropout_rate: 0.2
+  l2_regularization: 0.0001
+
+# ─────────────────────────────────────────────────────────────────
+# AUGMENTATION
+# ─────────────────────────────────────────────────────────────────
+augmentation:
+  # Time-domain augmentations
+  SevenBandParametricEQ: 0.1
+  TanhDistortion: 0.1
+  PitchShift: 0.1
+  BandStopFilter: 0.1
+  AddColorNoise: 0.1
+  AddBackgroundNoiseFromFile: 0.3
+  Gain: 1.0
+  ApplyImpulseResponse: 0.2
+
+  # Noise mixing parameters
+  background_min_snr_db: 0
+  background_max_snr_db: 10
+  min_jitter_s: 0.195
+  max_jitter_s: 0.205
+
+  # Augmentation magnitude ranges
+  eq_min_gain_db: -6.0
+  eq_max_gain_db: 6.0
+  distortion_min: 0.1
+  distortion_max: 0.5
+  pitch_shift_min_semitones: -2.0
+  pitch_shift_max_semitones: 2.0
+  band_stop_min_center_freq: 100.0
+  band_stop_max_center_freq: 5000.0
+  band_stop_min_bandwidth_fraction: 0.5
+  band_stop_max_bandwidth_fraction: 1.99
+  gain_min_db: -3.0
+  gain_max_db: 3.0
+  color_noise_min_snr_db: -5.0
+  color_noise_max_snr_db: 10.0
+  # Background sources - use your own dataset paths
+  impulse_paths: ["${DATASET_DIR:-./dataset}/rirs"]
+  background_paths: ["${DATASET_DIR:-./dataset}/background"]
+  augmentation_duration_s: 3.2
+
+# ─────────────────────────────────────────────────────────────────
+# PERFORMANCE CONFIGURATION
+# ─────────────────────────────────────────────────────────────────
+performance:
+  # GPU if available, otherwise use CPU with good resources
+  gpu_only: false
+  mixed_precision: true
+  spec_augment_backend: "tf"
+  async_mining: false
+
+  # Standard CPU resources
+  num_workers: 12
+  num_threads_per_worker: 2
+  prefetch_factor: 8
+  pin_memory: true
+  max_memory_gb: 32
+
+  # Standard parallelism
+  inter_op_parallelism: 12
+  intra_op_parallelism: 12
+
+  # Profiling enabled
+  enable_profiling: true
+  profile_every_n_steps: 100
+  profile_output_dir: "./profiles"
+  tf_profile_start_step: 100   # Step to start TF Profiler GPU trace (0 = disabled)
+  gpu_memory_log_interval: 1000  # Log GPU memory to TensorBoard every N steps (0 = disabled)
+
+  # TensorBoard enabled
+  tensorboard_enabled: true
+  tensorboard_log_dir: "./logs"
+
+  # Data pipeline
+  prefetch_buffer: null  # null = tf.data.AUTOTUNE (dynamic optimization)
+  use_tfdata: true
+  tfdata_cache_dir: null
+  mmap_readonly: true
+  tfdata_prefetch_to_device: true
+  tfdata_prefetch_device: "/GPU:0"
+  benchmark_pipeline: false
+  log_throughput: true
+  log_throughput_interval: 1000
+  disable_mmap: false
+
+# ─────────────────────────────────────────────────────────────────
+# SPEAKER CLUSTERING (Enabled for standard quality)
+# ─────────────────────────────────────────────────────────────────
+speaker_clustering:
+  enabled: true
+  method: "agglomerative"
+  embedding_model: "speechbrain/spkrec-ecapa-voxceleb"
+  similarity_threshold: 0.72
+  n_clusters: null
+  leakage_audit_enabled: true
+  leakage_similarity_threshold: 0.9
+  use_embedding_cache: true
+  cache_dir: null
+  batch_size: null
+  num_io_workers: 8
+  use_mixed_precision: true
+  use_dataloader: false
+  use_adaptive_clustering: true
+  hdbscan_min_cluster_size: 5
+  hdbscan_min_samples: 3
+  adaptive_threshold_small: 5000
+  adaptive_threshold_large: 50000
+
+# ─────────────────────────────────────────────────────────────────
+# HARD NEGATIVE MINING (Enabled for standard quality)
+# ─────────────────────────────────────────────────────────────────
+hard_negative_mining:
+  enabled: true
+  fp_threshold: 0.8
+  max_samples: 5000
+  mining_interval_epochs: 5
+  # NEW - Collection Phase (during training)
+  collection_mode: "mine_immediately"    # "log_only" | "mine_immediately"
+  log_predictions: true
+  log_file: "logs/false_predictions.json"
+  # NEW - Mining Phase (post-training)
+  enable_post_training_mining: true
+  mined_subdirectory: "mined"
+  min_epochs_before_mining: 10
+  top_k_per_epoch: 100
+  deduplicate_by_hash: true
+
+# ─────────────────────────────────────────────────────────────────
+# EXPORT SETTINGS
+# ─────────────────────────────────────────────────────────────────
+export:
+  wake_word: "Hey Katya"
+  author: "Sarpel GURAY"
+  website: "https://github.com/sarpel/microwakeword-training-platform"
+  trained_languages: ["en"]
+
+  quantize: true
+  inference_input_type: "int8"
+  inference_output_type: "uint8"
+
+  probability_cutoff: 0.97
+  sliding_window_size: 5
+  tensor_arena_size: 30000
+  minimum_esphome_version: "2024.7.0"
+
+  # TFLite calibration settings
+  representative_dataset_size: 500
+  representative_dataset_real_size: 2000
+  arena_size_margin: 1.3
+
+# ─────────────────────────────────────────────────────────────────
+# PREPROCESSING (VAD, splitting, duration filtering)
+# ─────────────────────────────────────────────────────────────────
+preprocessing:
+  # Duration filtering
+  min_duration_ms: 300.0
+  max_duration_ms: 2000.0
+  discarded_dir: "./discarded"
+
+  # VAD trim settings (vad_trim_audio.py)
+  vad_aggressiveness: 2       # 0=lenient, 3=aggressive
+  vad_pad_ms: 200             # ms of silence padding to keep around speech
+  vad_frame_ms: 30            # VAD frame size (10, 20, or 30 ms)
+
+  # Background audio splitting (split_long_audio.py)
+  split_max_chunk_ms: 2000.0
+  split_min_chunk_ms: 500.0
+  split_target_chunk_ms: 2000.0
+
+# ─────────────────────────────────────────────────────────────────
+# QUALITY SCORING THRESHOLDS
+# ─────────────────────────────────────────────────────────────────
+quality:
+  # Clipping detection
+  clip_threshold: 0.001
+  max_clip_ratio: 0.01
+
+  # Score-based filtering
+  discard_bottom_pct: 5.0     # discard lowest 5% of files by WQI
+  min_wqi: 0.0
+  discarded_quality_dir: "./discarded/quality"
+
+  # WADA-SNR threshold
+  min_snr_db: -10.0
+
+  # Silero VAD (full scorer)
+  vad_speech_threshold: 0.3
+
+  # DNSMOS thresholds (full scorer)
+  dnsmos_min_ovrl: 0.0
+  dnsmos_min_sig: 0.0
+  dnsmos_cache_dir: "~/.cache/dnsmos"
+
+# ─────────────────────────────────────────────────────────────────
+# EVALUATION AND METRICS
+# ─────────────────────────────────────────────────────────────────
+evaluation:
+  default_threshold: 0.97     # Match deployment probability_cutoff
+  n_thresholds: 101           # Number of thresholds for ROC/PR curves
+  max_fah: 10.0               # Maximum FAH for average viable recall
+  warmup_runs: 10             # Warmup runs for latency measurement
+  n_latency_runs: 100         # Number of runs for latency measurement
+  target_fah: 0.5
+  target_recall: 0.95
+  gain_window_steps: 1000
+  plateau_window_evals: 5
+  plateau_min_delta: 0.001
+  plateau_slope_eps: 0.0001

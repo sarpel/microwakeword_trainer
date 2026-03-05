@@ -1,0 +1,48 @@
+# microwakeword_trainer - PyTorch Environment Requirements
+# Version 2.0 - For Speaker Clustering and SpeechBrain ECAPA-TDNN Embeddings
+#
+# IMPORTANT: This is a SEPARATE environment from the TensorFlow training environment.
+# TensorFlow and PyTorch conflict - do NOT install them together.
+#
+# Use this environment ONLY for:
+# - Speaker clustering with SpeechBrain ECAPA-TDNN embeddings
+# - Hard negative mining with speechbrain
+# - Data preprocessing with transformers
+#
+# For the main training pipeline, use requirements.txt (TensorFlow environment).
+
+# PyTorch — pin to <2.11 (2.10.x is latest stable as of 2026-02)
+# Install CUDA wheels via: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+torch<2.11
+torchaudio<2.11
+
+# TFLite support for model verification (pin <3.0 for compatibility)
+ai-edge-litert<3.0
+
+# Speaker Recognition & Embeddings
+speechbrain>=1.0.3
+librosa>=0.10
+
+# NLP/embedding utilities
+transformers>=5.0
+
+# Clustering
+scikit-learn==1.8.0
+
+# Audio/Data (same as TF env)
+numpy==1.26.4
+scipy==1.17.1
+pyyaml==6.0.3
+
+# HuggingFace datasets
+datasets>=4.0
+huggingface_hub>=1.3,<2.0
+
+audio-metadata==0.11.1
+
+# Visualization
+matplotlib==3.10.8
+seaborn==0.13.2
+
+# Utilities
+tqdm==4.67.3
