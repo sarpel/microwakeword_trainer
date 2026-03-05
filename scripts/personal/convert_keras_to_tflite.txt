@@ -1,0 +1,5 @@
+python scripts/convert_keras_to_tflite.py \
+     models/best_model.keras \
+     --data data/representative_data.npz \
+     --name "jarvis" \
+     --prob 0.7

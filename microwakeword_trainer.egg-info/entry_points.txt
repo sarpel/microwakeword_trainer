@@ -1,0 +1,7 @@
+[console_scripts]
+mww-autotune = src.tuning.cli:main
+mww-cluster-analyze = src.tools.cluster_analyze:main
+mww-cluster-apply = src.tools.cluster_apply:main
+mww-export = src.export.tflite:main
+mww-mine-hard-negatives = src.tools.mine_hard_negatives:main
+mww-train = src.training.trainer:main

@@ -1,0 +1,5 @@
+https://github.com/sarpel/micro-wake-word/raw/main/models/hey_katya.json
+
+https://raw.githubusercontent.com/sarpel/micro-wake-word/main/models/hey_katya.json
+
+github://esphome/micro-wake-word-models/models/v2/okay_nabu.json
