@@ -61,28 +61,28 @@ model:
 augmentation:
   SevenBandParametricEQ: 0.20
   TanhDistortion: 0.15
-  PitchShift: 0.20
-  BandStopFilter: 0.20
-  AddColorNoise: 0.25
+  PitchShift: 0.15
+  BandStopFilter: 0.10
+  AddColorNoise: 0.20
   AddBackgroundNoiseFromFile: 0.35
   Gain: 1.0
   ApplyImpulseResponse: 0.30
   background_min_snr_db: -5.0
-  background_max_snr_db: 20.0
+  background_max_snr_db: 15.0
   min_jitter_s: 0.15
-  max_jitter_s: 0.25
-  eq_min_gain_db: -9.0
-  eq_max_gain_db: 9.0
+  max_jitter_s: 0.20
+  eq_min_gain_db: -6.0
+  eq_max_gain_db: 6.0
   distortion_min: 0.05
-  distortion_max: 0.3
-  pitch_shift_min_semitones: -3.0
-  pitch_shift_max_semitones: 3.0
+  distortion_max: 0.2
+  pitch_shift_min_semitones: -2.0
+  pitch_shift_max_semitones: 2.0
   band_stop_min_center_freq: 80.0
   band_stop_max_center_freq: 7000.0
   band_stop_min_bandwidth_fraction: 0.5
   band_stop_max_bandwidth_fraction: 1.99
-  gain_min_db: -6.0
-  gain_max_db: 6.0
+  gain_min_db: -5.0
+  gain_max_db: 5.0
   color_noise_min_snr_db: -10.0
   color_noise_max_snr_db: 20.0
   impulse_paths: ["./dataset/rirs"]
@@ -126,8 +126,8 @@ speaker_clustering:
   leakage_audit_enabled: true
   leakage_similarity_threshold: 0.9
   use_embedding_cache: true
-  cache_dir: null
-  batch_size: null
+  cache_dir: ./cache/speaker_embeddings
+  batch_size: 32
   num_io_workers: 8
   use_mixed_precision: true
   use_dataloader: true
@@ -148,7 +148,7 @@ hard_negative_mining:
   # NEW - Mining Phase (post-training)
   enable_post_training_mining: true
   mined_subdirectory: "mined"
-  min_epochs_before_mining: 5
+  min_epochs_before_mining: 10
   top_k_per_epoch: 100
   deduplicate_by_hash: true
 export:

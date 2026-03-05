@@ -160,6 +160,14 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
         valid = False
     checks["assign_var_count"] = assign_var_count == 6
 
+    # NEW: Check CALL_ONCE exists (Article V compliance)
+    call_once_count = op_counts.get("CALL_ONCE", 0)
+    if call_once_count != 1:
+        errors.append(f"Expected exactly 1 CALL_ONCE op for init subgraph, got {call_once_count}")
+        valid = False
+    checks["call_once_count"] = call_once_count == 1
+
+
     expected_state_shapes = [
         (1, 2, 1, 40),
         (1, 4, 1, 32),
@@ -170,16 +178,31 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
     ]
     all_tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
     observed_state_shapes: list[tuple[int, ...]] = []
+    observed_state_dtypes: list[str] = []  # NEW: Track dtypes
+    
     for op in ops_details:
         if op.get("op_name") == "READ_VARIABLE":
             out_idx = op["outputs"][0]
             tensor = all_tensors.get(out_idx)
             if tensor is not None:
                 observed_state_shapes.append(tuple(int(v) for v in tensor.get("shape", [])))
+                # NEW: Check dtype
+                dtype = tensor.get("dtype")
+                observed_state_dtypes.append(str(dtype))
+    
     details["observed_state_shapes"] = observed_state_shapes
-    checks["state_shapes"] = sorted(observed_state_shapes) == sorted(expected_state_shapes)
+    details["observed_state_dtypes"] = observed_state_dtypes
+    
+    # NEW: Check state variable dtypes are int8 (Article VI compliance)
+    checks["state_dtypes_int8"] = all(dt == "<class 'numpy.int8'>" for dt in observed_state_dtypes)
+    if not checks["state_dtypes_int8"]:
+        errors.append(f"State variables must be int8, got dtypes: {observed_state_dtypes}")
+        valid = False
+    
+    # MODIFIED: Check shapes in order (don't sort - order matters for Article VI)
+    checks["state_shapes"] = observed_state_shapes == expected_state_shapes
     if not checks["state_shapes"]:
-        errors.append(f"State tensor shape mismatch: observed={sorted(observed_state_shapes)}, expected={sorted(expected_state_shapes)}")
+        errors.append(f"State tensor shape/order mismatch: observed={observed_state_shapes}, expected={expected_state_shapes}")
         valid = False
 
     try:
