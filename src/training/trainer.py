@@ -973,6 +973,10 @@ class Trainer:
             labels_all = tf.concat(all_labels, axis=0)
             scores_np = scores_all.numpy()
             labels_np = labels_all.numpy()
+            # Clear lists to free memory before metrics computation
+            all_scores.clear()
+            all_labels.clear()
+            del scores_all, labels_all
             self.val_metrics.update(labels_np, scores_np)
 
             if score_sample_limit > 0:

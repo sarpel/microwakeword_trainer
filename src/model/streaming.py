@@ -26,6 +26,9 @@ References:
 """
 
 import tensorflow as tf
+import logging
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # MODES ENUMERATION
@@ -117,6 +120,28 @@ class RingBuffer:
             return self.buffer
 
         # Shift buffer left and append new data.
+        # Use slice assignment to avoid creating new tensors
+        # This updates the buffer in-place, preventing memory growth
+        time_dim_size = self.buffer.shape[1]
+        if time_dim_size > 1:
+            # Shift: move [1:] to [0:-1]
+            self.buffer = tf.tensor_scatter_nd_update(
+                self.buffer,
+                [[0, i] for i in range(time_dim_size - 1)],
+                self.buffer[:, 1:]
+            )
+        # Insert new data at the end
+        self.buffer = tf.tensor_scatter_nd_update(
+            self.buffer,
+            [[0, time_dim_size - 1]],
+            new_data
+        )
+        return self.buffer
+        # Always use [:, 1:, ...] so we get a consistent (size-1) prefix,
+        # even when self.size == 1 (producing an empty intermediate).
+        shifted = self.buffer[:, 1:, ...]
+        self.buffer = tf.concat([shifted, new_data], axis=1)
+        return self.buffer
         # Always use [:, 1:, ...] so we get a consistent (size-1) prefix,
         # even when self.size == 1 (producing an empty intermediate).
         shifted = self.buffer[:, 1:, ...]
