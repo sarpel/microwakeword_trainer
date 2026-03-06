@@ -234,6 +234,8 @@ class HardExampleMiner:
             for idx in selected_indices
         ]
         self.hard_negatives.extend(hard_negative_records)
+        if len(self.hard_negatives) > self.max_samples:
+            self.hard_negatives = self.hard_negatives[-self.max_samples :]
 
         return mining_result
 

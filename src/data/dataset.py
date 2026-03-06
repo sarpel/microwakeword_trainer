@@ -9,6 +9,7 @@ Provides:
 import logging
 import os
 import struct
+from collections import OrderedDict
 import json
 from datetime import datetime
 from hashlib import sha1, sha256
@@ -82,7 +83,7 @@ class RaggedMmap:
         self._lengths: Union[List[int], np.ndarray, None] = None
         self._num_arrays: int = 0
         self._total_bytes: int = 0
-        self._memory_cache: dict[int, np.ndarray] | None = None
+        self._memory_cache: OrderedDict[int, np.ndarray] | None = None
 
         if create:
             self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -143,7 +144,7 @@ class RaggedMmap:
                     with open(self._data_file, "rb") as handle:
                         data = handle.read()
                     self._data = np.frombuffer(data, dtype=self.dtype)
-                    self._memory_cache = {}
+                    self._memory_cache = OrderedDict()
                 else:
                     self._data = np.memmap(
                         self._data_file,
@@ -269,11 +270,16 @@ class RaggedMmap:
         if elem_offset + elem_length > self._data.shape[0]:
             raise RuntimeError("RaggedMmap index out of bounds; data file may be corrupted")
 
-        if self._memory_cache is not None and idx in self._memory_cache:
-            return self._memory_cache[idx]
-        array = np.array(self._data[elem_offset : elem_offset + elem_length])
         if self._memory_cache is not None:
+            if idx in self._memory_cache:
+                self._memory_cache.move_to_end(idx)
+                return self._memory_cache[idx]
+            array = np.array(self._data[elem_offset : elem_offset + elem_length])
             self._memory_cache[idx] = array
+            if len(self._memory_cache) > 1024:
+                self._memory_cache.popitem(last=False)
+            return array
+        array = np.array(self._data[elem_offset : elem_offset + elem_length])
         return array
 
     def __len__(self) -> int:

@@ -149,7 +149,7 @@ class OptimizedDataPipeline:
     def create_training_pipeline(
         self,
         cache_dir: str | None = None,
-        shuffle_buffer: int = 10000,
+        shuffle_buffer: int = 2000,
         shuffle_seed: int | None = None,
     ) -> tf.data.Dataset:
         """Create optimized training data pipeline.
@@ -186,6 +186,11 @@ class OptimizedDataPipeline:
         )
 
         # Cache first (before shuffle for proper training behavior)
+        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
+        if resolved_cache_dir:
+            cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_train")
+            ds = ds.cache(str(cache_path))
+            logger.info(f"Using disk cache: {cache_path}")
         resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         if resolved_cache_dir:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_train")
@@ -353,6 +358,10 @@ class OptimizedDataPipeline:
         if resolved_cache_dir:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_test")
             ds = ds.cache(str(cache_path))
+        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
+        if resolved_cache_dir:
+            cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_test")
+            ds = ds.cache(str(cache_path))
         else:
             ds = ds.cache()
 
@@ -396,6 +405,10 @@ class OptimizedDataPipeline:
         )
 
         # Cache (no shuffle for validation)
+        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
+        if resolved_cache_dir:
+            cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_val")
+            ds = ds.cache(str(cache_path))
         resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         if resolved_cache_dir:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_val")
