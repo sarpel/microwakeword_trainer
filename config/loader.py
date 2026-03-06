@@ -187,6 +187,14 @@ class PerformanceConfig:
     # TensorBoard
     tensorboard_enabled: bool = True
     tensorboard_log_dir: str = "./logs"
+    tensorboard_log_histograms: bool = True
+    tensorboard_log_images: bool = True
+    tensorboard_log_pr_curves: bool = True
+    tensorboard_log_graph: bool = True
+    tensorboard_log_advanced_scalars: bool = True
+    tensorboard_log_weight_histograms: bool = False
+    tensorboard_image_interval: int = 5000
+    tensorboard_histogram_interval: int = 5000
     # Data pipeline (NEW)
     prefetch_buffer: int = 2  # Buffer size for tf.data pipeline
     use_tfdata: bool = True  # Use tf.data pipeline instead of Python generators

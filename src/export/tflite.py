@@ -418,13 +418,12 @@ def create_representative_dataset(
         rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
         for i in range(num_samples):
             # Shape: (1, stride, mel_bins)
-            sample = rng.uniform(0.0, 25.85, (1, stride, mel_bins)).astype(np.float32)
+            sample = rng.uniform(0.0, 26.0, (1, stride, mel_bins)).astype(np.float32)
 
             # Boundary anchors for quantization calibration
             if i == 0:
                 sample[0, 0, 0] = 0.0  # Force minimum
-                sample[0, 0, 1] = 25.85  # Force maximum (Article III compliance)
-
+                sample[0, 0, 1] = 26.0  # Force maximum (Article III compliance)
 
             yield [sample]
 
@@ -515,7 +514,7 @@ def create_representative_dataset_from_data(
             # Boundary anchors for quantization calibration
             if i == 0:
                 chunk[0, 0, 0] = 0.0
-                chunk[0, 0, 1] = 25.85  # Force maximum (Article III compliance)
+                chunk[0, 0, 1] = 26.0  # Force maximum
             yield [chunk]
 
     return representative_dataset_gen
@@ -705,36 +704,34 @@ def convert_model_saved(
     mode: str = "stream_internal_state_inference",
 ) -> tf.keras.Model:
     """Convert non-streaming model to streaming SavedModel (Article IX Stage 1).
-    
+
     This implements the mandated Stage 1 conversion from ARCHITECTURAL_CONSTITUTION.md:
     - Takes a non-streaming trained model
     - Converts to streaming with internal state inference
     - Produces SavedModel with proper state variables
-    
+
     Args:
         model: Non-streaming trained model (e.g., MixedNet in NON_STREAM mode)
         config: Configuration dict with model parameters
         folder: Output directory for streaming SavedModel
         mode: Must be "stream_internal_state_inference" (Article IX requirement)
-    
+
     Returns:
         Streaming model ready for Stage 2 TFLite conversion
     """
     import os
-    from ..model.streaming import Modes
-    
+
     if mode != "stream_internal_state_inference":
         raise ValueError(f"mode must be 'stream_internal_state_inference', got {mode}")
-    
+
     os.makedirs(folder, exist_ok=True)
-    
+
     print("[Stage 1] Converting non-streaming model to streaming SavedModel...")
     print(f"  Input model: {model.name}")
     print(f"  Mode: {mode}")
-    
+
     # Build streaming export model with state variables
-    from .streaming_export import StreamingExportModel
-    
+
     streaming_model = StreamingExportModel(
         first_conv_filters=config.get("first_conv_filters", 32),
         first_conv_kernel=config.get("first_conv_kernel", 5),
@@ -743,22 +740,22 @@ def convert_model_saved(
         mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
         mel_bins=config.get("mel_bins", 40),
     )
-    
+
     # Build and transfer weights
     input_shape = (config.get("stride", 3), config.get("mel_bins", 40))
     _ = streaming_model(tf.zeros((1, input_shape[0], input_shape[1]), dtype=tf.float32))
-    
+
     # Transfer weights from non-streaming model to streaming model
     # This simulates the conversion process
     streaming_model.set_weights(model.get_weights())
-    
+
     # Fold batch norms for clean export
     streaming_model.fold_batch_norms()
-    
+
     # Export to SavedModel
     export_archive = tf.keras.export.ExportArchive()
     export_archive.track(streaming_model)
-    
+
     export_input_sig = [
         tf.TensorSpec(
             shape=(1, input_shape[0], input_shape[1]),
@@ -766,20 +763,20 @@ def convert_model_saved(
             name="inputs",
         )
     ]
-    
+
     def serve_fn(inputs: tf.Tensor) -> tf.Tensor:
         return streaming_model(inputs, training=False)
-    
+
     export_archive.add_endpoint(
         name="serve",
         fn=serve_fn,
         input_signature=export_input_sig,
     )
     export_archive.write_out(folder)
-    
+
     print(f"  ✓ Streaming SavedModel saved to: {folder}")
     print(f"  ✓ Model has {len(streaming_model.state_vars)} state variables")
-    
+
     return streaming_model
 
 

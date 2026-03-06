@@ -89,3 +89,10 @@ paths:
 - Supports recursive config merging for nested dicts
 - Validates against known architectures (defined in loader)
 - `_substitute_env_vars()` and `_resolve_path()` handle all path/env processing
+
+
+## Related Documentation
+
+- [Configuration Reference](../docs/CONFIGURATION.md) - Complete configuration reference
+- [Training Guide](../docs/TRAINING.md) - Training workflow
+- [Export Guide](../docs/EXPORT.md) - Export configuration

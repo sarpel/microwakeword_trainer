@@ -106,3 +106,10 @@ Audio validation constants: VALIDATION_SAMPLE_RATE=16000, VALIDATION_SAMPLE_WIDT
 - RaggedMmap creates `.data`, `.offsets`, `.lengths` files in storage directory
 - FeatureConfig validates on init, warns if sample rate != 16000 Hz
 - `load_clips()` is the main entry for audio discovery/loading
+
+
+## Related Documentation
+
+- [Training Guide](../../docs/TRAINING.md) - Complete training workflow
+- [Configuration Reference](../../docs/CONFIGURATION.md) - All config options
+- [Export Guide](../../docs/EXPORT.md) - TFLite export process

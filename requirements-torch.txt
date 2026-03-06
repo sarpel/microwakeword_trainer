@@ -16,9 +16,6 @@
 torch<2.11
 torchaudio<2.11
 
-# TFLite support for model verification (pin <3.0 for compatibility)
-ai-edge-litert<3.0
-
 # Speaker Recognition & Embeddings
 speechbrain>=1.0.3
 librosa>=0.10

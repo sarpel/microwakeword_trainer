@@ -31,15 +31,10 @@ import numpy as np
 
 
 def _make_interpreter(tflite_path: str):
-    """Create and allocate a TFLite interpreter, preferring ai-edge-litert."""
-    try:
-        from ai_edge_litert.interpreter import Interpreter
+    """Create and allocate a TFLite interpreter for the given model path."""
+    import tensorflow as tf
 
-        interp = Interpreter(model_path=tflite_path)
-    except ImportError:
-        import tensorflow as tf
-
-        interp = tf.lite.Interpreter(model_path=tflite_path)
+    interp = tf.lite.Interpreter(model_path=tflite_path)
     interp.allocate_tensors()
     return interp
 

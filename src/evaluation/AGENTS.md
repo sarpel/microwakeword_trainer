@@ -74,3 +74,9 @@ fah_rate = estimator.estimate_false_activations_per_hour(false_positives, durati
 - Prefer centralized ROC/AUC and PR handling through `MetricsCalculator.compute_all_metrics()`.
 - Used by `src/training/trainer.py` during validation steps.
 - Best model selection based on FAH (false activations per hour), then recall at thresholds.
+
+
+## Related Documentation
+
+- [Training Guide](../../docs/TRAINING.md) - Training workflow and metrics
+- [Configuration Reference](../../docs/CONFIGURATION.md) - Evaluation config options

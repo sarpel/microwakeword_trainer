@@ -55,3 +55,9 @@ Current function ownership:
 - Global GPU/CPU tuning (`configure_mixed_precision`, `set_threading_config`, `setup_gpu_environment`) → `src/utils/performance.py`
 
 If training-specific monitor/optimization modules are introduced later, prefer delegating from `performance.py` wrappers instead of duplicating behavior.
+
+
+## Related Documentation
+
+- [Configuration Reference](../../docs/CONFIGURATION.md) - PerformanceConfig options
+- [Training Guide](../../docs/TRAINING.md) - Performance optimization tips

@@ -76,6 +76,12 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 ├── profiles/              # Performance profiles
 ├── notebooks/             # Analysis notebooks
 ├── docs/                  # Documentation
+│   ├── ARCHITECTURE.md    # MixedNet architecture documentation
+│   ├── CONFIGURATION.md   # Complete configuration reference
+│   ├── TRAINING.md        # Training workflow guide
+│   ├── EXPORT.md          # TFLite export guide
+│   ├── my_environment.md  # Project-specific training profile
+│   └── POST_TRAINING_ANALYSIS.md  # Post-training analysis guide
 │   ├── GUIDE.md           # Complete configuration reference
 │   ├── IMPLEMENTATION_PLAN.md  # v2.0 implementation plan (1782 lines)
 │   ├── my_environment.md  # Project-specific training profile
@@ -97,7 +103,6 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 ## Key Dependencies
 - **tensorflow>=2.16** - Core ML framework
 - **cupy-cuda12x>=14.0** - GPU SpecAugment (no CPU fallback)
-- **ai-edge-litert** - TFLite export (formerly TF Lite)
 - **pymicro-features** - Audio feature extraction (40 mel bins, ESPHome-compatible)
 - **rich** - Training progress display (RichTrainingLogger)
 - **optuna** - Hyperparameter optimization (optional)
@@ -118,7 +123,7 @@ Loader (736 lines) supports:
 ## Critical Constraints
 - **GPU Required**: CuPy SpecAugment has no CPU fallback
 - **CUDA 12.x**: Required for CuPy compatibility
-- **Python 3.10-3.11**: ai-edge-litert 2.x does not support Python 3.12 (use 3.10 or 3.11)
+- **Python 3.10-3.11**:
 - **Separate venvs for TF/PyTorch**: If using speechbrain, use different environments
 - **ARCHITECTURAL_CONSTITUTION.md is immutable**: No exceptions, no overrides, no "quick tweaks"
 - **Relaxed typing**: mypy configured with `disallow_untyped_defs=false` (see pyproject.toml)
@@ -191,6 +196,17 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 | Audio splitter | `scripts/split_audio.py` (59 lines) | Audio splitting utility |
 | VAD trimmer | `scripts/vad_trim.py` (168 lines) | VAD-based audio trimming |
 
+## Documentation
+
+| Document | Purpose | Location |
+|----------|---------|----------|
+| ARCHITECTURE.md | MixedNet architecture, MixConv blocks, streaming, ESPHome requirements | `docs/ARCHITECTURE.md` |
+| CONFIGURATION.md | Complete config reference - all 9 dataclasses with fields/defaults | `docs/CONFIGURATION.md` |
+| TRAINING.md | Training workflow, data flow, augmentation, hard negative mining | `docs/TRAINING.md` |
+| EXPORT.md | TFLite export pipeline, INT8 quantization, manifest format | `docs/EXPORT.md` |
+| Implementation Status | Component status, test coverage, metrics, roadmap | `specs/implementation_status.md` |
+| AGENTS.md (per module) | Module-specific patterns and notes | `src/*/AGENTS.md` |
+
 ## Implemented Configurations
 | Config | Status | Implementation |
 |--------|--------|----------------|
@@ -222,8 +238,6 @@ python -c "from config.loader import load_full_config; load_full_config('standar
 - **Don't install nvidia-driver inside WSL** - Install on Windows host only
 - **Don't mix TF and PyTorch in same venv** - Use separate environments
 - **Don't use CPU-only CuPy** - SpecAugment requires GPU, no fallback
-- **Don't use Python 3.12 yet** - ai-edge-litert 2.1.2 lacks support
-- **Don't pin ai-edge-litert without version** - Pin to `<3.0`
 - **Don't contradict ARCHITECTURAL_CONSTITUTION.md** - Not even "small tweaks" to constants
 - **Don't use `model.export()`** - Fails with ring buffer states; use `tf.keras.export.ExportArchive`
 - **Don't use int8 output dtype** - ESPHome requires uint8; model silently broken on device

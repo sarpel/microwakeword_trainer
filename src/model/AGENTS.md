@@ -68,3 +68,10 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 **Ring Buffer Law**: `buffer_frames = kernel_size - stride` — inviolable identity from ARCHITECTURAL_CONSTITUTION.md.
 
 **References**: microWakeWord (OHF-Voice), Google kws_streaming.
+
+
+## Related Documentation
+
+- [Architecture Guide](../../docs/ARCHITECTURE.md) - Complete architecture documentation
+- [Export Guide](../../docs/EXPORT.md) - Streaming conversion and TFLite export
+- [Configuration Reference](../../docs/CONFIGURATION.md) - ModelConfig options
