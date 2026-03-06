@@ -309,3 +309,6 @@ class ParallelAugmenter:
         """Cleanup thread pool."""
         if hasattr(self, "executor"):
             self.executor.shutdown(wait=True, cancel_futures=True)
+        """Cleanup thread pool."""
+        if hasattr(self, "executor"):
+            self.executor.shutdown(wait=True, cancel_futures=True)
