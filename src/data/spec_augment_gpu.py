@@ -67,7 +67,10 @@ def spec_augment_gpu(
         spec_gpu[time_mask_start : time_mask_start + time_mask_size, :] = 0
 
     # Transfer back to CPU
-    return cast("np.ndarray[Any, Any]", cp.asnumpy(spec_gpu))
+    spec_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(spec_gpu))
+    del spec_gpu
+    cp.get_default_memory_pool().free_all_blocks()
+    return spec_cpu
 
 
 def batch_spec_augment_gpu(
@@ -137,4 +140,7 @@ def batch_spec_augment_gpu(
             batch_gpu[i, mask_start : mask_start + mask_size, :] = 0
 
     # Transfer back to CPU
-    return cast("np.ndarray[Any, Any]", cp.asnumpy(batch_gpu))
+    batch_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(batch_gpu))
+    del batch_gpu
+    cp.get_default_memory_pool().free_all_blocks()
+    return batch_cpu

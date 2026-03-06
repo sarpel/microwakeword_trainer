@@ -594,7 +594,7 @@ class Trainer:
             return plateau_metrics
 
         self._eval_history.append((step, {"quality_score": float(quality_score)}))
-        max_len = max(1, self.eval_plateau_window_evals)
+        max_len = 5
         if len(self._eval_history) > max_len:
             self._eval_history = self._eval_history[-max_len:]
 
@@ -1045,6 +1045,7 @@ class Trainer:
             metrics["fah_at_target_recall"] = float(fah_at_recall)
             metrics["threshold_for_target_recall"] = float(threshold_at_recall)
 
+        self.val_metrics.reset()
         return metrics
 
     def _log_false_predictions_to_json(self, epoch: int) -> None:
@@ -1126,6 +1127,7 @@ class Trainer:
 
         except Exception as e:
             self.logger.log_warning(f"Failed to write false predictions log: {e}")
+        self.false_predictions_log.clear()
 
     def train(
         self,

@@ -19,8 +19,8 @@ import numpy as np
 import tensorflow as tf
 from matplotlib import pyplot as plt
 
-from src.evaluation.calibration import compute_calibration_curve
-from src.evaluation.metrics import compute_roc_pr_curves
+from ..evaluation.calibration import compute_calibration_curve
+from ..evaluation.metrics import compute_roc_pr_curves
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class TensorBoardLogger:
     Features:
     - Histogram logging for score distributions and weight statistics
     - Image logging for confusion matrices, ROC/PR curves, score distributions
-    - Interactive PR curves via tf.summary.pr_curve
+    - Interactive PR curves via tf.summary.pr_curve (if available)
     - Advanced scalar metrics (EER, calibration, per-class breakdown)
     - Model graph visualization
     - Text summaries for operating points and confusion matrices
@@ -202,6 +202,8 @@ class TensorBoardLogger:
         if not self.enabled or not self.log_images or self.writer is None:
             return
 
+        fig = None
+        buf = None
         try:
             # Create figure
             fig, ax = plt.subplots(figsize=(6, 5))
@@ -249,8 +251,6 @@ class TensorBoardLogger:
             fig.savefig(buf, format="png", dpi=100)
             buf.seek(0)
             image = plt.imread(buf)
-            buf.close()
-            plt.close(fig)
 
             # Log to TensorBoard
             with self.writer.as_default():
@@ -262,6 +262,11 @@ class TensorBoardLogger:
 
         except Exception as e:
             logger.warning(f"Failed to log confusion matrix image: {e}")
+        finally:
+            if buf is not None:
+                buf.close()
+            if fig is not None:
+                plt.close(fig)
 
     def log_roc_pr_curves(
         self,
@@ -279,6 +284,8 @@ class TensorBoardLogger:
         if not self.enabled or not self.log_images or self.writer is None:
             return
 
+        fig = None
+        buf = None
         try:
             curves = compute_roc_pr_curves(y_true, y_score, n_thresholds=101)
             fpr = curves["fpr"]
@@ -315,8 +322,6 @@ class TensorBoardLogger:
             fig.savefig(buf, format="png", dpi=100)
             buf.seek(0)
             image = plt.imread(buf)
-            buf.close()
-            plt.close(fig)
 
             # Log to TensorBoard
             with self.writer.as_default():
@@ -328,6 +333,11 @@ class TensorBoardLogger:
 
         except Exception as e:
             logger.warning(f"Failed to log ROC/PR curves: {e}")
+        finally:
+            if buf is not None:
+                buf.close()
+            if fig is not None:
+                plt.close(fig)
 
     def log_score_distribution_image(
         self,
@@ -347,6 +357,8 @@ class TensorBoardLogger:
         if not self.enabled or not self.log_images or self.writer is None:
             return
 
+        fig = None
+        buf = None
         try:
             fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -400,8 +412,6 @@ class TensorBoardLogger:
             fig.savefig(buf, format="png", dpi=100)
             buf.seek(0)
             image = plt.imread(buf)
-            buf.close()
-            plt.close(fig)
 
             # Log to TensorBoard
             with self.writer.as_default():
@@ -413,6 +423,11 @@ class TensorBoardLogger:
 
         except Exception as e:
             logger.warning(f"Failed to log score distribution image: {e}")
+        finally:
+            if buf is not None:
+                buf.close()
+            if fig is not None:
+                plt.close(fig)
 
     def log_pr_curve_interactive(
         self,
@@ -428,6 +443,43 @@ class TensorBoardLogger:
             step: Global step
         """
         if not self.enabled or not self.log_pr_curves or self.writer is None:
+            return
+
+        try:
+            # Log interactive PR curve
+            with self.writer.as_default():
+                tf.summary.pr_curve(
+                    "pr_curve",
+                    labels=y_true,
+                    predictions=y_score,
+                    num_thresholds=101,
+                    step=step,
+                )
+
+        except Exception as e:
+            logger.warning(f"Failed to log interactive PR curve: {e}")
+
+    def log_pr_curve_interactive(
+        self,
+        y_true: np.ndarray,
+        y_score: np.ndarray,
+        step: int,
+    ) -> None:
+        """Log interactive PR curve using tf.summary.pr_curve.
+
+        Note: tf.summary.pr_curve requires tensorboard-plugin-pr-curve which may not
+        be installed. This method will silently skip if the API is unavailable.
+
+        Args:
+            y_true: Ground truth labels
+            y_score: Predicted scores
+            step: Global step
+        """
+        if not self.enabled or not self.log_pr_curves or self.writer is None:
+            return
+
+        # Skip if pr_curve is not available in this TF version
+        if not hasattr(tf.summary, "pr_curve"):
             return
 
         try:
@@ -462,6 +514,8 @@ class TensorBoardLogger:
         if not self.enabled or not self.log_images or self.writer is None:
             return
 
+        fig = None
+        buf = None
         try:
             cal_curve = compute_calibration_curve(y_true, y_score, n_bins=n_bins)
             prob_true = cal_curve["prob_true"]
@@ -484,8 +538,6 @@ class TensorBoardLogger:
             fig.savefig(buf, format="png", dpi=100)
             buf.seek(0)
             image = plt.imread(buf)
-            buf.close()
-            plt.close(fig)
 
             # Log to TensorBoard
             with self.writer.as_default():
@@ -497,6 +549,11 @@ class TensorBoardLogger:
 
         except Exception as e:
             logger.warning(f"Failed to log calibration curve: {e}")
+        finally:
+            if buf is not None:
+                buf.close()
+            if fig is not None:
+                plt.close(fig)
 
     def log_fah_recall_curve(
         self,
@@ -516,6 +573,8 @@ class TensorBoardLogger:
         if not self.enabled or not self.log_images or self.writer is None:
             return
 
+        fig = None
+        buf = None
         try:
             thresholds = np.linspace(0.01, 0.99, 100)
 
@@ -552,8 +611,6 @@ class TensorBoardLogger:
             fig.savefig(buf, format="png", dpi=100)
             buf.seek(0)
             image = plt.imread(buf)
-            buf.close()
-            plt.close(fig)
 
             # Log to TensorBoard
             with self.writer.as_default():
@@ -565,6 +622,11 @@ class TensorBoardLogger:
 
         except Exception as e:
             logger.warning(f"Failed to log FAH/recall curve: {e}")
+        finally:
+            if buf is not None:
+                buf.close()
+            if fig is not None:
+                plt.close(fig)
 
     def log_advanced_scalars(
         self,

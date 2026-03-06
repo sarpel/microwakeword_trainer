@@ -205,6 +205,8 @@ class MixConvBlock(tf.keras.layers.Layer):
                 pad_amount = self.kernel_sizes[0] - 1
                 if pad_amount > 0:
                     net = tf.pad(net, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
+            else:
+                net = StridedKeep(self.kernel_sizes[0], mode=self.mode)(net)
             net = self.depthwise_convs[0](net)
         else:
             # Multiple kernel sizes - split channels and apply different convs
