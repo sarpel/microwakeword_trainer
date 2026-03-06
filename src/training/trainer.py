@@ -27,12 +27,14 @@ import tensorflow as tf
 from tensorflow import keras
 
 from src.data.spec_augment_gpu import batch_spec_augment_gpu
+from src.evaluation.calibration import compute_brier_score
 from src.evaluation.metrics import MetricsCalculator
 from src.model.architecture import build_model
 from src.training.async_miner import AsyncHardExampleMiner
 from src.training.miner import HardExampleMiner
 from src.training.profiler import TFProfiler, TrainingProfiler
 from src.training.rich_logger import RichTrainingLogger
+from src.training.tensorboard_logger import TensorBoardLogger
 from src.utils.performance import get_system_info
 from src.utils.terminal_logger import TerminalLogger
 
@@ -279,6 +281,7 @@ class Trainer:
         self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 100) or 0)
         self.gpu_memory_log_interval = int(performance.get("gpu_memory_log_interval", 1000) or 0)
         self.tensorboard_writer: tf.summary.SummaryWriter | None = None
+        self.tensorboard_logger: TensorBoardLogger | None = None
 
         # Log seed after logger is initialized
         if self._seed_applied:
@@ -350,6 +353,7 @@ class Trainer:
             ambient_duration_hours=self.val_ambient_duration_hours,
             default_threshold=default_threshold,
         )
+        self._last_val_raw_labels: list[int] = []
 
         # TensorBoard metric selection (keep focused, high-signal metrics)
         self._tb_train_metric_keys = ["loss", "precision", "recall", "auc", "step_time_ms", "data_loading_ms", "spec_augment_ms", "train_step_ms"]
@@ -380,6 +384,16 @@ class Trainer:
         ]
         self._prev_quality_metrics: dict[str, float] | None = None
         self._prev_quality_step: int | None = None
+
+        # Advanced TensorBoard logger configuration
+        self.tensorboard_log_histograms = bool(performance.get("tensorboard_log_histograms", True))
+        self.tensorboard_log_images = bool(performance.get("tensorboard_log_images", True))
+        self.tensorboard_log_pr_curves = bool(performance.get("tensorboard_log_pr_curves", True))
+        self.tensorboard_log_graph = bool(performance.get("tensorboard_log_graph", True))
+        self.tensorboard_log_advanced_scalars = bool(performance.get("tensorboard_log_advanced_scalars", True))
+        self.tensorboard_log_weight_histograms = bool(performance.get("tensorboard_log_weight_histograms", False))
+        self.tensorboard_image_interval = int(performance.get("tensorboard_image_interval", 5000) or 5000)
+        self.tensorboard_histogram_interval = int(performance.get("tensorboard_histogram_interval", 5000) or 5000)
 
         # Hard negative mining
         hn_config = config.get("hard_negative_mining", {})
@@ -433,6 +447,58 @@ class Trainer:
         if n_thresholds < 2:
             n_thresholds = 2
         return np.linspace(0.0, 1.0, n_thresholds).tolist()
+
+    def _init_tensorboard_logger(self, log_dir: Path) -> None:
+        if not self.tensorboard_enabled:
+            return
+        self.tensorboard_logger = TensorBoardLogger(
+            log_dir=str(log_dir),
+            enabled=True,
+            log_histograms=self.tensorboard_log_histograms,
+            log_images=self.tensorboard_log_images,
+            log_pr_curves=self.tensorboard_log_pr_curves,
+            log_graph=self.tensorboard_log_graph,
+            log_advanced_scalars=self.tensorboard_log_advanced_scalars,
+            image_interval=self.tensorboard_image_interval,
+            histogram_interval=self.tensorboard_histogram_interval,
+            log_weight_histograms=self.tensorboard_log_weight_histograms,
+        )
+
+    def _log_advanced_tensorboard_metrics(self, metrics: dict[str, float], step: int) -> None:
+        if self.tensorboard_logger is None:
+            return
+        if not self.val_metrics.all_y_true:
+            return
+
+        y_true = np.array(self.val_metrics.all_y_true)
+        y_score = np.array(self.val_metrics.all_y_scores)
+        raw_labels = None
+        if self._last_val_raw_labels:
+            raw_labels = np.array(self._last_val_raw_labels)
+
+        hist_due = self.tensorboard_histogram_interval > 0 and step % self.tensorboard_histogram_interval == 0
+        image_due = self.tensorboard_image_interval > 0 and step % self.tensorboard_image_interval == 0
+
+        if hist_due:
+            self.tensorboard_logger.log_score_histograms(y_true, y_score, step, raw_labels)
+
+        tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
+        if image_due:
+            self.tensorboard_logger.log_score_distribution_image(y_true, y_score, step, raw_labels)
+            self.tensorboard_logger.log_confusion_matrix_image(tp, fp, tn, fn, step, threshold=self.val_metrics.default_threshold)
+            self.tensorboard_logger.log_roc_pr_curves(y_true, y_score, step)
+            self.tensorboard_logger.log_pr_curve_interactive(y_true, y_score, step)
+            self.tensorboard_logger.log_calibration_curve(y_true, y_score, step)
+
+        if image_due and self.val_ambient_duration_hours > 0:
+            self.tensorboard_logger.log_fah_recall_curve(y_true, y_score, self.val_ambient_duration_hours, step)
+
+        self.tensorboard_logger.log_advanced_scalars(metrics, step)
+
+        if hist_due and self.tensorboard_log_weight_histograms and self.model is not None:
+            self.tensorboard_logger.log_weight_histograms(self.model, step)
+
+        self.tensorboard_logger.flush()
 
     def _get_current_phase_settings(self, step: int) -> dict[str, Any]:
         """Get training settings for current step (cached per phase)."""
@@ -744,8 +810,8 @@ class Trainer:
             result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 git_commit = result.stdout.strip()
-        except Exception:
-            pass
+        except Exception as exc:
+            self.logger.log_warning(f"Could not resolve git commit: {exc}")
 
         # Stable config hash (ignore run-time-only fields)
         try:
@@ -812,7 +878,7 @@ class Trainer:
             self._last_assigned_lr = current_lr
 
         # Apply class weights (GPU-accelerated) - works for both tfdata and non-tfdata paths
-        combined_weights = self._apply_class_weights(
+        combined_weights: Any = self._apply_class_weights(
             y_true=train_ground_truth,
             sample_weights=train_sample_weights,
             positive_weight=phase_settings["positive_weight"],
@@ -872,6 +938,7 @@ class Trainer:
         all_scores: list[tf.Tensor] = []
         all_labels: list[tf.Tensor] = []
         self._last_val_paths: list[str] = []  # Store sample paths for false prediction logging
+        self._last_val_raw_labels = []
         for batch in iterator:
             if not isinstance(batch, tuple) or len(batch) != 3:
                 raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
@@ -891,6 +958,14 @@ class Trainer:
             # Collect sample paths from metadata if available
             if isinstance(metadata, dict) and "file_path" in metadata:
                 self._last_val_paths.extend(metadata["file_path"] if isinstance(metadata["file_path"], list) else [metadata["file_path"]])
+            if isinstance(metadata, dict) and "raw_labels" in metadata:
+                raw_labels = metadata["raw_labels"]
+                if isinstance(raw_labels, list):
+                    self._last_val_raw_labels.extend(raw_labels)
+                else:
+                    self._last_val_raw_labels.extend(np.asarray(raw_labels).ravel().tolist())
+            else:
+                self._last_val_raw_labels.extend(np.asarray(ground_truth).ravel().tolist())
             batch_count += 1
 
         if all_scores:
@@ -907,12 +982,35 @@ class Trainer:
         metrics = self.val_metrics.compute_metrics()
         if self.val_metrics.all_y_true:
             y_true = np.array(self.val_metrics.all_y_true)
+            y_score = np.array(self.val_metrics.all_y_scores)
             pos_count = int(np.sum(y_true == 1))
             neg_count = int(np.sum(y_true == 0))
             total_count = int(y_true.shape[0])
             metrics["val_positive_count"] = float(pos_count)
             metrics["val_negative_count"] = float(neg_count)
             metrics["val_total_count"] = float(total_count)
+            metrics["score_mean"] = float(np.mean(y_score))
+            metrics["score_std"] = float(np.std(y_score))
+            metrics["score_median"] = float(np.median(y_score))
+            try:
+                metrics["brier_score"] = compute_brier_score(y_true, y_score)
+            except ValueError as exc:
+                self.logger.log_warning(f"Brier score computation skipped: {exc}")
+            if len(np.unique(y_true)) >= 2:
+                calc = MetricsCalculator(
+                    y_true=y_true,
+                    y_score=y_score,
+                    ambient_duration_hours=self.val_ambient_duration_hours,
+                )
+                curves = calc.compute_roc_pr_curves(n_thresholds=len(self.val_metrics.cutoffs))
+                fpr = curves["fpr"]
+                tpr = curves["tpr"]
+                thresholds = curves["thresholds"]
+                if fpr.size > 0:
+                    fnr = 1.0 - tpr
+                    idx = int(np.argmin(np.abs(fpr - fnr)))
+                    metrics["eer"] = float(fpr[idx])
+                    metrics["eer_threshold"] = float(thresholds[idx])
         if score_samples:
             scores_arr = np.array(score_samples, dtype=np.float32)
             metrics["score_min"] = float(np.min(scores_arr))
@@ -1091,7 +1189,13 @@ class Trainer:
         if self.tensorboard_enabled:
             log_dir = Path(self.tensorboard_log_dir) / run_name
             log_dir.mkdir(parents=True, exist_ok=True)
-            self.tensorboard_writer = tf.summary.create_file_writer(str(log_dir))
+            self._init_tensorboard_logger(log_dir)
+            if self.tensorboard_logger is not None and self.tensorboard_logger.writer is not None:
+                self.tensorboard_writer = self.tensorboard_logger.writer
+            else:
+                self.tensorboard_writer = tf.summary.create_file_writer(str(log_dir))
+            if self.tensorboard_logger is not None:
+                self.tensorboard_logger.log_model_graph(self.model, input_shape, step=0)
 
         try:
             for step in range(1, total_steps + 1):
@@ -1230,10 +1334,23 @@ class Trainer:
                     if self.tensorboard_writer is not None:
                         self._log_tensorboard_metrics("val", val_metrics, step, self._tb_val_metric_keys)
                         self.tensorboard_writer.flush()
+                    if advanced_due and self.tensorboard_logger is not None:
+                        self._log_advanced_tensorboard_metrics(val_metrics, step)
 
                     if advanced_due and self.eval_checkpoints_interval and step % self.eval_checkpoints_interval == 0:
                         is_best, reason = self._is_best_model(val_metrics, self.target_minimization, self.best_recall)
                         self._save_checkpoint(val_metrics, is_best, reason)
+                        if self.tensorboard_logger is not None:
+                            summary_text = "\n".join(
+                                [
+                                    f"Checkpoint at step {step}",
+                                    f"Best FAH: {self.best_fah:.4f}",
+                                    f"Best Recall: {self.best_recall:.4f}",
+                                    f"Best weights path: {self.best_weights_path or 'N/A'}",
+                                    f"Reason: {reason}",
+                                ]
+                            )
+                            self.tensorboard_logger.log_text_summary("checkpoints/summary", summary_text, step)
 
                     # Hard negative mining or logging (based on collection_mode)
                     if advanced_due and step % self.eval_advanced_step_interval == 0:
@@ -1286,9 +1403,14 @@ class Trainer:
                     # Resume progress bar
                     progress.start()
         finally:
-            if self.tensorboard_writer is not None:
+            if self.tensorboard_logger is not None:
+                self.tensorboard_logger.close()
+                self.tensorboard_logger = None
+                self.tensorboard_writer = None
+            elif self.tensorboard_writer is not None:
                 self.tensorboard_writer.flush()
                 self.tensorboard_writer.close()
+                self.tensorboard_writer = None
             # Wait for async miner to complete if running
             if self._async_miner is not None and self._async_miner.is_mining():
                 self.logger.log_info("Waiting for async hard negative mining to complete...")

@@ -77,8 +77,8 @@ augmentation:
   distortion_max: 0.2
   pitch_shift_min_semitones: -2.0
   pitch_shift_max_semitones: 2.0
-  band_stop_min_center_freq: 80.0
-  band_stop_max_center_freq: 7000.0
+  band_stop_min_center_freq: 125.0
+  band_stop_max_center_freq: 7500.0
   band_stop_min_bandwidth_fraction: 0.5
   band_stop_max_bandwidth_fraction: 1.99
   gain_min_db: -5.0
@@ -107,6 +107,14 @@ performance:
   gpu_memory_log_interval: 1000  # Log GPU memory to TensorBoard every N steps (0 = disabled)
   tensorboard_enabled: true
   tensorboard_log_dir: "./logs"
+  tensorboard_log_histograms: true
+  tensorboard_log_images: true
+  tensorboard_log_pr_curves: true
+  tensorboard_log_graph: true
+  tensorboard_log_advanced_scalars: true
+  tensorboard_log_weight_histograms: true
+  tensorboard_image_interval: 5000
+  tensorboard_histogram_interval: 5000
   prefetch_buffer: 4
   use_tfdata: true
   tfdata_cache_dir: null  # Use RAM cache (64GB available) instead of disk

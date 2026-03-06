@@ -96,7 +96,7 @@ Output: [1, 1]  (uint8)  ← Wake word probability
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
-| Python | 3.10 or 3.11 | 3.12 NOT supported (ai-edge-litert) |
+| Python | 3.10 or 3.11 | 3.12 NOT supported |
 | CUDA | 12.x | Required for CuPy |
 | GPU | NVIDIA (Volta+) | No CPU fallback for SpecAugment |
 | RAM | 16GB+ | For standard training |

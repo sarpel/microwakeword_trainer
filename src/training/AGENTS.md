@@ -123,3 +123,10 @@ Expects FullConfig from `config.loader` with:
 - Supports TensorBoard logging (controlled via config)
 - Two-phase training: typically [20000, 10000] steps with [0.001, 0.0001] LR
 - Best model selection by FAH (false activations/hour) then recall
+
+
+## Related Documentation
+
+- [Training Guide](../../docs/TRAINING.md) - Complete training documentation
+- [Configuration Reference](../../docs/CONFIGURATION.md) - TrainingConfig options
+- [Architecture Guide](../../docs/ARCHITECTURE.md) - Model architecture

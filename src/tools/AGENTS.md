@@ -158,3 +158,9 @@ mww-cluster-apply --undo cluster_output/positive_backup_manifest.json
 - `cluster_apply` skips files that are not found or already organized into `speaker_*` subdirectories
 - The `--dataset all` flag runs clustering on `positive`, `negative`, and `hard_negative` sequentially
 - `SpeakerClustering` (from `src.data.clustering`) handles embedding extraction and cluster assignment — these tools are CLI wrappers
+
+
+## Related Documentation
+
+- [Training Guide](../../docs/TRAINING.md) - Speaker clustering and data preparation
+- [Configuration Reference](../../docs/CONFIGURATION.md) - SpeakerClusteringConfig options

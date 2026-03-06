@@ -103,3 +103,10 @@ Streaming model uses 2 subgraphs with 6 state variables for ring buffers.
 - `model_analyzer.py` can compare models, estimate performance, and generate full reports
 - DEFAULT_TENSOR_ARENA_SIZE = 22860 bytes in manifest.py (add 10% margin to measured value)
 - Verification also available via `scripts/verify_esphome.py` (standalone, 168 lines)
+
+
+## Related Documentation
+
+- [Export Guide](../../docs/EXPORT.md) - Complete export documentation
+- [Architecture Guide](../../docs/ARCHITECTURE.md) - Model architecture details
+- [Configuration Reference](../../docs/CONFIGURATION.md) - ExportConfig options

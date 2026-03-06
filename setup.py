@@ -50,7 +50,6 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
-        # Python 3.12 is NOT supported (ai-edge-litert 2.x requires 3.10 or 3.11)
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
     entry_points={

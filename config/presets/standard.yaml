@@ -165,6 +165,14 @@ performance:
   # TensorBoard enabled
   tensorboard_enabled: true
   tensorboard_log_dir: "./logs"
+  tensorboard_log_histograms: true
+  tensorboard_log_images: true
+  tensorboard_log_pr_curves: true
+  tensorboard_log_graph: true
+  tensorboard_log_advanced_scalars: true
+  tensorboard_log_weight_histograms: false
+  tensorboard_image_interval: 5000
+  tensorboard_histogram_interval: 5000
 
   # Data pipeline
   prefetch_buffer: null  # null = tf.data.AUTOTUNE (dynamic optimization)
