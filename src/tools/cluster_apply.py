@@ -300,6 +300,8 @@ Examples:
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without moving files")
 
     args = parser.parse_args()
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
     logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
 
     output_dir = Path(args.output_dir)

@@ -172,8 +172,10 @@ ci_export/
 # Keep important source dirs from dataset/data exclusions
 !src/data/
 !src/config/
+!src/tuning
 discarded
-
+fil-result
 dataset.tar
 microwakeword_trainer.7z
-tuning
+microwakeword_trainer.egg-info
+

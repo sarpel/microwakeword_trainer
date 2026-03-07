@@ -191,15 +191,9 @@ class OptimizedDataPipeline:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_train")
             ds = ds.cache(str(cache_path))
             logger.info(f"Using disk cache: {cache_path}")
-        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
-        if resolved_cache_dir:
-            cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_train")
-            ds = ds.cache(str(cache_path))
-            logger.info(f"Using disk cache: {cache_path}")
         else:
-            ds = ds.cache()
-            logger.info("Using memory cache")
-
+            # Skip memory cache to avoid OOM with large datasets
+            logger.info("No cache directory specified, skipping cache")
         # Shuffle for training (after cache to reshuffle each epoch)
         training_cfg = self.config.get("training", {})
         deterministic_ops = os.environ.get("TF_DETERMINISTIC_OPS") == "1"
@@ -358,13 +352,9 @@ class OptimizedDataPipeline:
         if resolved_cache_dir:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_test")
             ds = ds.cache(str(cache_path))
-        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
-        if resolved_cache_dir:
-            cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_test")
-            ds = ds.cache(str(cache_path))
         else:
-            ds = ds.cache()
-
+            # Skip memory cache to avoid OOM with large datasets
+            logger.info("No cache directory specified, skipping cache")
         # Prefetch
         ds = ds.prefetch(buffer_size=self.autotune)
         if self.prefetch_to_device:
@@ -409,13 +399,9 @@ class OptimizedDataPipeline:
         if resolved_cache_dir:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_val")
             ds = ds.cache(str(cache_path))
-        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
-        if resolved_cache_dir:
-            cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_val")
-            ds = ds.cache(str(cache_path))
         else:
-            ds = ds.cache()
-
+            # Skip memory cache to avoid OOM with large datasets
+            logger.info("No cache directory specified, skipping cache")
         # No extra batching (generator already yields full batches)
 
         # Prefetch
@@ -533,6 +519,14 @@ class PrefetchGenerator:
         """
         raise TypeError("object of type 'PrefetchGenerator' has no len()")
 
+    def close(self) -> None:
+        """Release the iterator and allow cleanup."""
+        self.iterator = None
+
+    def __del__(self):
+        """Ensure iterator is released on destruction."""
+        self.close()
+
 
 def benchmark_pipeline(
     dataset: WakeWordDataset,
@@ -592,6 +586,7 @@ def benchmark_pipeline(
         # Simulate training step
         _ = tf.reduce_sum(x) + tf.reduce_sum(y)
     ds_time = time.time() - start
+    del ds_iter
     results["tfdata_time"] = ds_time
     results["tfdata_batches_per_sec"] = n_batches / ds_time
 

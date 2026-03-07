@@ -25,8 +25,9 @@ References:
 - Google Research kws_streaming: https://github.com/google-research/google-research/tree/master/kws_streaming
 """
 
-import tensorflow as tf
 import logging
+
+import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
@@ -125,17 +126,9 @@ class RingBuffer:
         time_dim_size = self.buffer.shape[1]
         if time_dim_size > 1:
             # Shift: move [1:] to [0:-1]
-            self.buffer = tf.tensor_scatter_nd_update(
-                self.buffer,
-                [[0, i] for i in range(time_dim_size - 1)],
-                self.buffer[:, 1:]
-            )
+            self.buffer = tf.tensor_scatter_nd_update(self.buffer, [[0, i] for i in range(time_dim_size - 1)], self.buffer[:, 1:])
         # Insert new data at the end
-        self.buffer = tf.tensor_scatter_nd_update(
-            self.buffer,
-            [[0, time_dim_size - 1]],
-            new_data
-        )
+        self.buffer = tf.tensor_scatter_nd_update(self.buffer, [[0, time_dim_size - 1]], new_data)
         return self.buffer
         # Always use [:, 1:, ...] so we get a consistent (size-1) prefix,
         # even when self.size == 1 (producing an empty intermediate).

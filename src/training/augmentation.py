@@ -305,10 +305,20 @@ class ParallelAugmenter:
                 augmented.extend([audio_samples[i].copy()] * num_augmentations)
         return augmented
 
+    def close(self) -> None:
+        """Shutdown the thread pool executor."""
+        if hasattr(self, "executor"):
+            self.executor.shutdown(wait=True, cancel_futures=True)
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit — cleanup thread pool."""
+        self.close()
+        return False
+
     def __del__(self):
         """Cleanup thread pool."""
-        if hasattr(self, "executor"):
-            self.executor.shutdown(wait=True, cancel_futures=True)
-        """Cleanup thread pool."""
-        if hasattr(self, "executor"):
-            self.executor.shutdown(wait=True, cancel_futures=True)
+        self.close()

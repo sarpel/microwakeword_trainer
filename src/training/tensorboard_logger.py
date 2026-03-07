@@ -445,56 +445,9 @@ class TensorBoardLogger:
         if not self.enabled or not self.log_pr_curves or self.writer is None:
             return
 
-        try:
-            # Log interactive PR curve
-            with self.writer.as_default():
-                tf.summary.pr_curve(
-                    "pr_curve",
-                    labels=y_true,
-                    predictions=y_score,
-                    num_thresholds=101,
-                    step=step,
-                )
-
-        except Exception as e:
-            logger.warning(f"Failed to log interactive PR curve: {e}")
-
-    def log_pr_curve_interactive(
-        self,
-        y_true: np.ndarray,
-        y_score: np.ndarray,
-        step: int,
-    ) -> None:
-        """Log interactive PR curve using tf.summary.pr_curve.
-
-        Note: tf.summary.pr_curve requires tensorboard-plugin-pr-curve which may not
-        be installed. This method will silently skip if the API is unavailable.
-
-        Args:
-            y_true: Ground truth labels
-            y_score: Predicted scores
-            step: Global step
-        """
-        if not self.enabled or not self.log_pr_curves or self.writer is None:
-            return
-
-        # Skip if pr_curve is not available in this TF version
-        if not hasattr(tf.summary, "pr_curve"):
-            return
-
-        try:
-            # Log interactive PR curve
-            with self.writer.as_default():
-                tf.summary.pr_curve(
-                    "pr_curve",
-                    labels=y_true,
-                    predictions=y_score,
-                    num_thresholds=101,
-                    step=step,
-                )
-
-        except Exception as e:
-            logger.warning(f"Failed to log interactive PR curve: {e}")
+        # tf.summary.pr_curve was removed in TF2; PR curve is already logged as
+        # an image via log_roc_pr_curves(). Nothing to do here.
+        logger.debug("log_pr_curve_interactive: tf.summary.pr_curve unavailable in TF2, skipping.")
 
     def log_calibration_curve(
         self,

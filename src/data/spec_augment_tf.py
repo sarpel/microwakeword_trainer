@@ -77,7 +77,7 @@ def spec_augment_tf(
     return spec
 
 
-@tf.function
+@tf.function(reduce_retracing=True)
 def batch_spec_augment_tf(
     batch: tf.Tensor,
     time_mask_max_size: int,

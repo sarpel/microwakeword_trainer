@@ -72,7 +72,7 @@ training:
   gradient_clipnorm: null
   ema_decay: null
   random_seed: null              # Set an integer for reproducible runs (null = non-deterministic)
-  auto_tune_on_poor_fah: false   # If true, run mww-autotune automatically after training if final FAH > target_minimization
+  auto_tune_on_poor_fah: false   # DEPRECATED: use auto_tuning.enabled
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -300,3 +300,24 @@ evaluation:
   plateau_window_evals: 5
   plateau_min_delta: 0.001
   plateau_slope_eps: 0.0001
+
+
+# ─────────────────────────────────────────────────────────────────
+# AUTO-TUNING (post-training fine-tuning)
+# ─────────────────────────────────────────────────────────────────
+auto_tuning:
+  enabled: false
+  target_fah: 0.5
+  target_recall: 0.90
+  max_iterations: 20
+  patience: 5
+  steps_per_iteration: 2000
+  initial_lr: 0.0001
+  lr_decay_factor: 0.7
+  min_lr: 0.000001
+  positive_weight_range: [0.5, 3.0]
+  negative_weight_range: [10.0, 50.0]
+  hard_negative_weight_range: [20.0, 100.0]
+  pareto_improvement_threshold: 0.005
+  convergence_window: 5
+  output_dir: ./tuning_output

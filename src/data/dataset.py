@@ -1141,6 +1141,25 @@ class WakeWordDataset:
 
         return factory
 
+    def close(self) -> None:
+        """Close the dataset and release resources."""
+        if self.feature_store is not None:
+            self.feature_store.close()
+            self.feature_store = None
+
+    def __enter__(self) -> "WakeWordDataset":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit - ensures cleanup."""
+        self.close()
+
+
+# =============================================================================
+# DIRECTORY STRUCTURE
+# =============================================================================
+
 
 # =============================================================================
 # DIRECTORY STRUCTURE

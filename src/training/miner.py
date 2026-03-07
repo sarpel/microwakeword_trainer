@@ -1,65 +1,23 @@
-"""Hard example mining module for training improved wake word detection."""
+"""Hard negative mining for wake word training."""
 
+from __future__ import annotations
+
+import heapq
+import logging
 import os
+from typing import Any
 
 import numpy as np
+import tensorflow as tf
 
-
-def mine_hard_examples(
-    features: np.ndarray,
-    labels: np.ndarray,
-    model,
-    n_samples: int = 1000,
-    threshold: float = 0.5,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Mine hard examples for training.
-
-    Identifies negative samples that the model incorrectly predicts as positive
-    (false positives) - these are the most valuable for improving the model.
-
-    Args:
-        features: Feature array [n_samples, feature_dim]
-        labels: Label array [n_samples] (0=negative, 1=positive)
-        model: Trained model with predict method
-        n_samples: Number of hard samples to mine
-        threshold: Classification threshold for FP detection
-
-    Returns:
-        Tuple of (hard_features, hard_labels) for mined samples
-    """
-    predictions = model.predict(features, verbose=0)
-    labels = np.asarray(labels).reshape(-1)
-
-    # Handle both single and batch prediction formats
-    if len(predictions.shape) > 1:
-        predictions = predictions.flatten()
-
-    # Find false positives: negative samples predicted as positive
-    negative_mask = labels == 0
-    fp_predictions = predictions[negative_mask]
-    fp_indices = np.where(negative_mask)[0]
-
-    # Filter to those above threshold
-    hard_mask = fp_predictions > threshold
-    hard_indices = fp_indices[hard_mask]
-    hard_scores = fp_predictions[hard_mask]
-
-    # Sort by confidence (most confident false positives first)
-    sort_order = np.argsort(-hard_scores)
-    hard_indices = hard_indices[sort_order]
-
-    # Limit to n_samples
-    if len(hard_indices) > n_samples:
-        hard_indices = hard_indices[:n_samples]
-
-    return features[hard_indices], labels[hard_indices]
+logger = logging.getLogger(__name__)
 
 
 class HardExampleMiner:
-    """Hard example mining for improved training.
+    """Mines hard negative examples during training.
 
-    Implements iterative hard negative mining to progressively improve
-    the model's ability to distinguish false positives.
+    Identifies false positives (hard negatives) and maintains a collection
+    for inclusion in subsequent training iterations.
     """
 
     def __init__(
@@ -70,7 +28,7 @@ class HardExampleMiner:
         mining_interval_epochs: int = 5,
         output_dir: str = "./data/raw/hard_negative",
     ):
-        """Initialize miner.
+        """Initialize the hard example miner.
 
         Args:
             strategy: Mining strategy ("confidence" or "entropy")
@@ -85,81 +43,67 @@ class HardExampleMiner:
         self.mining_interval_epochs = mining_interval_epochs
         self.output_dir = output_dir
 
+        # Ensure output directory exists
+        os.makedirs(output_dir, exist_ok=True)
+
         # Storage for hard negatives
         self.hard_negatives: list[dict] = []
         self.mining_history: list[dict] = []
-
-        # Create output directory
-        os.makedirs(output_dir, exist_ok=True)
+        self._max_history_size = 100  # Limit mining history to prevent unbounded growth
 
     def get_hard_samples(
         self,
         labels: np.ndarray,
         predictions: np.ndarray,
     ) -> np.ndarray:
-        """Get hard samples based on predictions.
+        """Identify hard negative samples from labels and predictions.
 
-        Identifies:
-        - False positives (FP): negative samples predicted as positive
-        - Hard negatives: negative samples with high prediction scores
+        Hard negatives are negative samples (label 0) that the model
+        predicts as positive with high confidence.
 
         Args:
-            labels: Label array [n_samples]
-            predictions: Model predictions [n_samples]
+            labels: Ground truth labels array
+            predictions: Model predictions array
 
         Returns:
-            Indices of hard samples
+            Array of indices of hard negative samples
         """
-        # Flatten labels and predictions if needed
-        labels = np.asarray(labels).reshape(-1)
-        if len(predictions.shape) > 1:
-            predictions = predictions.flatten()
+        # Get negative samples (label == 0)
+        negative_mask = labels == 0
+        negative_indices = np.where(negative_mask)[0]
 
+        if len(negative_indices) == 0:
+            return np.array([], dtype=np.int64)
+
+        # Get predictions for negative samples only
+        negative_predictions = predictions[negative_indices]
+
+        # Find false positives: negative samples predicted as positive
         if self.strategy == "confidence":
-            # Hard negatives: negative samples with high prediction scores
-            negative_mask = labels == 0
-            negative_predictions = predictions[negative_mask]
-            negative_indices = np.where(negative_mask)[0]
-
-            # Get indices sorted by prediction confidence (descending)
-            hard_order = np.argsort(-negative_predictions)
-            hard_indices = negative_indices[hard_order]
-
-            # Filter to those above threshold
-            valid_mask = negative_predictions[hard_order] > self.fp_threshold
-            hard_indices = hard_indices[valid_mask]
-
+            # High confidence false positives
+            false_positive_mask = negative_predictions >= self.fp_threshold
+            hard_indices = negative_indices[false_positive_mask]
         elif self.strategy == "entropy":
-            # Entropy-based: samples where model is most uncertain
-            # Low entropy = high confidence (both positive and negative)
-            epsilon = 1e-10
-            entropy = -(predictions * np.log(predictions + epsilon) + (1 - predictions) * np.log(1 - predictions + epsilon))
-
-            # Get negative samples with highest entropy (most uncertain)
-            negative_mask = labels == 0
-            negative_entropy = entropy[negative_mask]
-            negative_indices = np.where(negative_mask)[0]
-
-            # Sort by entropy (most uncertain first)
-            hard_order = np.argsort(-negative_entropy)
-            hard_indices = negative_indices[hard_order]
-
+            # High uncertainty samples (close to threshold)
+            uncertainty = np.abs(negative_predictions - 0.5)
+            hard_mask = uncertainty < 0.1  # Within 0.1 of decision boundary
+            hard_indices = negative_indices[hard_mask]
         else:
-            raise ValueError(f"Unknown strategy: {self.strategy}")
-
-        # Limit to max_samples
-        if len(hard_indices) > self.max_samples:
-            hard_indices = hard_indices[: self.max_samples]
+            error_msg = f"Unknown mining strategy: {self.strategy}"
+            raise ValueError(error_msg)
 
         return hard_indices
 
     def mine_from_dataset(
         self,
-        model,
-        data_generator,
+        model: tf.keras.Model,
+        data_generator: Any,
         epoch: int,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Mine hard negatives from a data generator.
+
+        Memory-efficient implementation that streams through data and only
+        keeps hard negative samples, not the entire dataset.
 
         Args:
             model: Trained model
@@ -170,12 +114,10 @@ class HardExampleMiner:
             Mining result dictionary with keys: epoch, num_hard_negatives,
             indices (global dataset indices), avg_prediction.
         """
-        all_hard_global_indices = []
-        all_predictions = []
-        all_labels = []
-        all_features = []
-
-        # Collect predictions across dataset, tracking global index offset
+        # Use a heap to track top-K hard negatives by prediction score
+        # Each entry: (negative_score, global_index, feature, label, prediction)
+        # negative_score is -prediction so that highest predictions are popped first
+        hard_negative_heap: list[tuple[float, int, np.ndarray, int, float]] = []
         global_offset = 0
 
         # Handle both generator factories and direct generators
@@ -185,20 +127,28 @@ class HardExampleMiner:
             gen = data_generator
 
         for features, labels, _ in gen:
-            predictions = model.predict(features, verbose=0)
-            all_features.append(features)
-            all_predictions.append(predictions)
-            all_labels.append(labels)
+            predictions = model(features, training=False).numpy()
 
-            # Get hard indices local to this batch, then convert to global
+            # Get hard indices local to this batch
             local_hard_indices = self.get_hard_samples(labels, predictions)
-            global_hard_indices = local_hard_indices + global_offset
-            all_hard_global_indices.extend(global_hard_indices.tolist())
+
+            # Add hard negatives to heap
+            for local_idx in local_hard_indices:
+                global_idx = global_offset + int(local_idx)
+                pred_score = float(predictions[local_idx])
+                # Use negative score for max-heap behavior with min-heap
+                heap_entry = (-pred_score, global_idx, features[local_idx].copy(), int(labels[local_idx]), pred_score)
+
+                if len(hard_negative_heap) < self.max_samples:
+                    heapq.heappush(hard_negative_heap, heap_entry)
+                elif -pred_score > hard_negative_heap[0][0]:
+                    # This hard negative has higher score than the lowest in heap
+                    heapq.heapreplace(hard_negative_heap, heap_entry)
 
             global_offset += len(features)
 
-        # Combine all predictions — guard against empty generator
-        if not all_features:
+        # Check if we found any hard negatives
+        if not hard_negative_heap:
             mining_result = {
                 "epoch": epoch,
                 "num_hard_negatives": 0,
@@ -206,33 +156,42 @@ class HardExampleMiner:
                 "avg_prediction": 0.0,
             }
             self.mining_history.append(mining_result)
+            # Limit history size to prevent memory leak
+            if len(self.mining_history) > self._max_history_size:
+                self.mining_history = self.mining_history[-self._max_history_size :]
             return mining_result
-        all_features = np.concatenate(all_features)
-        all_predictions = np.concatenate(all_predictions)
-        all_labels = np.concatenate(all_labels)
 
-        # Deduplicate indices while preserving original (hardness-ranked) order
-        unique_indices = list(dict.fromkeys(all_hard_global_indices))
-        selected_indices = unique_indices[: self.max_samples]
+        # Extract results from heap
+        # Sort by prediction score (descending) - heap is sorted by negative score
+        sorted_hard = sorted(hard_negative_heap, key=lambda x: x[0])
+
+        selected_indices = [int(entry[1]) for entry in sorted_hard]
+        avg_prediction = float(np.mean([entry[4] for entry in sorted_hard]))
 
         # Store mining result
         mining_result = {
             "epoch": epoch,
-            "num_hard_negatives": len(unique_indices),
+            "num_hard_negatives": len(sorted_hard),
             "indices": selected_indices,
-            "avg_prediction": (float(np.mean(all_predictions[unique_indices])) if unique_indices else 0.0),
+            "avg_prediction": avg_prediction,
         }
 
         self.mining_history.append(mining_result)
+        # Limit history size to prevent unbounded memory growth
+        if len(self.mining_history) > self._max_history_size:
+            self.mining_history = self.mining_history[-self._max_history_size :]
+
+        # Create hard negative records
         hard_negative_records = [
             {
-                "global_index": int(idx),
-                "feature": all_features[idx],
-                "label": int(all_labels[idx]),
-                "prediction": float(all_predictions[idx]),
+                "global_index": int(entry[1]),
+                "feature": entry[2],
+                "label": entry[3],
+                "prediction": entry[4],
             }
-            for idx in selected_indices
+            for entry in sorted_hard
         ]
+
         self.hard_negatives.extend(hard_negative_records)
         if len(self.hard_negatives) > self.max_samples:
             self.hard_negatives = self.hard_negatives[-self.max_samples :]
