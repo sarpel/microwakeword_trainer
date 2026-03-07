@@ -473,7 +473,51 @@ def create_representative_dataset_from_data(
         print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
         return create_representative_dataset(config, num_samples)
 
-    n_stored = len(store)
+    try:
+        n_stored = len(store)
+        if n_stored == 0:
+            print("  Warning: Feature store is empty, falling back to random calibration")
+            return create_representative_dataset(config, num_samples)
+
+        # Pre-extract stride-sized chunks from real spectrograms
+        chunks: list[np.ndarray] = []
+        rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
+        indices = rng.permutation(n_stored)
+
+        for idx in indices:
+            if len(chunks) >= num_samples:
+                break
+            spec, _label = store.get(int(idx))  # shape: [time_frames, mel_bins] or flat
+            if spec.ndim == 1:
+                # Flat array — reshape to [time_frames, mel_bins]
+                if spec.size % mel_bins != 0:
+                    continue
+                spec = spec.reshape(-1, mel_bins)
+            n_frames = spec.shape[0]
+            if n_frames < stride:
+                continue
+            # Extract all non-overlapping stride-sized chunks from this spectrogram
+            n_possible = n_frames // stride
+            remaining = num_samples - len(chunks)
+            n_to_take = min(n_possible, remaining)
+            starts = np.arange(n_to_take) * stride
+            for t in starts:
+                chunk = spec[t : t + stride].reshape(1, stride, mel_bins).astype(np.float32)
+                chunks.append(chunk)
+
+        print(f"  Using {len(chunks)} real-data calibration samples")
+
+        def representative_dataset_gen():
+            for i, chunk in enumerate(chunks):
+                # Boundary anchors for quantization calibration
+                if i == 0:
+                    chunk[0, 0, 0] = 0.0
+                    chunk[0, 0, 1] = 26.0  # Force maximum
+                yield [chunk]
+
+        return representative_dataset_gen
+    finally:
+        store.close()
     if n_stored == 0:
         print("  Warning: Feature store is empty, falling back to random calibration")
         store.close()

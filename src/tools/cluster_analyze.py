@@ -276,6 +276,8 @@ Output files (per dataset):
     )
 
     args = parser.parse_args()
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
     logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
 
     console.print("[bold]Loading configuration...[/bold]")

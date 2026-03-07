@@ -68,6 +68,10 @@ def check_gpu_and_cupy_available() -> tuple[bool, str]:
             return False, "CuPy is installed but cannot access the GPU. Check CUDA installation."
 
         # Try a small allocation to be sure
+        _test_arr = cp.array([1, 2, 3])
+        del _test_arr
+        cp.get_default_memory_pool().free_all_blocks()
+        return True, f"GPU and CuPy available: {GPUtil.getGPUs()[0].name}"
         cp.array([1, 2, 3])
         return True, f"GPU and CuPy available: {GPUtil.getGPUs()[0].name}"
     except ImportError:

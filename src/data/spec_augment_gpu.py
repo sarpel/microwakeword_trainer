@@ -18,6 +18,10 @@ except ImportError:
     cp = None
     HAS_GPU = False
 
+# Call counter for periodic memory pool cleanup
+_call_counter = 0
+_cleanup_interval = 100  # Free memory pool every N calls to reduce fragmentation
+
 
 def spec_augment_gpu(
     spectrogram: np.ndarray,
@@ -42,6 +46,8 @@ def spec_augment_gpu(
     Raises:
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
+    global _call_counter
+
     if cp is None:
         raise RuntimeError("CuPy is not available. Install cupy package: pip install cupy")
 
@@ -69,7 +75,12 @@ def spec_augment_gpu(
     # Transfer back to CPU
     spec_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(spec_gpu))
     del spec_gpu
-    cp.get_default_memory_pool().free_all_blocks()
+
+    # Periodic cleanup to reduce fragmentation (not every call)
+    _call_counter += 1
+    if _call_counter % _cleanup_interval == 0:
+        cp.get_default_memory_pool().free_all_blocks()
+
     return spec_cpu
 
 
@@ -99,6 +110,8 @@ def batch_spec_augment_gpu(
     Raises:
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
+    global _call_counter
+
     if cp is None:
         raise RuntimeError("CuPy is not available. Install cupy package: pip install cupy")
 
@@ -142,5 +155,10 @@ def batch_spec_augment_gpu(
     # Transfer back to CPU
     batch_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(batch_gpu))
     del batch_gpu
-    cp.get_default_memory_pool().free_all_blocks()
+
+    # Periodic cleanup to reduce fragmentation (not every call)
+    _call_counter += 1
+    if _call_counter % _cleanup_interval == 0:
+        cp.get_default_memory_pool().free_all_blocks()
+
     return batch_cpu

@@ -183,6 +183,15 @@ class TestEvaluator:
             from ..data.dataset import FeatureStore
 
             store = FeatureStore(store_path)
+            try:
+                store.open()
+                raw_labels = []
+                for i in range(len(store)):
+                    _, label = store.get(i)
+                    raw_labels.append(label)
+                return np.array(raw_labels, dtype=np.int32)
+            finally:
+                store.close()
             store.open()
             raw_labels = []
             for i in range(len(store)):

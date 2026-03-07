@@ -4,6 +4,7 @@ Captures all terminal output (including Rich console output) to a log file
 for later analysis and debugging.
 """
 
+import atexit
 import re
 import sys
 from datetime import datetime
@@ -43,9 +44,22 @@ class TeeOutput:
         bytes_written = 0
         for stream in self.streams:
             try:
-                # Strip ANSI codes for file streams (not terminals)
                 is_file = not hasattr(stream, "isatty") or not stream.isatty()
-                write_data = strip_ansi_codes(data) if is_file else data
+                if is_file:
+                    # Strip ANSI codes for file streams
+                    write_data = strip_ansi_codes(data)
+                    # Skip progress bar redraws: Rich live display uses \r to
+                    # overwrite lines in place. After ANSI stripping these become
+                    # bare progress bar text with no trailing newline — exactly
+                    # what floods the log file. Drop any write that contains \r
+                    # (carriage return without newline advancement).
+                    if "\r" in write_data:
+                        continue
+                    # Also skip lines that are purely whitespace after stripping
+                    if not write_data.strip():
+                        continue
+                else:
+                    write_data = data
                 result = stream.write(write_data)
                 if result is not None:
                     bytes_written = max(bytes_written, result)
@@ -196,12 +210,29 @@ class TerminalLogger:
 
         self._is_capturing = True
 
+        # Register atexit handler to ensure file is closed on abrupt exit
+        atexit.register(self.stop_capture)
+
+        # Print startup message (goes to both terminal and file via tee)
+
         # Print startup message (goes to both terminal and file via tee)
         print(f"[TerminalLogger] Capturing output to: {self.log_file}")
 
         return self.log_file
 
+    def __del__(self):
+        """Ensure file handle is closed on destruction."""
+        self.stop_capture()
+
     def stop_capture(self) -> None:
+        """Stop capturing and restore original stdout/stderr."""
+        if not self._is_capturing:
+            return
+
+        # Unregister atexit handler to prevent double-close
+        atexit.unregister(self.stop_capture)
+
+        # Write footer
         """Stop capturing and restore original stdout/stderr."""
         if not self._is_capturing:
             return

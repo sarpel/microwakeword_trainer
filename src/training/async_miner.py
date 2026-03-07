@@ -68,6 +68,11 @@ class AsyncHardExampleMiner:
             logger.exception(f"Mining failed at epoch {epoch}: {e}")
             result = None
         finally:
+            # Clean up model to free memory
+            try:
+                del model
+            except Exception:
+                pass
             with self._lock:
                 self._result = result
                 self._is_running = False
@@ -162,3 +167,10 @@ class AsyncHardExampleMiner:
 
         thread.join(timeout=timeout)
         return not thread.is_alive()
+
+    def __del__(self):
+        """Ensure mining thread is cleaned up on destruction."""
+        try:
+            self.wait_for_completion(timeout=1.0)
+        except Exception:
+            pass  # Ignore errors during cleanup

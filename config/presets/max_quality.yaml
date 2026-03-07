@@ -46,7 +46,7 @@ training:
   gradient_clipnorm: 1.0
   ema_decay: null
   random_seed: 42              # Set an integer for reproducible runs (null = non-deterministic)
-  auto_tune_on_poor_fah: true   # If true, run mww-autotune automatically after training if final FAH > target_minimization
+  auto_tune_on_poor_fah: true    # DEPRECATED: use auto_tuning.enabled
 model:
   architecture: "mixednet"
   first_conv_filters: 32
@@ -145,7 +145,7 @@ speaker_clustering:
   adaptive_threshold_small: 5000
   adaptive_threshold_large: 50000
 hard_negative_mining:
-  enabled: true
+  enabled: false
   fp_threshold: 0.75
   max_samples: 15000
   mining_interval_epochs: 1
@@ -154,7 +154,7 @@ hard_negative_mining:
   log_predictions: true
   log_file: "logs/false_predictions.json"
   # NEW - Mining Phase (post-training)
-  enable_post_training_mining: true
+  enable_post_training_mining: false
   mined_subdirectory: "mined"
   min_epochs_before_mining: 10
   top_k_per_epoch: 100
@@ -196,7 +196,7 @@ quality:
   dnsmos_min_sig: 2.5
   dnsmos_cache_dir: "~/.cache/dnsmos"
 evaluation:
-  default_threshold: 0.97
+  default_threshold: 0.5
   n_thresholds: 101
   max_fah: 1.0
   warmup_runs: 10
@@ -207,3 +207,24 @@ evaluation:
   plateau_window_evals: 5
   plateau_min_delta: 0.001
   plateau_slope_eps: 0.0001
+
+
+# ─────────────────────────────────────────────────────────────────
+# AUTO-TUNING (post-training fine-tuning)
+# ─────────────────────────────────────────────────────────────────
+auto_tuning:
+  enabled: true
+  target_fah: 0.2
+  target_recall: 0.95
+  max_iterations: 200
+  patience: 15
+  steps_per_iteration: 8000
+  initial_lr: 0.00005
+  lr_decay_factor: 0.7
+  min_lr: 0.000001
+  positive_weight_range: [0.5, 3.0]
+  negative_weight_range: [10.0, 50.0]
+  hard_negative_weight_range: [20.0, 100.0]
+  pareto_improvement_threshold: 0.003
+  convergence_window: 7
+  output_dir: ./tuning_output

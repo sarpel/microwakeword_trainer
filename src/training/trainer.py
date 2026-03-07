@@ -937,8 +937,8 @@ class Trainer:
         score_sample_limit = 2000
         all_scores: list[tf.Tensor] = []
         all_labels: list[tf.Tensor] = []
-        self._last_val_paths: list[str] = []  # Store sample paths for false prediction logging
-        self._last_val_raw_labels = []
+        self._last_val_paths: list[str] = []  # Reset for each validation to prevent memory leak
+        self._last_val_raw_labels: list[int] = []
         for batch in iterator:
             if not isinstance(batch, tuple) or len(batch) != 3:
                 raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
@@ -1049,7 +1049,6 @@ class Trainer:
             metrics["fah_at_target_recall"] = float(fah_at_recall)
             metrics["threshold_for_target_recall"] = float(threshold_at_recall)
 
-        self.val_metrics.reset()
         return metrics
 
     def _log_false_predictions_to_json(self, epoch: int) -> None:
@@ -1480,116 +1479,126 @@ def train(config: dict) -> tf.keras.Model:
     # No need to check for spectrogram_length in model_cfg - it's deprecated
 
     dataset = WakeWordDataset(config)
-    dataset.build()
+    try:
+        dataset.build()
 
-    trainer = Trainer(config)
+        trainer = Trainer(config)
 
-    # Validate dataset class distribution
-    _LABEL_NAMES = {0: "negative", 1: "positive", 2: "hard_negative"}
-    for split_name in ["train", "val", "test"]:
-        dist = dataset.get_label_distribution(split_name)
-        if not dist:
-            if split_name == "train":
-                raise RuntimeError(f"No samples found in {split_name} split!")
-            continue
-        dist_str = ", ".join(f"{_LABEL_NAMES.get(k, f'label_{k}')}={v}" for k, v in sorted(dist.items()))
-        trainer.logger.log_info(f"Dataset {split_name}: {dist_str} (total={sum(dist.values())})")
-        pos_count = dist.get(1, 0)
-        neg_count = dist.get(0, 0) + dist.get(2, 0)
-        if pos_count == 0 and split_name == "train":
-            raise RuntimeError("No positive samples in training set!")
-        if pos_count > 0 and neg_count / pos_count < 5.0 and split_name == "train":
-            trainer.logger.log_warning(f"Low negative:positive ratio ({neg_count / pos_count:.1f}:1) in {split_name} — recommend at least 5:1")
-    performance = config.get("performance", {})
-    use_tfdata = performance.get("use_tfdata", True)
-    if performance.get("benchmark_pipeline", False):
-        from src.data.tfdata_pipeline import benchmark_pipeline
+        # Validate dataset class distribution
+        _LABEL_NAMES = {0: "negative", 1: "positive", 2: "hard_negative"}
+        for split_name in ["train", "val", "test"]:
+            dist = dataset.get_label_distribution(split_name)
+            if not dist:
+                if split_name == "train":
+                    raise RuntimeError(f"No samples found in {split_name} split!")
+                continue
+            dist_str = ", ".join(f"{_LABEL_NAMES.get(k, f'label_{k}')}={v}" for k, v in sorted(dist.items()))
+            trainer.logger.log_info(f"Dataset {split_name}: {dist_str} (total={sum(dist.values())})")
+            pos_count = dist.get(1, 0)
+            neg_count = dist.get(0, 0) + dist.get(2, 0)
+            if pos_count == 0 and split_name == "train":
+                raise RuntimeError("No positive samples in training set!")
+            if pos_count > 0 and neg_count / pos_count < 5.0 and split_name == "train":
+                trainer.logger.log_warning(f"Low negative:positive ratio ({neg_count / pos_count:.1f}:1) in {split_name} — recommend at least 5:1")
+        performance = config.get("performance", {})
+        use_tfdata = performance.get("use_tfdata", True)
+        if performance.get("benchmark_pipeline", False):
+            from src.data.tfdata_pipeline import benchmark_pipeline
 
-        trainer.logger.log_info("Benchmarking data pipeline...")
-        benchmark_pipeline(dataset, config, n_batches=100)
+            trainer.logger.log_info("Benchmarking data pipeline...")
+            benchmark_pipeline(dataset, config, n_batches=100)
 
-    if use_tfdata:
-        from src.data.tfdata_pipeline import OptimizedDataPipeline
+        if use_tfdata:
+            from src.data.tfdata_pipeline import OptimizedDataPipeline
 
-        # Build SpecAugment config to pass to pipeline
-        training_cfg = config.get("training", {})
-        spec_augment_config = None
-        if trainer.spec_augment_backend == "tf":
-            spec_augment_config = {
-                "enabled": trainer.spec_augment_enabled,
-                "backend": "tf",
-                "time_mask_max_size": training_cfg.get("time_mask_max_size", [0, 0]),
-                "time_mask_count": training_cfg.get("time_mask_count", [0, 0]),
-                "freq_mask_max_size": training_cfg.get("freq_mask_max_size", [0, 0]),
-                "freq_mask_count": training_cfg.get("freq_mask_count", [0, 0]),
-                "seed": training_cfg.get("split_seed", 42),
-            }
+            # Build SpecAugment config to pass to pipeline
+            training_cfg = config.get("training", {})
+            spec_augment_config = None
+            if trainer.spec_augment_backend == "tf":
+                spec_augment_config = {
+                    "enabled": trainer.spec_augment_enabled,
+                    "backend": "tf",
+                    "time_mask_max_size": training_cfg.get("time_mask_max_size", [0, 0]),
+                    "time_mask_count": training_cfg.get("time_mask_count", [0, 0]),
+                    "freq_mask_max_size": training_cfg.get("freq_mask_max_size", [0, 0]),
+                    "freq_mask_count": training_cfg.get("freq_mask_count", [0, 0]),
+                    "seed": training_cfg.get("split_seed", 42),
+                }
 
-        pipeline = OptimizedDataPipeline(dataset, config, max_time_frames=max_time_frames, spec_augment_config=spec_augment_config)
-        shuffle_seed = int(config.get("training", {}).get("split_seed", 42))
-        train_ds = pipeline.create_training_pipeline(shuffle_seed=shuffle_seed)
-        val_ds = pipeline.create_validation_pipeline()
-        test_ds = pipeline.create_test_pipeline()
+            pipeline = OptimizedDataPipeline(dataset, config, max_time_frames=max_time_frames, spec_augment_config=spec_augment_config)
+            shuffle_seed = int(config.get("training", {}).get("split_seed", 42))
+            train_ds = pipeline.create_training_pipeline(shuffle_seed=shuffle_seed)
+            val_ds = pipeline.create_validation_pipeline()
+            test_ds = pipeline.create_test_pipeline()
 
-        # Pipeline already yields 4-tuples (features, labels, sample_weights, is_hard_neg)
-        # Just need to cast labels to int32
-        def train_factory():
-            for features, labels, sample_weights, is_hard_neg in train_ds:
-                labels_int = tf.cast(labels, tf.int32)
-                yield features, labels_int, sample_weights, is_hard_neg
+            # Pipeline already yields 4-tuples (features, labels, sample_weights, is_hard_neg)
+            # Just need to cast labels to int32
+            def train_factory():
+                for features, labels, sample_weights, is_hard_neg in train_ds:
+                    labels_int = tf.cast(labels, tf.int32)
+                    yield features, labels_int, sample_weights, is_hard_neg
 
-        def val_factory():
-            for features, labels, _, _ in val_ds:
-                labels_int = tf.cast(labels, tf.int32)
-                yield features, labels_int, None
+            def val_factory():
+                for features, labels, _, _ in val_ds:
+                    labels_int = tf.cast(labels, tf.int32)
+                    yield features, labels_int, None
 
-        def test_factory():
-            for features, labels, _, _ in test_ds:
-                labels_int = tf.cast(labels, tf.int32)
-                metadata = {"raw_labels": labels_int.numpy().tolist()}
-                yield features, labels_int, metadata
+            def test_factory():
+                for features, labels, _, _ in test_ds:
+                    labels_int = tf.cast(labels, tf.int32)
+                    metadata = {"raw_labels": labels_int.numpy().tolist()}
+                    yield features, labels_int, metadata
 
-        model = trainer.train(
-            train_data_factory=train_factory,
-            val_data_factory=val_factory,
-            mining_data_factory=dataset.train_mining_generator_factory(max_time_frames=max_time_frames),
-            test_data_factory=test_factory,
-            input_shape=input_shape,
-        )
-    else:
-        model = trainer.train(
-            train_data_factory=dataset.train_generator_factory(max_time_frames=max_time_frames),
-            val_data_factory=dataset.val_generator_factory(max_time_frames=max_time_frames),
-            mining_data_factory=dataset.train_mining_generator_factory(max_time_frames=max_time_frames),
-            test_data_factory=dataset.test_generator_factory(max_time_frames=max_time_frames),
-            input_shape=input_shape,
-        )
-    # Auto-tune post-training if configured and final FAH > target
-    training_cfg = config.get("training", {})
-    auto_tune = training_cfg.get("auto_tune_on_poor_fah", False)
-    if auto_tune and trainer.best_fah > trainer.target_minimization:
-        trainer.logger.log_info(f"auto_tune_on_poor_fah: final FAH={trainer.best_fah:.3f} > target={trainer.target_minimization:.3f} — launching mww-autotune")
-        import subprocess
+            model = trainer.train(
+                train_data_factory=train_factory,
+                val_data_factory=val_factory,
+                mining_data_factory=dataset.train_mining_generator_factory(max_time_frames=max_time_frames),
+                test_data_factory=test_factory,
+                input_shape=input_shape,
+            )
+        else:
+            model = trainer.train(
+                train_data_factory=dataset.train_generator_factory(max_time_frames=max_time_frames),
+                val_data_factory=dataset.val_generator_factory(max_time_frames=max_time_frames),
+                mining_data_factory=dataset.train_mining_generator_factory(max_time_frames=max_time_frames),
+                test_data_factory=dataset.test_generator_factory(max_time_frames=max_time_frames),
+                input_shape=input_shape,
+            )
+        # Auto-tune post-training if configured and final FAH > target
+        at_config = config.get("auto_tuning", {})
+        auto_tune_enabled = at_config.get("enabled", False)
+        # Fallback to legacy flag
+        if not auto_tune_enabled:
+            auto_tune_enabled = config.get("training", {}).get("auto_tune_on_poor_fah", False)
+        target_min = config.get("training", {}).get("target_minimization", 0.5)
+        if auto_tune_enabled and trainer.best_fah > target_min:
+            trainer.logger.log_info(f"auto_tuning.enabled: final FAH={trainer.best_fah:.3f} > target={target_min:.3f} — launching auto-tuner")
+            import subprocess
 
-        checkpoint = trainer.best_weights_path or os.path.join(trainer.checkpoint_dir, "best_weights.weights.h5")
-        config_arg = training_cfg.get("_config_preset", "standard")
-        cmd = [
-            sys.executable,
-            "-m",
-            "src.tuning.cli",
-            "--checkpoint",
-            checkpoint,
-            "--config",
-            config_arg,
-            "--target-fah",
-            str(trainer.target_minimization),
-        ]
-        try:
-            subprocess.run(cmd, check=True)  # noqa: S603
-        except subprocess.CalledProcessError as e:
-            trainer.logger.log_warning(f"Auto-tune finished with non-zero exit ({e.returncode}) — see above for details")
-        except Exception as e:
-            trainer.logger.log_warning(f"Auto-tune failed: {e}")
+            checkpoint = trainer.best_weights_path or os.path.join(trainer.checkpoint_dir, "best_weights.weights.h5")
+            config_arg = config.get("training", {}).get("_config_preset", "standard")
+            cmd = [
+                sys.executable,
+                "-m",
+                "src.tuning.cli",
+                "--checkpoint",
+                checkpoint,
+                "--config",
+                config_arg,
+            ]
+            # Pass target overrides from auto_tuning config
+            if "target_fah" in at_config:
+                cmd.extend(["--target-fah", str(at_config["target_fah"])])
+            if "target_recall" in at_config:
+                cmd.extend(["--target-recall", str(at_config["target_recall"])])
+            try:
+                subprocess.run(cmd, check=True)  # noqa: S603
+            except subprocess.CalledProcessError as e:
+                trainer.logger.log_warning(f"Auto-tune finished with non-zero exit ({e.returncode}) — see above for details")
+            except Exception as e:
+                trainer.logger.log_warning(f"Auto-tune failed: {e}")
+    finally:
+        dataset.close()
     return model
 
 

@@ -90,7 +90,7 @@ class TrainingConfig:
     split_seed: int = 42
     strict_content_hash_leakage_check: bool = True
     random_seed: Optional[int] = None
-    auto_tune_on_poor_fah: bool = False
+    auto_tune_on_poor_fah: bool = False  # DEPRECATED: use auto_tuning.enabled instead
     # Optimizer and loss parameters (NEW)
     optimizer: str = "adam"  # Optimizer type (currently only "adam" supported)
     label_smoothing: float = 0.0  # Label smoothing for BinaryCrossentropy (0.0 = disabled)
@@ -357,6 +357,40 @@ class EvaluationConfig:
 
 
 @dataclass
+class AutoTuningConfig:
+    """Auto-tuning configuration for post-training fine-tuning."""
+
+    # Activation
+    enabled: bool = False
+
+    # Targets
+    target_fah: float = 0.3
+    target_recall: float = 0.92
+
+    # Iteration control
+    max_iterations: int = 100
+    patience: int = 10
+    steps_per_iteration: int = 5000
+
+    # Learning rate
+    initial_lr: float = 0.0001
+    lr_decay_factor: float = 0.7
+    min_lr: float = 1e-6
+
+    # Class weight bounds
+    positive_weight_range: List[float] = field(default_factory=lambda: [0.5, 3.0])
+    negative_weight_range: List[float] = field(default_factory=lambda: [10.0, 50.0])
+    hard_negative_weight_range: List[float] = field(default_factory=lambda: [20.0, 100.0])
+
+    # Pareto / convergence
+    pareto_improvement_threshold: float = 0.005
+    convergence_window: int = 5
+
+    # Output
+    output_dir: str = "./tuning_output"
+
+
+@dataclass
 class FullConfig:
     """Complete configuration container."""
 
@@ -373,6 +407,7 @@ class FullConfig:
     preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    auto_tuning: AutoTuningConfig = field(default_factory=AutoTuningConfig)
 
 
 # =============================================================================
@@ -413,6 +448,7 @@ class ConfigLoader:
         "preprocessing": PreprocessingConfig,
         "quality": QualityConfig,
         "evaluation": EvaluationConfig,
+        "auto_tuning": AutoTuningConfig,
     }
 
     def __init__(self, base_dir: Optional[Path] = None):
