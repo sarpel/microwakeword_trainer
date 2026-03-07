@@ -95,6 +95,13 @@ Reads targets from config auto_tuning section, overridable via CLI args.
     )
 
     parser.add_argument(
+        "--users-hard-negs",
+        type=str,
+        default=None,
+        help="Path to user's custom hard negative audio files (overrides config paths.hard_negative_dir during tuning)",
+    )
+
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate config without running tuning",
@@ -223,8 +230,8 @@ def main() -> int:
             config=config_dict,
             auto_tuning_config=at,
             console=console,
+            users_hard_negs_dir=args.users_hard_negs,
         )
-
         result = tuner.tune()
 
         # Print final results

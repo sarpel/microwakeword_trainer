@@ -426,11 +426,13 @@ class AutoTuner:
         config: dict,
         auto_tuning_config: dict | None = None,
         console: Console | None = None,
+        users_hard_negs_dir: str | None = None,
     ):
         self.checkpoint_path = checkpoint_path
         self.base_config = copy.deepcopy(config)
         self.current_config = copy.deepcopy(config)
         self.console = console or Console()
+        self.users_hard_negs_dir = Path(users_hard_negs_dir) if users_hard_negs_dir else None
 
         at = auto_tuning_config or config.get("auto_tuning", {})
         self.target_fah = at.get("target_fah", 0.3)
@@ -562,6 +564,33 @@ class AutoTuner:
 
     def _run_fine_tuning_iteration(self, config: dict) -> tf.keras.Model:
         """Run one fine-tuning iteration. Returns tuned model."""
+        # If user provided custom hard negatives, override the config
+        iter_config = copy.deepcopy(config)
+        if self.users_hard_negs_dir is not None:
+            paths = iter_config.setdefault("paths", {})
+            paths["hard_negative_dir"] = str(self.users_hard_negs_dir)
+            self.file_logger.info(f"Using user's hard negatives: {self.users_hard_negs_dir}")
+
+        dataset = WakeWordDataset(iter_config)
+        dataset.build()
+
+        hardware_cfg = iter_config.get("hardware", {})
+        clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
+        window_step_ms = hardware_cfg.get("window_step_ms", 10)
+        mel_bins = hardware_cfg.get("mel_bins", 40)
+        max_time_frames = int(clip_duration_ms / window_step_ms)
+        input_shape = (max_time_frames, mel_bins)
+
+        trainer = Trainer(iter_config)
+        model = trainer.train(
+            train_data_factory=dataset.train_generator_factory(max_time_frames=max_time_frames),
+            val_data_factory=dataset.val_generator_factory(max_time_frames=max_time_frames),
+            input_shape=input_shape,
+            weights_path=self.best_checkpoint,
+        )
+        dataset.close()
+        return model
+        """Run one fine-tuning iteration. Returns tuned model."""
         dataset = WakeWordDataset(config)
         dataset.build()
 
@@ -609,6 +638,9 @@ class AutoTuner:
         table.add_row("Max Iterations", str(self.max_iterations))
         table.add_row("Steps/Iteration", str(self.steps_per_iteration))
         table.add_row("Output Dir", str(self.output_dir))
+        if self.users_hard_negs_dir:
+            table.add_row("User Hard Negs", str(self.users_hard_negs_dir), style="yellow")
+        panel = Panel(table, title="Auto-Tuning Configuration", border_style="blue", expand=False)
         panel = Panel(table, title="Auto-Tuning Configuration", border_style="blue", expand=False)
         self.console.print(panel)
 
