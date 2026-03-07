@@ -5,6 +5,7 @@ GPU-mandatory: This module requires GPU availability and will raise RuntimeError
 if GPU is not available. No CPU fallback is provided.
 """
 
+import threading
 from typing import Any, cast
 
 import numpy as np
@@ -21,6 +22,7 @@ except ImportError:
 # Call counter for periodic memory pool cleanup
 _call_counter = 0
 _cleanup_interval = 100  # Free memory pool every N calls to reduce fragmentation
+_counter_lock = threading.Lock()
 
 
 def spec_augment_gpu(
@@ -77,8 +79,10 @@ def spec_augment_gpu(
     del spec_gpu
 
     # Periodic cleanup to reduce fragmentation (not every call)
-    _call_counter += 1
-    if _call_counter % _cleanup_interval == 0:
+    with _counter_lock:
+        _call_counter += 1
+        should_cleanup = _call_counter % _cleanup_interval == 0
+    if should_cleanup:
         cp.get_default_memory_pool().free_all_blocks()
 
     return spec_cpu
@@ -157,8 +161,10 @@ def batch_spec_augment_gpu(
     del batch_gpu
 
     # Periodic cleanup to reduce fragmentation (not every call)
-    _call_counter += 1
-    if _call_counter % _cleanup_interval == 0:
+    with _counter_lock:
+        _call_counter += 1
+        should_cleanup = _call_counter % _cleanup_interval == 0
+    if should_cleanup:
         cp.get_default_memory_pool().free_all_blocks()
 
     return batch_cpu

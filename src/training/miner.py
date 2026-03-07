@@ -10,7 +10,9 @@ from typing import Any
 import numpy as np
 import tensorflow as tf
 
-logger = logging.getLogger(__name__)
+from src.training.rich_logger import RichTrainingLogger
+
+logger = RichTrainingLogger()
 
 
 class HardExampleMiner:
@@ -136,12 +138,12 @@ class HardExampleMiner:
             for local_idx in local_hard_indices:
                 global_idx = global_offset + int(local_idx)
                 pred_score = float(predictions[local_idx])
-                # Use negative score for max-heap behavior with min-heap
-                heap_entry = (-pred_score, global_idx, features[local_idx].copy(), int(labels[local_idx]), pred_score)
+                # Store positive pred_score so min-heap root is the lowest-scoring entry
+                heap_entry = (pred_score, global_idx, features[local_idx].copy(), int(labels[local_idx]), pred_score)
 
                 if len(hard_negative_heap) < self.max_samples:
                     heapq.heappush(hard_negative_heap, heap_entry)
-                elif -pred_score > hard_negative_heap[0][0]:
+                elif pred_score > hard_negative_heap[0][0]:
                     # This hard negative has higher score than the lowest in heap
                     heapq.heapreplace(hard_negative_heap, heap_entry)
 
@@ -162,8 +164,8 @@ class HardExampleMiner:
             return mining_result
 
         # Extract results from heap
-        # Sort by prediction score (descending) - heap is sorted by negative score
-        sorted_hard = sorted(hard_negative_heap, key=lambda x: x[0])
+        # Sort by prediction score (descending) - heap stores positive scores
+        sorted_hard = sorted(hard_negative_heap, key=lambda x: x[0], reverse=True)
 
         selected_indices = [int(entry[1]) for entry in sorted_hard]
         avg_prediction = float(np.mean([entry[4] for entry in sorted_hard]))

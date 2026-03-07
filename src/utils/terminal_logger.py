@@ -214,15 +214,17 @@ class TerminalLogger:
         atexit.register(self.stop_capture)
 
         # Print startup message (goes to both terminal and file via tee)
-
-        # Print startup message (goes to both terminal and file via tee)
         print(f"[TerminalLogger] Capturing output to: {self.log_file}")
 
         return self.log_file
 
     def __del__(self):
         """Ensure file handle is closed on destruction."""
-        self.stop_capture()
+        try:
+            self.stop_capture()
+        except Exception as e:
+            # Log errors during interpreter shutdown
+            print(f"[TerminalLogger] Error stopping capture: {e}")
 
     def stop_capture(self) -> None:
         """Stop capturing and restore original stdout/stderr."""
@@ -231,11 +233,6 @@ class TerminalLogger:
 
         # Unregister atexit handler to prevent double-close
         atexit.unregister(self.stop_capture)
-
-        # Write footer
-        """Stop capturing and restore original stdout/stderr."""
-        if not self._is_capturing:
-            return
 
         # Write footer
         if self._file_handle:

@@ -510,10 +510,11 @@ def create_representative_dataset_from_data(
         def representative_dataset_gen():
             for i, chunk in enumerate(chunks):
                 # Boundary anchors for quantization calibration
+                sample = chunk.copy()
                 if i == 0:
-                    chunk[0, 0, 0] = 0.0
-                    chunk[0, 0, 1] = 26.0  # Force maximum
-                yield [chunk]
+                    sample[0, 0, 0] = 0.0
+                    sample[0, 0, 1] = 26.0  # Force maximum
+                yield [sample]
 
         return representative_dataset_gen
     finally:

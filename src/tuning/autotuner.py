@@ -20,6 +20,7 @@ from src.evaluation.metrics import MetricsCalculator
 from src.model.architecture import build_model
 from src.training.miner import HardExampleMiner
 from src.training.trainer import Trainer
+from src.utils.performance import set_threading_config
 
 
 @dataclass
@@ -282,7 +283,7 @@ class PhaseController:
 class AdaptiveKnobController:
     """Replaces rigid MicroConfigAdjuster. Uses impact memory for knob selection."""
 
-    ALL_KNOBS = {
+    _DEFAULT_KNOBS = {
         "positive_class_weight": {"min": 0.5, "max": 3.0, "step": 0.2, "default_dir": 1},
         "negative_class_weight": {"min": 10.0, "max": 50.0, "step": 3.0, "default_dir": 1},
         "hard_negative_class_weight": {"min": 20.0, "max": 100.0, "step": 5.0, "default_dir": 1},
@@ -291,15 +292,16 @@ class AdaptiveKnobController:
     }
 
     def __init__(self, config: dict, auto_tuning_config: dict):
+        self.knobs = copy.deepcopy(self._DEFAULT_KNOBS)
         self.current_values: dict[str, float] = {}
         self._sync_from_config(config)
         at = auto_tuning_config
-        self.ALL_KNOBS["positive_class_weight"]["min"] = at.get("positive_weight_range", [0.5, 3.0])[0]
-        self.ALL_KNOBS["positive_class_weight"]["max"] = at.get("positive_weight_range", [0.5, 3.0])[1]
-        self.ALL_KNOBS["negative_class_weight"]["min"] = at.get("negative_weight_range", [10.0, 50.0])[0]
-        self.ALL_KNOBS["negative_class_weight"]["max"] = at.get("negative_weight_range", [10.0, 50.0])[1]
-        self.ALL_KNOBS["hard_negative_class_weight"]["min"] = at.get("hard_negative_weight_range", [20.0, 100.0])[0]
-        self.ALL_KNOBS["hard_negative_class_weight"]["max"] = at.get("hard_negative_weight_range", [20.0, 100.0])[1]
+        self.knobs["positive_class_weight"]["min"] = at.get("positive_weight_range", [0.5, 3.0])[0]
+        self.knobs["positive_class_weight"]["max"] = at.get("positive_weight_range", [0.5, 3.0])[1]
+        self.knobs["negative_class_weight"]["min"] = at.get("negative_weight_range", [10.0, 50.0])[0]
+        self.knobs["negative_class_weight"]["max"] = at.get("negative_weight_range", [10.0, 50.0])[1]
+        self.knobs["hard_negative_class_weight"]["min"] = at.get("hard_negative_weight_range", [20.0, 100.0])[0]
+        self.knobs["hard_negative_class_weight"]["max"] = at.get("hard_negative_weight_range", [20.0, 100.0])[1]
         self._last_knob: str | None = None
         self._last_direction: int = 0
         self._escalation_factor: float = 1.0
@@ -330,7 +332,7 @@ class AdaptiveKnobController:
 
         scores: dict[str, float] = {}
         impact_scores = impact_memory.get_impact_scores()
-        for knob_name in self.ALL_KNOBS:
+        for knob_name in self.knobs:
             phase_bonus = 2.0 if knob_name in phase_params.preferred_knobs else 0.0
             impact = impact_scores.get(knob_name, 0.5)
             recency = impact_memory.iterations_since_last_tried(knob_name, current_iteration)
@@ -343,7 +345,7 @@ class AdaptiveKnobController:
                 best_score = score
                 best_knob = name
 
-        knob_info = self.ALL_KNOBS[best_knob]
+        knob_info = self.knobs[best_knob]
         direction = knob_info["default_dir"]
         if phase == Phase.AGGRESSIVE_FAH and best_knob in (
             "negative_class_weight",
@@ -369,7 +371,7 @@ class AdaptiveKnobController:
         training = new_config.setdefault("training", {})
         model = new_config.setdefault("model", {})
 
-        knob_info = self.ALL_KNOBS[knob_name]
+        knob_info = self.knobs[knob_name]
         current = self.current_values[knob_name]
         new_value = current + direction * step
         new_value = max(knob_info["min"], min(knob_info["max"], new_value))
@@ -457,6 +459,7 @@ class AutoTuner:
         self.pareto = ParetoFrontier()
         self.impact = ImpactMemory()
         self.trend = TrendAnalyzer(window_size=self.convergence_window)
+        # Remove this line - HardExampleMiner should be used in training loop, not AutoTuner
         self.phase_ctrl = PhaseController()
         self.knob_ctrl = AdaptiveKnobController(config, at)
         self.hard_miner = HardExampleMiner(strategy="confidence", fp_threshold=0.8, max_samples=10000)
@@ -590,26 +593,6 @@ class AutoTuner:
         )
         dataset.close()
         return model
-        """Run one fine-tuning iteration. Returns tuned model."""
-        dataset = WakeWordDataset(config)
-        dataset.build()
-
-        hardware_cfg = config.get("hardware", {})
-        clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
-        window_step_ms = hardware_cfg.get("window_step_ms", 10)
-        mel_bins = hardware_cfg.get("mel_bins", 40)
-        max_time_frames = int(clip_duration_ms / window_step_ms)
-        input_shape = (max_time_frames, mel_bins)
-
-        trainer = Trainer(config)
-        model = trainer.train(
-            train_data_factory=dataset.train_generator_factory(max_time_frames=max_time_frames),
-            val_data_factory=dataset.val_generator_factory(max_time_frames=max_time_frames),
-            input_shape=input_shape,
-            weights_path=self.best_checkpoint,
-        )
-        dataset.close()
-        return model
 
     def _save_checkpoint(self, model: tf.keras.Model, metrics: TuneMetrics) -> str:
         path = self.output_dir / f"tuned_fah{metrics.fah:.3f}_rec{metrics.recall:.3f}_iter{self.iteration}.weights.h5"
@@ -688,6 +671,14 @@ class AutoTuner:
         """Main tuning loop with sophisticated multi-phase optimization."""
         self._log_header()
         self.file_logger.info(f"Starting auto-tuning: target_fah={self.target_fah}, target_recall={self.target_recall}")
+
+        performance_cfg = self.base_config.get("performance", {})
+        inter_op_parallelism = int(performance_cfg.get("inter_op_parallelism", 16) or 0)
+        intra_op_parallelism = int(performance_cfg.get("intra_op_parallelism", 16) or 0)
+        set_threading_config(
+            inter_op_parallelism=inter_op_parallelism,
+            intra_op_parallelism=intra_op_parallelism,
+        )
 
         self.console.print("[cyan]Evaluating initial model...[/]")
         model = self._load_model()
