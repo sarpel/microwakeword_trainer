@@ -210,7 +210,6 @@ def find_speech_boundaries(
             speech.append(False)
 
     first = next((i for i, s in enumerate(speech) if s), None)
-    last = next((i for i in range(len(speech) - 1, -1, -1) if speech[i]), None)
     last = next((i for i, s in reversed(list(enumerate(speech))) if s), None)
     if first is None or last is None:
         return None

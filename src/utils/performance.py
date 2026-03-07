@@ -111,14 +111,14 @@ def configure_tensorflow_gpu(
         raise RuntimeError("No GPU available. This project requires a CUDA-capable GPU for training.")
 
     if memory_growth and memory_limit_mb:
-        raise ValueError("memory_growth and memory_limit_mb are mutually exclusive in TensorFlow GPU config. " "Please provide only one.")
+        raise ValueError("memory_growth and memory_limit_mb are mutually exclusive in TensorFlow GPU config. Please provide only one.")
 
     try:
         if device_id is not None and 0 <= device_id < len(gpus):
             target_gpu = gpus[device_id]
         else:
             if device_id is not None:
-                print(f"Warning: device_id={device_id} out of range for {len(gpus)} GPUs. " "Falling back to GPU 0.")
+                print(f"Warning: device_id={device_id} out of range for {len(gpus)} GPUs. Falling back to GPU 0.")
             target_gpu = gpus[0]
 
         if memory_growth:
@@ -198,15 +198,25 @@ def set_threading_config(
         inter_op_parallelism = num_threads
         intra_op_parallelism = num_threads
 
-    tf.config.threading.set_inter_op_parallelism_threads(inter_op_parallelism)
-    tf.config.threading.set_intra_op_parallelism_threads(intra_op_parallelism)
+    try:
+        tf.config.threading.set_inter_op_parallelism_threads(inter_op_parallelism)
+        tf.config.threading.set_intra_op_parallelism_threads(intra_op_parallelism)
+    except RuntimeError as e:
+        if "cannot be modified after initialization" not in str(e):
+            raise
+        current_config = {
+            "inter_op_parallelism": tf.config.threading.get_inter_op_parallelism_threads(),
+            "intra_op_parallelism": tf.config.threading.get_intra_op_parallelism_threads(),
+        }
+        print(f"Threading already initialized; keeping existing values: inter={current_config['inter_op_parallelism']}, intra={current_config['intra_op_parallelism']}")
+        return current_config
 
     config = {
         "inter_op_parallelism": tf.config.threading.get_inter_op_parallelism_threads(),
         "intra_op_parallelism": tf.config.threading.get_intra_op_parallelism_threads(),
     }
 
-    print(f"Threading configured: inter={config['inter_op_parallelism']}, " f"intra={config['intra_op_parallelism']}")
+    print(f"Threading configured: inter={config['inter_op_parallelism']}, intra={config['intra_op_parallelism']}")
 
     return config
 

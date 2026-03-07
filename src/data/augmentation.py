@@ -406,9 +406,3 @@ def apply_spec_augment_gpu(
     del spec_gpu
     cp.get_default_memory_pool().free_all_blocks()
     return result
-    # Transfer back to CPU
-    result = cp.asnumpy(spec_gpu)
-    del spec_gpu
-    cp.get_default_memory_pool().free_all_blocks()
-    return result
-    return cp.asnumpy(spec_gpu)

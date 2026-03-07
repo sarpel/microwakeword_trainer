@@ -302,7 +302,6 @@ Examples:
     args = parser.parse_args()
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
-    logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

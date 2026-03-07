@@ -313,12 +313,6 @@ class Trainer:
         if self.val_ambient_duration_hours > 0:
             self.logger.log_info(f"Validation FAH uses scaled duration: {self.val_ambient_duration_hours:.2f}h (full={self.ambient_duration_hours:.2f}h × val_split={self.val_split})")
 
-        # Apply threading config
-        if self.inter_op_parallelism > 0:
-            tf.config.threading.set_inter_op_parallelism_threads(self.inter_op_parallelism)
-        if self.intra_op_parallelism > 0:
-            tf.config.threading.set_intra_op_parallelism_threads(self.intra_op_parallelism)
-
         # Paths
         paths = config.get("paths", {})
         self.checkpoint_dir = paths.get("checkpoint_dir", "./checkpoints")
