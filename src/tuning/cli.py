@@ -28,7 +28,7 @@ def create_parser() -> argparse.ArgumentParser:
 Auto-tuning system for wake word model fine-tuning.
 
 Iteratively improves model quality to achieve target metrics using:
-- Multi-phase optimization (FAH reduction → balanced → recall → polish)
+- Multi-phase optimization (FAH reduction -> balanced -> recall -> polish)
 - Adaptive knob selection with impact memory
 - Pareto frontier tracking (never regress)
 - Multi-threshold evaluation (not hardcoded 0.5)
@@ -65,6 +65,7 @@ Reads targets from config auto_tuning section, overridable via CLI args.
         default=None,
         help="Target FAH value (overrides config auto_tuning.target_fah)",
     )
+
     parser.add_argument(
         "--target-recall",
         type=float,
@@ -155,7 +156,7 @@ def print_config_summary(args: argparse.Namespace, config: dict) -> None:
 
     panel = Panel(
         table,
-        title="\U0001f527 Auto-Tune Configuration",
+        title="Auto-Tune Configuration",
         border_style="blue",
         expand=False,
     )
@@ -238,7 +239,7 @@ def main() -> int:
         result_table.add_row("Best FAH", f"{result['best_fah']:.4f}")
         result_table.add_row("Best Recall", f"{result['best_recall']:.4f}")
         result_table.add_row("Iterations", str(result["iterations"]))
-        result_table.add_row("Target Met", "\u2705 Yes" if result["target_met"] else "\u274c No")
+        result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
         result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
         result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))
 

@@ -76,16 +76,15 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 ├── profiles/              # Performance profiles
 ├── notebooks/             # Analysis notebooks
 ├── docs/                  # Documentation
-│   ├── ARCHITECTURE.md    # MixedNet architecture documentation
+│   ├── ARCHITECTURAL.md   # MixedNet architecture documentation
 │   ├── CONFIGURATION.md   # Complete configuration reference
 │   ├── TRAINING.md        # Training workflow guide
 │   ├── EXPORT.md          # TFLite export guide
+│   ├── INDEX.md           # Documentation index
+│   └── TROUBLESHOOTING.md # Troubleshooting guide
 │   ├── my_environment.md  # Project-specific training profile
 │   └── POST_TRAINING_ANALYSIS.md  # Post-training analysis guide
-│   ├── GUIDE.md           # Complete configuration reference
 │   ├── IMPLEMENTATION_PLAN.md  # v2.0 implementation plan (1782 lines)
-│   ├── my_environment.md  # Project-specific training profile
-│   ├── POST_TRAINING_ANALYSIS.md  # Post-training analysis guide
 │   ├── RESEARCH_REPORT_MIXED_PRECISION.md  # Mixed precision research (Turkish)
 │   └── LOG_ANALYSIS_GUIDE.md  # Log analysis guide (Turkish)
 └── ARCHITECTURAL_CONSTITUTION.md  # ⛔ IMMUTABLE SOURCE TRUTH (530 lines)
@@ -325,7 +324,7 @@ When adding a new config field to `config/loader.py`:
 - [ ] Add the field to `config/presets/fast_test.yaml` with appropriate default
 - [ ] Add the field to `config/presets/standard.yaml` with appropriate default
 - [ ] Add the field to `config/presets/max_quality.yaml` with appropriate default
-- [ ] Update `docs/GUIDE.md` with documentation for the new field
+- [ ] Update `docs/CONFIGURATION.md` with documentation for the new field
 - [ ] Update the relevant AGENTS.md file with notes about the config
 
 ### Example
@@ -361,7 +360,7 @@ When adding a new configuration field:
 1. Add field to the appropriate dataclass in `config/loader.py`
 2. Add the field with appropriate default to all three preset YAML files
 3. If the field requires validation, add checks in the dataclass `__post_init__` method
-4. Update documentation in `docs/GUIDE.md` if applicable
+4. Update documentation in `docs/CONFIGURATION.md` if applicable
 
 ### User Workflow
 
