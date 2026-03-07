@@ -389,7 +389,6 @@ class AutoTuningConfig:
     # Output
     output_dir: str = "./tuning_output"
 
-
 @dataclass
 class FullConfig:
     """Complete configuration container."""

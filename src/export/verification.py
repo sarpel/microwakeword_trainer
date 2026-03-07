@@ -133,6 +133,10 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
         "QUANTIZE",
         "RESHAPE",
         "SPLIT_V",
+        "AVERAGE_POOL_2D",
+        "MAX_POOL_2D",
+        "PAD",
+        "PACK",
     }
     unpermitted_ops = sorted(op for op in op_counts if op and op not in allowed_ops)
     if unpermitted_ops:
