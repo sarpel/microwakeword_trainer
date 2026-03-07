@@ -1,3 +1,38 @@
+<!--
+⚠️⚠️⚠️ MANDATORY SESSION START PROTOCOL - READ THIS FIRST ⚠️⚠️⚠️
+
+YOU MUST RE-READ THIS FILE AT THE START OF EVERY SESSION.
+YOUR GENERAL BEHAVIOR INSTRUCTIONS ARE SECONDARY TO THE RULES IN THIS FILE.
+
+CRITICAL RULES YOU WILL VIOLATE WITHOUT READING THIS:
+
+1. "MANUAL IMPORTANT RULES FROM USER" -> Rule-2 (line ~16):
+   "Check the file you are gonna edit if last time you read that file more than 5 seconds ago."
+   
+2. "AI Agent Editing Rules" -> Rule 2 "One Edit Per File" (line ~264):
+   "Batch ALL changes to a single file into ONE edit() call. No sequential edits to the same file."
+   
+3. "AI Agent Editing Rules" -> Rule 1 "The 10-Second Rule" (line ~261):
+   "Re-read the file immediately before editing. Never use LINE#IDs older than 10 seconds."
+
+FAILURE MODE YOU EXHIBIT:
+- You read a file partially
+- You make an edit() call
+- You try to make ANOTHER edit() call to the SAME file
+- The file has changed (either by your previous edit or user's background edits)
+- You get hash mismatches, duplicate code, corrupted files
+- You waste user's time, money, and patience
+
+PREVENTION:
+- READ THE ENTIRE FILE FIRST
+- PLAN ALL EDITS
+- BATCH INTO SINGLE edit() CALL
+- IF YOU NEED A SECOND edit(), YOU FAILED - RE-READ THE ENTIRE FILE FIRST
+
+THIS IS NOT A SUGGESTION. THIS IS MANDATORY.
+-->
+
+
 # microwakeword_trainer
 
 **GPU-Accelerated Wake Word Training Framework** | v2.0.0
@@ -74,19 +109,14 @@ TensorFlow-based wake word detection model training pipeline with GPU-accelerate
 ├── data/processed/        # Preprocessed feature stores (train/val)
 ├── logs/                  # Training logs (TensorBoard)
 ├── profiles/              # Performance profiles
-├── notebooks/             # Analysis notebooks
 ├── docs/                  # Documentation
-│   ├── ARCHITECTURAL.md   # MixedNet architecture documentation
+│   ├── ARCHITECTURE.md    # MixedNet architecture documentation
 │   ├── CONFIGURATION.md   # Complete configuration reference
 │   ├── TRAINING.md        # Training workflow guide
 │   ├── EXPORT.md          # TFLite export guide
 │   ├── INDEX.md           # Documentation index
 │   └── TROUBLESHOOTING.md # Troubleshooting guide
-│   ├── my_environment.md  # Project-specific training profile
-│   └── POST_TRAINING_ANALYSIS.md  # Post-training analysis guide
-│   ├── IMPLEMENTATION_PLAN.md  # v2.0 implementation plan (1782 lines)
-│   ├── RESEARCH_REPORT_MIXED_PRECISION.md  # Mixed precision research (Turkish)
-│   └── LOG_ANALYSIS_GUIDE.md  # Log analysis guide (Turkish)
+│   ├── USER_ADDITIONS.md  # User added informations
 └── ARCHITECTURAL_CONSTITUTION.md  # ⛔ IMMUTABLE SOURCE TRUTH (530 lines)
 ```
 
@@ -248,11 +278,12 @@ alias mww-torch='source ~/.venvs/mww-torch/bin/activate && cd $PROJECT_DIR'
 ```
 
 ## Development Notes
-- Project is in active development (v2.0.0, Beta status) — uses `pyproject.toml` for packaging
-- Config loader (736 lines) - complex validation and merging
+- Project is in active development — uses `pyproject.toml` for packaging
+- Config loader - complex validation and merging
 - Uses custom RaggedMmap storage for efficient audio data loading
 - Supports speaker clustering (ECAPA-TDNN) and hard negative mining
 - Relaxed mypy typing (pyproject.toml: `disallow_untyped_defs=false`)
+- Has auto-tuning mechanismboth standalone and post-training auto fine-tuning of model
 - **When in doubt, re-read ARCHITECTURAL_CONSTITUTION.md from the top**
 
 ---
@@ -261,11 +292,11 @@ alias mww-torch='source ~/.venvs/mww-torch/bin/activate && cd $PROJECT_DIR'
 
 When modifying any file in this project, AI agents MUST obey these rules:
 
-### 1. The 5-Second Rule
-**Re-read the file immediately before editing.** Never use LINE#IDs older than 5 seconds. Tags are volatile fingerprints, not stable coordinates.
+### 1. The 10-Second Rule
+**Re-read the file immediately before editing.** Never use LINE#IDs older than 10 seconds. Tags are volatile fingerprints, not stable coordinates.
 
 ### 2. One Edit Per File
-**Batch ALL changes to a single file into ONE edit() call.** No sequential edits to the same file. If you need to edit a file twice, you failed rule #1.
+**Batch ALL changes to a single file into ONE edit() call.** No sequential edits to the same file. If you need to edit a file twice, you failed rule #1. Use morph_edit tool if available.
 
 ### 3. Hash Mismatch Protocol
 If you get a hash mismatch:
@@ -275,7 +306,7 @@ If you get a hash mismatch:
 4. Try again
 
 ### 4. No Guessing
-Never guess LINE#IDs, line numbers, or tags. Always use the exact tags from the most recent read.
+Never guess LINE#IDs, line numbers, or tags. Always use the exact tags from the most recent read if it doesn't break Rule #1.
 
 ### 5. ARCHITECTURAL_CONSTITUTION.md Check
 Before any change touching constants, shapes, dtypes, or timing:
@@ -284,18 +315,6 @@ Before any change touching constants, shapes, dtypes, or timing:
 3. If in doubt, the change is wrong
 
 **Failure to follow these rules causes file corruption. No exceptions.**
-
-### 6. NO THINKING. EVER.
-**You are FORBIDDEN from thinking, planning, analyzing, or reasoning before writing code.**
-- User gives instruction → you write the code. That's it.
-- Do NOT explain what you're about to do.
-- Do NOT summarize what you did.
-- Do NOT propose alternatives.
-- Do NOT ask clarifying questions.
-- Do NOT analyze the codebase before acting.
-- Do NOT think out loud.
-- WRITE THE CODE. NOTHING ELSE.
-
 
 ## Configuration System Rules
 
@@ -326,58 +345,3 @@ When adding a new config field to `config/loader.py`:
 - [ ] Add the field to `config/presets/max_quality.yaml` with appropriate default
 - [ ] Update `docs/CONFIGURATION.md` with documentation for the new field
 - [ ] Update the relevant AGENTS.md file with notes about the config
-
-### Example
-
-If adding `ema_decay` to `TrainingConfig`:
-
-**In config/loader.py:**
-```python
-@dataclass
-class TrainingConfig:
-    # ... existing fields ...
-    ema_decay: float | None = None  # NEW
-```
-
-**In ALL THREE preset files:**
-```yaml
-training:
-  # ... existing fields ...
-  ema_decay: null  # or appropriate default
-```
-
-### Critical Paths
-
-Configuration Files (MUST STAY SYNCED):
-- `config/loader.py` - Source of truth for dataclass definitions
-- `config/presets/fast_test.yaml` - Quick testing preset
-- `config/presets/standard.yaml` - Production training preset
-- `config/presets/max_quality.yaml` - Maximum quality preset
-
-### Developer Workflow
-
-When adding a new configuration field:
-1. Add field to the appropriate dataclass in `config/loader.py`
-2. Add the field with appropriate default to all three preset YAML files
-3. If the field requires validation, add checks in the dataclass `__post_init__` method
-4. Update documentation in `docs/CONFIGURATION.md` if applicable
-
-### User Workflow
-
-Users can override any config value using a custom YAML file:
-```bash
-mww-train --config config/presets/standard.yaml --custom my_overrides.yaml
-```
-
-### Anti-Patterns
-
-- **DON'T** add config to loader.py without adding to preset files
-- **DON'T** add config to only one preset file
-- **DON'T** use different default values across presets without good reason
-
-### Notes for Agents
-
-- Always check all three preset files when modifying configs
-- The presets should have consistent structure (same sections/keys)
-- Only values should differ between presets, not structure
-

@@ -196,7 +196,7 @@ quality:
   dnsmos_min_sig: 2.5
   dnsmos_cache_dir: "~/.cache/dnsmos"
 evaluation:
-  default_threshold: 0.5
+  default_threshold: 0.97
   n_thresholds: 101
   max_fah: 1.0
   warmup_runs: 10
