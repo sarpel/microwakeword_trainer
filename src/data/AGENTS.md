@@ -6,12 +6,11 @@ Audio data pipeline: ingestion, feature extraction, augmentation, dataset storag
 
 | File | Lines | Purpose | Key Classes/Functions |
 |------|-------|---------|----------------------|
-| `dataset.py` | 962 | Training dataset with mmap storage | `RaggedMmap`, `FeatureStore`, `WakeWordDataset`, `load_dataset()` |
+| `dataset.py` | 962 | Training dataset with mmap storage | `RaggedMmap`, `FeatureStore`, `WakeWordDataset`, `load_dataset()`, `get_split_file_paths()` |
 | `ingestion.py` | 777 | Audio loading, validation, metadata | `SampleRecord`, `Clips`, `ClipsLoaderConfig`, `Split`, `Label`, `load_clips()` |
 | `clustering.py` | 1,212 | Speaker diversity via embeddings | `extract_speaker_embeddings`, `cluster_samples`, `SpeakerClustering`, `SpeakerClusteringConfig` |
 | `features.py` | 513 | Mel spectrogram generation | `FeatureConfig`, `MicroFrontend`, `SpectrogramGeneration`, `extract_features()` |
 | `augmentation.py` | 405 | Data-level audio augmentation (8 types) | `AudioAugmentation`, `AugmentationConfig`, `apply_spec_augment_gpu()` |
-| `hard_negatives.py` | 317 | Hard negative mining pipeline | FP detection, auto-mining |
 | `spec_augment_gpu.py` | 150 | CuPy SpecAugment (GPU-only) | `spec_augment_gpu`, `batch_spec_augment_gpu` |
 | `tfdata_pipeline.py` | 364 | TF data pipeline optimization | `OptimizedDataPipeline`, `benchmark_pipeline`, `create_optimized_dataset` |
 | `preprocessing.py` | 598 | Audio preprocessing pipeline | `SpeechPreprocessConfig`, `PreprocessResult`, `SplitResult` |

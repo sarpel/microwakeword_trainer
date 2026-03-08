@@ -171,7 +171,7 @@ class PerformanceConfig:
 
     gpu_only: bool = False
     spec_augment_backend: str = "tf"
-    async_mining: bool = False
+    async_mining: bool = False  # DEPRECATED: moved to MiningConfig (kept for backward compat)
     mixed_precision: bool = True
     num_workers: int = 16
     num_threads_per_worker: int = 2
@@ -239,23 +239,42 @@ class SpeakerClusteringConfig:
 
 
 @dataclass
-class HardNegativeMiningConfig:
-    """Hard negative mining configuration."""
+class MiningConfig:
+    """Unified configuration for all mining, false prediction extraction, and logging.
 
+    Consolidates the former HardNegativeMiningConfig, TopFPExtractionConfig,
+    and PerformanceConfig.async_mining into a single section.
+    """
+
+    # General
     enabled: bool = True
+    async_mining: bool = False
+
+    # In-training mining
     fp_threshold: float = 0.8
     max_samples: int = 5000
     mining_interval_epochs: int = 5
-    # NEW - Collection Phase (during training)
     collection_mode: str = "log_only"  # "log_only" | "mine_immediately"
+
+    # Logging
     log_predictions: bool = True
     log_file: str = "logs/false_predictions.json"
-    # NEW - Mining Phase (post-training)
+    top_k_per_epoch: int = 100
+
+    # Post-training mining
     enable_post_training_mining: bool = True
     mined_subdirectory: str = "mined"
     min_epochs_before_mining: int = 10
-    top_k_per_epoch: int = 100
     deduplicate_by_hash: bool = True
+
+    # Top false positive extraction (formerly TopFPExtractionConfig)
+    extract_top_fps: bool = True
+    top_fp_percent: float = 5.0  # Top N% of false positives to extract
+    extraction_confidence_threshold: float = 0.5  # Min score to consider as FP
+    extraction_output_dir: str = "dataset/top5fps"  # Destination for extracted files
+    extraction_log_file: str = "logs/top_fp_extraction.json"  # JSON log path
+    run_extraction_at_training_end: bool = True  # Auto-run at end of training
+    extraction_batch_size: int = 64  # Batch size for inference scan
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -271,7 +290,12 @@ class HardNegativeMiningConfig:
             raise ValueError(f"top_k_per_epoch must be a positive integer, got {self.top_k_per_epoch}")
         if self.collection_mode not in ("log_only", "mine_immediately"):
             raise ValueError(f"collection_mode must be 'log_only' or 'mine_immediately', got {self.collection_mode}")
-
+        if not 0.0 < self.top_fp_percent <= 100.0:
+            raise ValueError(f"top_fp_percent must be between 0 and 100, got {self.top_fp_percent}")
+        if not 0.0 <= self.extraction_confidence_threshold <= 1.0:
+            raise ValueError(f"extraction_confidence_threshold must be between 0.0 and 1.0, got {self.extraction_confidence_threshold}")
+        if self.extraction_batch_size <= 0:
+            raise ValueError(f"extraction_batch_size must be positive, got {self.extraction_batch_size}")
 
 @dataclass
 class ExportConfig:
@@ -484,31 +508,6 @@ class AutoTuningExpertConfig:
         if not 0.0 < self.cooling_rate < 1.0:
             raise ValueError("AutoTuningExpertConfig: cooling_rate must be between 0 and 1")
 
-@dataclass
-class TopFPExtractionConfig:
-    """Top false positive extraction from hard negatives.
-
-    Identifies the most confidently mis-predicted hard_negative samples
-    and logs them for later removal via --move-now.
-    """
-
-    enabled: bool = True
-    top_percent: float = 5.0  # Top N% of false positives to extract
-    confidence_threshold: float = 0.5  # Min score to consider a prediction as positive
-    output_dir: str = "dataset/top5fps"  # Destination for moved files
-    log_file: str = "logs/top_fp_extraction.json"  # JSON log path
-    run_at_training_end: bool = True  # Auto-run at end of training
-    batch_size: int = 64  # Batch size for inference scan
-
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        if not 0.0 < self.top_percent <= 100.0:
-            raise ValueError(f"top_percent must be between 0 and 100, got {self.top_percent}")
-        if not 0.0 <= self.confidence_threshold <= 1.0:
-            raise ValueError(f"confidence_threshold must be between 0.0 and 1.0, got {self.confidence_threshold}")
-        if self.batch_size <= 0:
-            raise ValueError(f"batch_size must be positive, got {self.batch_size}")
-
 
 @dataclass
 class FullConfig:
@@ -522,14 +521,13 @@ class FullConfig:
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
     speaker_clustering: SpeakerClusteringConfig = field(default_factory=SpeakerClusteringConfig)
-    hard_negative_mining: HardNegativeMiningConfig = field(default_factory=HardNegativeMiningConfig)
+    mining: MiningConfig = field(default_factory=MiningConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
     preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     auto_tuning: AutoTuningConfig = field(default_factory=AutoTuningConfig)
     auto_tuning_expert: AutoTuningExpertConfig = field(default_factory=AutoTuningExpertConfig)
-    top_fp_extraction: TopFPExtractionConfig = field(default_factory=TopFPExtractionConfig)
 
 
 # =============================================================================
@@ -565,14 +563,13 @@ class ConfigLoader:
         "augmentation": AugmentationConfig,
         "performance": PerformanceConfig,
         "speaker_clustering": SpeakerClusteringConfig,
-        "hard_negative_mining": HardNegativeMiningConfig,
+        "mining": MiningConfig,
         "export": ExportConfig,
         "preprocessing": PreprocessingConfig,
         "quality": QualityConfig,
         "evaluation": EvaluationConfig,
         "auto_tuning": AutoTuningConfig,
         "auto_tuning_expert": AutoTuningExpertConfig,
-        "top_fp_extraction": TopFPExtractionConfig,
     }
 
     def __init__(self, base_dir: Optional[Path] = None):

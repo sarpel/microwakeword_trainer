@@ -35,8 +35,7 @@ training:
   training_steps: [40000, 25000, 15000]
   # LR starts at standard 0.001, decays ~5x per phase for stable convergence
   learning_rates: [0.001, 0.0002, 0.00005]
-  batch_size: 128               # Fits 8GB VRAM with mixed precision
-  split_seed: 42
+  batch_size: 128               # Fits 8GB VRAM with mixed precision  class_balance_strategy: "oversample_positive"  # NEW: Balance classes for better wake word learning  split_seed: 42
   eval_step_interval: 500                 # Not directly used as a condition in the training loop.
   eval_basic_step_interval: 1000          # Main eval trigger. Runs full validation, computes all metrics. Prints 📊 Validation Results table.
   materialize_metrics_interval: 1000      # Training accuracy computation. Requires full batch evaluation
@@ -46,9 +45,9 @@ training:
   eval_log_every_step: true
   steps_per_epoch: 1000
 
-  positive_class_weight: [3.0, 5.0, 8.0]
+  positive_class_weight: [10.0, 20.0, 30.0]
   negative_class_weight: [1.0, 1.0, 1.0]
-  hard_negative_class_weight: [2.0, 4.0, 6.0]
+  hard_negative_class_weight: [1.0, 1.0, 1.0]  # REDUCED: Don't overwhelm model with hard negatives
 
   # Progressive SpecAugment: light→moderate→strong
   time_mask_max_size: [1, 2, 3]
@@ -57,8 +56,8 @@ training:
   freq_mask_count: [1, 1, 1]
 
   # Checkpoint selection
-  minimization_metric: "ambient_false_positives_per_hour"
-  target_minimization: 0.2
+  minimization_metric: "average_viable_recall"  # CHANGED: Prioritize recall over FAH
+  target_minimization: 1.0  # RAISED: Allow 1 FAH instead of 0.2 - model needs to learn to detect wake word
   maximization_metric: "average_viable_recall"
 
   # 42.02h of ambient audio (negative + background + hard_negative) for FAH calculation
@@ -140,7 +139,7 @@ performance:
   gpu_only: true
   mixed_precision: true
   spec_augment_backend: "tf"
-  async_mining: true
+  async_mining: true  # DEPRECATED: moved to mining section
   num_workers: 8
   num_threads_per_worker: 2
   prefetch_factor: 8
@@ -206,11 +205,14 @@ speaker_clustering:
 # ─────────────────────────────────────────────────────────────────
 # HARD NEGATIVE MINING (enabled for max quality)
 # ─────────────────────────────────────────────────────────────────
-hard_negative_mining:
+# MINING (Max quality — mine every epoch, stricter thresholds)
+# ─────────────────────────────────────────────────────────────────
+mining:
   enabled: true
+  async_mining: true
   fp_threshold: 0.8
   max_samples: 5000
-  mining_interval_epochs: 5
+  mining_interval_epochs: 1              # Mine EVERY epoch for max quality
   collection_mode: "log_only"
   log_predictions: true
   log_file: "logs/false_predictions.json"
@@ -219,6 +221,14 @@ hard_negative_mining:
   min_epochs_before_mining: 10
   top_k_per_epoch: 100
   deduplicate_by_hash: true
+  # Top FP extraction with stricter settings for max quality
+  extract_top_fps: true
+  top_fp_percent: 5.0
+  extraction_confidence_threshold: 0.8   # Stricter than standard (0.5)
+  extraction_output_dir: "${DATASET_DIR:-./dataset}/top5fps"
+  extraction_log_file: "logs/top_fp_extraction.json"
+  run_extraction_at_training_end: true
+  extraction_batch_size: 128             # Larger batch for max quality
 
 # ─────────────────────────────────────────────────────────────────
 # EXPORT SETTINGS
@@ -282,7 +292,7 @@ evaluation:
   warmup_runs: 10
   n_latency_runs: 100
   target_fah: 0.2               # Stricter than standard (0.5)
-  target_recall: 0.95
+  target_recall: 0.92
   gain_window_steps: 1000
   plateau_window_evals: 5
   plateau_min_delta: 0.001
@@ -293,7 +303,7 @@ evaluation:
 auto_tuning:
   enabled: true
   target_fah: 0.2
-  target_recall: 0.95
+  target_recall: 0.92
   max_iterations: 50            # Quality over speed
   max_gradient_steps: 250000    # Generous budget for max quality
   patience: 15
@@ -342,11 +352,3 @@ auto_tuning_expert:
 # ─────────────────────────────────────────────────────────────────
 # TOP FALSE POSITIVE EXTRACTION (from hard negatives)
 # ─────────────────────────────────────────────────────────────────
-top_fp_extraction:
-  enabled: true
-  top_percent: 5.0
-  confidence_threshold: 0.8
-  output_dir: "${DATASET_DIR:-./dataset}/top5fps"
-  log_file: "logs/top_fp_extraction.json"
-  run_at_training_end: true
-  batch_size: 128

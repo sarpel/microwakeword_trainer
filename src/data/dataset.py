@@ -830,19 +830,52 @@ class WakeWordDataset:
         store = FeatureStore(store_dir)
         store.initialize(len(samples), feature_dim=mel_bins)
 
+        processed_paths: list[str] = []
         for sample in samples:
             try:
                 audio = load_audio_wave(sample.path, target_sr=sample_rate)
                 features = frontend.compute_mel_spectrogram(audio)
                 store.add(features, self._label_to_int(sample.label))
+                processed_paths.append(str(sample.path))
             except Exception as e:
                 logger.warning(f"Failed to process {sample.path}: {e}")
                 continue
 
         count = len(store)
         store.close()
+
+        # Persist ordered file paths for index-to-filepath mapping
+        paths_file = store_dir / "file_paths.json"
+        with open(paths_file, "w") as f:
+            json.dump(processed_paths, f)
+        logger.info(f"Saved {len(processed_paths)} file paths to {paths_file}")
+
         logger.info(f"Processed {count} {split_name} samples")
         return count
+
+    def get_split_file_paths(self, split_name: str) -> list[str] | None:
+        """Get ordered file paths for a dataset split.
+
+        Returns the list of file paths in the same order as samples in the
+        FeatureStore. Useful for mapping prediction indices to file paths.
+
+        Args:
+            split_name: Split name ('val', 'train', 'test').
+
+        Returns:
+            Ordered list of file path strings, or None if not available.
+        """
+        paths_file = Path(self.data_path) / split_name / "file_paths.json"
+        if not paths_file.exists():
+            logger.warning(f"File paths not found: {paths_file}. Rebuild dataset to enable file path tracking.")
+            return None
+
+        try:
+            with open(paths_file, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to load file paths from {paths_file}: {e}")
+            return None
 
     def build(self, config: Optional[Dict[str, Any]] = None) -> "WakeWordDataset":
         """Build the dataset from raw audio files.

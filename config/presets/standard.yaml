@@ -142,7 +142,7 @@ performance:
   gpu_only: false
   mixed_precision: true
   spec_augment_backend: "tf"
-  async_mining: false
+  async_mining: false  # DEPRECATED: moved to mining section
 
   # Standard CPU resources
   num_workers: 12
@@ -210,23 +210,30 @@ speaker_clustering:
   adaptive_threshold_large: 50000
 
 # ─────────────────────────────────────────────────────────────────
-# HARD NEGATIVE MINING (Enabled for standard quality)
+# MINING (Hard negative mining, false prediction logging & extraction)
 # ─────────────────────────────────────────────────────────────────
-hard_negative_mining:
+mining:
   enabled: true
+  async_mining: false
   fp_threshold: 0.8
   max_samples: 5000
   mining_interval_epochs: 5
-  # NEW - Collection Phase (during training)
   collection_mode: "mine_immediately"    # "log_only" | "mine_immediately"
   log_predictions: true
   log_file: "logs/false_predictions.json"
-  # NEW - Mining Phase (post-training)
   enable_post_training_mining: true
   mined_subdirectory: "mined"
   min_epochs_before_mining: 10
   top_k_per_epoch: 100
   deduplicate_by_hash: true
+  # Top false positive extraction (formerly separate section)
+  extract_top_fps: true
+  top_fp_percent: 5.0                    # Top N% of false positives to extract
+  extraction_confidence_threshold: 0.5   # Min score to consider as FP
+  extraction_output_dir: "${DATASET_DIR:-./dataset}/top5fps"
+  extraction_log_file: "logs/top_fp_extraction.json"
+  run_extraction_at_training_end: true    # Auto-run at end of training
+  extraction_batch_size: 64              # Batch size for inference scan
 
 # ─────────────────────────────────────────────────────────────────
 # EXPORT SETTINGS
@@ -363,14 +370,3 @@ auto_tuning_expert:
   stir_level_5: 12
   curriculum_advance_threshold: 0.3
 
-# ─────────────────────────────────────────────────────────────────
-# TOP FALSE POSITIVE EXTRACTION (from hard negatives)
-# ─────────────────────────────────────────────────────────────────
-top_fp_extraction:
-  enabled: true
-  top_percent: 5.0                   # Top N% of false positives to extract
-  confidence_threshold: 0.5          # Min score to consider a prediction as positive
-  output_dir: "${DATASET_DIR:-./dataset}/top5fps"
-  log_file: "logs/top_fp_extraction.json"
-  run_at_training_end: true          # Auto-run extraction scan at end of training
-  batch_size: 64                     # Batch size for inference scan

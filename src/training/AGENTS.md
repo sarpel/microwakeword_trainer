@@ -6,24 +6,25 @@ Complete training loop with Rich logging, profiling, hard example mining, and wa
 ## Files
 | File | Lines | Purpose | Key Classes/Functions |
 |------|-------|---------|----------------------|
-| `trainer.py` | 874 | Main training loop | `Trainer`, `EvaluationMetrics`, `train()`, `main()` |
+| `trainer.py` | ~960 | Main training loop | `Trainer`, `EvaluationMetrics`, `train()`, `main()` |
+| `mining.py` | ~1860 | Unified mining & FP extraction | `HardExampleMiner`, `AsyncHardExampleMiner`, `log_false_predictions_to_json()`, `run_top_fp_extraction()`, `consolidate_prediction_logs()`, `mine_from_prediction_logs()` |
 | `rich_logger.py` | 312 | Rich-based progress display | `RichTrainingLogger` |
-| `miner.py` | 305 | Hard negative mining during training | `HardExampleMiner`, `mine_hard_examples()` |
 | `augmentation.py` | 266 | Waveform-level augmentation pipeline | `AudioAugmentationPipeline`, `ParallelAugmenter` |
 | `profiler.py` | 176 | Section-based training profiling | `TrainingProfiler` |
 | `__init__.py` | 16 | Package exports | Exports: `Trainer`, `TrainingMetrics` (alias for `EvaluationMetrics`), `train()`, `main()` |
 
-## Entry Point
+## Entry Points
 ```python
-# From setup.py console_scripts
+# From pyproject.toml console_scripts
 mww-train = src.training.trainer:main
+mww-mine-hard-negatives = src.training.mining:main
 ```
 
 ## Trainer Class
 ```python
 class Trainer:
     def __init__(self, config: FullConfig)
-    def train(self, train_data_factory, val_data_factory, input_shape=None)
+    def train(self, train_data_factory, val_data_factory, mining_data_factory=None, test_data_factory=None, input_shape=None, val_file_paths=None)
     def train_step(self, fingerprints, ground_truth, sample_weights)
     def validate(self, data_factory)   # Accepts callable factory or generator
     # Internal:
@@ -59,75 +60,85 @@ class RichTrainingLogger:
     def log_info(self, msg)
 ```
 
-## HardExampleMiner
+## Mining Module (`mining.py`)
+
+Unified module consolidating ALL hard negative mining, false prediction logging, and extraction.
+
+### Classes:
+
 ```python
 class HardExampleMiner:
-    def __init__(self, config)
-    def get_hard_samples(self, model, dataset)
-    def mine_from_dataset(self, model, data_factory)
-    def save_hard_negatives(self, path)
-    def load_hard_negatives(self, path)
-    def get_all_hard_negatives(self)
-```
-
-## AsyncHardExampleMiner
-```python
-class AsyncHardExampleMiner:
+    """Heap-based in-training mining on feature-level data"""
     def __init__(self, strategy, fp_threshold, max_samples, mining_interval_epochs, output_dir)
-    def start_mining(self, model, data_generator, epoch)
-    def wait_for_completion(self)
-    def get_result(self)
-    def is_mining(self)
+    def get_hard_samples(self, labels, predictions) -> np.ndarray
+    def mine_from_dataset(self, model, data_generator, epoch) -> dict
+    def save_hard_negatives(self, features, labels, predictions, filepath=None)
+    def load_hard_negatives(self, filepath)
+    def get_all_hard_negatives(self) -> list[dict]
+
+class AsyncHardExampleMiner:
+    """Thread-safe wrapper for non-blocking background mining"""
+    def __init__(self, strategy, fp_threshold, max_samples, mining_interval_epochs, output_dir)
+    def start_mining(self, model, data_generator, epoch)  # Clones model for thread safety
+    def wait_for_completion(self, timeout=None) -> bool
+    def get_result(self) -> dict | None
+    def is_mining(self) -> bool
 ```
 
-**Async Hard Negative Mining** - Background mining for non-blocking training operations:
+### Module-level functions:
 
-**Public Methods**:
-- `start_mining(model, data_generator, epoch)`: Start mining in background thread
-- `wait_for_completion()`: Block until mining finishes (called at epoch end)
-- `get_result()`: Retrieve mining results (dict with stats)
-- `is_mining()`: Check if mining is currently running
-
-**Usage Example**:
 ```python
-# In Trainer._train_epoch()
-if performance.async_mining and collection_mode == "mine_immediately":
-    async_miner = AsyncHardExampleMiner(
-        fp_threshold=0.8,
-        max_samples=5000,
-        mining_interval_epochs=5
-    )
-    async_miner.start_mining(model, data_generator, epoch)
+# Called from trainer per-epoch:
+log_false_predictions_to_json(epoch, y_true, y_scores, fp_threshold, top_k, log_file, val_paths, best_weights_path, logger)
 
-    # Continue training...
+# Called at end of training:
+run_top_fp_extraction(config, checkpoint_path=None, top_percent_override=None, threshold_override=None, log_file_override=None)
 
-    # At epoch end
-    async_miner.wait_for_completion()
-    result = async_miner.get_result()
+# Post-training consolidation:
+consolidate_prediction_logs(epoch_logs, all_files) -> dict
+mine_from_prediction_logs(prediction_log, output_dir, min_epoch, top_k, deduplicate, dry_run) -> int
+compute_file_hash(file_path, chunk_size=8192) -> str
 ```
 
-**Key Differences from HardExampleMiner**:
-- Runs in background thread (non-blocking)
-- Model is cloned for thread safety
-- Uses thread-safe locking for result access
-- Better GPU utilization but requires careful sync
+### CLI subcommands (via `mww-mine-hard-negatives`):
+- `mine` — Post-training mining from prediction logs
+- `extract-top-fps` — Top N% false positive extraction via model inference
+- `consolidate-logs` — Merge per-epoch logs with file path mapping
 
-**Presets**:
-- `standard` and `max_quality` presets in `config/presets/` enable async mining by default
-- `fast_test` preset uses synchronous mining for simplicity
+## Mining Configuration
+
+All mining is configured via a single `MiningConfig` section in `config/loader.py`:
+
+```yaml
+mining:
+  enabled: true
+  async_mining: true        # Background mining (non-blocking)
+  fp_threshold: 0.8         # Min score for false positive detection
+  max_samples: 5000
+  mining_interval_epochs: 5
+  collection_mode: "log_only"  # or "mine_immediately"
+  log_predictions: true
+  log_file: "logs/false_predictions.json"
+  top_k_per_epoch: 100
+  # Post-training extraction
+  extract_top_fps: true
+  top_fp_percent: 5.0
+  extraction_confidence_threshold: 0.5
+  extraction_output_dir: "dataset/top5fps"
+```
+
+**Note**: `performance.async_mining` is DEPRECATED. Use `mining.async_mining` instead.
 
 **Selection Criteria**:
-- **Use AsyncHardExampleMiner** (`performance.async_mining=true`):
+- **Use AsyncHardExampleMiner** (`mining.async_mining: true`):
   - Large datasets (>10k samples)
-  - High GPU availability
   - Need minimal training interruptions
   - Production training runs
 
-- **Use HardExampleMiner** (`performance.async_mining=false`):
+- **Use HardExampleMiner** (`mining.async_mining: false`):
   - Small datasets (<5k samples)
   - Debugging and development
   - Reproducible behavior needed
-  - Limited GPU resources
 
 ## AudioAugmentationPipeline
 Waveform-level augmentations applied **before** spectrogram conversion. This is separate from `src/data/augmentation.py` (which is the data-level AudioAugmentation class with 8 aug types).
@@ -160,59 +171,13 @@ Config → Trainer.__init__() → _build_model() → train()
 - Negative: 20.0
 - Hard negative: 40.0
 
-## Configuration
-Expects FullConfig from `config.loader` with:
-- `training.*` - batch_size, learning_rates, training_steps, eval_step_interval
-- `training.async_hard_neg_mining.*` - enabled, queue_size, confidence_threshold (for async mining)
-- `performance.*` - gpu_only, mixed_precision, profiling
-- `hardware.*` - sample_rate, mel_bins, window/step sizes
-- `augmentation.*` - waveform augmentation params
-- `hard_negative_mining.*` - fp_threshold, mining_interval_epochs, max_samples, collection_mode (root-level config for mining behavior)
-
-## Hard Negative Mining Configuration
-
-The framework provides two mechanisms for hard negative mining:
-
-1. **`hard_negative_mining.*`** (root-level): Configuration for hard negative mining behavior
-   - Controls mining parameters: `fp_threshold`, `max_samples`, `mining_interval_epochs`
-   - Determines when mining occurs via `collection_mode`:
-     - `"log_only"`: Only log false predictions; no mining during training
-     - `"mine_immediately"`: Mine immediately during training (uses async if enabled)
-   - Applies to both synchronous and async mining modes
-
-2. **`performance.async_mining`**: Boolean flag to enable.background async mining
-   - `false` (default): Uses `HardExampleMiner` (synchronous, blocking)
-   - `true`: Uses `AsyncHardExampleMiner` when `collection_mode="mine_immediately"` (background thread, non-blocking)
-
-**Relationship and Selection**:
-- These are NOT mutually exclusive; they work together to control mining behavior
-- `performance.async_mining` is a performance optimization flag
-- `hard_negative_mining.collection_mode` controls the mining strategy
-- **Use `performance.async_mining=true`** for: High-throughput training, non-blocking mining, better GPU utilization
-- **Use `performance.async_mining=false`** for: Deterministic behavior, simpler debugging, reproduction
-
-**Example Configurations**:
-
-```yaml
-# Async mining (high throughput)
-performance:
-  async_mining: true
-hard_negative_mining:
-  enabled: true
-  collection_mode: "mine_immediately"
-
-# Sync mining (deterministic)
-performance:
-  async_mining: false
-hard_negative_mining:
-  enabled: true
-  collection_mode: "mine_immediately"
-```
-
 ## Anti-Patterns
 - **Don't instantiate Trainer directly for production** - Use `main()` or `train()` helper
 - **Don't ignore config validation** - Pass validated config from loader
 - **Don't call augmentation after spectrogram** - Waveform augs are pre-spectrogram only
+- **Don't import from deleted files** - `miner.py`, `async_miner.py` no longer exist; import from `mining.py`
+- **Don't use `hard_negative_mining` config key** - Use `mining` instead (consolidated)
+- **Don't use `performance.async_mining`** - Deprecated; use `mining.async_mining`
 
 ## Notes
 - Integrates with `src/data/` for dataset loading
@@ -224,8 +189,7 @@ hard_negative_mining:
 - Supports TensorBoard logging (controlled via config)
 - Two-phase training: typically [20000, 10000] steps with [0.001, 0.0001] LR
 - Best model selection by FAH (false activations/hour) then recall
-- **AsyncHardExampleMiner** is enabled by default in standard and max_quality presets for better throughput
-
+- **Validation file path tracking**: `WakeWordDataset.get_split_file_paths('val')` provides ordered file paths for mapping prediction indices to files. Passed to `Trainer.train()` via `val_file_paths` parameter.
 
 ## Related Documentation
 
