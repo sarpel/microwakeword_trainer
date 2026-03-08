@@ -58,8 +58,8 @@ training:
   minimization_metric: "ambient_false_positives_per_hour"
   target_minimization: 0.5
   maximization_metric: "average_viable_recall"
-  # Hours of negative/background audio for FAH calculation
-  ambient_duration_hours: 10.0
+  # Hours of negative/background/hard_negative audio for FAH calculation
+  ambient_duration_hours: 42.02
   train_split: 0.8
   val_split: 0.1
   test_split: 0.1
