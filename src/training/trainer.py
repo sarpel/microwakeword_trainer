@@ -540,15 +540,7 @@ class Trainer:
     def _augment_quality_metrics(self, metrics: dict[str, float], step: int) -> dict[str, float]:
         """Add derived quality metrics and gains per 1k steps."""
         quality_metrics = dict(metrics)
-        quality_score = None
-        if metrics.get("recall_at_target_fah") is not None:
-            quality_score = metrics.get("recall_at_target_fah")
-        elif metrics.get("average_viable_recall") is not None:
-            quality_score = metrics.get("average_viable_recall")
-        elif metrics.get("recall_at_no_faph") is not None:
-            quality_score = metrics.get("recall_at_no_faph")
-        elif metrics.get("f1_score") is not None:
-            quality_score = metrics.get("f1_score")
+        quality_score, _, _, _ = self._compute_checkpoint_quality_score(metrics, self.eval_target_fah)
         if isinstance(quality_score, (int, float, np.floating, np.integer)):
             quality_metrics["quality_score"] = float(quality_score)
 
@@ -616,6 +608,43 @@ class Trainer:
         plateau_metrics["quality_plateau_slope"] = float(slope)
         plateau_metrics["quality_plateau_gap"] = float(plateau_gap)
         return plateau_metrics
+
+    def _compute_checkpoint_quality_score(self, metrics: dict[str, float], target_fah: float) -> tuple[float, float, float, float]:
+        """Compute composite quality score used by both logging and checkpointing.
+
+        Returns:
+            Tuple of (quality_score, current_recall, fah, fah_penalty)
+        """
+        if "ambient_false_positives_per_hour" in metrics:
+            fah = float(metrics.get("ambient_false_positives_per_hour", float("inf")))
+        else:
+            fp = metrics.get("fp", 0)
+            if isinstance(fp, (int, float, np.floating, np.integer)) and self.val_ambient_duration_hours > 0:
+                fah = float(fp) / max(self.val_ambient_duration_hours, 0.001)
+            else:
+                fah = float("inf")
+
+        operating_recall_raw = metrics.get("operating_recall")
+        if not isinstance(operating_recall_raw, (int, float, np.floating, np.integer)):
+            operating_recall_raw = metrics.get("recall_at_target_fah")
+        if not isinstance(operating_recall_raw, (int, float, np.floating, np.integer)):
+            operating_recall_raw = metrics.get("recall")
+        operating_recall = float(operating_recall_raw) if isinstance(operating_recall_raw, (int, float, np.floating, np.integer)) else 0.0
+
+        avr_raw = metrics.get("average_viable_recall")
+        avr = float(avr_raw) if isinstance(avr_raw, (int, float, np.floating, np.integer)) else operating_recall
+
+        # FAH-aware recall quality: blend operating-point recall and average viable recall.
+        # Keeps checkpointing robust while rewarding broad-threshold quality (AVR).
+        recall_quality = (0.7 * operating_recall) + (0.3 * avr)
+
+        # Compute FAH penalty: quadratic decay from 1.0 to 0.0
+        fah_ceiling = max(float(target_fah) * 3.0, 0.01)  # floor to avoid div-by-zero
+        fah_ratio = min(fah / fah_ceiling, 1.0)
+        fah_penalty = max(0.0, 1.0 - fah_ratio**2)
+
+        quality_score = recall_quality * fah_penalty
+        return quality_score, operating_recall, fah, fah_penalty
 
     def _build_model(self, input_shape: tuple[int, ...]) -> tf.keras.Model:
         """Build the model architecture.
@@ -718,8 +747,8 @@ class Trainer:
     def _is_best_model(self, metrics: dict[str, float], target_fah: float, target_recall: float) -> tuple[bool, str]:
         """Determine if current model is best using composite quality score.
 
-        Composite score = recall_component × fah_penalty
-        - recall_component: operating_recall (or recall fallback)
+        Composite score = recall_quality × fah_penalty
+        - recall_quality: 0.7×operating_recall + 0.3×average_viable_recall (with fallbacks)
         - fah_penalty: max(0, 1 - (fah / fah_ceiling)²)
           - fah_ceiling = target_fah × 3 (beyond 3× target, model is worthless)
           - Quadratic penalty: gentle near 0 FAH, harsh near ceiling
@@ -736,35 +765,25 @@ class Trainer:
         Returns:
             Tuple of (is_best, reason)
         """
-        # Get FAH
-        if "ambient_false_positives_per_hour" in metrics:
-            fah = metrics.get("ambient_false_positives_per_hour", float("inf"))
-        else:
-            fp = metrics.get("fp", 0)
-            fah = fp / max(self.val_ambient_duration_hours, 0.001) if self.val_ambient_duration_hours > 0 else float("inf")
-
-        # Get recall (prefer operating-point recall at target FAH)
-        current_recall = metrics.get("operating_recall", metrics.get("recall", 0))
-
-        # Compute FAH penalty: quadratic decay from 1.0 to 0.0
-        fah_ceiling = max(target_fah * 3.0, 0.01)  # floor to avoid div-by-zero
-        fah_ratio = min(fah / fah_ceiling, 1.0)
-        fah_penalty = max(0.0, 1.0 - fah_ratio ** 2)
-
-        # Composite quality score
-        quality_score = current_recall * fah_penalty
+        quality_score, current_recall, fah, fah_penalty = self._compute_checkpoint_quality_score(metrics, target_fah)
+        avr_raw = metrics.get("average_viable_recall")
+        avr = float(avr_raw) if isinstance(avr_raw, (int, float, np.floating, np.integer)) else current_recall
+        recall_quality = (0.7 * current_recall) + (0.3 * avr)
 
         if quality_score > self.best_quality_score:
             reason = (
                 f"Quality score improved: {quality_score:.4f} > {self.best_quality_score:.4f} "
-                f"(recall={current_recall:.4f}, FAH={fah:.2f}, fah_penalty={fah_penalty:.4f})"
+                f"(operating_recall={current_recall:.4f}, avr={avr:.4f}, recall_quality={recall_quality:.4f}, "
+                f"FAH={fah:.2f}, fah_penalty={fah_penalty:.4f})"
             )
             return True, reason
 
         return (
             False,
-            f"No improvement: quality={quality_score:.4f} (best={self.best_quality_score:.4f}), "
-            f"recall={current_recall:.4f}, FAH={fah:.2f}",
+            (
+                f"No improvement: quality={quality_score:.4f} (best={self.best_quality_score:.4f}), "
+                f"operating_recall={current_recall:.4f}, avr={avr:.4f}, recall_quality={recall_quality:.4f}, FAH={fah:.2f}"
+            ),
         )
 
     def _save_checkpoint(self, metrics: dict[str, float], is_best: bool, reason: str) -> None:
@@ -785,17 +804,10 @@ class Trainer:
             self.logger.log_checkpoint(reason, True, self.best_weights_path)
 
             # Update best metrics
-            if "ambient_false_positives_per_hour" in metrics:
-                self.best_fah = metrics.get("ambient_false_positives_per_hour", float("inf"))
-            else:
-                fp = metrics.get("fp", 0)
-                self.best_fah = fp / max(self.val_ambient_duration_hours, 0.001) if self.val_ambient_duration_hours > 0 else float("inf")
-            self.best_recall = metrics.get("operating_recall", metrics.get("recall", 0))
-            # Update quality score
-            fah_ceiling = max(self.target_minimization * 3.0, 0.01)
-            fah_ratio = min(self.best_fah / fah_ceiling, 1.0)
-            fah_penalty = max(0.0, 1.0 - fah_ratio ** 2)
-            self.best_quality_score = self.best_recall * fah_penalty
+            quality_score, current_recall, fah, _ = self._compute_checkpoint_quality_score(metrics, self.eval_target_fah)
+            self.best_fah = float(fah)
+            self.best_recall = float(current_recall)
+            self.best_quality_score = float(quality_score)
 
         # Save periodic checkpoint
         checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_step_{self.current_step}.weights.h5")
@@ -1351,7 +1363,7 @@ class Trainer:
                         self._log_advanced_tensorboard_metrics(val_metrics, step)
 
                     if advanced_due and self.eval_checkpoints_interval and step % self.eval_checkpoints_interval == 0:
-                        is_best, reason = self._is_best_model(val_metrics, self.target_minimization, self.best_recall)
+                        is_best, reason = self._is_best_model(val_metrics, self.eval_target_fah, self.best_recall)
                         self._save_checkpoint(val_metrics, is_best, reason)
                         if self.tensorboard_logger is not None:
                             summary_text = "\n".join(
@@ -1580,10 +1592,10 @@ def train(config: dict) -> tf.keras.Model:
         if not auto_tune_enabled:
             auto_tune_enabled = config.get("training", {}).get("auto_tune_on_poor_fah", False)
         target_min = config.get("training", {}).get("target_minimization", 0.5)
-        
+
         # Track if auto-tuning was run to skip top FP extraction (config doesn't propagate back)
         auto_tune_was_run = False
-        
+
         if auto_tune_enabled and trainer.best_fah > target_min:
             auto_tune_was_run = True
             trainer.logger.log_info(f"auto_tuning.enabled: final FAH={trainer.best_fah:.3f} > target={target_min:.3f} — launching auto-tuner")
@@ -1619,9 +1631,7 @@ def train(config: dict) -> tf.keras.Model:
                 from scripts.extract_top5_fps import run_extraction
 
                 trainer.logger.log_info("Running top FP extraction from hard negatives...")
-                checkpoint = trainer.best_weights_path or os.path.join(
-                    trainer.checkpoint_dir, "best_weights.weights.h5"
-                )
+                checkpoint = trainer.best_weights_path or os.path.join(trainer.checkpoint_dir, "best_weights.weights.h5")
                 result = run_extraction(config, checkpoint_path=checkpoint)
                 trainer.logger.log_info(
                     f"Top FP extraction: {result.get('top_fp_count', 0)} files logged "

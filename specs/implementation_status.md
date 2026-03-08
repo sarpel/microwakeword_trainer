@@ -15,7 +15,7 @@ microwakeword_trainer is a **production-ready** GPU-accelerated wake word traini
 ## Component Status
 
 | Component | Status | Implementation | Testing | Documentation | Notes |
-|-----------|--------|---------------|-----------|--------|
+|-----------|--------|---------------|-----------|---------------|-------|
 | Configuration System | ✅ Complete | ✅ Unit Tests | ✅ Complete | 12 dataclasses, YAML presets, env var substitution |
 | Training Pipeline | ✅ Complete | ✅ Integration Tests | ✅ Complete | Two-phase training, hard negative mining, TensorBoard |
 | Model Architecture | ✅ Complete | ✅ Verified | ✅ Complete | MixedNet with streaming layers, ESPHome-compatible |
@@ -432,7 +432,7 @@ pytest --cov=src --cov=config tests/
 |----------|--------|----------|
 | `specs/implementation_status.md` | ✅ Created | This document - implementation tracking |
 | `specs/phase1_complete.yaml` | 🔄 To Be Created | Phase 1 completion summary |
-| `specs/testing_plan.md` | 🔄 To Be Created | Testing strategy |
+| `specs/testing_plan.md` | ✅ Complete | Testing strategy |
 
 ---
 
