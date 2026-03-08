@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import tensorflow as tf
 
-from src.training.async_miner import AsyncHardExampleMiner
+from src.training.mining import AsyncHardExampleMiner
 
 
 class TestAsyncHardExampleMiner:

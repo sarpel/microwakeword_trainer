@@ -30,8 +30,7 @@ from src.data.spec_augment_gpu import batch_spec_augment_gpu
 from src.evaluation.calibration import compute_brier_score
 from src.evaluation.metrics import MetricsCalculator
 from src.model.architecture import build_model
-from src.training.async_miner import AsyncHardExampleMiner
-from src.training.miner import HardExampleMiner
+from src.training.mining import AsyncHardExampleMiner, HardExampleMiner, log_false_predictions_to_json, run_top_fp_extraction
 from src.training.profiler import TFProfiler, TrainingProfiler
 from src.training.rich_logger import RichTrainingLogger
 from src.training.tensorboard_logger import TensorBoardLogger
@@ -275,7 +274,8 @@ class Trainer:
         self.prefetch_buffer = performance.get("prefetch_buffer", 12)
         self.use_tfdata = performance.get("use_tfdata", True)
         self.log_throughput = performance.get("log_throughput", True)
-        self.async_mining = performance.get("async_mining", False)
+        mining_cfg = config.get("mining", {})
+        self.async_mining = mining_cfg.get("async_mining", performance.get("async_mining", False))
         self.spec_augment_backend = performance.get("spec_augment_backend", "tf")
         self.log_throughput_interval = int(performance.get("log_throughput_interval", 1000) or 1000)
         self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 100) or 0)
@@ -392,7 +392,7 @@ class Trainer:
         self.tensorboard_histogram_interval = int(performance.get("tensorboard_histogram_interval", 5000) or 5000)
 
         # Hard negative mining
-        hn_config = config.get("hard_negative_mining", {})
+        hn_config = config.get("mining", {})
         self.hard_negative_mining_enabled = hn_config.get("enabled", False)
         self.hn_config = hn_config  # Store config for collection mode access
         self.hard_negative_miner: HardExampleMiner | None = None
@@ -953,7 +953,7 @@ class Trainer:
         score_sample_limit = 2000
         all_scores: list[tf.Tensor] = []
         all_labels: list[tf.Tensor] = []
-        self._last_val_paths: list[str] = []  # Reset for each validation to prevent memory leak
+        self._last_val_paths: list[str] = self._val_file_paths or []  # Use pre-loaded paths if available
         self._last_val_raw_labels: list[int] = []
         for batch in iterator:
             if not isinstance(batch, tuple) or len(batch) != 3:
@@ -971,9 +971,8 @@ class Trainer:
 
             all_scores.append(scores)
             all_labels.append(tf.cast(ground_truth, tf.int32))
-            # Collect sample paths from metadata if available
-            if isinstance(metadata, dict) and "file_path" in metadata:
-                self._last_val_paths.extend(metadata["file_path"] if isinstance(metadata["file_path"], list) else [metadata["file_path"]])
+            # File paths are now pre-loaded via val_file_paths (populated from dataset.get_split_file_paths)
+            # Legacy metadata-based path collection removed — was always broken (metadata was sample_weights numpy array)
             if isinstance(metadata, dict) and "raw_labels" in metadata:
                 raw_labels = metadata["raw_labels"]
                 if isinstance(raw_labels, list):
@@ -1070,9 +1069,7 @@ class Trainer:
     def _log_false_predictions_to_json(self, epoch: int) -> None:
         """Log false positive predictions to JSON file for post-training mining.
 
-        This method reads the validation metrics collected during validate(),
-        identifies false positives (negative samples with high scores), and logs
-        them to a JSON file for later mining.
+        Delegates to the unified mining module function.
 
         Args:
             epoch: Current training epoch
@@ -1084,9 +1081,6 @@ class Trainer:
         if not hn_config.get("log_predictions", True):
             return
 
-        # Get threshold for false positives
-        fp_threshold = hn_config.get("fp_threshold", 0.8)
-
         # Access validation data from metrics accumulator
         if not hasattr(self.val_metrics, "all_y_true") or not hasattr(self.val_metrics, "all_y_scores"):
             self.logger.log_warning("Cannot log false predictions: validation metrics not available")
@@ -1094,58 +1088,19 @@ class Trainer:
 
         y_true = np.array(self.val_metrics.all_y_true)
         y_scores = np.array(self.val_metrics.all_y_scores)
+        val_paths = self._last_val_paths if hasattr(self, "_last_val_paths") else None
 
-        # Find false positives: negative samples (label=0) with high scores
-        false_positive_mask = (y_true == 0) & (y_scores >= fp_threshold)
-        false_positive_indices = np.where(false_positive_mask)[0]
-
-        if len(false_positive_indices) == 0:
-            self.logger.log_info(f"Epoch {epoch}: No false positives found above threshold {fp_threshold}")
-            return
-
-        # Build log entry for this epoch
-        epoch_entry = {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "epoch": epoch,
-            "fp_threshold": fp_threshold,
-            "total_val_samples": len(y_true),
-            "false_positive_count": int(len(false_positive_indices)),
-            "false_predictions": [],
-        }
-
-        # Log top false positives by score
-        top_k = hn_config.get("top_k_per_epoch", 100)
-        top_indices = false_positive_indices[np.argsort(y_scores[false_positive_indices])[-top_k:][::-1]]
-
-        for idx in top_indices:
-            file_path = self._last_val_paths[idx] if hasattr(self, "_last_val_paths") and idx < len(self._last_val_paths) else None
-            epoch_entry["false_predictions"].append({"index": int(idx), "score": float(y_scores[idx]), "true_label": "negative", "file_path": file_path})
-
-        # Write per-epoch log file (atomic, no race conditions)
-        log_dir = Path(hn_config.get("log_file", "logs/false_predictions.json")).parent
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Write each epoch to its own file (atomic operation)
-            epoch_log_path = log_dir / f"epoch_{epoch:04d}_false_predictions.json"
-            with open(epoch_log_path, "w") as f:
-                json.dump(epoch_entry, f, indent=2)
-
-            # Update metadata if needed (on first epoch only for simplicity)
-            metadata_path = log_dir / "metadata.json"
-            if not metadata_path.exists():
-                metadata = {
-                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "model_checkpoint": str(self.best_weights_path or "unknown"),
-                    "fp_threshold": fp_threshold,
-                }
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata, f, indent=2)
-
-            self.logger.log_info(f"Epoch {epoch}: Logged {len(top_indices)} false predictions to {epoch_log_path}")
-
-        except Exception as e:
-            self.logger.log_warning(f"Failed to write false predictions log: {e}")
+        result = log_false_predictions_to_json(
+            epoch=epoch,
+            y_true=y_true,
+            y_scores=y_scores,
+            fp_threshold=hn_config.get("fp_threshold", 0.8),
+            top_k=hn_config.get("top_k_per_epoch", 100),
+            log_file=hn_config.get("log_file", "logs/false_predictions.json"),
+            val_paths=val_paths,
+            best_weights_path=self.best_weights_path,
+            logger=self.logger,
+        )
         self.false_predictions_log.clear()
 
     def train(
@@ -1156,6 +1111,7 @@ class Trainer:
         test_data_factory=None,
         input_shape: tuple[int, ...] | None = None,
         weights_path: str | None = None,
+        val_file_paths: list[str] | None = None,
     ) -> tf.keras.Model:
         """Main training loop.
 
@@ -1165,7 +1121,9 @@ class Trainer:
             mining_data_factory: Optional factory for mining dataset
             test_data_factory: Optional factory for test dataset
             weights_path: Optional path to model weights to load after building model (for fine-tuning)
+            val_file_paths: Optional ordered list of validation file paths for FP tracking
         """
+        self._val_file_paths = val_file_paths
         input_shape = self.input_shape if input_shape is None else input_shape
 
         self.logger.log_info("Building model...")
@@ -1576,6 +1534,7 @@ def train(config: dict) -> tf.keras.Model:
                 mining_data_factory=dataset.train_mining_generator_factory(max_time_frames=max_time_frames),
                 test_data_factory=test_factory,
                 input_shape=input_shape,
+                val_file_paths=dataset.get_split_file_paths('val'),
             )
         else:
             model = trainer.train(
@@ -1584,6 +1543,7 @@ def train(config: dict) -> tf.keras.Model:
                 mining_data_factory=dataset.train_mining_generator_factory(max_time_frames=max_time_frames),
                 test_data_factory=dataset.test_generator_factory(max_time_frames=max_time_frames),
                 input_shape=input_shape,
+                val_file_paths=dataset.get_split_file_paths('val'),
             )
         # Auto-tune post-training if configured and final FAH > target
         at_config = config.get("auto_tuning", {})
@@ -1623,20 +1583,16 @@ def train(config: dict) -> tf.keras.Model:
                 trainer.logger.log_warning(f"Auto-tune finished with non-zero exit ({e.returncode}) — see above for details")
             except Exception as e:
                 trainer.logger.log_warning(f"Auto-tune failed: {e}")
-        # Top FP extraction from hard negatives (log only, no file moves)
-        # Skip if auto-tuning was run (config doesn't propagate back from subprocess)
-        top_fp_config = config.get("top_fp_extraction", {})
-        if top_fp_config.get("enabled", False) and top_fp_config.get("run_at_training_end", True) and not auto_tune_was_run:
+        mining_config = config.get("mining", {})
+        if mining_config.get("extract_top_fps", False) and mining_config.get("run_extraction_at_training_end", True) and not auto_tune_was_run:
             try:
-                from scripts.extract_top5_fps import run_extraction
-
                 trainer.logger.log_info("Running top FP extraction from hard negatives...")
                 checkpoint = trainer.best_weights_path or os.path.join(trainer.checkpoint_dir, "best_weights.weights.h5")
-                result = run_extraction(config, checkpoint_path=checkpoint)
+                result = run_top_fp_extraction(config, checkpoint_path=checkpoint)
                 trainer.logger.log_info(
                     f"Top FP extraction: {result.get('top_fp_count', 0)} files logged "
                     f"(out of {result.get('total_false_positives', 0)} FPs). "
-                    f"Run 'python scripts/extract_top5_fps.py --move-now' to move them."
+                    f"Run 'mww-mine-hard-negatives extract-top-fps' to move them."
                 )
             except Exception as e:
                 trainer.logger.log_warning(f"Top FP extraction failed: {e}")

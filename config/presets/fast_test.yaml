@@ -142,7 +142,7 @@ performance:
   gpu_only: true
   mixed_precision: true
   spec_augment_backend: "tf"
-  async_mining: false
+  async_mining: false  # DEPRECATED: moved to mining section
 
   # Reduced CPU resources
   num_workers: 12
@@ -210,23 +210,30 @@ speaker_clustering:
   adaptive_threshold_large: 50000
 
 # ─────────────────────────────────────────────────────────────────
-# HARD NEGATIVE MINING (Disabled for fast test)
+# MINING (Disabled for fast test)
 # ─────────────────────────────────────────────────────────────────
-hard_negative_mining:
-  # NEW - Collection Phase (during training)
-  collection_mode: "log_only"           # "log_only" | "mine_immediately"
+mining:
+  enabled: false
+  async_mining: false
+  fp_threshold: 0.8
+  max_samples: 5000
+  mining_interval_epochs: 5
+  collection_mode: "log_only"
   log_predictions: true
   log_file: "logs/false_predictions.json"
-  # NEW - Mining Phase (post-training)
-  enable_post_training_mining: false  # Disabled: consistent with enabled: false below
+  enable_post_training_mining: false     # Disabled for fast test
   mined_subdirectory: "mined"
   min_epochs_before_mining: 10
   top_k_per_epoch: 100
   deduplicate_by_hash: true
-  enabled: false
-  fp_threshold: 0.8
-  max_samples: 5000
-  mining_interval_epochs: 5
+  # Top FP extraction disabled for fast test
+  extract_top_fps: false
+  top_fp_percent: 5.0
+  extraction_confidence_threshold: 0.5
+  extraction_output_dir: "${DATASET_DIR:-./dataset}/top5fps"
+  extraction_log_file: "logs/top_fp_extraction.json"
+  run_extraction_at_training_end: false
+  extraction_batch_size: 64
 
 # ─────────────────────────────────────────────────────────────────
 # EXPORT SETTINGS
@@ -354,14 +361,3 @@ auto_tuning_expert:
   stir_level_5: 9
   curriculum_advance_threshold: 0.3
 
-# ─────────────────────────────────────────────────────────────────
-# TOP FALSE POSITIVE EXTRACTION (from hard negatives)
-# ─────────────────────────────────────────────────────────────────
-top_fp_extraction:
-  enabled: false                     # Disabled for fast tests
-  top_percent: 5.0
-  confidence_threshold: 0.5
-  output_dir: "${DATASET_DIR:-./dataset}/top5fps"
-  log_file: "logs/top_fp_extraction.json"
-  run_at_training_end: false
-  batch_size: 64

@@ -13,7 +13,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 ├── src/                  # Source code (8 modules, ~19,685 lines Python)
 ├── config/                # YAML presets + Python loader (dual structure)
 ├── tests/                 # Unit + integration tests
-├── scripts/               # Standalone tools (14 utilities)
+├── scripts/               # Standalone tools (~10 utilities)
 ├── docs/                  # User documentation
 ├── specs/                 # Implementation specs & status (NEW)
 ├── ARCHITECTURAL_CONSTITUTION.md  # Immutable architectural truth
@@ -24,6 +24,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 | Task | Location | Notes |
 |------|----------|-------|
 | Training loop | `src/training/trainer.py` (951 lines) | Two-phase, hard negative mining |
+| Mining & FP extraction | `src/training/mining.py` (1859 lines) | Unified: HardExampleMiner, AsyncMiner, FP logging, top-FP extraction, consolidation |
 | Config system | `config/loader.py` (736 lines) | 14 dataclasses, env var substitution |
 | Model architecture | `src/model/architecture.py` (694 lines) | MixedNet, streaming layers |
 | TFLite export | `src/export/tflite.py` (780 lines) | INT8 quantization, dual subgraphs |
@@ -35,7 +36,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 ## CONVENTIONS
 
 ### Configuration System
-- **14 dataclass sections** in loader.py (Hardware, Paths, Training, Model, Augmentation, Performance, SpeakerClustering, HardNegativeMining, Export, Preprocessing, Quality, Evaluation)
+- **14 dataclass sections** in loader.py (Hardware, Paths, Training, Model, Augmentation, Performance, SpeakerClustering, Mining, Export, Preprocessing, Quality, Evaluation)
 - **Three presets**: fast_test, standard, max_quality
 - **Environment variable substitution**: `${VAR}` or `${VAR:-default}`
 - **Immutable hardware section**: Enforced by ARCHITECTURAL_CONSTITUTION.md
