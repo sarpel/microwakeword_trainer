@@ -25,15 +25,18 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mww-autotune",
         description="""
-Auto-tuning system for wake word model fine-tuning.
+MaxQualityAutoTuner — post-training auto-tuning for wake word models.
 
-Iteratively improves model quality to achieve target metrics using:
-- Multi-phase optimization (FAH reduction -> balanced -> recall -> polish)
-- Adaptive knob selection with impact memory
-- Pareto frontier tracking (never regress)
-- Multi-threshold evaluation (not hardcoded 0.5)
+Iteratively improves model quality to achieve target FAH/recall using:
+  - 7 surgical strategy arms with Thompson sampling
+  - 3-pass threshold optimization (quantile → exact → CV refinement)
+  - Temperature scaling for probability calibration
+  - Pareto archive (never regress on any objective)
+  - INT8 shadow evaluation (optional)
+  - Simulated annealing acceptance criterion
+  - Confirmation phase for final candidate validation
 
-Reads targets from config auto_tuning section, overridable via CLI args.
+Quality is prioritized over speed. Time cost does not matter.
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -114,6 +117,32 @@ Reads targets from config auto_tuning section, overridable via CLI args.
         help="Verbose output",
     )
 
+    parser.add_argument(
+        "--max-gradient-steps",
+        type=int,
+        default=None,
+        help="Max gradient steps per burst (overrides config auto_tuning.max_gradient_steps)",
+    )
+
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=None,
+        help="Cross-validation folds for threshold refinement (overrides config auto_tuning.cv_folds)",
+    )
+
+    parser.add_argument(
+        "--no-int8-shadow",
+        action="store_true",
+        help="Disable INT8 shadow evaluation (overrides config auto_tuning.int8_shadow)",
+    )
+
+    parser.add_argument(
+        "--no-confirmation",
+        action="store_true",
+        help="Skip confirmation phase (overrides config auto_tuning.require_confirmation)",
+    )
+
     return parser
 
 
@@ -157,8 +186,10 @@ def print_config_summary(args: argparse.Namespace, config: dict) -> None:
     table.add_row("Target FAH", f"< {at.get('target_fah', 0.3)}")
     table.add_row("Target Recall", f"> {at.get('target_recall', 0.92)}")
     table.add_row("Max Iterations", str(at.get("max_iterations", 100)))
-    table.add_row("Patience", str(at.get("patience", 10)))
-    table.add_row("Steps/Iteration", str(at.get("steps_per_iteration", 5000)))
+    table.add_row("Max Gradient Steps", str(at.get("max_gradient_steps", 200)))
+    table.add_row("CV Folds", str(at.get("cv_folds", 3)))
+    table.add_row("INT8 Shadow", str(at.get("int8_shadow", True)))
+    table.add_row("Confirmation", str(at.get("require_confirmation", True)))
     table.add_row("Output Dir", str(at.get("output_dir", "./tuning_output")))
 
     panel = Panel(
@@ -209,6 +240,14 @@ def main() -> int:
         at["output_dir"] = args.output_dir
     if args.patience is not None:
         at["patience"] = args.patience
+    if args.max_gradient_steps is not None:
+        at["max_gradient_steps"] = args.max_gradient_steps
+    if args.cv_folds is not None:
+        at["cv_folds"] = args.cv_folds
+    if args.no_int8_shadow:
+        at["int8_shadow"] = False
+    if args.no_confirmation:
+        at["require_confirmation"] = False
 
     # Print summary
     print_config_summary(args, config_dict)
@@ -220,7 +259,7 @@ def main() -> int:
 
     # Confirm
     console.print("\n[cyan]Starting auto-tuning...[/]")
-    console.print("[dim]This may take a long time. Quality is prioritized over speed.[/]")
+    console.print("[dim]Quality is prioritized over speed. Time cost does not matter.[/]")
     console.print()
 
     # Run auto-tuning

@@ -370,21 +370,34 @@ class AutoTuningConfig:
     target_recall: float = 0.92
 
     # Iteration control
-    max_iterations: int = 100
+    max_iterations: int = 50
+    max_gradient_steps: int = 150_000
     patience: int = 10
-    steps_per_iteration: int = 5000
 
-    # Learning rate
+    # Legacy fields (kept for backward compat, ignored by MaxQualityAutoTuner)
+    steps_per_iteration: int = 5000
     initial_lr: float = 0.0001
     lr_decay_factor: float = 0.7
     min_lr: float = 1e-6
-
-    # Class weight bounds
     positive_weight_range: List[float] = field(default_factory=lambda: [0.5, 3.0])
     negative_weight_range: List[float] = field(default_factory=lambda: [10.0, 50.0])
     hard_negative_weight_range: List[float] = field(default_factory=lambda: [20.0, 100.0])
 
-    # Pareto / convergence
+    # Cross-validation & confirmation
+    cv_folds: int = 5
+    confirmation_fraction: float = 0.20
+    bootstrap_samples: int = 1000
+
+    # INT8 shadow evaluation
+    int8_shadow: bool = True
+    int8_shadow_interval: int = 5
+    require_int8_pass: bool = True
+    require_confirmation: bool = True
+
+    # Grouping
+    group_key: str = "speaker_id"
+
+    # Pareto / convergence (legacy)
     pareto_improvement_threshold: float = 0.005
     convergence_window: int = 5
 
@@ -416,7 +429,60 @@ class AutoTuningConfig:
                 raise ValueError(f"AutoTuningConfig: {range_name} must contain exactly two numbers, got {range_val}")
             if range_val[0] >= range_val[1]:
                 raise ValueError(f"AutoTuningConfig: {range_name}[0] must be < {range_name}[1], got {range_val}")
+        if not isinstance(self.cv_folds, int) or self.cv_folds < 2:
+            raise ValueError(f"AutoTuningConfig: cv_folds must be >= 2, got {self.cv_folds}")
+        if not 0.0 < self.confirmation_fraction < 1.0:
+            raise ValueError(f"AutoTuningConfig: confirmation_fraction must be between 0 and 1, got {self.confirmation_fraction}")
 
+
+@dataclass
+class AutoTuningExpertConfig:
+    """Expert-level auto-tuning parameters. Most users should use defaults."""
+
+    # Burst step bounds
+    min_burst_steps: int = 200
+    max_burst_steps: int = 5000
+    default_burst_steps: int = 500
+
+    # Learning rate bounds
+    min_lr: float = 1e-7
+    max_lr: float = 1e-4
+    default_lr: float = 1e-5
+
+    # SAM / SWA
+    sam_rho: float = 0.05
+    swa_collection_interval: int = 100
+
+    # Simulated annealing
+    initial_temperature: float = 0.5
+    cooling_rate: float = 0.95
+    reheat_after: int = 5
+    reheat_factor: float = 1.3
+
+    # Pool / archive sizes
+    active_pool_size: int = 12
+    pareto_archive_size: int = 24
+
+    # Stir level thresholds (stagnation counts)
+    stir_level_1: int = 3
+    stir_level_2: int = 5
+    stir_level_3: int = 7
+    stir_level_4: int = 9
+    stir_level_5: int = 12
+
+    # Curriculum
+    curriculum_advance_threshold: float = 0.3
+
+    def __post_init__(self):
+        """Validate expert configuration."""
+        if self.min_burst_steps >= self.max_burst_steps:
+            raise ValueError("AutoTuningExpertConfig: min_burst_steps must be < max_burst_steps")
+        if self.min_lr >= self.max_lr:
+            raise ValueError("AutoTuningExpertConfig: min_lr must be < max_lr")
+        if not 0.0 < self.sam_rho < 1.0:
+            raise ValueError("AutoTuningExpertConfig: sam_rho must be between 0 and 1")
+        if not 0.0 < self.cooling_rate < 1.0:
+            raise ValueError("AutoTuningExpertConfig: cooling_rate must be between 0 and 1")
 
 @dataclass
 class TopFPExtractionConfig:
@@ -462,6 +528,7 @@ class FullConfig:
     quality: QualityConfig = field(default_factory=QualityConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     auto_tuning: AutoTuningConfig = field(default_factory=AutoTuningConfig)
+    auto_tuning_expert: AutoTuningExpertConfig = field(default_factory=AutoTuningExpertConfig)
     top_fp_extraction: TopFPExtractionConfig = field(default_factory=TopFPExtractionConfig)
 
 
@@ -504,6 +571,7 @@ class ConfigLoader:
         "quality": QualityConfig,
         "evaluation": EvaluationConfig,
         "auto_tuning": AutoTuningConfig,
+        "auto_tuning_expert": AutoTuningExpertConfig,
         "top_fp_extraction": TopFPExtractionConfig,
     }
 

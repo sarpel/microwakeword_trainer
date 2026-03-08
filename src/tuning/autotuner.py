@@ -1,853 +1,2310 @@
+"""MaxQualityAutoTuner — Post-training auto-tuning for wake word models.
+
+Replaces the legacy AutoTuner with a sophisticated branch-and-confirm system
+using surgical gradient bursts, 7 strategy arms with Thompson sampling,
+3-pass threshold optimization, temperature scaling, simulated annealing
+acceptance, Pareto archive, INT8 shadow evaluation, and confirmation phase.
+
+Quality over speed. Time budget doesn't matter — only final model quality.
+"""
+
+from __future__ import annotations
+
 import copy
 import enum
+import io
 import logging
+import math
+import os
+import pickle
 import sys
+import tempfile
 import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
-import tensorflow as tf
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
-from src.data.dataset import WakeWordDataset
-from src.evaluation.metrics import MetricsCalculator
-from src.model.architecture import build_model
-from src.training.miner import HardExampleMiner
-from src.training.trainer import Trainer
-from src.utils.performance import set_threading_config
+logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ParetoPoint:
-    fah: float
-    recall: float
-    checkpoint_path: str
-    config_snapshot: dict = field(default_factory=dict)
-    iteration: int = 0
-
-
-class ParetoFrontier:
-    """Track non-dominated (FAH, recall) solutions."""
-
-    def __init__(self):
-        self.points: list[ParetoPoint] = []
-
-    def add(self, fah, recall, checkpoint_path, config_snapshot, iteration) -> bool:
-        """Add point. Returns True if it's Pareto-improving (not dominated by any existing)."""
-        if self.is_dominated(fah, recall):
-            return False
-
-        new_point = ParetoPoint(
-            fah=fah,
-            recall=recall,
-            checkpoint_path=checkpoint_path,
-            config_snapshot=config_snapshot,
-            iteration=iteration,
-        )
-
-        filtered = []
-        for point in self.points:
-            if fah <= point.fah and recall >= point.recall:
-                continue
-            filtered.append(point)
-
-        filtered.append(new_point)
-        self.points = filtered
-        return True
-
-    def is_dominated(self, fah, recall) -> bool:
-        """Check if (fah, recall) is dominated by any frontier point."""
-        for point in self.points:
-            if point.fah <= fah and point.recall >= recall:
-                return True
-        return False
-
-    def best_by_target(self, target_fah, target_recall) -> ParetoPoint | None:
-        """Find point closest to meeting both targets. Use weighted distance."""
-        if not self.points:
-            return None
-
-        best_point = None
-        best_score = float("inf")
-        for point in self.points:
-            fah_gap = max(0.0, point.fah - target_fah)
-            recall_gap = max(0.0, target_recall - point.recall)
-            score = (fah_gap * 2.0) + recall_gap
-            if score < best_score:
-                best_score = score
-                best_point = point
-        return best_point
-
-    @property
-    def frontier(self) -> list[ParetoPoint]:
-        """Return frontier sorted by FAH ascending."""
-        return sorted(self.points, key=lambda p: p.fah)
-
-
-@dataclass
-class KnobRecord:
-    param_name: str
-    delta_value: float
-    fah_before: float
-    fah_after: float
-    recall_before: float
-    recall_after: float
-    iteration: int
-
-
-class ImpactMemory:
-    """Track parameter adjustment effectiveness."""
-
-    def __init__(self):
-        self.records: list[KnobRecord] = []
-        self._last_tried: dict[str, int] = {}
-
-    def record(self, param_name, delta_value, fah_before, fah_after, recall_before, recall_after, iteration):
-        """Record an adjustment and its effect."""
-        self.records.append(
-            KnobRecord(
-                param_name=param_name,
-                delta_value=delta_value,
-                fah_before=fah_before,
-                fah_after=fah_after,
-                recall_before=recall_before,
-                recall_after=recall_after,
-                iteration=iteration,
-            )
-        )
-        self._last_tried[param_name] = iteration
-
-    def get_impact_scores(self) -> dict[str, float]:
-        """Return impact score per knob. Higher = more effective.
-        Score = mean(fah_improvement_normalized + recall_improvement_normalized) for each knob.
-        Unexplored knobs get 0.5 (encourage exploration)."""
-        if not self.records:
-            return {}
-
-        by_param: dict[str, list[KnobRecord]] = {}
-        for record in self.records:
-            by_param.setdefault(record.param_name, []).append(record)
-
-        scores: dict[str, float] = {}
-        for param_name, entries in by_param.items():
-            effects = []
-            for entry in entries:
-                fah_improvement = entry.fah_before - entry.fah_after
-                recall_improvement = entry.recall_after - entry.recall_before
-                fah_norm = np.tanh(fah_improvement)
-                recall_norm = np.tanh(recall_improvement)
-                effects.append(fah_norm + recall_norm)
-            scores[param_name] = float(np.mean(effects)) if effects else 0.0
-
-        return scores
-
-    def best_knob(self) -> str | None:
-        """Highest impact parameter name."""
-        scores = self.get_impact_scores()
-        if not scores:
-            return None
-        best_name = None
-        best_score = float("-inf")
-        for name, score in scores.items():
-            if score > best_score:
-                best_score = score
-                best_name = name
-        return best_name
-
-    def last_was_harmful(self, param_name: str) -> bool:
-        """True if last adjustment to this param made things worse (both FAH AND recall)."""
-        for record in reversed(self.records):
-            if record.param_name == param_name:
-                return record.fah_after > record.fah_before and record.recall_after < record.recall_before
-        return False
-
-    def iterations_since_last_tried(self, param_name: str, current_iteration: int) -> int:
-        """How many iterations since this knob was last adjusted."""
-        if param_name not in self._last_tried:
-            return current_iteration
-        return max(0, current_iteration - self._last_tried[param_name])
-
-
-class TrendAnalyzer:
-    """Sliding window trend analysis over metrics history."""
-
-    def __init__(self, window_size: int = 5):
-        self.window_size = window_size
-        self.history: list[tuple[int, float, float]] = []
-
-    def add(self, iteration: int, fah: float, recall: float):
-        self.history.append((iteration, fah, recall))
-
-    def _window(self) -> list[tuple[int, float, float]]:
-        if len(self.history) <= self.window_size:
-            return self.history
-        return self.history[-self.window_size :]
-
-    def fah_trend(self) -> float:
-        """Linear regression slope of FAH. Negative = improving."""
-        window = self._window()
-        if len(window) < 2:
-            return 0.0
-        x = np.array([p[0] for p in window], dtype=np.float32)
-        y = np.array([p[1] for p in window], dtype=np.float32)
-        slope = np.polyfit(x, y, 1)[0]
-        return float(slope)
-
-    def recall_trend(self) -> float:
-        """Linear regression slope of recall. Positive = improving."""
-        window = self._window()
-        if len(window) < 2:
-            return 0.0
-        x = np.array([p[0] for p in window], dtype=np.float32)
-        y = np.array([p[2] for p in window], dtype=np.float32)
-        slope = np.polyfit(x, y, 1)[0]
-        return float(slope)
-
-    def is_stagnant(self) -> bool:
-        """True if no meaningful change in last window_size iterations.
-        Meaningful = abs(slope) > 0.001 for either metric."""
-        return abs(self.fah_trend()) <= 0.001 and abs(self.recall_trend()) <= 0.001
-
-    def momentum_direction(self) -> str:
-        """Return 'improving', 'worsening', or 'flat'."""
-        fah_slope = self.fah_trend()
-        recall_slope = self.recall_trend()
-        improving = fah_slope < -0.001 or recall_slope > 0.001
-        worsening = fah_slope > 0.001 and recall_slope < -0.001
-        if improving and not worsening:
-            return "improving"
-        if worsening:
-            return "worsening"
-        return "flat"
-
-
-class Phase(enum.Enum):
-    AGGRESSIVE_FAH = "aggressive_fah"
-    BALANCED = "balanced"
-    PRECISION_RECALL = "precision_recall"
-    POLISH = "polish"
-
-
-@dataclass
-class PhaseParams:
-    lr_multiplier: float
-    step_multiplier: float
-    preferred_knobs: list[str]
-
-
-class PhaseController:
-    """Determine optimization phase based on metric gaps."""
-
-    PHASE_PARAMS = {
-        Phase.AGGRESSIVE_FAH: PhaseParams(
-            lr_multiplier=1.0,
-            step_multiplier=1.5,
-            preferred_knobs=["negative_class_weight", "hard_negative_class_weight"],
-        ),
-        Phase.BALANCED: PhaseParams(
-            lr_multiplier=0.8,
-            step_multiplier=1.0,
-            preferred_knobs=[],
-        ),
-        Phase.PRECISION_RECALL: PhaseParams(
-            lr_multiplier=0.5,
-            step_multiplier=1.0,
-            preferred_knobs=["positive_class_weight", "dropout_rate"],
-        ),
-        Phase.POLISH: PhaseParams(
-            lr_multiplier=0.3,
-            step_multiplier=0.5,
-            preferred_knobs=["learning_rate"],
-        ),
-    }
-
-    def determine_phase(self, current_fah, current_recall, target_fah, target_recall) -> Phase:
-        if current_fah > target_fah * 2.0:
-            return Phase.AGGRESSIVE_FAH
-        if current_fah > target_fah and current_recall < target_recall:
-            return Phase.BALANCED
-        if current_fah <= target_fah and current_recall < target_recall:
-            return Phase.PRECISION_RECALL
-        return Phase.POLISH
-
-    def get_phase_params(self, phase: Phase) -> PhaseParams:
-        return self.PHASE_PARAMS[phase]
-
-
-class AdaptiveKnobController:
-    """Replaces rigid MicroConfigAdjuster. Uses impact memory for knob selection."""
-
-    _DEFAULT_KNOBS = {
-        "positive_class_weight": {"min": 0.5, "max": 3.0, "step": 0.2, "default_dir": 1},
-        "negative_class_weight": {"min": 10.0, "max": 50.0, "step": 3.0, "default_dir": 1},
-        "hard_negative_class_weight": {"min": 20.0, "max": 100.0, "step": 5.0, "default_dir": 1},
-        "learning_rate": {"min": 1e-6, "max": 0.001, "step": 0.00002, "default_dir": -1},
-        "dropout_rate": {"min": 0.0, "max": 0.5, "step": 0.05, "default_dir": -1},
-    }
-
-    def __init__(self, config: dict, auto_tuning_config: dict):
-        self.knobs = copy.deepcopy(self._DEFAULT_KNOBS)
-        self.current_values: dict[str, float] = {}
-        self._sync_from_config(config)
-        at = auto_tuning_config
-        self.knobs["positive_class_weight"]["min"] = at.get("positive_weight_range", [0.5, 3.0])[0]
-        self.knobs["positive_class_weight"]["max"] = at.get("positive_weight_range", [0.5, 3.0])[1]
-        self.knobs["negative_class_weight"]["min"] = at.get("negative_weight_range", [10.0, 50.0])[0]
-        self.knobs["negative_class_weight"]["max"] = at.get("negative_weight_range", [10.0, 50.0])[1]
-        self.knobs["hard_negative_class_weight"]["min"] = at.get("hard_negative_weight_range", [20.0, 100.0])[0]
-        self.knobs["hard_negative_class_weight"]["max"] = at.get("hard_negative_weight_range", [20.0, 100.0])[1]
-        self._last_knob: str | None = None
-        self._last_direction: int = 0
-        self._escalation_factor: float = 1.0
-
-    def _sync_from_config(self, config: dict):
-        """Read current values from config dict."""
-        training = config.get("training", {})
-        model = config.get("model", {})
-        pos_w = training.get("positive_class_weight", [1.0])
-        self.current_values["positive_class_weight"] = pos_w[-1] if isinstance(pos_w, list) else pos_w
-        neg_w = training.get("negative_class_weight", [20.0])
-        self.current_values["negative_class_weight"] = neg_w[-1] if isinstance(neg_w, list) else neg_w
-        hn_w = training.get("hard_negative_class_weight", [40.0])
-        self.current_values["hard_negative_class_weight"] = hn_w[-1] if isinstance(hn_w, list) else hn_w
-        lrs = training.get("learning_rates", [0.0001])
-        self.current_values["learning_rate"] = lrs[-1] if isinstance(lrs, list) else lrs
-        self.current_values["dropout_rate"] = model.get("dropout_rate", 0.2)
-
-    def select_knob(
-        self,
-        phase: Phase,
-        impact_memory: ImpactMemory,
-        trend: TrendAnalyzer,
-        current_iteration: int,
-    ) -> tuple[str, int, float]:
-        """Select best knob to adjust. Returns (knob_name, direction, step_size)."""
-        phase_params = PhaseController.PHASE_PARAMS[phase]
-
-        scores: dict[str, float] = {}
-        impact_scores = impact_memory.get_impact_scores()
-        for knob_name in self.knobs:
-            phase_bonus = 2.0 if knob_name in phase_params.preferred_knobs else 0.0
-            impact = impact_scores.get(knob_name, 0.5)
-            recency = impact_memory.iterations_since_last_tried(knob_name, current_iteration)
-            scores[knob_name] = phase_bonus + impact + min(recency * 0.1, 1.0)
-
-        best_knob = "positive_class_weight"
-        best_score = float("-inf")
-        for name, score in scores.items():
-            if score > best_score:
-                best_score = score
-                best_knob = name
-
-        knob_info = self.knobs[best_knob]
-        direction = knob_info["default_dir"]
-        if phase == Phase.AGGRESSIVE_FAH and best_knob in (
-            "negative_class_weight",
-            "hard_negative_class_weight",
-        ):
-            direction = 1
-        elif phase == Phase.PRECISION_RECALL and best_knob == "positive_class_weight":
-            direction = 1
-
-        if impact_memory.last_was_harmful(best_knob):
-            direction = -direction
-
-        step = knob_info["step"] * self._escalation_factor
-
-        self._last_knob = best_knob
-        self._last_direction = direction
-
-        return (best_knob, direction, step)
-
-    def apply_adjustment(self, config: dict, knob_name: str, direction: int, step: float) -> dict:
-        """Apply knob adjustment to config dict. Returns new config."""
-        new_config = copy.deepcopy(config)
-        training = new_config.setdefault("training", {})
-        model = new_config.setdefault("model", {})
-
-        knob_info = self.knobs[knob_name]
-        current = self.current_values[knob_name]
-        new_value = current + direction * step
-        new_value = max(knob_info["min"], min(knob_info["max"], new_value))
-        self.current_values[knob_name] = new_value
-
-        if knob_name == "positive_class_weight":
-            training["positive_class_weight"] = [new_value]
-        elif knob_name == "negative_class_weight":
-            training["negative_class_weight"] = [new_value]
-        elif knob_name == "hard_negative_class_weight":
-            training["hard_negative_class_weight"] = [new_value]
-        elif knob_name == "learning_rate":
-            training["learning_rates"] = [new_value]
-        elif knob_name == "dropout_rate":
-            model["dropout_rate"] = new_value
-
-        return new_config
-
-    def escalate(self):
-        """Increase step sizes by 1.5x for stuck situations."""
-        self._escalation_factor *= 1.5
-
-    def reset_escalation(self):
-        self._escalation_factor = 1.0
-
-    def reverse_last(self):
-        """Reverse the last direction."""
-        self._last_direction = -self._last_direction
-
-
-class StagnationAction(enum.Enum):
-    ESCALATE = "escalate"
-    REVERSE = "reverse"
-    SWITCH = "switch"
-    RESTART = "restart"
+# ============================================================================
+# Section 1: Data Structures
+# ============================================================================
 
 
 @dataclass
 class TuneMetrics:
-    fah: float
-    recall: float
-    precision: float
-    f1: float
-    threshold: float
-    recall_at_target_fah: float
-    fah_at_target_recall: float
-    avg_viable_recall: float
+    """Evaluation metrics for a tuning candidate."""
+
+    fah: float = float("inf")
+    recall: float = 0.0
+    auc_roc: float = 0.0
+    auc_pr: float = 0.0
+    ece: float = 1.0
+    threshold: float = 0.5
+    threshold_uint8: int = 128
+    precision: float = 0.0
+    f1: float = 0.0
+    total_positives: int = 0
+    total_negatives: int = 0
+    false_positives: int = 0
+    false_negatives: int = 0
+    ambient_duration_hours: float = 0.0
+
+    def dominates(self, other: TuneMetrics) -> bool:
+        """Pareto dominance: self dominates other if better in all objectives."""
+        return self.fah <= other.fah and self.recall >= other.recall and self.auc_pr >= other.auc_pr and (self.fah < other.fah or self.recall > other.recall or self.auc_pr > other.auc_pr)
+
+    def meets_target(self, target_fah: float, target_recall: float) -> bool:
+        return self.fah <= target_fah and self.recall >= target_recall
+
+    def to_dict(self) -> dict:
+        return {
+            "fah": self.fah,
+            "recall": self.recall,
+            "auc_roc": self.auc_roc,
+            "auc_pr": self.auc_pr,
+            "ece": self.ece,
+            "threshold": self.threshold,
+            "threshold_uint8": self.threshold_uint8,
+            "precision": self.precision,
+            "f1": self.f1,
+        }
+
+
+@dataclass
+class CandidateState:
+    """Complete state of a tuning candidate."""
+
+    id: str
+    weights_bytes: bytes
+    optimizer_state_bytes: bytes
+    batchnorm_state: dict
+    swa_buffers: Optional[bytes] = None
+    temperature: float = 1.0
+    threshold_float32: float = 0.5
+    threshold_uint8: int = 128
+    eval_results: Optional[TuneMetrics] = None
+    eval_results_int8: Optional[TuneMetrics] = None
+    sharpness_score: float = 0.0
+    curriculum_stage: int = 0
+    strategy_arm: int = -1
+    parent_id: str = ""
+    iteration: int = 0
+    stagnation_count: int = 0
+    history: list = field(default_factory=list)
+    lr: float = 1e-5
+
+
+@dataclass
+class StrategyArm:
+    """Definition of a strategy arm."""
+
+    name: str
+    min_steps: int
+    max_steps: int
+    default_steps: int
+    lr_range: tuple
+    default_lr: float
+    description: str
+    use_sam: bool = False
+    use_swa: bool = False
+    use_cosine_schedule: bool = False
+    consecutive_ban: bool = False
+
+
+STRATEGY_ARMS = [
+    StrategyArm(
+        "boundary_polish",
+        500,
+        1000,
+        750,
+        (1e-6, 1e-4),
+        0.0,
+        "50% near-threshold + 50% replay",
+    ),
+    StrategyArm(
+        "fa_suppression",
+        750,
+        1500,
+        1000,
+        (5e-6, 2e-5),
+        1e-5,
+        "60% FA + 20% hard_neg + 20% replay",
+    ),
+    StrategyArm(
+        "recall_recovery",
+        750,
+        1500,
+        1000,
+        (1e-5, 5e-5),
+        2e-5,
+        "60% misses + 20% easy_pos + 20% replay",
+    ),
+    StrategyArm(
+        "sam_flatten",
+        1500,
+        3000,
+        2000,
+        (1e-5, 5e-5),
+        3e-5,
+        "SAM flatten + SWA",
+        use_sam=True,
+        use_swa=True,
+    ),
+    StrategyArm(
+        "cyclic_op_sweep",
+        1500,
+        3000,
+        2000,
+        (1e-6, 5e-5),
+        0.0,
+        "Cosine warm restarts",
+        use_cosine_schedule=True,
+    ),
+    StrategyArm(
+        "macro_refine",
+        2000,
+        5000,
+        3000,
+        (1e-6, 3e-5),
+        1e-5,
+        "Full proportional + curriculum",
+        use_cosine_schedule=True,
+    ),
+    StrategyArm(
+        "hardest_only_shock",
+        200,
+        500,
+        300,
+        (5e-6, 2e-5),
+        1e-5,
+        "100% hardest examples",
+        consecutive_ban=True,
+    ),
+]
+
+
+# ============================================================================
+# Section 2: Pareto Archive
+# ============================================================================
+
+
+class ParetoArchive:
+    """Multi-objective Pareto archive with diversity filtering."""
+
+    def __init__(self, max_size: int = 24, diversity_threshold: float = 0.01):
+        self.archive: list[CandidateState] = []
+        self.max_size = max_size
+        self.diversity_threshold = diversity_threshold
+
+    def try_add(self, candidate: CandidateState) -> bool:
+        """Add candidate if non-dominated or diverse. Returns True if added."""
+        if candidate.eval_results is None:
+            return False
+
+        c_metrics = candidate.eval_results
+        # Remove dominated entries
+        new_archive = []
+        for entry in self.archive:
+            if entry.eval_results is not None and not c_metrics.dominates(entry.eval_results):
+                new_archive.append(entry)
+
+        # Check if candidate is dominated by any remaining
+        is_dominated = any(e.eval_results is not None and e.eval_results.dominates(c_metrics) for e in new_archive)
+
+        if is_dominated:
+            # Still add if diverse enough
+            if not self._is_diverse(candidate, new_archive):
+                self.archive = new_archive
+                return False
+
+        # Check diversity
+        if not is_dominated or self._is_diverse(candidate, new_archive):
+            new_archive.append(candidate)
+
+        # If over capacity, drop by crowding distance
+        if len(new_archive) > self.max_size:
+            new_archive = self._prune_by_crowding(new_archive)
+
+        self.archive = new_archive
+        return True
+
+    def _is_diverse(self, candidate: CandidateState, archive: list[CandidateState]) -> bool:
+        if not archive:
+            return True
+        c = candidate.eval_results
+        if c is None:
+            return False
+        for entry in archive:
+            e = entry.eval_results
+            if e is None:
+                continue
+            dist = math.sqrt((c.fah - e.fah) ** 2 + (c.recall - e.recall) ** 2 + (c.auc_pr - e.auc_pr) ** 2)
+            if dist < self.diversity_threshold:
+                return False
+        return True
+
+    def _prune_by_crowding(self, archive: list[CandidateState]) -> list[CandidateState]:
+        """Remove entries with smallest crowding distance until at max_size."""
+        while len(archive) > self.max_size:
+            distances = self._crowding_distances(archive)
+            worst_idx = int(np.argmin(distances))
+            archive.pop(worst_idx)
+        return archive
+
+    def _crowding_distances(self, archive: list[CandidateState]) -> np.ndarray:
+        n = len(archive)
+        if n <= 2:
+            return np.full(n, float("inf"))
+
+        objectives = np.array([[-a.eval_results.fah, a.eval_results.recall, a.eval_results.auc_pr] for a in archive if a.eval_results is not None])
+        distances = np.zeros(n)
+
+        for obj_idx in range(objectives.shape[1]):
+            sorted_indices = np.argsort(objectives[:, obj_idx])
+            distances[sorted_indices[0]] = float("inf")
+            distances[sorted_indices[-1]] = float("inf")
+
+            obj_range = objectives[sorted_indices[-1], obj_idx] - objectives[sorted_indices[0], obj_idx]
+            if obj_range < 1e-12:
+                continue
+
+            for i in range(1, n - 1):
+                distances[sorted_indices[i]] += (objectives[sorted_indices[i + 1], obj_idx] - objectives[sorted_indices[i - 1], obj_idx]) / obj_range
+
+        return distances
+
+    def get_best(self, target_fah: float, target_recall: float) -> Optional[CandidateState]:
+        """Best candidate: meets targets with max recall, else closest."""
+        meeting = [c for c in self.archive if c.eval_results is not None and c.eval_results.meets_target(target_fah, target_recall)]
+        if meeting:
+            return max(meeting, key=lambda c: c.eval_results.recall)
+
+        if not self.archive:
+            return None
+
+        # Closest to targets by scalarized distance
+        def score(c):
+            m = c.eval_results
+            if m is None:
+                return float("inf")
+            fah_excess = max(0, m.fah - target_fah) / max(target_fah, 1e-8)
+            recall_deficit = max(0, target_recall - m.recall) / max(target_recall, 1e-8)
+            return 2.0 * fah_excess + 1.0 * recall_deficit
+
+        return min(self.archive, key=score)
+
+    def get_frontier_points(self) -> list[dict]:
+        """Return frontier as list of dicts for logging."""
+        points = []
+        for c in sorted(
+            self.archive,
+            key=lambda x: x.eval_results.fah if x.eval_results else float("inf"),
+        ):
+            if c.eval_results is not None:
+                points.append(
+                    {
+                        "id": c.id,
+                        "fah": c.eval_results.fah,
+                        "recall": c.eval_results.recall,
+                        "auc_pr": c.eval_results.auc_pr,
+                        "threshold": c.eval_results.threshold,
+                        "threshold_uint8": c.eval_results.threshold_uint8,
+                        "arm": STRATEGY_ARMS[c.strategy_arm].name if 0 <= c.strategy_arm < len(STRATEGY_ARMS) else "initial",
+                        "iteration": c.iteration,
+                    }
+                )
+        return points
+
+    def __len__(self) -> int:
+        return len(self.archive)
+
+
+# ============================================================================
+# Section 3: Error Memory
+# ============================================================================
+
+
+class ErrorMemory:
+    """Tracks persistent false alarms and misses across iterations."""
+
+    def __init__(self, max_history: int = 10):
+        self.persistent_false_alarms: dict[int, int] = {}
+        self.persistent_misses: dict[int, int] = {}
+        self.recent_scores: dict[int, list[float]] = {}
+        self.max_history = max_history
+
+    def update(
+        self,
+        indices: np.ndarray,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        threshold: float,
+    ):
+        """Update error tracking after evaluation."""
+        predictions = (y_pred >= threshold).astype(int)
+        labels = (y_true >= 0.5).astype(int)
+
+        for i, idx in enumerate(indices):
+            idx_key = int(idx)
+
+            # Track scores
+            if idx_key not in self.recent_scores:
+                self.recent_scores[idx_key] = []
+            self.recent_scores[idx_key].append(float(y_pred[i]))
+            if len(self.recent_scores[idx_key]) > self.max_history:
+                self.recent_scores[idx_key] = self.recent_scores[idx_key][-self.max_history :]
+
+            # Track false alarms (predicted positive, actually negative)
+            if predictions[i] == 1 and labels[i] == 0:
+                self.persistent_false_alarms[idx_key] = self.persistent_false_alarms.get(idx_key, 0) + 1
+            # Track misses (predicted negative, actually positive)
+            elif predictions[i] == 0 and labels[i] == 1:
+                self.persistent_misses[idx_key] = self.persistent_misses.get(idx_key, 0) + 1
+
+    def get_persistent_fa_indices(self, min_count: int = 3) -> list[int]:
+        return [idx for idx, count in self.persistent_false_alarms.items() if count >= min_count]
+
+    def get_persistent_miss_indices(self, min_count: int = 3) -> list[int]:
+        return [idx for idx, count in self.persistent_misses.items() if count >= min_count]
+
+    def get_near_boundary_indices(self, threshold: float, margin: float = 0.05) -> list[int]:
+        """Samples whose recent scores are consistently near the threshold."""
+        result = []
+        for idx, scores in self.recent_scores.items():
+            if scores:
+                mean_score = np.mean(scores)
+                if abs(mean_score - threshold) < margin:
+                    result.append(idx)
+        return result
+
+
+# ============================================================================
+# Section 4: Focused Sampler
+# ============================================================================
+
+
+class FocusedSampler:
+    """Builds focused mini-batches for each strategy arm."""
+
+    def __init__(
+        self,
+        features: np.ndarray,
+        labels: np.ndarray,
+        sample_weights: np.ndarray,
+        error_memory: ErrorMemory,
+    ):
+        self.features = features
+        self.labels = labels
+        self.sample_weights = sample_weights
+        self.error_memory = error_memory
+        self._index_by_label()
+
+    def _index_by_label(self):
+        labels_int = (self.labels >= 0.5).astype(int)
+        self.pos_indices = np.where(labels_int == 1)[0]
+        self.neg_indices = np.where(labels_int == 0)[0]
+        self.all_indices = np.arange(len(self.labels))
+
+    def build_batch(
+        self,
+        strategy_arm: int,
+        threshold: float,
+        batch_size: int = 128,
+        curriculum_stage: int = 0,
+        recent_scores: Optional[np.ndarray] = None,
+    ) -> tuple:
+        """Return (batch_features, batch_labels, batch_weights)."""
+        if strategy_arm == 0:
+            return self._boundary_polish_batch(threshold, batch_size, recent_scores)
+        elif strategy_arm == 1:
+            return self._fa_suppression_batch(threshold, batch_size, recent_scores)
+        elif strategy_arm == 2:
+            return self._recall_recovery_batch(threshold, batch_size, recent_scores)
+        elif strategy_arm == 3:
+            return self._standard_batch(batch_size)
+        elif strategy_arm == 4:
+            return self._standard_batch(batch_size)
+        elif strategy_arm == 5:
+            return self._curriculum_batch(batch_size, curriculum_stage, recent_scores)
+        elif strategy_arm == 6:
+            return self._hardest_only_batch(threshold, batch_size, recent_scores)
+        else:
+            return self._standard_batch(batch_size)
+
+    def _boundary_polish_batch(self, threshold: float, batch_size: int, scores: Optional[np.ndarray]) -> tuple:
+        """50% near-threshold + 50% replay."""
+        half = batch_size // 2
+        near = self._get_near_boundary(threshold, half, scores)
+        replay = self._random_sample(batch_size - len(near))
+        indices = np.concatenate([near, replay])
+        return self._gather(indices)
+
+    def _fa_suppression_batch(self, threshold: float, batch_size: int, scores: Optional[np.ndarray]) -> tuple:
+        """60% FA + 20% hard_neg + 20% replay."""
+        n_fa = int(batch_size * 0.6)
+        n_hard = int(batch_size * 0.2)
+        n_replay = batch_size - n_fa - n_hard
+
+        fa_indices = self._get_false_alarm_indices(threshold, n_fa, scores)
+        hard_neg = self._random_from(self.neg_indices, n_hard)
+        replay = self._random_sample(n_replay)
+        indices = np.concatenate([fa_indices, hard_neg, replay])
+        return self._gather(indices)
+
+    def _recall_recovery_batch(self, threshold: float, batch_size: int, scores: Optional[np.ndarray]) -> tuple:
+        """60% misses + 20% easy_pos + 20% replay."""
+        n_miss = int(batch_size * 0.6)
+        n_easy = int(batch_size * 0.2)
+        n_replay = batch_size - n_miss - n_easy
+
+        miss_indices = self._get_miss_indices(threshold, n_miss, scores)
+        easy_pos = self._random_from(self.pos_indices, n_easy)
+        replay = self._random_sample(n_replay)
+        indices = np.concatenate([miss_indices, easy_pos, replay])
+        return self._gather(indices)
+
+    def _curriculum_batch(
+        self,
+        batch_size: int,
+        curriculum_stage: int,
+        scores: Optional[np.ndarray],
+    ) -> tuple:
+        """Curriculum-aware batch based on stage."""
+        if curriculum_stage == 0:
+            # 70% near-boundary, 30% replay
+            n_focus = int(batch_size * 0.7)
+        elif curriculum_stage == 1:
+            n_focus = int(batch_size * 0.6)
+        elif curriculum_stage == 2:
+            n_focus = int(batch_size * 0.5)
+        else:
+            n_focus = int(batch_size * 0.25)
+
+        n_replay = batch_size - n_focus
+        persistent = self.error_memory.get_persistent_fa_indices(min_count=2) + self.error_memory.get_persistent_miss_indices(min_count=2)
+
+        if persistent:
+            focus_pool = np.array(persistent)
+            focus_pool = focus_pool[focus_pool < len(self.features)]
+            focus = self._random_from(focus_pool, n_focus)
+        else:
+            focus = self._random_sample(n_focus)
+
+        replay = self._random_sample(n_replay)
+        indices = np.concatenate([focus, replay])
+        return self._gather(indices)
+
+    def _hardest_only_batch(self, threshold: float, batch_size: int, scores: Optional[np.ndarray]) -> tuple:
+        """100% hardest examples."""
+        persistent = self.error_memory.get_persistent_fa_indices(min_count=1) + self.error_memory.get_persistent_miss_indices(min_count=1)
+
+        if persistent and len(persistent) >= batch_size:
+            pool = np.array(persistent)
+            pool = pool[pool < len(self.features)]
+            indices = self._random_from(pool, batch_size)
+        elif scores is not None:
+            # Pick samples closest to threshold
+            distances = np.abs(scores - threshold)
+            indices = np.argsort(distances)[:batch_size]
+        else:
+            indices = self._random_sample(batch_size)
+        return self._gather(indices)
+
+    def _standard_batch(self, batch_size: int) -> tuple:
+        """Standard proportional batch."""
+        indices = self._random_sample(batch_size)
+        return self._gather(indices)
+
+    def _get_near_boundary(self, threshold: float, n: int, scores: Optional[np.ndarray]) -> np.ndarray:
+        near_indices = self.error_memory.get_near_boundary_indices(threshold)
+        if near_indices:
+            pool = np.array(near_indices)
+            pool = pool[pool < len(self.features)]
+            return self._random_from(pool, n)
+        if scores is not None:
+            distances = np.abs(scores - threshold)
+            sorted_idx = np.argsort(distances)
+            return sorted_idx[:n]
+        return self._random_sample(n)
+
+    def _get_false_alarm_indices(self, threshold: float, n: int, scores: Optional[np.ndarray]) -> np.ndarray:
+        fa_indices = self.error_memory.get_persistent_fa_indices(min_count=1)
+        if fa_indices:
+            pool = np.array(fa_indices)
+            pool = pool[pool < len(self.features)]
+            return self._random_from(pool, n)
+        # Fallback: negative samples with high scores
+        if scores is not None:
+            neg_scores = scores[self.neg_indices]
+            top_fa = np.argsort(-neg_scores)[:n]
+            return self.neg_indices[top_fa]
+        return self._random_from(self.neg_indices, n)
+
+    def _get_miss_indices(self, threshold: float, n: int, scores: Optional[np.ndarray]) -> np.ndarray:
+        miss_indices = self.error_memory.get_persistent_miss_indices(min_count=1)
+        if miss_indices:
+            pool = np.array(miss_indices)
+            pool = pool[pool < len(self.features)]
+            return self._random_from(pool, n)
+        # Fallback: positive samples with low scores
+        if scores is not None:
+            pos_scores = scores[self.pos_indices]
+            low_recall = np.argsort(pos_scores)[:n]
+            return self.pos_indices[low_recall]
+        return self._random_from(self.pos_indices, n)
+
+    def _random_from(self, pool: np.ndarray, n: int) -> np.ndarray:
+        if len(pool) == 0:
+            return self._random_sample(n)
+        indices = np.random.choice(pool, size=min(n, len(pool)), replace=len(pool) < n)
+        return indices
+
+    def _random_sample(self, n: int) -> np.ndarray:
+        return np.random.choice(self.all_indices, size=n, replace=n > len(self.all_indices))
+
+    def _gather(self, indices: np.ndarray) -> tuple:
+        indices = indices.astype(int)
+        indices = np.clip(indices, 0, len(self.features) - 1)
+        return (
+            self.features[indices],
+            self.labels[indices],
+            self.sample_weights[indices],
+        )
+
+
+# ============================================================================
+# Section 5: Temperature Scaling
+# ============================================================================
+
+
+def _sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-np.clip(x, -500, 500)))
+
+
+def _logit(p: np.ndarray) -> np.ndarray:
+    p = np.clip(p, 1e-7, 1.0 - 1e-7)
+    return np.log(p / (1.0 - p))
+
+
+def fit_temperature(probs: np.ndarray, labels: np.ndarray) -> float:
+    """Platt scaling: find T minimizing NLL on calibration set."""
+    try:
+        from scipy.optimize import minimize_scalar
+    except ImportError:
+        return 1.0
+
+    logits = _logit(probs)
+    y = labels.astype(np.float64)
+
+    def nll(t):
+        if t <= 0:
+            return 1e10
+        scaled = _sigmoid(logits / t)
+        scaled = np.clip(scaled, 1e-7, 1.0 - 1e-7)
+        return -np.mean(y * np.log(scaled) + (1 - y) * np.log(1 - scaled))
+
+    result = minimize_scalar(nll, bounds=(0.1, 10.0), method="bounded")
+    optimal_t = result.x
+
+    # Verify ECE improves
+    ece_before = compute_ece(y, probs)
+    scaled_probs = apply_temperature(probs, optimal_t)
+    ece_after = compute_ece(y, scaled_probs)
+
+    if ece_after >= ece_before:
+        return 1.0
+    return float(optimal_t)
+
+
+def apply_temperature(scores: np.ndarray, temperature: float) -> np.ndarray:
+    """Apply temperature scaling to model output probabilities."""
+    if abs(temperature - 1.0) < 1e-6:
+        return scores
+    logits = _logit(scores)
+    return _sigmoid(logits / temperature)
+
+
+def compute_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 15) -> float:
+    """Expected Calibration Error."""
+    bin_boundaries = np.linspace(0, 1, n_bins + 1)
+    ece = 0.0
+    total = len(y_true)
+    if total == 0:
+        return 0.0
+
+    for i in range(n_bins):
+        mask = (y_prob >= bin_boundaries[i]) & (y_prob < bin_boundaries[i + 1])
+        if i == n_bins - 1:
+            mask = (y_prob >= bin_boundaries[i]) & (y_prob <= bin_boundaries[i + 1])
+        n_bin = np.sum(mask)
+        if n_bin == 0:
+            continue
+        avg_confidence = np.mean(y_prob[mask])
+        avg_accuracy = np.mean(y_true[mask])
+        ece += (n_bin / total) * abs(avg_confidence - avg_accuracy)
+    return ece
+
+
+# ============================================================================
+# Section 6: 3-Pass Threshold Optimizer
+# ============================================================================
+
+
+class ThresholdOptimizer:
+    """3-pass threshold optimization with cross-validation."""
+
+    def optimize(
+        self,
+        y_true: np.ndarray,
+        y_scores: np.ndarray,
+        ambient_duration_hours: float,
+        target_fah: float,
+        target_recall: float,
+        cv_folds: int = 5,
+        fold_indices: Optional[list] = None,
+    ) -> tuple:
+        """3-pass threshold optimization.
+
+        Returns: (threshold_float32, threshold_uint8, TuneMetrics)
+        """
+        # Pass 1: Coarse quantile sweep
+        region = self._coarse_sweep(y_true, y_scores, ambient_duration_hours, target_fah, target_recall)
+
+        # Pass 2: Fine sweep within promising region
+        best_threshold = self._fine_sweep(
+            y_true,
+            y_scores,
+            ambient_duration_hours,
+            target_fah,
+            target_recall,
+            region,
+        )
+
+        # Pass 3: Robust CV refinement
+        if cv_folds > 1 and fold_indices is not None and len(fold_indices) >= cv_folds:
+            best_threshold = self._cv_refine(
+                y_true,
+                y_scores,
+                ambient_duration_hours,
+                target_fah,
+                target_recall,
+                best_threshold,
+                fold_indices,
+            )
+
+        threshold_uint8 = self._float_to_uint8(best_threshold)
+        metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours)
+
+        return best_threshold, threshold_uint8, metrics
+
+    def _coarse_sweep(
+        self,
+        y_true: np.ndarray,
+        y_scores: np.ndarray,
+        ambient_hours: float,
+        target_fah: float,
+        target_recall: float,
+    ) -> tuple:
+        """Pass 1: Sweep 4096 quantile thresholds, find promising region."""
+        n_thresholds = 4096
+        thresholds = np.quantile(y_scores, np.linspace(0, 1, n_thresholds))
+        thresholds = np.unique(thresholds)
+
+        labels = (y_true >= 0.5).astype(int)
+        n_pos = np.sum(labels)
+        best_score = -1.0
+        best_threshold = 0.5
+        region_low = 0.0
+        region_high = 1.0
+
+        feasible_thresholds = []
+        for t in thresholds:
+            preds = (y_scores >= t).astype(int)
+            fp = np.sum((preds == 1) & (labels == 0))
+            tp = np.sum((preds == 1) & (labels == 1))
+            fah = fp / max(ambient_hours, 1e-8)
+            recall = tp / max(n_pos, 1) if n_pos > 0 else 0.0
+
+            if fah <= target_fah:
+                feasible_thresholds.append((t, recall, fah))
+                if recall > best_score:
+                    best_score = recall
+                    best_threshold = t
+
+        if feasible_thresholds:
+            feas_t = [f[0] for f in feasible_thresholds]
+            margin = (max(feas_t) - min(feas_t)) * 0.1
+            region_low = min(feas_t) - margin
+            region_high = max(feas_t) + margin
+        else:
+            # No feasible point found — sweep around the middle
+            region_low = np.quantile(y_scores, 0.5)
+            region_high = np.quantile(y_scores, 0.99)
+
+        return (max(0, region_low), min(1, region_high))
+
+    def _fine_sweep(
+        self,
+        y_true: np.ndarray,
+        y_scores: np.ndarray,
+        ambient_hours: float,
+        target_fah: float,
+        target_recall: float,
+        region: tuple,
+    ) -> float:
+        """Pass 2: Exact unique scores within promising region."""
+        mask = (y_scores >= region[0]) & (y_scores <= region[1])
+        unique_scores = np.unique(y_scores[mask])
+
+        if len(unique_scores) == 0:
+            unique_scores = np.unique(y_scores)
+
+        labels = (y_true >= 0.5).astype(int)
+        n_pos = np.sum(labels)
+        best_threshold = 0.5
+        best_recall = -1.0
+        best_fah = float("inf")
+
+        for t in unique_scores:
+            preds = (y_scores >= t).astype(int)
+            fp = np.sum((preds == 1) & (labels == 0))
+            tp = np.sum((preds == 1) & (labels == 1))
+            fah = fp / max(ambient_hours, 1e-8)
+            recall = tp / max(n_pos, 1) if n_pos > 0 else 0.0
+
+            if fah <= target_fah and recall > best_recall:
+                best_recall = recall
+                best_fah = fah
+                best_threshold = t
+            elif fah <= target_fah and recall == best_recall and fah < best_fah:
+                best_fah = fah
+                best_threshold = t
+
+        if best_recall < 0:
+            # No feasible point — pick threshold with lowest FAH
+            for t in sorted(unique_scores, reverse=True):
+                preds = (y_scores >= t).astype(int)
+                fp = np.sum((preds == 1) & (labels == 0))
+                fah = fp / max(ambient_hours, 1e-8)
+                if fah < best_fah:
+                    best_fah = fah
+                    best_threshold = t
+
+        return float(best_threshold)
+
+    def _cv_refine(
+        self,
+        y_true: np.ndarray,
+        y_scores: np.ndarray,
+        ambient_hours: float,
+        target_fah: float,
+        target_recall: float,
+        initial_threshold: float,
+        fold_indices: list,
+    ) -> float:
+        """Pass 3: Cross-validation refinement around the initial threshold."""
+        # Search window around initial threshold
+        window = 0.02
+        n_search = 201
+        candidates = np.linspace(
+            max(0, initial_threshold - window),
+            min(1, initial_threshold + window),
+            n_search,
+        )
+
+        labels = (y_true >= 0.5).astype(int)
+        best_threshold = initial_threshold
+        best_worst_recall = -1.0
+
+        for t in candidates:
+            fold_recalls = []
+            fold_fahs = []
+            for fold_idx in fold_indices:
+                fold_labels = labels[fold_idx]
+                fold_scores = y_scores[fold_idx]
+                n_pos = np.sum(fold_labels)
+                if n_pos == 0:
+                    continue
+
+                preds = (fold_scores >= t).astype(int)
+                fp = np.sum((preds == 1) & (fold_labels == 0))
+                tp = np.sum((preds == 1) & (fold_labels == 1))
+                fold_fah = fp / max(ambient_hours / len(fold_indices), 1e-8)
+                fold_recall = tp / max(n_pos, 1)
+                fold_recalls.append(fold_recall)
+                fold_fahs.append(fold_fah)
+
+            if not fold_recalls:
+                continue
+
+            worst_recall = min(fold_recalls)
+            worst_fah = max(fold_fahs)
+
+            if worst_fah <= target_fah * 1.1 and worst_recall > best_worst_recall:
+                best_worst_recall = worst_recall
+                best_threshold = t
+
+        # INT8 quantization margin: shift by ±1/255
+        uint8_val = self._float_to_uint8(best_threshold)
+        # Prefer slightly higher threshold for INT8 safety margin
+        adjusted = (uint8_val + 1) / 255.0
+        if adjusted <= 1.0:
+            test_metrics = self._compute_metrics_at_threshold(y_true, y_scores, adjusted, ambient_hours)
+            if test_metrics.fah <= target_fah:
+                best_threshold = adjusted
+
+        return float(best_threshold)
+
+    def _float_to_uint8(self, threshold: float) -> int:
+        return max(0, min(255, int(round(threshold * 255))))
+
+    def _compute_metrics_at_threshold(
+        self,
+        y_true: np.ndarray,
+        y_scores: np.ndarray,
+        threshold: float,
+        ambient_hours: float,
+    ) -> TuneMetrics:
+        """Compute full metrics at a given threshold."""
+        labels = (y_true >= 0.5).astype(int)
+        preds = (y_scores >= threshold).astype(int)
+
+        tp = int(np.sum((preds == 1) & (labels == 1)))
+        fp = int(np.sum((preds == 1) & (labels == 0)))
+        fn = int(np.sum((preds == 0) & (labels == 1)))
+
+        n_pos = int(np.sum(labels))
+        n_neg = int(np.sum(1 - labels))
+
+        recall = tp / max(n_pos, 1) if n_pos > 0 else 0.0
+        precision = tp / max(tp + fp, 1) if (tp + fp) > 0 else 0.0
+        f1 = 2 * precision * recall / max(precision + recall, 1e-8) if (precision + recall) > 0 else 0.0
+        fah = fp / max(ambient_hours, 1e-8)
+
+        # AUC metrics
+        try:
+            from sklearn.metrics import roc_auc_score, average_precision_score
+
+            auc_roc = float(roc_auc_score(labels, y_scores))
+            auc_pr = float(average_precision_score(labels, y_scores))
+        except Exception:
+            auc_roc = 0.0
+            auc_pr = 0.0
+
+        ece = compute_ece(labels, y_scores)
+
+        return TuneMetrics(
+            fah=fah,
+            recall=recall,
+            auc_roc=auc_roc,
+            auc_pr=auc_pr,
+            ece=ece,
+            threshold=threshold,
+            threshold_uint8=self._float_to_uint8(threshold),
+            precision=precision,
+            f1=f1,
+            total_positives=n_pos,
+            total_negatives=n_neg,
+            false_positives=fp,
+            false_negatives=fn,
+            ambient_duration_hours=ambient_hours,
+        )
+
+
+# ============================================================================
+# Section 7: Thompson Sampling
+# ============================================================================
+
+
+class ThompsonSampler:
+    """Thompson sampling for strategy arm selection with regime bonuses."""
+
+    def __init__(self, n_arms: int = 7):
+        self.successes = np.ones(n_arms)
+        self.failures = np.ones(n_arms)
+        self.last_arm: int = -1
+        self.n_arms = n_arms
+
+    # Regime → arm affinity mapping
+    REGIME_BONUSES = {
+        "near_feasible": {0, 3},  # boundary_polish, sam_flatten
+        "fah_dominated": {1, 6},  # fa_suppression, hardest_only_shock
+        "recall_dominated": {2, 4},  # recall_recovery, cyclic_op_sweep
+        "balanced": {3, 5},  # sam_flatten, macro_refine
+    }
+
+    def select_arm(self, regime: str) -> int:
+        """Sample from Beta distributions with regime bonus."""
+        bonus_arms = self.REGIME_BONUSES.get(regime, set())
+
+        samples = np.zeros(self.n_arms)
+        for i in range(self.n_arms):
+            # Ban consecutive hardest_only_shock
+            if i == 6 and self.last_arm == 6:
+                samples[i] = -1.0
+                continue
+
+            sample = np.random.beta(self.successes[i], self.failures[i])
+            if i in bonus_arms:
+                sample += 0.3
+            samples[i] = sample
+
+        selected = int(np.argmax(samples))
+        self.last_arm = selected
+        return selected
+
+    def update(self, arm: int, success: bool):
+        self.successes[arm] += float(success)
+        self.failures[arm] += float(not success)
+
+
+def diagnose_regime(metrics: TuneMetrics, target_fah: float, target_recall: float) -> str:
+    """Classify current state into regime."""
+    fah_ok = metrics.fah <= target_fah * 1.5
+    recall_ok = metrics.recall >= target_recall * 0.9
+    if fah_ok and recall_ok:
+        return "near_feasible"
+    elif not fah_ok and recall_ok:
+        return "fah_dominated"
+    elif fah_ok and not recall_ok:
+        return "recall_dominated"
+    else:
+        return "balanced"
+
+
+# ============================================================================
+# Section 8: Stir Controller
+# ============================================================================
+
+
+class StirController:
+    """Manages 5 levels of stir for stagnation escape."""
+
+    def __init__(self, thresholds: Optional[list] = None):
+        self.thresholds = thresholds or [3, 5, 7, 9, 12]
+
+    def get_stir_level(self, stagnation_count: int) -> int:
+        for i, thresh in enumerate(self.thresholds):
+            if stagnation_count < thresh:
+                return i
+        return 5
+
+
+# ============================================================================
+# Section 9: Annealing Controller
+# ============================================================================
+
+
+class AnnealingController:
+    """Simulated annealing acceptance with Pareto awareness."""
+
+    def __init__(
+        self,
+        initial_temperature: float = 0.5,
+        cooling_rate: float = 0.95,
+        reheat_factor: float = 1.3,
+        reheat_after: int = 5,
+    ):
+        self.temperature = initial_temperature
+        self.cooling_rate = cooling_rate
+        self.reheat_factor = reheat_factor
+        self.reheat_after = reheat_after
+        self.consecutive_rejections = 0
+
+    def should_accept(
+        self,
+        candidate_metrics: TuneMetrics,
+        parent_metrics: TuneMetrics,
+        target_fah: float,
+        target_recall: float,
+    ) -> bool:
+        """Simulated annealing acceptance."""
+        if candidate_metrics.dominates(parent_metrics):
+            self._on_accept()
+            return True
+
+        candidate_cost = self._scalarized_cost(candidate_metrics, target_fah, target_recall)
+        parent_cost = self._scalarized_cost(parent_metrics, target_fah, target_recall)
+        delta = candidate_cost - parent_cost
+
+        if delta <= 0:
+            self._on_accept()
+            return True
+
+        p = np.exp(-delta / max(self.temperature, 1e-8))
+        accepted = np.random.random() < p
+        if accepted:
+            self._on_accept()
+        else:
+            self._on_reject()
+        return accepted
+
+    def _scalarized_cost(self, m: TuneMetrics, target_fah: float, target_recall: float) -> float:
+        fah_excess = max(0, m.fah - target_fah) / max(target_fah, 1e-8)
+        recall_deficit = max(0, target_recall - m.recall) / max(target_recall, 1e-8)
+        return 2.0 * fah_excess + 1.0 * recall_deficit
+
+    def _on_accept(self):
+        self.temperature *= self.cooling_rate
+        self.consecutive_rejections = 0
+
+    def _on_reject(self):
+        self.consecutive_rejections += 1
+        if self.consecutive_rejections >= self.reheat_after:
+            self.temperature *= self.reheat_factor
+            self.consecutive_rejections = 0
+
+
+# ============================================================================
+# Section 10: Main AutoTuner Class
+# ============================================================================
 
 
 class AutoTuner:
+    """MaxQualityAutoTuner — Sophisticated post-training auto-tuning system.
+
+    Uses surgical gradient bursts, 7 strategy arms with Thompson sampling,
+    3-pass threshold optimization, temperature scaling, simulated annealing,
+    Pareto archive, INT8 shadow evaluation, and confirmation phase.
+    """
+
     def __init__(
         self,
         checkpoint_path: str,
         config: dict,
         auto_tuning_config: dict | None = None,
-        console: Console | None = None,
+        console=None,
         users_hard_negs_dir: str | None = None,
     ):
-        self.checkpoint_path = checkpoint_path
-        self.base_config = copy.deepcopy(config)
-        self.current_config = copy.deepcopy(config)
-        self.console = console or Console()
-        self.users_hard_negs_dir = Path(users_hard_negs_dir) if users_hard_negs_dir else None
+        from rich.console import Console
+
+        self.checkpoint_path = Path(checkpoint_path)
+        self.config = config
 
         at = auto_tuning_config or config.get("auto_tuning", {})
         self.target_fah = at.get("target_fah", 0.3)
         self.target_recall = at.get("target_recall", 0.92)
-        self.max_iterations = at.get("max_iterations", 100)
+        self.max_iterations = at.get("max_iterations", 50)
+        self.max_gradient_steps = at.get("max_gradient_steps", 150_000)
+        self.cv_folds = at.get("cv_folds", 5)
+        self.confirmation_fraction = at.get("confirmation_fraction", 0.20)
+        self.bootstrap_samples = at.get("bootstrap_samples", 1000)
+        self.int8_shadow_enabled = at.get("int8_shadow", True)
+        self.int8_shadow_interval = at.get("int8_shadow_interval", 5)
+        self.require_int8_pass = at.get("require_int8_pass", True)
+        self.require_confirmation = at.get("require_confirmation", True)
+        self.group_key = at.get("group_key", "speaker_id")
         self.patience = at.get("patience", 10)
-        self.steps_per_iteration = at.get("steps_per_iteration", 5000)
-        self.initial_lr = at.get("initial_lr", 0.0001)
-        self.lr_decay_factor = at.get("lr_decay_factor", 0.7)
-        self.min_lr = at.get("min_lr", 1e-6)
-        self.pareto_threshold = at.get("pareto_improvement_threshold", 0.005)
-        self.convergence_window = at.get("convergence_window", 5)
         self.output_dir = Path(at.get("output_dir", "./tuning_output"))
+        self.users_hard_negs_dir = users_hard_negs_dir
+
+        # Expert params
+        expert = config.get("auto_tuning_expert", {})
+        self.burst_steps_range = (
+            expert.get("min_burst_steps", 200),
+            expert.get("max_burst_steps", 5000),
+        )
+        self.lr_range = (
+            expert.get("min_lr", 1e-7),
+            expert.get("max_lr", 1e-4),
+        )
+        self.default_lr = expert.get("default_lr", 1e-5)
+        self.sam_rho = expert.get("sam_rho", 0.05)
+        self.swa_interval = expert.get("swa_collection_interval", 100)
+        self.initial_annealing_temp = expert.get("initial_temperature", 0.5)
+        self.cooling_rate = expert.get("cooling_rate", 0.95)
+        self.reheat_after = expert.get("reheat_after", 5)
+        self.reheat_factor = expert.get("reheat_factor", 1.3)
+        self.active_pool_size = expert.get("active_pool_size", 12)
+        self.archive_size = expert.get("pareto_archive_size", 24)
+        stir_defaults = [3, 5, 7, 9, 12]
+        self.stir_thresholds = [expert.get(f"stir_level_{i}", d) for i, d in enumerate(stir_defaults, 1)]
+        self.curriculum_threshold = expert.get("curriculum_advance_threshold", 0.3)
+
+        # Create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "checkpoints").mkdir(exist_ok=True)
+        (self.output_dir / "logs").mkdir(exist_ok=True)
+        (self.output_dir / "exports").mkdir(exist_ok=True)
+        (self.output_dir / "confirmation").mkdir(exist_ok=True)
 
-        self.current_lr = self.initial_lr
-        self.iteration = 0
-        self.no_improvement_count = 0
-        self.stagnation_count = 0
-        self.best_checkpoint = checkpoint_path
+        # Console and logging
+        self.console = console or Console()
+        self.file_logger = self._setup_file_logger()
 
-        self.pareto = ParetoFrontier()
-        self.impact = ImpactMemory()
-        self.trend = TrendAnalyzer(window_size=self.convergence_window)
-        # Remove this line - HardExampleMiner should be used in training loop, not AutoTuner
-        self.phase_ctrl = PhaseController()
-        self.knob_ctrl = AdaptiveKnobController(config, at)
-        self.hard_miner = HardExampleMiner(strategy="confidence", fp_threshold=0.8, max_samples=10000)
+        # Campaign state
+        self.archive = ParetoArchive(max_size=self.archive_size)
+        self.thompson = ThompsonSampler(n_arms=len(STRATEGY_ARMS))
+        self.annealing = AnnealingController(
+            initial_temperature=self.initial_annealing_temp,
+            cooling_rate=self.cooling_rate,
+            reheat_factor=self.reheat_factor,
+            reheat_after=self.reheat_after,
+        )
+        self.stir = StirController(thresholds=self.stir_thresholds)
+        self.error_memory = ErrorMemory()
+        self.threshold_optimizer = ThresholdOptimizer()
 
-        self._setup_logging()
+        self.total_gradient_steps = 0
+        self.best_checkpoint_path: Optional[str] = None
 
-    def _setup_logging(self):
-        """Setup file + console logging."""
-        log_dir = self.output_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        self.file_logger = logging.getLogger(f"autotune_{id(self)}")
-        self.file_logger.setLevel(logging.INFO)
-        self.file_logger.handlers.clear()
-        fh = logging.FileHandler(log_dir / "autotune.log", mode="w")
-        fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        self.file_logger.addHandler(fh)
-        sh = logging.StreamHandler(sys.stdout)
-        sh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        self.file_logger.addHandler(sh)
+    def _setup_file_logger(self) -> logging.Logger:
+        flogger = logging.getLogger(f"autotuner.{id(self)}")
+        flogger.setLevel(logging.DEBUG)
+        flogger.handlers.clear()
+        fh = logging.FileHandler(self.output_dir / "logs" / "autotune.log", mode="w")
+        fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        flogger.addHandler(fh)
+        return flogger
 
-    def _evaluate(self, model: tf.keras.Model, dataset: WakeWordDataset) -> TuneMetrics:
-        """Evaluate model with multi-threshold scanning. NOT hardcoded threshold=0.5."""
-        start_time = time.perf_counter()
-        y_true_list = []
-        y_scores_list = []
+    # ------------------------------------------------------------------
+    # Data loading and partitioning
+    # ------------------------------------------------------------------
 
-        val_gen_factory = dataset.val_generator_factory()
+    def _load_evaluation_data(self) -> tuple:
+        """Load validation data and return (features, labels, sample_weights, indices).
+
+        Returns arrays ready for in-memory evaluation.
+        """
+        import tensorflow as tf
+        from src.data.dataset import WakeWordDataset
+
+        self.file_logger.info("Loading validation data...")
+
+        dataset = WakeWordDataset(config=self.config, split="val")
+        gen_factory = dataset.val_generator_factory()
+        generator = gen_factory()
+
+        all_features = []
+        all_labels = []
+        all_weights = []
+
+        for batch in generator:
+            features, labels, weights = batch[0], batch[1], batch[2]
+            if isinstance(features, tf.Tensor):
+                features = features.numpy()
+            if isinstance(labels, tf.Tensor):
+                labels = labels.numpy()
+            if isinstance(weights, tf.Tensor):
+                weights = weights.numpy()
+
+            all_features.append(features)
+            all_labels.append(labels)
+            all_weights.append(weights)
+
+        features = np.concatenate(all_features, axis=0)
+        labels = np.concatenate(all_labels, axis=0)
+        weights = np.concatenate(all_weights, axis=0)
+        indices = np.arange(len(labels))
+
+        dataset.close()
+
+        self.file_logger.info(f"Loaded {len(labels)} samples: {int(np.sum(labels >= 0.5))} positive, {int(np.sum(labels < 0.5))} negative")
+        return features, labels, weights, indices
+
+    def _partition_data(self, features: np.ndarray, labels: np.ndarray, weights: np.ndarray) -> dict:
+        """Partition data: calibration 15%, search 60%, confirmation 20%, representative 5%.
+
+        Returns dict with keys: cal, search, confirm, repr, fold_indices.
+        Each value is (features, labels, weights, indices).
+        """
+        n = len(labels)
+        indices = np.arange(n)
+        np.random.shuffle(indices)
+
+        n_cal = max(1, int(n * 0.15))
+        n_repr = max(1, int(n * 0.05))
+        n_confirm = max(1, int(n * self.confirmation_fraction))
+        n_search = n - n_cal - n_repr - n_confirm
+
+        cal_idx = indices[:n_cal]
+        search_idx = indices[n_cal : n_cal + n_search]
+        confirm_idx = indices[n_cal + n_search : n_cal + n_search + n_confirm]
+        repr_idx = indices[n_cal + n_search + n_confirm :]
+
+        # Create CV fold indices for the search partition
+        fold_indices = []
+        fold_size = len(search_idx) // max(self.cv_folds, 1)
+        for i in range(self.cv_folds):
+            start = i * fold_size
+            end = start + fold_size if i < self.cv_folds - 1 else len(search_idx)
+            fold_indices.append(np.arange(start, end))
+
+        partition = {
+            "cal": (features[cal_idx], labels[cal_idx], weights[cal_idx], cal_idx),
+            "search": (
+                features[search_idx],
+                labels[search_idx],
+                weights[search_idx],
+                search_idx,
+            ),
+            "confirm": (
+                features[confirm_idx],
+                labels[confirm_idx],
+                weights[confirm_idx],
+                confirm_idx,
+            ),
+            "repr": (
+                features[repr_idx],
+                labels[repr_idx],
+                weights[repr_idx],
+                repr_idx,
+            ),
+            "fold_indices": fold_indices,
+        }
+
+        self.file_logger.info(f"Data partitioned: cal={n_cal}, search={n_search}, confirm={n_confirm}, repr={n_repr}")
+        return partition
+
+    # ------------------------------------------------------------------
+    # Model serialization helpers
+    # ------------------------------------------------------------------
+
+    def _serialize_weights(self, model) -> bytes:
+        weights = [w.numpy() for w in model.trainable_weights]
+        return pickle.dumps(weights)
+
+    def _deserialize_weights(self, model, weights_bytes: bytes):
+        weights = pickle.loads(weights_bytes)
+        for w, val in zip(model.trainable_weights, weights):
+            w.assign(val)
+
+    def _serialize_optimizer_state(self, optimizer) -> bytes:
         try:
-            val_gen = val_gen_factory()
-            for batch in val_gen:
-                if isinstance(batch, tuple):
-                    batch_features = batch[0]
-                    batch_labels = batch[1]
-                else:
-                    batch_features = batch.get("features")
-                    batch_labels = batch.get("labels")
-                predictions = model.predict(batch_features, verbose=0)
-                y_true_list.extend(batch_labels.flatten().tolist())
-                y_scores_list.extend(predictions.flatten().tolist())
-        except Exception as e:
-            self.file_logger.error(f"Evaluation failed: {e}")
-            return TuneMetrics(
-                fah=float("inf"),
-                recall=0.0,
-                precision=0.0,
-                f1=0.0,
-                threshold=0.0,
-                recall_at_target_fah=0.0,
-                fah_at_target_recall=float("inf"),
-                avg_viable_recall=0.0,
+            state = [v.numpy() for v in optimizer.variables]
+            return pickle.dumps(state)
+        except Exception:
+            return pickle.dumps([])
+
+    def _deserialize_optimizer_state(self, optimizer, state_bytes: bytes):
+        try:
+            state = pickle.loads(state_bytes)
+            if state:
+                for v, val in zip(optimizer.variables, state):
+                    v.assign(val)
+        except Exception:
+            pass
+
+    def _save_bn_state(self, model) -> dict:
+        import tensorflow as tf
+
+        bn_state = {}
+        for layer in model.layers:
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                bn_state[layer.name] = {
+                    "moving_mean": layer.moving_mean.numpy().copy(),
+                    "moving_variance": layer.moving_variance.numpy().copy(),
+                }
+        return bn_state
+
+    def _restore_bn_state(self, model, bn_state: dict):
+        import tensorflow as tf
+
+        for layer in model.layers:
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                if layer.name in bn_state:
+                    layer.moving_mean.assign(bn_state[layer.name]["moving_mean"])
+                    layer.moving_variance.assign(bn_state[layer.name]["moving_variance"])
+
+    def _freeze_bn(self, model):
+        import tensorflow as tf
+
+        for layer in model.layers:
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = False
+
+    def _unfreeze_bn(self, model):
+        import tensorflow as tf
+
+        for layer in model.layers:
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = True
+
+    # ------------------------------------------------------------------
+    # Training: gradient burst
+    # ------------------------------------------------------------------
+
+    def _train_burst(
+        self,
+        model,
+        optimizer,
+        sampler: FocusedSampler,
+        strategy_arm: int,
+        candidate: CandidateState,
+        n_steps: int,
+        lr: float,
+        use_sam: bool = False,
+        use_swa: bool = False,
+        recent_scores: Optional[np.ndarray] = None,
+    ) -> dict:
+        """Execute a short gradient burst with optional SAM/SWA.
+
+        Returns: {'steps': int, 'final_loss': float, 'mean_loss': float,
+                  'swa_snapshots': list (if SWA)}
+        """
+        import tensorflow as tf
+
+        self._freeze_bn(model)
+        optimizer.learning_rate.assign(lr)
+
+        loss_fn = tf.keras.losses.BinaryCrossentropy(
+            from_logits=False,
+            label_smoothing=self.config.get("training", {}).get("label_smoothing", 0.0),
+        )
+        clipnorm = self.config.get("training", {}).get("gradient_clipnorm", None)
+        batch_size = self.config.get("training", {}).get("batch_size", 128)
+
+        losses = []
+        swa_snapshots = []
+        trainable_vars = model.trainable_variables
+
+        for step in range(n_steps):
+            batch_features, batch_labels, batch_weights = sampler.build_batch(
+                strategy_arm,
+                candidate.threshold_float32,
+                batch_size=batch_size,
+                curriculum_stage=candidate.curriculum_stage,
+                recent_scores=recent_scores,
             )
 
-        y_true = np.array(y_true_list)
-        y_scores = np.array(y_scores_list)
-        calc = MetricsCalculator(y_true=y_true, y_score=y_scores)
+            batch_features = tf.constant(batch_features, dtype=tf.float32)
+            batch_labels = tf.constant(batch_labels.reshape(-1, 1), dtype=tf.float32)
+            batch_weights = tf.constant(batch_weights.reshape(-1), dtype=tf.float32)
 
-        ambient_hours = float(self.base_config.get("training", {}).get("ambient_duration_hours", 0.0))
+            if use_sam:
+                loss_val = self._sam_step(
+                    model,
+                    optimizer,
+                    loss_fn,
+                    batch_features,
+                    batch_labels,
+                    batch_weights,
+                    clipnorm,
+                )
+            else:
+                loss_val = self._standard_step(
+                    model,
+                    optimizer,
+                    loss_fn,
+                    batch_features,
+                    batch_labels,
+                    batch_weights,
+                    clipnorm,
+                )
 
-        recall_at_fah, thresh_fah, actual_fah = calc.compute_recall_at_target_fah(ambient_hours, self.target_fah)
-        fah_at_recall, thresh_recall, actual_recall = calc.compute_fah_at_target_recall(ambient_hours, self.target_recall)
-        avg_viable = calc.compute_average_viable_recall(ambient_hours, max_fah=self.target_fah * 2)
+            losses.append(float(loss_val))
 
-        if actual_fah <= self.target_fah:
-            best_threshold = thresh_recall
-        else:
-            best_threshold = thresh_fah
+            # SWA snapshot collection
+            if use_swa and (step + 1) % self.swa_interval == 0:
+                snapshot = [w.numpy().copy() for w in model.trainable_weights]
+                swa_snapshots.append(snapshot)
 
-        full_metrics = calc.compute_all_metrics(ambient_hours, threshold=best_threshold)
+            # Cosine schedule
+            if STRATEGY_ARMS[strategy_arm].use_cosine_schedule:
+                arm = STRATEGY_ARMS[strategy_arm]
+                lr_max = arm.lr_range[1]
+                lr_min = arm.lr_range[0]
+                cosine_lr = lr_min + 0.5 * (lr_max - lr_min) * (1 + math.cos(math.pi * step / max(n_steps, 1)))
+                optimizer.learning_rate.assign(cosine_lr)
 
-        metrics = TuneMetrics(
-            fah=full_metrics.get("ambient_false_positives_per_hour", float("inf")),
-            recall=full_metrics.get("recall", 0.0),
-            precision=full_metrics.get("precision", 0.0),
-            f1=full_metrics.get("f1_score", 0.0),
-            threshold=best_threshold,
-            recall_at_target_fah=recall_at_fah,
-            fah_at_target_recall=fah_at_recall,
-            avg_viable_recall=avg_viable,
+        self._unfreeze_bn(model)
+
+        return {
+            "steps": n_steps,
+            "final_loss": losses[-1] if losses else 0.0,
+            "mean_loss": float(np.mean(losses)) if losses else 0.0,
+            "swa_snapshots": swa_snapshots,
+        }
+
+    def _standard_step(self, model, optimizer, loss_fn, features, labels, weights, clipnorm):
+        import tensorflow as tf
+
+        with tf.GradientTape() as tape:
+            predictions = model(features, training=True)
+            per_sample_loss = loss_fn(labels, predictions)
+            # Apply sample weights
+            weighted_loss = tf.reduce_mean(per_sample_loss * weights)
+
+        gradients = tape.gradient(weighted_loss, model.trainable_variables)
+        if clipnorm is not None:
+            gradients = [tf.clip_by_norm(g, clipnorm) if g is not None else g for g in gradients]
+        optimizer.apply_gradients([(g, v) for g, v in zip(gradients, model.trainable_variables) if g is not None])
+        return weighted_loss
+
+    def _sam_step(self, model, optimizer, loss_fn, features, labels, weights, clipnorm):
+        """Sharpness-Aware Minimization step."""
+        import tensorflow as tf
+
+        trainable_vars = model.trainable_variables
+
+        # Step 1: Compute gradient at current point
+        with tf.GradientTape() as tape:
+            predictions = model(features, training=True)
+            per_sample_loss = loss_fn(labels, predictions)
+            loss_val = tf.reduce_mean(per_sample_loss * weights)
+
+        grad1 = tape.gradient(loss_val, trainable_vars)
+
+        # Step 2: Compute epsilon = rho * grad / ||grad||
+        grad_norm = tf.sqrt(sum(tf.reduce_sum(tf.square(g)) for g in grad1 if g is not None))
+        epsilon = []
+        old_values = []
+        for g, v in zip(grad1, trainable_vars):
+            old_values.append(v.numpy().copy())
+            if g is not None:
+                e = self.sam_rho * g / (grad_norm + 1e-12)
+                v.assign_add(e)
+                epsilon.append(e)
+            else:
+                epsilon.append(None)
+
+        # Step 3: Compute gradient at perturbed point
+        with tf.GradientTape() as tape:
+            predictions = model(features, training=True)
+            per_sample_loss = loss_fn(labels, predictions)
+            loss_perturbed = tf.reduce_mean(per_sample_loss * weights)
+
+        grad2 = tape.gradient(loss_perturbed, trainable_vars)
+
+        # Step 4: Restore original weights
+        for v, old_val in zip(trainable_vars, old_values):
+            v.assign(old_val)
+
+        # Step 5: Apply SAM gradient
+        if clipnorm is not None:
+            grad2 = [tf.clip_by_norm(g, clipnorm) if g is not None else g for g in grad2]
+        optimizer.apply_gradients([(g, v) for g, v in zip(grad2, trainable_vars) if g is not None])
+        return loss_val
+
+    # ------------------------------------------------------------------
+    # SWA averaging
+    # ------------------------------------------------------------------
+
+    def _apply_swa(self, model, swa_snapshots: list):
+        """Average SWA snapshots and assign to model."""
+        if not swa_snapshots:
+            return
+        averaged = []
+        for weight_group in zip(*swa_snapshots):
+            averaged.append(np.mean(weight_group, axis=0))
+        for w, avg_val in zip(model.trainable_weights, averaged):
+            w.assign(avg_val)
+
+    # ------------------------------------------------------------------
+    # Refresh BN statistics
+    # ------------------------------------------------------------------
+
+    def _refresh_bn_statistics(self, model, features: np.ndarray, n_batches: int = 50):
+        """Run forward passes to refresh BatchNorm running statistics."""
+        import tensorflow as tf
+
+        self._unfreeze_bn(model)
+        batch_size = self.config.get("training", {}).get("batch_size", 128)
+        n = len(features)
+
+        for i in range(min(n_batches, n // batch_size + 1)):
+            start = (i * batch_size) % n
+            end = min(start + batch_size, n)
+            batch = tf.constant(features[start:end], dtype=tf.float32)
+            _ = model(batch, training=True)
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
+
+    def _evaluate_model(
+        self,
+        model,
+        features: np.ndarray,
+        labels: np.ndarray,
+        ambient_hours: float,
+        temperature: float = 1.0,
+        fold_indices: Optional[list] = None,
+    ) -> TuneMetrics:
+        """Full evaluation: predict → temperature scale → threshold optimize → metrics."""
+        import tensorflow as tf
+
+        # Predict in batches
+        batch_size = self.config.get("training", {}).get("batch_size", 128)
+        all_scores = []
+        for i in range(0, len(features), batch_size):
+            batch = tf.constant(features[i : i + batch_size], dtype=tf.float32)
+            preds = model(batch, training=False)
+            all_scores.append(preds.numpy())
+
+        y_scores = np.concatenate(all_scores, axis=0).flatten()
+
+        # Apply temperature scaling
+        y_scores = apply_temperature(y_scores, temperature)
+        y_true = labels.flatten()
+
+        # 3-pass threshold optimization
+        threshold, threshold_uint8, metrics = self.threshold_optimizer.optimize(
+            y_true,
+            y_scores,
+            ambient_hours,
+            self.target_fah,
+            self.target_recall,
+            cv_folds=self.cv_folds,
+            fold_indices=fold_indices,
         )
-        elapsed = time.perf_counter() - start_time
-        self.file_logger.info(f"Evaluation completed in {elapsed:.2f}s")
+
         return metrics
 
-    def _load_model(self) -> tf.keras.Model:
-        hardware_cfg = self.current_config.get("hardware", {})
-        clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
-        window_step_ms = hardware_cfg.get("window_step_ms", 10)
-        mel_bins = hardware_cfg.get("mel_bins", 40)
-        input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
-        model = build_model(input_shape=input_shape, model_config=self.current_config.get("model", {}))
-        _ = model(tf.zeros((1, *input_shape), dtype=tf.float32), training=False)
-        # Suppress optimizer state warning - we intentionally only load model weights
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            model.load_weights(self.best_checkpoint)
-        return model
+    def _predict_scores(self, model, features: np.ndarray, temperature: float = 1.0) -> np.ndarray:
+        """Get model prediction scores with temperature scaling."""
+        import tensorflow as tf
 
-    def _apply_iteration_config(self, config: dict, phase: Phase) -> dict:
-        training = config.setdefault("training", {})
-        phase_params = self.phase_ctrl.get_phase_params(phase)
-        steps = int(self.steps_per_iteration * phase_params.step_multiplier)
-        training["training_steps"] = [steps]
-        effective_lr = max(self.current_lr * phase_params.lr_multiplier, self.min_lr)
-        training["learning_rates"] = [effective_lr]
+        batch_size = self.config.get("training", {}).get("batch_size", 128)
+        all_scores = []
+        for i in range(0, len(features), batch_size):
+            batch = tf.constant(features[i : i + batch_size], dtype=tf.float32)
+            preds = model(batch, training=False)
+            all_scores.append(preds.numpy())
 
-        # Disable profiling and TensorBoard for auto-tuning iterations
-        # (prevents folder proliferation and unnecessary overhead)
-        performance = config.setdefault("performance", {})
-        performance["enable_profiling"] = False
-        performance["tf_profile_start_step"] = 0
-        performance["tensorboard_enabled"] = False
-        performance["log_throughput"] = False
+        scores = np.concatenate(all_scores, axis=0).flatten()
+        return apply_temperature(scores, temperature)
 
-        # Disable top FP extraction and hard negative mining during auto-tuning
-        config.setdefault("top_fp_extraction", {})["enabled"] = False
-        config.setdefault("hard_negative_mining", {})["enabled"] = False
-        config.setdefault("auto_tuning", {})["enabled"] = False
+    # ------------------------------------------------------------------
+    # INT8 shadow evaluation
+    # ------------------------------------------------------------------
 
-        return config
+    def _evaluate_int8(
+        self,
+        model,
+        search_features: np.ndarray,
+        search_labels: np.ndarray,
+        repr_features: np.ndarray,
+        ambient_hours: float,
+    ) -> Optional[TuneMetrics]:
+        """Export model to INT8 TFLite and evaluate."""
+        import tensorflow as tf
 
-    def _run_fine_tuning_iteration(self, config: dict) -> tf.keras.Model:
-        """Run one fine-tuning iteration. Returns tuned model."""
-        # If user provided custom hard negatives, override the config
-        iter_config = copy.deepcopy(config)
-        if self.users_hard_negs_dir is not None:
-            paths = iter_config.setdefault("paths", {})
-            paths["hard_negative_dir"] = str(self.users_hard_negs_dir)
-            self.file_logger.info(f"Using user's hard negatives: {self.users_hard_negs_dir}")
+        try:
+            from src.export.tflite import (
+                convert_model_saved,
+                convert_saved_model_to_tflite,
+                create_representative_dataset_from_data,
+            )
+        except ImportError:
+            self.file_logger.warning("TFLite export not available, skipping INT8 eval")
+            return None
 
-        dataset = WakeWordDataset(iter_config)
-        dataset.build()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Save weights temporarily
+                weights_path = os.path.join(tmpdir, "temp.weights.h5")
+                model.save_weights(weights_path)
 
-        hardware_cfg = iter_config.get("hardware", {})
-        clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
-        window_step_ms = hardware_cfg.get("window_step_ms", 10)
-        mel_bins = hardware_cfg.get("mel_bins", 40)
-        max_time_frames = int(clip_duration_ms / window_step_ms)
-        input_shape = (max_time_frames, mel_bins)
+                # Convert to SavedModel
+                saved_model_dir = os.path.join(tmpdir, "saved_model")
+                convert_model_saved(model, self.config, saved_model_dir)
 
-        trainer = Trainer(iter_config)
-        model = trainer.train(
-            train_data_factory=dataset.train_generator_factory(max_time_frames=max_time_frames),
-            val_data_factory=dataset.val_generator_factory(max_time_frames=max_time_frames),
-            input_shape=input_shape,
-            weights_path=self.best_checkpoint,
-        )
-        dataset.close()
-        return model
+                # Representative dataset for INT8 calibration
+                repr_dataset_fn = create_representative_dataset_from_data(repr_features)
 
-    def _save_checkpoint(self, model: tf.keras.Model, metrics: TuneMetrics) -> str:
-        path = self.output_dir / f"tuned_fah{metrics.fah:.3f}_rec{metrics.recall:.3f}_iter{self.iteration}.weights.h5"
-        model.save_weights(str(path))
-        return str(path)
+                # Convert to TFLite
+                tflite_bytes = convert_saved_model_to_tflite(saved_model_dir, repr_dataset_fn)
 
-    def _handle_stagnation(self) -> StagnationAction:
-        self.stagnation_count += 1
-        if self.stagnation_count == 1:
-            return StagnationAction.ESCALATE
-        if self.stagnation_count == 2:
-            return StagnationAction.REVERSE
-        if self.stagnation_count == 3:
-            return StagnationAction.SWITCH
-        self.stagnation_count = 0
-        self.current_lr = max(self.current_lr * self.lr_decay_factor, self.min_lr)
-        return StagnationAction.RESTART
+                # Save TFLite for inference
+                tflite_path = os.path.join(tmpdir, "model.tflite")
+                with open(tflite_path, "wb") as f:
+                    f.write(tflite_bytes)
 
-    def _log_header(self):
-        table = Table(show_header=False, box=None, padding=(0, 2))
-        table.add_column("Key", style="bold cyan")
-        table.add_column("Value")
-        table.add_row("Checkpoint", self.checkpoint_path)
-        table.add_row("Target FAH", f"< {self.target_fah}")
-        table.add_row("Target Recall", f"> {self.target_recall}")
-        table.add_row("Max Iterations", str(self.max_iterations))
-        table.add_row("Steps/Iteration", str(self.steps_per_iteration))
-        table.add_row("Output Dir", str(self.output_dir))
-        if self.users_hard_negs_dir:
-            table.add_row("User Hard Negs", str(self.users_hard_negs_dir), style="yellow")
-        panel = Panel(table, title="Auto-Tuning Configuration", border_style="blue", expand=False)
-        panel = Panel(table, title="Auto-Tuning Configuration", border_style="blue", expand=False)
-        self.console.print(panel)
+                # Run TFLite inference
+                interpreter = tf.lite.Interpreter(model_path=tflite_path)
+                interpreter.allocate_tensors()
 
-    def _log_iteration_status(self, metrics: TuneMetrics, phase: Phase, knob: str, direction: int):
-        table = Table(title=f"Iteration {self.iteration}/{self.max_iterations} — Phase: {phase.value}")
-        table.add_column("Metric", style="bold")
-        table.add_column("Current", justify="right")
-        table.add_column("Target", justify="right")
+                input_details = interpreter.get_input_details()
+                output_details = interpreter.get_output_details()
+
+                all_scores = []
+                for i in range(len(search_features)):
+                    input_data = search_features[i : i + 1].astype(np.float32)
+                    # Handle potential int8 input quantization
+                    if input_details[0]["dtype"] == np.int8:
+                        scale = input_details[0]["quantization_parameters"]["scales"][0]
+                        zp = input_details[0]["quantization_parameters"]["zero_points"][0]
+                        input_data = (input_data / scale + zp).astype(np.int8)
+
+                    interpreter.set_tensor(input_details[0]["index"], input_data)
+                    interpreter.invoke()
+                    output = interpreter.get_tensor(output_details[0]["index"])
+
+                    # Handle uint8 output
+                    if output_details[0]["dtype"] == np.uint8:
+                        scale = output_details[0]["quantization_parameters"]["scales"][0]
+                        zp = output_details[0]["quantization_parameters"]["zero_points"][0]
+                        score = (output.astype(np.float32) - zp) * scale
+                    else:
+                        score = output.astype(np.float32)
+
+                    all_scores.append(float(score.flatten()[0]))
+
+                y_scores = np.array(all_scores)
+                y_true = search_labels.flatten()
+
+                # Compute metrics
+                threshold, threshold_uint8, metrics = self.threshold_optimizer.optimize(y_true, y_scores, ambient_hours, self.target_fah, self.target_recall)
+
+                self.file_logger.info(f"INT8 eval: FAH={metrics.fah:.4f}, Recall={metrics.recall:.4f}, Threshold={metrics.threshold:.4f}")
+                return metrics
+
+        except Exception as e:
+            self.file_logger.error(f"INT8 evaluation failed: {e}")
+            return None
+
+    # ------------------------------------------------------------------
+    # Confirmation phase
+    # ------------------------------------------------------------------
+
+    def _confirmation_phase(
+        self,
+        model,
+        confirm_data: tuple,
+        repr_data: tuple,
+        ambient_hours: float,
+    ) -> Optional[CandidateState]:
+        """Final confirmation on held-out data."""
+        from rich.table import Table
+
+        self.file_logger.info("=" * 60)
+        self.file_logger.info("CONFIRMATION PHASE")
+        self.file_logger.info("=" * 60)
+
+        if len(self.archive) == 0:
+            self.file_logger.warning("No candidates in archive for confirmation")
+            return None
+
+        # Shortlist top 5 (or fewer)
+        shortlist = sorted(
+            self.archive.archive,
+            key=lambda c: self._scalarized_score(c.eval_results) if c.eval_results else float("inf"),
+        )[:5]
+
+        confirm_features, confirm_labels, confirm_weights, _ = confirm_data
+        repr_features = repr_data[0]
+        best_confirmed = None
+        best_score = float("inf")
+
+        table = Table(title="🔬 Confirmation Results")
+        table.add_column("Candidate", style="cyan")
+        table.add_column("Float32 FAH", justify="right")
+        table.add_column("Float32 Recall", justify="right")
+        table.add_column("INT8 FAH", justify="right")
+        table.add_column("INT8 Recall", justify="right")
         table.add_column("Status", justify="center")
 
-        fah_ok = metrics.fah <= self.target_fah
-        recall_ok = metrics.recall >= self.target_recall
-        table.add_row(
-            "FAH",
-            f"[{'green' if fah_ok else 'red'}]{metrics.fah:.4f}[/]",
-            f"< {self.target_fah}",
-            "✓" if fah_ok else "✗",
-        )
-        table.add_row(
-            "Recall",
-            f"[{'green' if recall_ok else 'red'}]{metrics.recall:.4f}[/]",
-            f"> {self.target_recall}",
-            "✓" if recall_ok else "✗",
-        )
-        table.add_row("Threshold", f"{metrics.threshold:.4f}", "-", "-")
-        table.add_row("AVR", f"{metrics.avg_viable_recall:.4f}", "-", "-")
-        table.add_row("Knob", f"{knob} ({'↑' if direction > 0 else '↓'})", "-", "-")
+        for candidate in shortlist:
+            # Restore weights
+            self._deserialize_weights(model, candidate.weights_bytes)
+            self._restore_bn_state(model, candidate.batchnorm_state)
+
+            # Evaluate on confirmation set (no re-optimization)
+            scores = self._predict_scores(model, confirm_features, candidate.temperature)
+            threshold = candidate.threshold_float32
+            metrics = self.threshold_optimizer._compute_metrics_at_threshold(confirm_labels.flatten(), scores, threshold, ambient_hours)
+
+            # INT8 confirmation
+            int8_metrics = None
+            if self.require_int8_pass:
+                int8_metrics = self._evaluate_int8(model, confirm_features, confirm_labels, repr_features, ambient_hours)
+
+            # Check pass/fail
+            float_pass = metrics.meets_target(self.target_fah, self.target_recall)
+            int8_pass = True
+            if self.require_int8_pass and int8_metrics is not None:
+                int8_pass = int8_metrics.fah <= self.target_fah * 1.2 and int8_metrics.recall >= self.target_recall * 0.95
+
+            passed = float_pass and int8_pass
+
+            status = "✅ PASS" if passed else "❌ FAIL"
+            table.add_row(
+                candidate.id,
+                f"{metrics.fah:.4f}",
+                f"{metrics.recall:.4f}",
+                f"{int8_metrics.fah:.4f}" if int8_metrics else "N/A",
+                f"{int8_metrics.recall:.4f}" if int8_metrics else "N/A",
+                status,
+            )
+
+            if passed:
+                score = self._scalarized_score(metrics)
+                if score < best_score:
+                    best_score = score
+                    candidate.eval_results = metrics
+                    candidate.eval_results_int8 = int8_metrics
+                    best_confirmed = candidate
+
+            self.file_logger.info(f"Confirmation {candidate.id}: FAH={metrics.fah:.4f}, Recall={metrics.recall:.4f}, Status={status}")
+
         self.console.print(table)
 
-    def _log_final_summary(self, result: dict[str, Any]):
-        table = Table(show_header=False, box=None, padding=(0, 2))
-        table.add_column("Key", style="bold")
-        table.add_column("Value")
-        table.add_row("Iterations", str(result["iterations"]))
-        table.add_row("Best FAH", f"{result['best_fah']:.4f}")
-        table.add_row("Best Recall", f"{result['best_recall']:.4f}")
-        table.add_row("Target Met", "✅ Yes" if result["target_met"] else "❌ No")
-        table.add_row("Pareto Points", str(len(self.pareto.points)))
-        table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
-        border = "green" if result["target_met"] else "yellow"
-        panel = Panel(table, title="Auto-Tuning Complete", border_style=border, expand=False)
-        self.console.print(panel)
+        if best_confirmed:
+            self.file_logger.info(f"Best confirmed: {best_confirmed.id} — FAH={best_confirmed.eval_results.fah:.4f}, Recall={best_confirmed.eval_results.recall:.4f}")
+        else:
+            self.file_logger.warning("No candidate passed confirmation phase")
+
+        return best_confirmed
+
+    def _scalarized_score(self, m: Optional[TuneMetrics]) -> float:
+        if m is None:
+            return float("inf")
+        fah_excess = max(0, m.fah - self.target_fah) / max(self.target_fah, 1e-8)
+        recall_deficit = max(0, self.target_recall - m.recall) / max(self.target_recall, 1e-8)
+        return 2.0 * fah_excess + 1.0 * recall_deficit
+
+    # ------------------------------------------------------------------
+    # Checkpoint management
+    # ------------------------------------------------------------------
+
+    def _save_checkpoint(self, model, metrics: TuneMetrics, iteration: int) -> str:
+        """Save model checkpoint and return path."""
+        name = f"tuned_fah{metrics.fah:.3f}_rec{metrics.recall:.3f}_iter{iteration}.weights.h5"
+        path = self.output_dir / "checkpoints" / name
+        model.save_weights(str(path))
+        self.file_logger.info(f"Checkpoint saved: {path}")
+        return str(path)
+
+    # ------------------------------------------------------------------
+    # Stir mechanisms
+    # ------------------------------------------------------------------
+
+    def _apply_stir(
+        self,
+        model,
+        optimizer,
+        candidate: CandidateState,
+        stir_level: int,
+        sampler: FocusedSampler,
+        recent_scores: Optional[np.ndarray],
+    ) -> dict:
+        """Apply stir mechanism based on level. Returns info dict."""
+        if stir_level <= 0:
+            return {"level": 0, "action": "none"}
+
+        info = {"level": stir_level, "action": ""}
+
+        if stir_level >= 1:
+            # L1: SWA collection will happen in train_burst
+            info["action"] = "swa_collection"
+
+        if stir_level >= 2:
+            # L2: SAM will be enabled in train_burst
+            info["action"] = "sam_flatten"
+
+        if stir_level >= 3:
+            # L3: Loss landscape probing — try random weight perturbations
+            info["action"] = "landscape_probe"
+            best_loss = float("inf")
+            best_weights = None
+            original_weights = self._serialize_weights(model)
+
+            for probe in range(4):
+                self._deserialize_weights(model, original_weights)
+                for w in model.trainable_weights:
+                    noise = np.random.normal(0, 0.001, w.shape)
+                    w.assign_add(noise)
+
+                # Quick eval
+                batch = sampler.build_batch(
+                    candidate.strategy_arm if candidate.strategy_arm >= 0 else 5,
+                    candidate.threshold_float32,
+                    batch_size=64,
+                    recent_scores=recent_scores,
+                )
+                import tensorflow as tf
+
+                preds = model(tf.constant(batch[0], dtype=tf.float32), training=False)
+                loss = float(tf.keras.losses.binary_crossentropy(batch[1].reshape(-1, 1), preds).numpy().mean())
+                if loss < best_loss:
+                    best_loss = loss
+                    best_weights = self._serialize_weights(model)
+
+            if best_weights is not None:
+                self._deserialize_weights(model, best_weights)
+            else:
+                self._deserialize_weights(model, original_weights)
+
+        if stir_level >= 5:
+            # L5: Gaussian noise perturbation + reheat annealing
+            info["action"] = "diversify"
+            for w in model.trainable_weights:
+                noise = np.random.normal(0, 0.001, w.shape)
+                w.assign_add(noise)
+            self.annealing.temperature *= self.reheat_factor
+
+        self.file_logger.info(f"Stir L{stir_level} applied: {info['action']}")
+        return info
+
+    # ------------------------------------------------------------------
+    # Parent selection
+    # ------------------------------------------------------------------
+
+    def _select_parent(self, active_pool: list[CandidateState]) -> CandidateState:
+        """Tournament selection from active pool."""
+        if len(active_pool) <= 1:
+            return active_pool[0]
+
+        # Tournament of 3
+        tournament_size = min(3, len(active_pool))
+        contenders = np.random.choice(len(active_pool), size=tournament_size, replace=False)
+
+        best = None
+        best_score = float("inf")
+        for idx in contenders:
+            c = active_pool[idx]
+            score = self._scalarized_score(c.eval_results)
+            if score < best_score:
+                best_score = score
+                best = c
+
+        return best
+
+    # ------------------------------------------------------------------
+    # Rich logging
+    # ------------------------------------------------------------------
+
+    def _log_header(self):
+        from rich.panel import Panel
+
+        header = (
+            f"[bold]MaxQualityAutoTuner[/bold]\n"
+            f"Target: FAH ≤ {self.target_fah:.2f}, Recall ≥ {self.target_recall:.2f}\n"
+            f"Max iterations: {self.max_iterations}, "
+            f"Max gradient steps: {self.max_gradient_steps:,}\n"
+            f"Checkpoint: {self.checkpoint_path}\n"
+            f"Output: {self.output_dir}"
+        )
+        self.console.print(Panel(header, title="🎯 Auto-Tuning Campaign", border_style="blue"))
+
+    def _log_iteration(
+        self,
+        iteration: int,
+        arm: StrategyArm,
+        metrics: TuneMetrics,
+        accepted: bool,
+        stir_level: int,
+        burst_info: dict,
+    ):
+        from rich.table import Table
+
+        status = "✅" if accepted else "❌"
+        stir_str = f"⚡L{stir_level}" if stir_level > 0 else ""
+        target_met = "🎯" if metrics.meets_target(self.target_fah, self.target_recall) else ""
+
+        self.console.print(
+            f"  [{iteration:3d}/{self.max_iterations}] "
+            f"{arm.name:20s} │ "
+            f"FAH={metrics.fah:8.4f} │ "
+            f"Recall={metrics.recall:.4f} │ "
+            f"AUC-PR={metrics.auc_pr:.4f} │ "
+            f"Thr={metrics.threshold:.4f} │ "
+            f"Loss={burst_info.get('mean_loss', 0):.4f} │ "
+            f"{status} {stir_str} {target_met}"
+        )
+
+        self.file_logger.info(
+            f"Iter {iteration}: arm={arm.name}, FAH={metrics.fah:.4f}, "
+            f"Recall={metrics.recall:.4f}, AUC-PR={metrics.auc_pr:.4f}, "
+            f"threshold={metrics.threshold:.4f}, accepted={accepted}, "
+            f"stir={stir_level}, steps={burst_info.get('steps', 0)}, "
+            f"total_steps={self.total_gradient_steps}"
+        )
+
+    def _log_final_summary(self, result: dict):
+        from rich.panel import Panel
+        from rich.table import Table
+
+        # Summary panel
+        met = "✅ YES" if result["target_met"] else "❌ NO"
+        elapsed = result.get("elapsed_seconds", 0)
+        minutes = elapsed / 60
+
+        summary = (
+            f"Target met: {met}\n"
+            f"Best FAH: {result['best_fah']:.4f}\n"
+            f"Best Recall: {result['best_recall']:.4f}\n"
+            f"Total iterations: {result['iterations']}\n"
+            f"Total gradient steps: {self.total_gradient_steps:,}\n"
+            f"Wall clock: {minutes:.1f} min\n"
+            f"Best checkpoint: {result.get('best_checkpoint', 'N/A')}"
+        )
+        self.console.print(Panel(summary, title="📊 Auto-Tuning Results", border_style="green" if result["target_met"] else "red"))
+
+        # Pareto frontier table
+        frontier = result.get("pareto_frontier", [])
+        if frontier:
+            table = Table(title="🏔️ Pareto Frontier")
+            table.add_column("ID", style="cyan")
+            table.add_column("FAH", justify="right")
+            table.add_column("Recall", justify="right")
+            table.add_column("AUC-PR", justify="right")
+            table.add_column("Threshold", justify="right")
+            table.add_column("Arm", style="yellow")
+            table.add_column("Iter", justify="right")
+
+            for p in frontier:
+                table.add_row(
+                    p["id"],
+                    f"{p['fah']:.4f}",
+                    f"{p['recall']:.4f}",
+                    f"{p['auc_pr']:.4f}",
+                    f"{p['threshold']:.4f}",
+                    p["arm"],
+                    str(p["iteration"]),
+                )
+            self.console.print(table)
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
 
     def tune(self) -> dict:
-        """Main tuning loop with sophisticated multi-phase optimization."""
+        """Main orchestration loop. Returns results dict."""
+        import tensorflow as tf
+        from src.model.architecture import build_model
+        from src.utils.performance import set_threading_config
+
+        set_threading_config(self.config)
+        wall_start = time.time()
+
         self._log_header()
-        self.file_logger.info(f"Starting auto-tuning: target_fah={self.target_fah}, target_recall={self.target_recall}")
+        self.file_logger.info("=" * 60)
+        self.file_logger.info("MaxQualityAutoTuner campaign started")
+        self.file_logger.info("=" * 60)
 
-        performance_cfg = self.base_config.get("performance", {})
-        inter_op_parallelism = int(performance_cfg.get("inter_op_parallelism", 16) or 0)
-        intra_op_parallelism = int(performance_cfg.get("intra_op_parallelism", 16) or 0)
-        set_threading_config(
-            inter_op_parallelism=inter_op_parallelism,
-            intra_op_parallelism=intra_op_parallelism,
+        # 1. Build model and load base checkpoint
+        model = build_model(self.config)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            model.load_weights(str(self.checkpoint_path))
+        self.file_logger.info(f"Model loaded from {self.checkpoint_path}")
+
+        # 2. Load and partition data
+        features, labels, weights, indices = self._load_evaluation_data()
+        ambient_hours = self.config.get("training", {}).get("ambient_duration_hours", 42.02)
+        # Scale ambient hours by validation split fraction
+        val_split = self.config.get("training", {}).get("val_split", 0.1)
+        ambient_hours_val = ambient_hours * val_split
+
+        partition = self._partition_data(features, labels, weights)
+        search_features, search_labels, search_weights, search_indices = partition["search"]
+        cal_features, cal_labels = partition["cal"][0], partition["cal"][1]
+        confirm_data = partition["confirm"]
+        repr_data = partition["repr"]
+        fold_indices = partition["fold_indices"]
+
+        # Scale ambient hours for search partition
+        search_fraction = len(search_labels) / max(len(labels), 1)
+        ambient_hours_search = ambient_hours_val * search_fraction
+
+        # 3. Create optimizer
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.default_lr)
+        # Build optimizer state by doing a dummy step
+        dummy_grads = [tf.zeros_like(v) for v in model.trainable_variables]
+        optimizer.apply_gradients(zip(dummy_grads, model.trainable_variables))
+
+        # 4. Evaluate base model
+        self.file_logger.info("Evaluating base model...")
+        base_temperature = fit_temperature(
+            self._predict_scores(model, cal_features),
+            (cal_labels >= 0.5).astype(float).flatten(),
         )
 
-        self.console.print("[cyan]Evaluating initial model...[/]")
-        model = self._load_model()
-        dataset = WakeWordDataset(self.base_config)
-        dataset.build()
-        initial_metrics = self._evaluate(model, dataset)
-        dataset.close()
-        del model
-        tf.keras.backend.clear_session()
-
-        self.file_logger.info(f"Initial: FAH={initial_metrics.fah:.4f}, Recall={initial_metrics.recall:.4f}, Threshold={initial_metrics.threshold:.4f}")
-
-        self.pareto.add(
-            initial_metrics.fah,
-            initial_metrics.recall,
-            self.checkpoint_path,
-            copy.deepcopy(self.base_config),
-            0,
+        base_metrics = self._evaluate_model(
+            model,
+            search_features,
+            search_labels,
+            ambient_hours_search,
+            temperature=base_temperature,
+            fold_indices=fold_indices,
         )
-        self.trend.add(0, initial_metrics.fah, initial_metrics.recall)
 
-        prev_fah = initial_metrics.fah
-        prev_recall = initial_metrics.recall
+        self.file_logger.info(f"Base model: FAH={base_metrics.fah:.4f}, Recall={base_metrics.recall:.4f}, AUC-PR={base_metrics.auc_pr:.4f}, Temperature={base_temperature:.4f}")
+        self.console.print(f"  [bold]Base model[/bold]: FAH={base_metrics.fah:.4f}, Recall={base_metrics.recall:.4f}, AUC-PR={base_metrics.auc_pr:.4f}")
 
-        if initial_metrics.fah <= self.target_fah and initial_metrics.recall >= self.target_recall:
-            self.console.print("[bold green]Targets already met! No tuning needed.[/]")
-            result = {
-                "best_fah": initial_metrics.fah,
-                "best_recall": initial_metrics.recall,
-                "final_fah": initial_metrics.fah,
-                "final_recall": initial_metrics.recall,
-                "iterations": 0,
-                "best_checkpoint": self.checkpoint_path,
-                "target_met": True,
-                "pareto_frontier": [(p.fah, p.recall) for p in self.pareto.points],
-            }
-            self._log_final_summary(result)
-            return result
+        # 5. Create initial candidate
+        initial_candidate = CandidateState(
+            id="c_000",
+            weights_bytes=self._serialize_weights(model),
+            optimizer_state_bytes=self._serialize_optimizer_state(optimizer),
+            batchnorm_state=self._save_bn_state(model),
+            temperature=base_temperature,
+            threshold_float32=base_metrics.threshold,
+            threshold_uint8=base_metrics.threshold_uint8,
+            eval_results=base_metrics,
+            iteration=0,
+            lr=self.default_lr,
+        )
+        self.archive.try_add(initial_candidate)
 
-        last_knob = None
-        last_direction = 0
-        last_step = 0.0
+        # Active pool
+        active_pool = [initial_candidate]
 
-        while self.iteration < self.max_iterations:
-            self.iteration += 1
+        # Get initial scores for sampler
+        recent_scores = self._predict_scores(model, search_features, base_temperature)
 
-            phase = self.phase_ctrl.determine_phase(prev_fah, prev_recall, self.target_fah, self.target_recall)
-            self.file_logger.info(f"=== Iteration {self.iteration} | Phase: {phase.value} ===")
+        # 6. Main loop
+        consecutive_target_met = 0
+        last_iteration = 0
 
-            momentum = self.trend.momentum_direction()
+        try:
+            for iteration in range(1, self.max_iterations + 1):
+                last_iteration = iteration
 
-            if momentum == "improving" and last_knob is not None:
-                knob, direction, step = last_knob, last_direction, last_step
-                self.file_logger.info(f"Momentum: continuing {knob} {'↑' if direction > 0 else '↓'}")
-            else:
-                knob, direction, step = self.knob_ctrl.select_knob(phase, self.impact, self.trend, self.iteration)
-                self.file_logger.info(f"Selected knob: {knob} {'↑' if direction > 0 else '↓'} step={step:.6f}")
+                # Check gradient budget
+                if self.total_gradient_steps >= self.max_gradient_steps:
+                    self.file_logger.info(f"Gradient step budget exhausted: {self.total_gradient_steps}/{self.max_gradient_steps}")
+                    break
 
-            self.current_config = self.knob_ctrl.apply_adjustment(self.current_config, knob, direction, step)
-            iter_config = self._apply_iteration_config(self.current_config, phase)
+                # a. Select parent
+                parent = self._select_parent(active_pool)
 
-            try:
-                model = self._run_fine_tuning_iteration(iter_config)
-            except Exception as e:
-                self.file_logger.error(f"Training failed: {e}")
-                self.console.print(f"[red]Training error: {e}[/]")
-                continue
+                # b. Restore parent state
+                self._deserialize_weights(model, parent.weights_bytes)
+                self._restore_bn_state(model, parent.batchnorm_state)
+                self._deserialize_optimizer_state(optimizer, parent.optimizer_state_bytes)
 
-            dataset = WakeWordDataset(self.base_config)
-            dataset.build()
-            metrics = self._evaluate(model, dataset)
-            dataset.close()
+                # c. Diagnose regime and select strategy arm
+                regime = diagnose_regime(parent.eval_results, self.target_fah, self.target_recall)
+                arm_idx = self.thompson.select_arm(regime)
+                arm = STRATEGY_ARMS[arm_idx]
 
-            self.impact.record(
-                knob,
-                direction * step,
-                prev_fah,
-                metrics.fah,
-                prev_recall,
-                metrics.recall,
-                self.iteration,
-            )
-            self.trend.add(self.iteration, metrics.fah, metrics.recall)
+                # d. Determine learning rate
+                lr = arm.default_lr if arm.default_lr > 0 else parent.lr
+                lr = max(self.lr_range[0], min(lr, self.lr_range[1]))
 
-            self._log_iteration_status(metrics, phase, knob, direction)
-            self.file_logger.info(f"Result: FAH={metrics.fah:.4f}, Recall={metrics.recall:.4f}, Threshold={metrics.threshold:.4f}")
+                # e. Determine burst steps
+                n_steps = arm.default_steps
+                n_steps = max(
+                    self.burst_steps_range[0],
+                    min(n_steps, self.burst_steps_range[1]),
+                )
+                # Don't exceed remaining budget
+                remaining = self.max_gradient_steps - self.total_gradient_steps
+                n_steps = min(n_steps, remaining)
 
-            is_pareto_improving = self.pareto.add(
-                metrics.fah,
-                metrics.recall,
-                "",
-                copy.deepcopy(self.current_config),
-                self.iteration,
-            )
+                # f. Check and apply stir
+                stir_level = self.stir.get_stir_level(parent.stagnation_count)
+                use_sam = arm.use_sam or stir_level >= 2
+                use_swa = arm.use_swa or stir_level >= 1
 
-            if is_pareto_improving:
-                checkpoint_path = self._save_checkpoint(model, metrics)
-                self.pareto.points[-1].checkpoint_path = checkpoint_path
-                self.best_checkpoint = checkpoint_path
-                self.no_improvement_count = 0
-                self.stagnation_count = 0
-                self.knob_ctrl.reset_escalation()
-                last_knob, last_direction, last_step = knob, direction, step
-                self.console.print(f"[green]✓ Pareto improvement! Saved: {checkpoint_path}[/]")
-                self.file_logger.info(f"PARETO IMPROVEMENT: {checkpoint_path}")
-            else:
-                self.no_improvement_count += 1
-                last_knob = None
-                self.file_logger.info(f"No Pareto improvement ({self.no_improvement_count}/{self.patience})")
+                stir_info = self._apply_stir(
+                    model,
+                    optimizer,
+                    parent,
+                    stir_level,
+                    FocusedSampler(search_features, search_labels, search_weights, self.error_memory),
+                    recent_scores,
+                )
 
-            del model
-            tf.keras.backend.clear_session()
+                # g. Build focused sampler
+                sampler = FocusedSampler(
+                    search_features,
+                    search_labels,
+                    search_weights,
+                    self.error_memory,
+                )
 
-            prev_fah = metrics.fah
-            prev_recall = metrics.recall
+                # h. Execute gradient burst
+                burst_info = self._train_burst(
+                    model,
+                    optimizer,
+                    sampler,
+                    arm_idx,
+                    parent,
+                    n_steps,
+                    lr,
+                    use_sam=use_sam,
+                    use_swa=use_swa,
+                    recent_scores=recent_scores,
+                )
+                self.total_gradient_steps += n_steps
 
-            if metrics.fah <= self.target_fah and metrics.recall >= self.target_recall:
-                self.console.print("[bold green]🎯 Target metrics achieved![/]")
-                self.file_logger.info("TARGET MET!")
-                break
+                # i. SWA averaging if snapshots collected
+                swa_snapshots = burst_info.get("swa_snapshots", [])
+                if swa_snapshots and len(swa_snapshots) >= 2:
+                    # Save pre-SWA weights
+                    pre_swa_weights = self._serialize_weights(model)
+                    self._apply_swa(model, swa_snapshots)
 
-            if self.no_improvement_count >= self.patience:
-                action = self._handle_stagnation()
-                self.file_logger.info(f"Stagnation action: {action.value}")
-                self.console.print(f"[yellow]Stagnation detected → {action.value}[/]")
+                # j. Refresh BN statistics
+                self._refresh_bn_statistics(model, search_features)
 
-                if action == StagnationAction.ESCALATE:
-                    self.knob_ctrl.escalate()
-                elif action == StagnationAction.REVERSE:
-                    self.knob_ctrl.reverse_last()
-                elif action == StagnationAction.SWITCH:
-                    pass
-                elif action == StagnationAction.RESTART:
-                    best_point = self.pareto.best_by_target(self.target_fah, self.target_recall)
-                    if best_point:
-                        self.best_checkpoint = best_point.checkpoint_path
-                        self.current_config = copy.deepcopy(best_point.config_snapshot)
-                        self.knob_ctrl._sync_from_config(self.current_config)
-                        self.console.print(f"[yellow]Restarting from best Pareto point (FAH={best_point.fah:.4f}, Recall={best_point.recall:.4f})[/]")
+                # k. Recalibrate temperature
+                cal_scores = self._predict_scores(model, cal_features)
+                temperature = fit_temperature(
+                    cal_scores,
+                    (cal_labels >= 0.5).astype(float).flatten(),
+                )
 
-                self.no_improvement_count = 0
+                # l. Update recent_scores
+                recent_scores = self._predict_scores(model, search_features, temperature)
 
-        best_point = self.pareto.best_by_target(self.target_fah, self.target_recall)
+                # m. Full evaluation
+                eval_metrics = self._evaluate_model(
+                    model,
+                    search_features,
+                    search_labels,
+                    ambient_hours_search,
+                    temperature=temperature,
+                    fold_indices=fold_indices,
+                )
+
+                # n. INT8 shadow evaluation
+                int8_metrics = None
+                if self.int8_shadow_enabled and iteration % self.int8_shadow_interval == 0:
+                    int8_metrics = self._evaluate_int8(
+                        model,
+                        search_features,
+                        search_labels,
+                        repr_data[0],
+                        ambient_hours_search,
+                    )
+
+                # o. Build new candidate
+                new_candidate = CandidateState(
+                    id=f"c_{iteration:03d}",
+                    weights_bytes=self._serialize_weights(model),
+                    optimizer_state_bytes=self._serialize_optimizer_state(optimizer),
+                    batchnorm_state=self._save_bn_state(model),
+                    temperature=temperature,
+                    threshold_float32=eval_metrics.threshold,
+                    threshold_uint8=eval_metrics.threshold_uint8,
+                    eval_results=eval_metrics,
+                    eval_results_int8=int8_metrics,
+                    strategy_arm=arm_idx,
+                    parent_id=parent.id,
+                    iteration=iteration,
+                    lr=lr,
+                    history=parent.history
+                    + [
+                        {
+                            "iter": iteration,
+                            "arm": arm.name,
+                            "fah": eval_metrics.fah,
+                            "recall": eval_metrics.recall,
+                        }
+                    ],
+                )
+
+                # p. Accept/reject
+                accepted = self.annealing.should_accept(
+                    eval_metrics,
+                    parent.eval_results,
+                    self.target_fah,
+                    self.target_recall,
+                )
+
+                # q. Update Thompson sampling
+                improvement = eval_metrics.dominates(parent.eval_results)
+                self.thompson.update(arm_idx, improvement)
+
+                # r. Update error memory
+                search_all_indices = np.arange(len(search_labels))
+                self.error_memory.update(
+                    search_all_indices,
+                    search_labels.flatten(),
+                    recent_scores,
+                    eval_metrics.threshold,
+                )
+
+                # s. Manage active pool and archive
+                if accepted:
+                    new_candidate.stagnation_count = 0
+                    # Replace parent in active pool
+                    for i, c in enumerate(active_pool):
+                        if c.id == parent.id:
+                            active_pool[i] = new_candidate
+                            break
+                    else:
+                        if len(active_pool) < self.active_pool_size:
+                            active_pool.append(new_candidate)
+                        else:
+                            # Replace worst
+                            worst_idx = max(
+                                range(len(active_pool)),
+                                key=lambda i: self._scalarized_score(active_pool[i].eval_results),
+                            )
+                            active_pool[worst_idx] = new_candidate
+                else:
+                    parent.stagnation_count += 1
+
+                # Try to add to Pareto archive
+                self.archive.try_add(new_candidate)
+
+                # t. Save checkpoint if target met
+                if eval_metrics.meets_target(self.target_fah, self.target_recall):
+                    ckpt_path = self._save_checkpoint(model, eval_metrics, iteration)
+                    if self.best_checkpoint_path is None:
+                        self.best_checkpoint_path = ckpt_path
+                    elif eval_metrics.recall > base_metrics.recall:
+                        self.best_checkpoint_path = ckpt_path
+                    consecutive_target_met += 1
+                else:
+                    consecutive_target_met = 0
+
+                # u. Log iteration
+                self._log_iteration(iteration, arm, eval_metrics, accepted, stir_level, burst_info)
+
+                # v. Early termination: stable target met
+                if consecutive_target_met >= 3:
+                    self.file_logger.info("Target met for 3 consecutive iterations — stable convergence")
+                    self.console.print(f"  [bold green]✅ Stable target reached after {iteration} iterations[/bold green]")
+                    break
+
+        except KeyboardInterrupt:
+            self.file_logger.warning("Campaign interrupted by user")
+            self.console.print("\n  [bold yellow]⚠️ Campaign interrupted[/bold yellow]")
+
+        # 7. Confirmation phase
+        confirmed = None
+        if self.require_confirmation and len(self.archive) > 0:
+            confirmed = self._confirmation_phase(model, confirm_data, repr_data, ambient_hours_val)
+            if confirmed is not None:
+                # Save confirmed checkpoint
+                self._deserialize_weights(model, confirmed.weights_bytes)
+                self._restore_bn_state(model, confirmed.batchnorm_state)
+                self.best_checkpoint_path = self._save_checkpoint(model, confirmed.eval_results, confirmed.iteration)
+
+        # 8. Build final results
+        best = confirmed or self.archive.get_best(self.target_fah, self.target_recall)
+        if best is None and len(self.archive) > 0:
+            best = self.archive.archive[0]
+
+        # Ensure we have a checkpoint for the best
+        if best is not None and self.best_checkpoint_path is None:
+            self._deserialize_weights(model, best.weights_bytes)
+            self._restore_bn_state(model, best.batchnorm_state)
+            self.best_checkpoint_path = self._save_checkpoint(model, best.eval_results, best.iteration)
+
+        elapsed = time.time() - wall_start
         result = {
-            "best_fah": best_point.fah if best_point else prev_fah,
-            "best_recall": best_point.recall if best_point else prev_recall,
-            "final_fah": prev_fah,
-            "final_recall": prev_recall,
-            "iterations": self.iteration,
-            "best_checkpoint": best_point.checkpoint_path if best_point else self.best_checkpoint,
-            "target_met": prev_fah <= self.target_fah and prev_recall >= self.target_recall,
-            "pareto_frontier": [(p.fah, p.recall) for p in self.pareto.points],
+            "best_fah": best.eval_results.fah if best and best.eval_results else float("inf"),
+            "best_recall": best.eval_results.recall if best and best.eval_results else 0.0,
+            "final_fah": best.eval_results.fah if best and best.eval_results else float("inf"),
+            "final_recall": best.eval_results.recall if best and best.eval_results else 0.0,
+            "iterations": last_iteration,
+            "best_checkpoint": self.best_checkpoint_path or "",
+            "target_met": (best is not None and best.eval_results is not None and best.eval_results.meets_target(self.target_fah, self.target_recall)),
+            "pareto_frontier": self.archive.get_frontier_points(),
+            "elapsed_seconds": elapsed,
+            "total_gradient_steps": self.total_gradient_steps,
         }
+
         self._log_final_summary(result)
         return result
+
+
+# ============================================================================
+# Section 11: Convenience Functions
+# ============================================================================
 
 
 def autotune(
@@ -858,15 +2315,19 @@ def autotune(
     target_recall: float = 0.92,
     max_iterations: int = 100,
 ) -> dict:
-    """Convenience function for auto-tuning."""
-    at_config = config.get("auto_tuning", {})
-    at_config.setdefault("target_fah", target_fah)
-    at_config.setdefault("target_recall", target_recall)
-    at_config.setdefault("max_iterations", max_iterations)
-    at_config.setdefault("output_dir", output_dir)
-    tuner = AutoTuner(
-        checkpoint_path=checkpoint_path,
-        config=config,
-        auto_tuning_config=at_config,
-    )
+    """Convenience function for auto-tuning a trained wake word model."""
+    at_config = config.get("auto_tuning", {}).copy()
+    at_config["output_dir"] = output_dir
+    at_config["target_fah"] = target_fah
+    at_config["target_recall"] = target_recall
+    at_config["max_iterations"] = max_iterations
+
+    tuner = AutoTuner(checkpoint_path, config, at_config)
     return tuner.tune()
+
+
+def main() -> int:
+    """CLI entry point — delegates to cli.py."""
+    from src.tuning.cli import main as cli_main
+
+    return cli_main()
