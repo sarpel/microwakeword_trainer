@@ -371,14 +371,24 @@ mww-autotune \
     --checkpoint checkpoints/best_weights.weights.h5 \
     --config standard \
     --output-dir checkpoints/tuned/
+mww-autotune \
+    --checkpoint checkpoints/best_weights.weights.h5 \
+    --config standard \
+    --output-dir checkpoints/tuned/
+
+# With user-defined hard negatives directory
+mww-autotune \
+    --checkpoint checkpoints/best_weights.weights.h5 \
+    --config standard \
+    --users-hard-negs /path/to/custom_hard_negatives/
 ```
 
 The tool will:
 - Iterate through hyperparameters to find optimal thresholds
 - Use hard negative mining to improve model discrimination
+- Use user-provided hard negatives for better specificity (if specified)
 - Save the tuned checkpoint to your output directory
 - Log metrics and final configuration
-
 #### Step 6: Verify ESPHome Compatibility
 
 ```bash

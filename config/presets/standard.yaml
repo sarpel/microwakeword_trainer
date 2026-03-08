@@ -330,3 +330,15 @@ auto_tuning:
   pareto_improvement_threshold: 0.005
   convergence_window: 5
   output_dir: ./tuning_output
+
+# ─────────────────────────────────────────────────────────────────
+# TOP FALSE POSITIVE EXTRACTION (from hard negatives)
+# ─────────────────────────────────────────────────────────────────
+top_fp_extraction:
+  enabled: true
+  top_percent: 5.0                   # Top N% of false positives to extract
+  confidence_threshold: 0.5          # Min score to consider a prediction as positive
+  output_dir: "${DATASET_DIR:-./dataset}/top5fps"
+  log_file: "logs/top_fp_extraction.json"
+  run_at_training_end: true          # Auto-run extraction scan at end of training
+  batch_size: 64                     # Batch size for inference scan

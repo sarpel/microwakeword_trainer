@@ -353,6 +353,7 @@ ITEMS_TO_DELETE=(
     "$HOME/microwakeword_trainer/ci_export"
     "$HOME/microwakeword_trainer/checkpoints"
     "$HOME/microwakeword_trainer/tuning"
+    "$HOME/microwakeword_trainer/fil-results"
 )
 
 # SYNTAX: '$HOME' is a variable that contains your home directory path

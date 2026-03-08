@@ -104,9 +104,11 @@ Config → Trainer.__init__() → _build_model() → train()
 ## Configuration
 Expects FullConfig from `config.loader` with:
 - `training.*` - batch_size, learning_rates, training_steps, eval_step_interval
+- `training.async_hard_neg_mining.*` - enabled, queue_size, confidence_threshold (for async mining)
 - `performance.*` - gpu_only, mixed_precision, profiling
 - `hardware.*` - sample_rate, mel_bins, window/step sizes
 - `augmentation.*` - waveform augmentation params
+- `hard_negative_mining.*` - fp_threshold, mining_interval, max_samples (for synchronous mining)
 
 ## Anti-Patterns
 - **Don't instantiate Trainer directly for production** - Use `main()` or `train()` helper
@@ -117,12 +119,13 @@ Expects FullConfig from `config.loader` with:
 - Integrates with `src/data/` for dataset loading
 - Uses `src/model/` for model architecture via `build_model()`
 - Uses `src/evaluation/` for validation metrics via `MetricsCalculator`
-  - **`EvaluationMetrics`** (in `trainer.py`) wraps `MetricsCalculator` with a batch-accumulation interface and is the canonical class used inside the training loop.
-  - **`TrainingMetrics`** (exported from `__init__.py`) is a backward-compatibility alias: `TrainingMetrics = EvaluationMetrics`. Prefer `EvaluationMetrics` for new code; use `TrainingMetrics` only when you need the package-level import for backward compat.
-  - External callers that only need offline/post-training metrics should import `MetricsCalculator` directly from `src.evaluation.metrics`.
+- **`EvaluationMetrics`** (in `trainer.py`) wraps `MetricsCalculator` with a batch-accumulation interface and is the canonical class used inside the training loop.
+- **`TrainingMetrics`** (exported from `__init__.py`) is a backward-compatibility alias: `TrainingMetrics = EvaluationMetrics`. Prefer `EvaluationMetrics` for new code; use `TrainingMetrics` only when you need a package-level import for backward compat.
+- External callers that only need offline/post-training metrics should import `MetricsCalculator` directly from `src.evaluation.metrics`.
 - Supports TensorBoard logging (controlled via config)
 - Two-phase training: typically [20000, 10000] steps with [0.001, 0.0001] LR
 - Best model selection by FAH (false activations/hour) then recall
+- **AsyncHardExampleMiner** is enabled by default in standard and max_quality presets for better throughput
 
 
 ## Related Documentation

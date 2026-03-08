@@ -486,10 +486,12 @@ pytest --cov=src --cov=config tests/
 | `docs/CONFIGURATION.md` | Complete config reference |
 | `docs/TRAINING.md` | Training workflow and optimization |
 | `docs/EXPORT.md` | TFLite export and ESPHome deployment |
-| `specs/implementation_status.md` | Per-component implementation status |
+| `docs/USER_ADDITIONS.md` | Project-specific profiles and notes |
+| `specs/implementation_status.md` | Comprehensive implementation status and recent changes |
+| `specs/phase1_complete.yaml` | Phase 1 completion summary and best practices |
+| `specs/testing_plan.md` | Comprehensive testing strategy and procedures |
 | `AGENTS.md` | AI agent guidelines |
 | `src/*/AGENTS.md` | Per-module agent guidelines |
-
 ---
 
 *Generated 2026-03-06*

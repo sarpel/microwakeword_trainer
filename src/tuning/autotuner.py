@@ -563,6 +563,20 @@ class AutoTuner:
         training["training_steps"] = [steps]
         effective_lr = max(self.current_lr * phase_params.lr_multiplier, self.min_lr)
         training["learning_rates"] = [effective_lr]
+
+        # Disable profiling and TensorBoard for auto-tuning iterations
+        # (prevents folder proliferation and unnecessary overhead)
+        performance = config.setdefault("performance", {})
+        performance["enable_profiling"] = False
+        performance["tf_profile_start_step"] = 0
+        performance["tensorboard_enabled"] = False
+        performance["log_throughput"] = False
+
+        # Disable top FP extraction and hard negative mining during auto-tuning
+        config.setdefault("top_fp_extraction", {})["enabled"] = False
+        config.setdefault("hard_negative_mining", {})["enabled"] = False
+        config.setdefault("auto_tuning", {})["enabled"] = False
+
         return config
 
     def _run_fine_tuning_iteration(self, config: dict) -> tf.keras.Model:

@@ -321,6 +321,7 @@ class Trainer:
         self.current_step = 0
         self.best_fah = float("inf")
         self.best_recall = 0.0
+        self.best_quality_score = -1.0
         self.best_weights_path: str | None = None
         self._last_assigned_lr: float | None = None  # Guard redundant LR assigns
 
@@ -348,6 +349,7 @@ class Trainer:
             default_threshold=default_threshold,
         )
         self._last_val_raw_labels: list[int] = []
+        self._last_materialized_accuracy: float = 0.0  # Keep last accuracy for display between materialization intervals
 
         # TensorBoard metric selection (keep focused, high-signal metrics)
         self._tb_train_metric_keys = ["loss", "precision", "recall", "auc", "step_time_ms", "data_loading_ms", "spec_augment_ms", "train_step_ms"]
@@ -714,51 +716,55 @@ class Trainer:
         return sw_t * class_weights
 
     def _is_best_model(self, metrics: dict[str, float], target_fah: float, target_recall: float) -> tuple[bool, str]:
-        """Determine if current model is best based on two-priority checkpoint selection.
+        """Determine if current model is best using composite quality score.
 
-        Priority 1: Minimize FAH (false accepts per hour) below target
-        Priority 2: Maximize recall
+        Composite score = recall_component × fah_penalty
+        - recall_component: operating_recall (or recall fallback)
+        - fah_penalty: max(0, 1 - (fah / fah_ceiling)²)
+          - fah_ceiling = target_fah × 3 (beyond 3× target, model is worthless)
+          - Quadratic penalty: gentle near 0 FAH, harsh near ceiling
+
+        When FAH = 0 → penalty = 1.0 (perfect)
+        When FAH = target → penalty ≈ 0.889
+        When FAH ≥ 3×target → penalty = 0
 
         Args:
             metrics: Computed validation metrics
             target_fah: Target false accepts per hour
-            target_recall: Current best recall
+            target_recall: Current best recall (unused, kept for signature compat)
 
         Returns:
             Tuple of (is_best, reason)
         """
-        # Use proper FAH from evaluation package if available
+        # Get FAH
         if "ambient_false_positives_per_hour" in metrics:
             fah = metrics.get("ambient_false_positives_per_hour", float("inf"))
         else:
-            # Fallback: estimate FAH based on FP
             fp = metrics.get("fp", 0)
             fah = fp / max(self.val_ambient_duration_hours, 0.001) if self.val_ambient_duration_hours > 0 else float("inf")
 
-        # Prefer operating-point recall (target FAH) if present
+        # Get recall (prefer operating-point recall at target FAH)
         current_recall = metrics.get("operating_recall", metrics.get("recall", 0))
 
-        # Case 1: Achieved target FAH and improved recall
-        if fah <= target_fah and current_recall > self.best_recall:
-            return (
-                True,
-                f"Case 1: FAH={fah:.2f} <= target={target_fah}, recall improved to {current_recall:.4f}",
-            )
+        # Compute FAH penalty: quadratic decay from 1.0 to 0.0
+        fah_ceiling = max(target_fah * 3.0, 0.01)  # floor to avoid div-by-zero
+        fah_ratio = min(fah / fah_ceiling, 1.0)
+        fah_penalty = max(0.0, 1.0 - fah_ratio ** 2)
 
-        # Case 2: Haven't achieved target but decreased FAH
-        if fah < self.best_fah:
-            return True, f"Case 2: FAH decreased from {self.best_fah:.2f} to {fah:.2f}"
+        # Composite quality score
+        quality_score = current_recall * fah_penalty
 
-        # Case 3: Tied FAH and improved recall
-        if fah == self.best_fah and current_recall > self.best_recall:
-            return (
-                True,
-                f"Case 3: FAH tied at {fah:.2f}, recall improved to {current_recall:.4f}",
+        if quality_score > self.best_quality_score:
+            reason = (
+                f"Quality score improved: {quality_score:.4f} > {self.best_quality_score:.4f} "
+                f"(recall={current_recall:.4f}, FAH={fah:.2f}, fah_penalty={fah_penalty:.4f})"
             )
+            return True, reason
 
         return (
             False,
-            f"No improvement: FAH={fah:.2f} (best={self.best_fah:.2f}), recall={current_recall:.4f} (best={self.best_recall:.4f})",
+            f"No improvement: quality={quality_score:.4f} (best={self.best_quality_score:.4f}), "
+            f"recall={current_recall:.4f}, FAH={fah:.2f}",
         )
 
     def _save_checkpoint(self, metrics: dict[str, float], is_best: bool, reason: str) -> None:
@@ -785,6 +791,11 @@ class Trainer:
                 fp = metrics.get("fp", 0)
                 self.best_fah = fp / max(self.val_ambient_duration_hours, 0.001) if self.val_ambient_duration_hours > 0 else float("inf")
             self.best_recall = metrics.get("operating_recall", metrics.get("recall", 0))
+            # Update quality score
+            fah_ceiling = max(self.target_minimization * 3.0, 0.01)
+            fah_ratio = min(self.best_fah / fah_ceiling, 1.0)
+            fah_penalty = max(0.0, 1.0 - fah_ratio ** 2)
+            self.best_quality_score = self.best_recall * fah_penalty
 
         # Save periodic checkpoint
         checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_step_{self.current_step}.weights.h5")
@@ -881,10 +892,9 @@ class Trainer:
             is_hard_negative=is_hard_negative,
         )
 
-        # Train on batch
         result = self.model.train_on_batch(
             train_fingerprints,
-            train_ground_truth,
+            tf.reshape(train_ground_truth, [-1, 1]),
             sample_weight=combined_weights,
             return_dict=True,
         )
@@ -1250,7 +1260,11 @@ class Trainer:
                 materialize_due = step % self.materialize_metrics_interval == 0
                 if not materialize_due:
                     loss_value = float(train_metrics.get("loss", 0.0))
-                    train_metrics = {"loss": loss_value}
+                    # Keep last materialized accuracy for display (don't show 0 when not materialized)
+                    train_metrics = {"loss": loss_value, "accuracy": self._last_materialized_accuracy}
+                else:
+                    # Update cached accuracy when materialized
+                    self._last_materialized_accuracy = float(train_metrics.get("accuracy", 0.0))
                 train_metrics["step_time_ms"] = (time.perf_counter() - step_start) * 1000
                 train_metrics["data_loading_ms"] = (_t_data_end - _t0) * 1000
                 train_metrics["spec_augment_ms"] = (_t_aug_end - _t_aug_start) * 1000
@@ -1345,6 +1359,7 @@ class Trainer:
                                     f"Checkpoint at step {step}",
                                     f"Best FAH: {self.best_fah:.4f}",
                                     f"Best Recall: {self.best_recall:.4f}",
+                                    f"Best Quality Score: {self.best_quality_score:.4f}",
                                     f"Best weights path: {self.best_weights_path or 'N/A'}",
                                     f"Reason: {reason}",
                                 ]
@@ -1565,7 +1580,12 @@ def train(config: dict) -> tf.keras.Model:
         if not auto_tune_enabled:
             auto_tune_enabled = config.get("training", {}).get("auto_tune_on_poor_fah", False)
         target_min = config.get("training", {}).get("target_minimization", 0.5)
+        
+        # Track if auto-tuning was run to skip top FP extraction (config doesn't propagate back)
+        auto_tune_was_run = False
+        
         if auto_tune_enabled and trainer.best_fah > target_min:
+            auto_tune_was_run = True
             trainer.logger.log_info(f"auto_tuning.enabled: final FAH={trainer.best_fah:.3f} > target={target_min:.3f} — launching auto-tuner")
             import subprocess
 
@@ -1591,6 +1611,25 @@ def train(config: dict) -> tf.keras.Model:
                 trainer.logger.log_warning(f"Auto-tune finished with non-zero exit ({e.returncode}) — see above for details")
             except Exception as e:
                 trainer.logger.log_warning(f"Auto-tune failed: {e}")
+        # Top FP extraction from hard negatives (log only, no file moves)
+        # Skip if auto-tuning was run (config doesn't propagate back from subprocess)
+        top_fp_config = config.get("top_fp_extraction", {})
+        if top_fp_config.get("enabled", False) and top_fp_config.get("run_at_training_end", True) and not auto_tune_was_run:
+            try:
+                from scripts.extract_top5_fps import run_extraction
+
+                trainer.logger.log_info("Running top FP extraction from hard negatives...")
+                checkpoint = trainer.best_weights_path or os.path.join(
+                    trainer.checkpoint_dir, "best_weights.weights.h5"
+                )
+                result = run_extraction(config, checkpoint_path=checkpoint)
+                trainer.logger.log_info(
+                    f"Top FP extraction: {result.get('top_fp_count', 0)} files logged "
+                    f"(out of {result.get('total_false_positives', 0)} FPs). "
+                    f"Run 'python scripts/extract_top5_fps.py --move-now' to move them."
+                )
+            except Exception as e:
+                trainer.logger.log_warning(f"Top FP extraction failed: {e}")
     finally:
         dataset.close()
     return model
@@ -1636,7 +1675,8 @@ def main():
 
             config_dict = dataclasses.asdict(config)
 
-            # Update log directory from loaded config
+            # Store actual config preset name so auto-tuner subprocess can use it
+            config_dict.setdefault("training", {})["_config_preset"] = args.config
             perf_dict = config_dict.get("performance", {})
             log_dir = perf_dict.get("tensorboard_log_dir", "./logs")
             terminal_logger.log_dir = Path(log_dir)

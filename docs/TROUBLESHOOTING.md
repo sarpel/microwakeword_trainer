@@ -7,11 +7,12 @@
 3. [GPU & CUDA Issues](#gpu--cuda-issues)
 4. [Dataset & Data Issues](#dataset--data-issues)
 5. [Training Issues](#training-issues)
-6. [Export & ESPHome Compatibility Issues](#export--esphome-compatibility-issues)
-7. [Configuration Issues](#configuration-issues)
-8. [Performance & Optimization](#performance--optimization)
-9. [Speaker Clustering Issues](#speaker-clustering-issues)
-10. [Diagnostic Tools & Commands](#diagnostic-tools--commands)
+6. [Auto-Tuning Issues](#auto-tuning-issues)
+7. [Export & ESPHome Compatibility Issues](#export--esphome-compatibility-issues)
+8. [Configuration Issues](#configuration-issues)
+9. [Performance & Optimization](#performance--optimization)
+10. [Speaker Clustering Issues](#speaker-clustering-issues)
+11. [Diagnostic Tools & Commands](#diagnostic-tools--commands)
 
 ---
 
@@ -740,6 +741,139 @@ mww-train --config standard --checkpoint checkpoints/checkpoint_step_50000.weigh
 # Check available checkpoints:
 ls -la checkpoints/*.h5
 ```
+
+---
+
+## Auto-Tuning Issues
+
+### Issue: Auto-Tune Fails to Start
+
+**Symptoms:**
+- `FileNotFoundError` for checkpoint file
+- `ValueError` for invalid configuration
+- `ImportError` for missing dependencies
+
+**Diagnosis:**
+```bash
+# Verify checkpoint exists
+ls -la checkpoints/best_weights.weights.h5
+
+# Verify configuration
+python -c "from config.loader import load_full_config; load_full_config('standard')"
+
+# Check dependencies
+pip list | grep -i optuna
+```
+
+**Solutions:**
+1. **Checkpoint not found:**
+   ```bash
+   # Use full path or relative to project root
+   mww-autotune --checkpoint $PWD/checkpoints/best_weights.weights.h5
+   ```
+
+2. **Invalid configuration:**
+   - Check that preset exists in `config/presets/`
+   - Verify all required fields are present
+   - Check for type mismatches in values
+
+3. **Missing Optuna:**
+   ```bash
+   pip install optuna
+   ```
+
+---
+
+### Issue: Auto-Tune Not Improving Metrics
+
+**Symptoms:**
+- FAH remains high (>0.5) after auto-tuning
+- Recall decreases instead of improving
+- Model performance degrades
+
+**Diagnosis:**
+```bash
+# Check auto-tune logs
+cat checkpoints/tuned/autotune.log
+
+# Compare baseline vs tuned metrics
+cat checkpoints/tuned/baseline_metrics.json
+cat checkpoints/tuned/tuned_metrics.json
+```
+
+**Solutions:**
+
+1. **Insufficient hard negatives:**
+   ```bash
+   # Use automatic hard negative mining
+   mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config standard
+
+   # Or provide custom hard negatives directory
+   mww-autotune \
+       --checkpoint checkpoints/best_weights.weights.h5 \
+       --config standard \
+       --users-hard-negs /path/to/custom_hard_negatives/
+   ```
+
+2. **Dataset issues:**
+   - Verify test set is representative
+   - Check for data quality issues
+   - Ensure test set includes hard negatives
+
+3. **Aggressive targets:**
+   ```bash
+   # Use more realistic targets
+   mww-autotune \
+       --checkpoint checkpoints/best_weights.weights.h5 \
+       --config standard \
+       --target-fah 0.5 \
+       --target-recall 0.90
+   ```
+
+4. **Insufficient iterations:**
+   - Increase `max_iterations` in config
+   - Allow more time for optimization
+
+---
+
+### Issue: User-Defined Hard Negatives Not Used
+
+**Symptoms:**
+- Auto-tuner doesn't use provided hard negatives
+- Warnings about empty hard negatives directory
+- No improvement over baseline
+
+**Diagnosis:**
+```bash
+# Verify hard negatives directory exists
+ls -la /path/to/custom_hard_negatives/
+
+# Check for valid audio files
+find /path/to/custom_hard_negatives/ -name "*.wav" | wc -l
+
+# Review auto-tune log for warnings
+grep -i "hard.neg" checkpoints/tuned/autotune.log
+```
+
+**Solutions:**
+
+1. **Directory not found:**
+   - Use absolute path instead of relative
+   - Verify directory exists before running auto-tune
+
+2. **No audio files in directory:**
+   - Ensure directory contains WAV files
+   - Check file permissions
+   - Verify files are valid 16kHz mono WAV
+
+3. **Path syntax errors:**
+   ```bash
+   # Correct usage with absolute path
+   mww-autotune \
+       --checkpoint checkpoints/best_weights.weights.h5 \
+       --config standard \
+       --users-hard-negs "$PWD/hard_negatives/"
+   ```
 
 ---
 
