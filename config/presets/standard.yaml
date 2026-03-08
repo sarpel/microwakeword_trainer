@@ -318,18 +318,50 @@ auto_tuning:
   enabled: false
   target_fah: 0.3
   target_recall: 0.92
-  max_iterations: 100
+  max_iterations: 50
+  max_gradient_steps: 150000
   patience: 10
-  steps_per_iteration: 5000
-  initial_lr: 0.0001
-  lr_decay_factor: 0.7
-  min_lr: 0.000001
-  positive_weight_range: [0.5, 3.0]
-  negative_weight_range: [10.0, 50.0]
-  hard_negative_weight_range: [20.0, 100.0]
+  steps_per_iteration: 5000  # Legacy, ignored by MaxQualityAutoTuner
+  initial_lr: 0.0001         # Legacy, ignored by MaxQualityAutoTuner
+  lr_decay_factor: 0.7       # Legacy, ignored by MaxQualityAutoTuner
+  min_lr: 0.000001           # Legacy, ignored by MaxQualityAutoTuner
+  positive_weight_range: [0.5, 3.0]   # Legacy
+  negative_weight_range: [10.0, 50.0] # Legacy
+  hard_negative_weight_range: [20.0, 100.0] # Legacy
+  cv_folds: 5
+  confirmation_fraction: 0.20
+  bootstrap_samples: 1000
+  int8_shadow: true
+  int8_shadow_interval: 5
+  require_int8_pass: true
+  require_confirmation: true
+  group_key: speaker_id
   pareto_improvement_threshold: 0.005
   convergence_window: 5
   output_dir: ./tuning_output
+
+# Expert-level auto-tuning parameters (most users should use defaults)
+auto_tuning_expert:
+  min_burst_steps: 200
+  max_burst_steps: 5000
+  default_burst_steps: 500
+  min_lr: 0.0000001
+  max_lr: 0.0001
+  default_lr: 0.00001
+  sam_rho: 0.05
+  swa_collection_interval: 100
+  initial_temperature: 0.5
+  cooling_rate: 0.95
+  reheat_after: 5
+  reheat_factor: 1.3
+  active_pool_size: 12
+  pareto_archive_size: 24
+  stir_level_1: 3
+  stir_level_2: 5
+  stir_level_3: 7
+  stir_level_4: 9
+  stir_level_5: 12
+  curriculum_advance_threshold: 0.3
 
 # ─────────────────────────────────────────────────────────────────
 # TOP FALSE POSITIVE EXTRACTION (from hard negatives)
