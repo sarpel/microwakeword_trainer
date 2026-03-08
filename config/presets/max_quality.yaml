@@ -48,12 +48,12 @@ training:
 
   positive_class_weight: [3.0, 5.0, 8.0]
   negative_class_weight: [1.0, 1.0, 1.0]
-  hard_negative_class_weight: [1.0, 2.0, 3.0]
+  hard_negative_class_weight: [2.0, 4.0, 6.0]
 
   # Progressive SpecAugment: light→moderate→strong
-  time_mask_max_size: [2, 4, 6]
-  time_mask_count: [1, 1, 2]
-  freq_mask_max_size: [2, 4, 6]
+  time_mask_max_size: [1, 2, 3]
+  time_mask_count: [1, 1, 1]
+  freq_mask_max_size: [1, 2, 3]
   freq_mask_count: [1, 1, 1]
 
   # Checkpoint selection
@@ -61,8 +61,8 @@ training:
   target_minimization: 0.2
   maximization_metric: "average_viable_recall"
 
-  # 28.75h of ambient audio for FAH calculation
-  ambient_duration_hours: 28.75
+  # 42.02h of ambient audio (negative + background + hard_negative) for FAH calculation
+  ambient_duration_hours: 42.02
   train_split: 0.8
   val_split: 0.1
   test_split: 0.1
@@ -70,7 +70,7 @@ training:
 
   # Optimizer and loss parameters
   optimizer: "adam"
-  label_smoothing: 0.0          # Slight smoothing helps calibrate output scores
+  label_smoothing: 0.0
   gradient_clipnorm: 2.0        # Was 0.5 = too aggressive, capped max score at 0.87
   ema_decay: 0.99               # Half-life ~700 steps, smooths noise without killing convergence
   random_seed: 42               # Reproducible runs
@@ -141,7 +141,7 @@ performance:
   mixed_precision: true
   spec_augment_backend: "tf"
   async_mining: true
-  num_workers: 4
+  num_workers: 8
   num_threads_per_worker: 2
   prefetch_factor: 8
   pin_memory: true
@@ -159,12 +159,12 @@ performance:
   # Full TensorBoard logging for analysis
   tensorboard_enabled: true
   tensorboard_log_dir: "./logs"
-  tensorboard_log_histograms: true
-  tensorboard_log_images: true
+  tensorboard_log_histograms: false
+  tensorboard_log_images: false
   tensorboard_log_pr_curves: true
   tensorboard_log_graph: true
   tensorboard_log_advanced_scalars: true
-  tensorboard_log_weight_histograms: true
+  tensorboard_log_weight_histograms: false
   tensorboard_image_interval: 5000
   tensorboard_histogram_interval: 5000
 

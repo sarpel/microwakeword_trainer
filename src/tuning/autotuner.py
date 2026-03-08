@@ -1,10 +1,9 @@
-from __future__ import annotations
-
 import copy
 import enum
 import logging
 import sys
 import time
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -551,12 +550,13 @@ class AutoTuner:
         input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
         model = build_model(input_shape=input_shape, model_config=self.current_config.get("model", {}))
         _ = model(tf.zeros((1, *input_shape), dtype=tf.float32), training=False)
-        model.load_weights(self.best_checkpoint)
+        # Suppress optimizer state warning - we intentionally only load model weights
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            model.load_weights(self.best_checkpoint)
         return model
 
     def _apply_iteration_config(self, config: dict, phase: Phase) -> dict:
-        """Override config for a fine-tuning iteration (steps, LR, based on phase)."""
-        config = copy.deepcopy(config)
         training = config.setdefault("training", {})
         phase_params = self.phase_ctrl.get_phase_params(phase)
         steps = int(self.steps_per_iteration * phase_params.step_multiplier)

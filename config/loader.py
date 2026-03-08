@@ -83,7 +83,7 @@ class TrainingConfig:
     target_minimization: float = 0.5
     maximization_metric: str = "average_viable_recall"
     steps_per_epoch: int = 1000
-    ambient_duration_hours: float = 11.3
+    ambient_duration_hours: float = 42.02
     train_split: float = 0.8
     val_split: float = 0.1
     test_split: float = 0.1

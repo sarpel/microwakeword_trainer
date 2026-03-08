@@ -321,7 +321,7 @@ class Trainer:
         self.current_step = 0
         self.best_fah = float("inf")
         self.best_recall = 0.0
-        self.best_quality_score = -1.0
+        self.best_quality_score = 0.0
         self.best_weights_path: str | None = None
         self._last_assigned_lr: float | None = None  # Guard redundant LR assigns
 
