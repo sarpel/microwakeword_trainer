@@ -100,6 +100,8 @@ class TrainingConfig:
     def __post_init__(self) -> None:
         if self.batch_size <= 0:
             raise ValueError("training.batch_size must be > 0")
+        if not 0.0 <= self.label_smoothing < 1.0:
+            raise ValueError(f"training.label_smoothing must be in range [0.0, 1.0), got {self.label_smoothing}")
         if len(self.training_steps) != len(self.learning_rates):
             raise ValueError("training.training_steps and learning_rates must have same length")
 
@@ -676,7 +678,7 @@ class ConfigLoader:
             threshold = config["export"].get("probability_cutoff", 0.97)
             eval_threshold = config.get("evaluation", {}).get("default_threshold", threshold)
             deploy_threshold = max(threshold, eval_threshold)
-            
+
             if ls > 0:
                 # With smoothing, target is capped below 1.0: 1.0 - 0.5*ls
                 smoothed_target = 1.0 - 0.5 * ls
@@ -688,7 +690,7 @@ class ConfigLoader:
                 smoothed_target = 1.0
                 headroom = smoothed_target - deploy_threshold
                 min_headroom = 0.02  # 2% minimum for unsmoothed
-            
+
             if headroom < min_headroom:
                 issues.append(
                     f"Mathematical infeasibility: smoothed_target={smoothed_target:.3f}, "

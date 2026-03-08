@@ -70,6 +70,65 @@ class HardExampleMiner:
     def get_all_hard_negatives(self)
 ```
 
+## AsyncHardExampleMiner
+```python
+class AsyncHardExampleMiner:
+    def __init__(self, strategy, fp_threshold, max_samples, mining_interval_epochs, output_dir)
+    def start_mining(self, model, data_generator, epoch)
+    def wait_for_completion(self)
+    def get_result(self)
+    def is_mining(self)
+```
+
+**Async Hard Negative Mining** - Background mining for non-blocking training operations:
+
+**Public Methods**:
+- `start_mining(model, data_generator, epoch)`: Start mining in background thread
+- `wait_for_completion()`: Block until mining finishes (called at epoch end)
+- `get_result()`: Retrieve mining results (dict with stats)
+- `is_mining()`: Check if mining is currently running
+
+**Usage Example**:
+```python
+# In Trainer._train_epoch()
+if performance.async_mining and collection_mode == "mine_immediately":
+    async_miner = AsyncHardExampleMiner(
+        fp_threshold=0.8,
+        max_samples=5000,
+        mining_interval_epochs=5
+    )
+    async_miner.start_mining(model, data_generator, epoch)
+
+    # Continue training...
+
+    # At epoch end
+    async_miner.wait_for_completion()
+    result = async_miner.get_result()
+```
+
+**Key Differences from HardExampleMiner**:
+- Runs in background thread (non-blocking)
+- Model is cloned for thread safety
+- Uses thread-safe locking for result access
+- Better GPU utilization but requires careful sync
+
+**Presets**:
+- `standard` and `max_quality` presets in `config/presets/` enable async mining by default
+- `fast_test` preset uses synchronous mining for simplicity
+
+**Selection Criteria**:
+- **Use AsyncHardExampleMiner** (`performance.async_mining=true`):
+  - Large datasets (>10k samples)
+  - High GPU availability
+  - Need minimal training interruptions
+  - Production training runs
+
+- **Use HardExampleMiner** (`performance.async_mining=false`):
+  - Small datasets (<5k samples)
+  - Debugging and development
+  - Reproducible behavior needed
+  - Limited GPU resources
+
 ## AudioAugmentationPipeline
 Waveform-level augmentations applied **before** spectrogram conversion. This is separate from `src/data/augmentation.py` (which is the data-level AudioAugmentation class with 8 aug types).
 ```python
@@ -108,7 +167,47 @@ Expects FullConfig from `config.loader` with:
 - `performance.*` - gpu_only, mixed_precision, profiling
 - `hardware.*` - sample_rate, mel_bins, window/step sizes
 - `augmentation.*` - waveform augmentation params
-- `hard_negative_mining.*` - fp_threshold, mining_interval, max_samples (for synchronous mining)
+- `hard_negative_mining.*` - fp_threshold, mining_interval_epochs, max_samples, collection_mode (root-level config for mining behavior)
+
+## Hard Negative Mining Configuration
+
+The framework provides two mechanisms for hard negative mining:
+
+1. **`hard_negative_mining.*`** (root-level): Configuration for hard negative mining behavior
+   - Controls mining parameters: `fp_threshold`, `max_samples`, `mining_interval_epochs`
+   - Determines when mining occurs via `collection_mode`:
+     - `"log_only"`: Only log false predictions; no mining during training
+     - `"mine_immediately"`: Mine immediately during training (uses async if enabled)
+   - Applies to both synchronous and async mining modes
+
+2. **`performance.async_mining`**: Boolean flag to enable.background async mining
+   - `false` (default): Uses `HardExampleMiner` (synchronous, blocking)
+   - `true`: Uses `AsyncHardExampleMiner` when `collection_mode="mine_immediately"` (background thread, non-blocking)
+
+**Relationship and Selection**:
+- These are NOT mutually exclusive; they work together to control mining behavior
+- `performance.async_mining` is a performance optimization flag
+- `hard_negative_mining.collection_mode` controls the mining strategy
+- **Use `performance.async_mining=true`** for: High-throughput training, non-blocking mining, better GPU utilization
+- **Use `performance.async_mining=false`** for: Deterministic behavior, simpler debugging, reproduction
+
+**Example Configurations**:
+
+```yaml
+# Async mining (high throughput)
+performance:
+  async_mining: true
+hard_negative_mining:
+  enabled: true
+  collection_mode: "mine_immediately"
+
+# Sync mining (deterministic)
+performance:
+  async_mining: false
+hard_negative_mining:
+  enabled: true
+  collection_mode: "mine_immediately"
+```
 
 ## Anti-Patterns
 - **Don't instantiate Trainer directly for production** - Use `main()` or `train()` helper

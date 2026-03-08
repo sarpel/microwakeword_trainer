@@ -367,10 +367,7 @@ mww-autotune \
     --target-fah 0.2 \
     --target-recall 0.95
 
-mww-autotune \
-    --checkpoint checkpoints/best_weights.weights.h5 \
-    --config standard \
-    --output-dir checkpoints/tuned/
+
 mww-autotune \
     --checkpoint checkpoints/best_weights.weights.h5 \
     --config standard \
