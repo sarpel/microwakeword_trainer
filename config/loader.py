@@ -417,6 +417,32 @@ class AutoTuningConfig:
 
 
 @dataclass
+class TopFPExtractionConfig:
+    """Top false positive extraction from hard negatives.
+
+    Identifies the most confidently mis-predicted hard_negative samples
+    and logs them for later removal via --move-now.
+    """
+
+    enabled: bool = True
+    top_percent: float = 5.0  # Top N% of false positives to extract
+    confidence_threshold: float = 0.5  # Min score to consider a prediction as positive
+    output_dir: str = "dataset/top5fps"  # Destination for moved files
+    log_file: str = "logs/top_fp_extraction.json"  # JSON log path
+    run_at_training_end: bool = True  # Auto-run at end of training
+    batch_size: int = 64  # Batch size for inference scan
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        if not 0.0 < self.top_percent <= 100.0:
+            raise ValueError(f"top_percent must be between 0 and 100, got {self.top_percent}")
+        if not 0.0 <= self.confidence_threshold <= 1.0:
+            raise ValueError(f"confidence_threshold must be between 0.0 and 1.0, got {self.confidence_threshold}")
+        if self.batch_size <= 0:
+            raise ValueError(f"batch_size must be positive, got {self.batch_size}")
+
+
+@dataclass
 class FullConfig:
     """Complete configuration container."""
 
@@ -434,6 +460,7 @@ class FullConfig:
     quality: QualityConfig = field(default_factory=QualityConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     auto_tuning: AutoTuningConfig = field(default_factory=AutoTuningConfig)
+    top_fp_extraction: TopFPExtractionConfig = field(default_factory=TopFPExtractionConfig)
 
 
 # =============================================================================
@@ -475,6 +502,7 @@ class ConfigLoader:
         "quality": QualityConfig,
         "evaluation": EvaluationConfig,
         "auto_tuning": AutoTuningConfig,
+        "top_fp_extraction": TopFPExtractionConfig,
     }
 
     def __init__(self, base_dir: Optional[Path] = None):
@@ -642,6 +670,32 @@ class ConfigLoader:
             if abs(split_sum - 1.0) > 1e-6:
                 issues.append("training.train_split + training.val_split + training.test_split must equal 1.0")
 
+        # Cross-section feasibility: label smoothing vs deployment threshold
+        if "training" in config and "export" in config:
+            ls = config["training"].get("label_smoothing", 0.0)
+            threshold = config["export"].get("probability_cutoff", 0.97)
+            eval_threshold = config.get("evaluation", {}).get("default_threshold", threshold)
+            deploy_threshold = max(threshold, eval_threshold)
+            
+            if ls > 0:
+                # With smoothing, target is capped below 1.0: 1.0 - 0.5*ls
+                smoothed_target = 1.0 - 0.5 * ls
+                headroom = smoothed_target - deploy_threshold
+                min_headroom = 0.05  # 5% minimum for smoothed targets
+            else:
+                # Without smoothing, model can output 0-1.0, but 1.0 is theoretical max
+                # Allow tighter headroom (2%) since smoothed_target=1.0 is not a hard cap
+                smoothed_target = 1.0
+                headroom = smoothed_target - deploy_threshold
+                min_headroom = 0.02  # 2% minimum for unsmoothed
+            
+            if headroom < min_headroom:
+                issues.append(
+                    f"Mathematical infeasibility: smoothed_target={smoothed_target:.3f}, "
+                    f"deployment threshold={deploy_threshold:.3f} (headroom={headroom:.3f} < {min_headroom:.0%}). "
+                    f"The model has insufficient headroom to reliably cross threshold. "
+                    f"Either reduce label_smoothing or lower the threshold."
+                )
         # Validate model section
         if "model" in config:
             md = config["model"]

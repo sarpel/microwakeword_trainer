@@ -243,8 +243,10 @@ class TestEvaluator:
             tpr = curves["tpr"]
             thresholds = curves["thresholds"]
 
-            results["auc_roc"] = float(np.trapz(tpr, fpr))
-            results["auc_pr"] = float(np.trapz(curves["precision"], curves["recall"])) if "precision" in curves else None
+            # Reverse arrays: compute_roc_pr_curves sweeps thresholds 0→1,
+            # so FPR/recall are DECREASING. np.trapz needs ascending x-values.
+            results["auc_roc"] = float(np.trapz(tpr[::-1], fpr[::-1]))
+            results["auc_pr"] = float(np.trapz(curves["precision"][::-1], curves["recall"][::-1])) if "precision" in curves else None
 
             eer, eer_threshold = _compute_eer_manual(fpr, tpr, thresholds)
             results["eer"] = eer

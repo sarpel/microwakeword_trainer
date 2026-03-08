@@ -195,12 +195,37 @@ hard_negative_mining:
   mining_interval: 1000
   class_weight: 40.0
 ```
-
 ### Benefits
 
 - Improves model robustness
 - Reduces false positive rate
 - Adapts to training data distribution
+
+### AsyncHardExampleMiner (Background Mining)
+
+For improved throughput, the framework provides `AsyncHardExampleMiner` which runs hard negative mining in the background:
+
+```yaml
+training:
+  async_hard_neg_mining:
+    enabled: true
+    queue_size: 1000
+    confidence_threshold: 0.8
+    max_samples: 10000
+```
+
+**Benefits**:
+- Runs mining in parallel with training
+- No training interruptions for mining
+- Faster hard negative updates
+- Better GPU utilization
+
+**Configuration**:
+- `queue_size`: Number of predictions to buffer before mining
+- `confidence_threshold`: Minimum confidence for hard negative candidates
+- `max_samples`: Maximum hard negatives to collect per iteration
+
+> **Note**: Async mining is enabled by default in the standard and max_quality presets for better performance.
 
 ## Performance Optimization
 
