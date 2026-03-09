@@ -38,17 +38,17 @@ training:
   batch_size: 384               # Increased from 128 — fills 8GB VRAM better (~3.5-4GB)
   split_seed: 42
   eval_step_interval: 500                 # Not directly used as a condition in the training loop.
-  eval_basic_step_interval: 1000          # Main eval trigger. Runs full validation, computes all metrics. Prints 📊 Validation Results table.
+  eval_basic_step_interval: 500           # Main eval trigger. Runs full validation, computes all metrics. Prints 📊 Validation Results table.
   materialize_metrics_interval: 1000      # Training accuracy computation. Requires full batch evaluation
-  eval_advanced_step_interval: 5000       # Advanced computations: Score distribution, gain metrics, triggers hard negative mining updates.
+  eval_advanced_step_interval: 2000       # Advanced computations: Score distribution, gain metrics, triggers hard negative mining updates.
   eval_confusion_matrix_interval: 5000    # Prints the confusion matrix table and per-class recall/miss-rate/rejection-rate breakdown.
-  eval_checkpoints_interval: 5000         # Best model checkpoint saving. The `✅ BEST MODEL` message comes from here.
+  eval_checkpoints_interval: 1000         # Best model checkpoint saving. The `✅ BEST MODEL` message comes from here.
   eval_log_every_step: true
   steps_per_epoch: 1000
 
   positive_class_weight: [8.0, 10.0, 12.0]      # De-emphasized from [10,20,30] — was too recall-biased
-  negative_class_weight: [1.0, 1.0, 1.0]
-  hard_negative_class_weight: [3.0, 4.0, 6.0]   # UP from [1,1,1] — force discrimination against confusables
+  negative_class_weight: [1.2, 1.2, 1.2]     # Slightly up from [1,1,1] to maintain FAH pressure with more aggressive mining
+  hard_negative_class_weight: [4.0, 6.0, 8.0]   # UP from [1,1,1] — force discrimination against confusables
 
   # Progressive SpecAugment: light→moderate→strong
   time_mask_max_size: [1, 2, 3]
@@ -98,11 +98,11 @@ model:
 # ─────────────────────────────────────────────────────────────────
 augmentation:
   SevenBandParametricEQ: 0.20
-  TanhDistortion: 0.15
-  PitchShift: 0.15
+  TanhDistortion: 0.08
+  PitchShift: 0.10
   BandStopFilter: 0.10
   AddColorNoise: 0.20
-  AddBackgroundNoiseFromFile: 0.35
+  AddBackgroundNoiseFromFile: 0.30
   Gain: 1.0
   ApplyImpulseResponse: 0.30
 
@@ -117,8 +117,8 @@ augmentation:
   eq_max_gain_db: 6.0
   distortion_min: 0.05
   distortion_max: 0.2
-  pitch_shift_min_semitones: -2.0
-  pitch_shift_max_semitones: 2.0
+  pitch_shift_min_semitones: -1.2
+  pitch_shift_max_semitones: 1.2
   band_stop_min_center_freq: 125.0
   band_stop_max_center_freq: 7500.0
   band_stop_min_bandwidth_fraction: 0.5
@@ -143,7 +143,7 @@ performance:
   async_mining: true  # DEPRECATED: moved to mining section
   num_workers: 8
   num_threads_per_worker: 2
-  prefetch_factor: 8
+  prefetch_factor: 12
   pin_memory: true
   max_memory_gb: 40
   inter_op_parallelism: 16
@@ -211,7 +211,7 @@ speaker_clustering:
 mining:
   enabled: true
   async_mining: true
-  fp_threshold: 0.8
+  fp_threshold: 0.65
   max_samples: 5000
   mining_interval_epochs: 1              # Mine EVERY epoch for max quality
   collection_mode: "log_only"
@@ -220,7 +220,7 @@ mining:
   enable_post_training_mining: true
   mined_subdirectory: "mined"
   min_epochs_before_mining: 10
-  top_k_per_epoch: 100
+  top_k_per_epoch: 150
   deduplicate_by_hash: true
   # Top FP extraction with stricter settings for max quality
   extract_top_fps: true
@@ -293,7 +293,7 @@ evaluation:
   warmup_runs: 10
   n_latency_runs: 100
   target_fah: 1.0               # Relaxed from 0.2 — 0.2 on 4.2h val = ~0 FP tolerance, too strict
-  target_recall: 0.92
+  target_recall: 0.90
   gain_window_steps: 1000
   plateau_window_evals: 5
   plateau_min_delta: 0.001
@@ -304,7 +304,7 @@ evaluation:
 auto_tuning:
   enabled: true
   target_fah: 1.0               # Relaxed from 0.2 — match evaluation target_fah
-  target_recall: 0.92
+  target_recall: 0.90
   max_iterations: 50            # Quality over speed
   max_gradient_steps: 250000    # Generous budget for max quality
   patience: 15
@@ -316,10 +316,10 @@ auto_tuning:
   negative_weight_range: [10.0, 50.0] # Legacy
   hard_negative_weight_range: [20.0, 100.0] # Legacy
   cv_folds: 5
-  confirmation_fraction: 0.20
+  confirmation_fraction: 0.30
   bootstrap_samples: 2000       # More samples for max quality
   int8_shadow: true
-  int8_shadow_interval: 3       # More frequent INT8 checks
+  int8_shadow_interval: 1       # More frequent INT8 checks
   require_int8_pass: true
   require_confirmation: true
   group_key: speaker_id
