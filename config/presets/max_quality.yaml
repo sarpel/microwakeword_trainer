@@ -34,8 +34,9 @@ training:
   # 3-phase schedule: Phase 1 learns discrimination, Phase 2 refines boundary, Phase 3 polishes
   training_steps: [40000, 25000, 15000]
   # LR starts at standard 0.001, decays ~5x per phase for stable convergence
-  learning_rates: [0.001, 0.0002, 0.00005]
-  batch_size: 128               # Fits 8GB VRAM with mixed precision  class_balance_strategy: "oversample_positive"  # NEW: Balance classes for better wake word learning  split_seed: 42
+  learning_rates: [0.0017, 0.00035, 0.00009]  # Sqrt-scaled for batch_size 384 (×√3 from 128)
+  batch_size: 384               # Increased from 128 — fills 8GB VRAM better (~3.5-4GB)
+  split_seed: 42
   eval_step_interval: 500                 # Not directly used as a condition in the training loop.
   eval_basic_step_interval: 1000          # Main eval trigger. Runs full validation, computes all metrics. Prints 📊 Validation Results table.
   materialize_metrics_interval: 1000      # Training accuracy computation. Requires full batch evaluation
@@ -45,9 +46,9 @@ training:
   eval_log_every_step: true
   steps_per_epoch: 1000
 
-  positive_class_weight: [10.0, 20.0, 30.0]
+  positive_class_weight: [8.0, 10.0, 12.0]      # De-emphasized from [10,20,30] — was too recall-biased
   negative_class_weight: [1.0, 1.0, 1.0]
-  hard_negative_class_weight: [1.0, 1.0, 1.0]  # REDUCED: Don't overwhelm model with hard negatives
+  hard_negative_class_weight: [3.0, 4.0, 6.0]   # UP from [1,1,1] — force discrimination against confusables
 
   # Progressive SpecAugment: light→moderate→strong
   time_mask_max_size: [1, 2, 3]
@@ -291,7 +292,7 @@ evaluation:
   max_fah: 10.0
   warmup_runs: 10
   n_latency_runs: 100
-  target_fah: 0.2               # Stricter than standard (0.5)
+  target_fah: 1.0               # Relaxed from 0.2 — 0.2 on 4.2h val = ~0 FP tolerance, too strict
   target_recall: 0.92
   gain_window_steps: 1000
   plateau_window_evals: 5
@@ -302,7 +303,7 @@ evaluation:
 # ─────────────────────────────────────────────────────────────────
 auto_tuning:
   enabled: true
-  target_fah: 0.2
+  target_fah: 1.0               # Relaxed from 0.2 — match evaluation target_fah
   target_recall: 0.92
   max_iterations: 50            # Quality over speed
   max_gradient_steps: 250000    # Generous budget for max quality

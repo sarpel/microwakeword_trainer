@@ -8,7 +8,6 @@ Step-based training loop with:
 - Integration with TrainingProfiler
 """
 
-import json
 import os
 import sys
 import time
@@ -321,7 +320,7 @@ class Trainer:
         self.current_step = 0
         self.best_fah = float("inf")
         self.best_recall = 0.0
-        self.best_quality_score = 0.0
+        self.best_quality_score = float("-inf")
         self.best_weights_path: str | None = None
         self._last_assigned_lr: float | None = None  # Guard redundant LR assigns
 
@@ -638,10 +637,9 @@ class Trainer:
         # Keeps checkpointing robust while rewarding broad-threshold quality (AVR).
         recall_quality = (0.7 * operating_recall) + (0.3 * avr)
 
-        # Compute FAH penalty: quadratic decay from 1.0 to 0.0
-        fah_ceiling = max(float(target_fah) * 3.0, 0.01)  # floor to avoid div-by-zero
-        fah_ratio = min(fah / fah_ceiling, 1.0)
-        fah_penalty = max(0.0, 1.0 - fah_ratio**2)
+        # Smooth decay: always positive, never zero
+        # At FAH=0 → 1.0, at FAH=target → 0.5, at FAH=10×target → 0.01
+        fah_penalty = 1.0 / (1.0 + (fah / max(float(target_fah), 0.01)) ** 2)
 
         quality_score = recall_quality * fah_penalty
         return quality_score, operating_recall, fah, fah_penalty
@@ -749,13 +747,11 @@ class Trainer:
 
         Composite score = recall_quality × fah_penalty
         - recall_quality: 0.7×operating_recall + 0.3×average_viable_recall (with fallbacks)
-        - fah_penalty: max(0, 1 - (fah / fah_ceiling)²)
-          - fah_ceiling = target_fah × 3 (beyond 3× target, model is worthless)
-          - Quadratic penalty: gentle near 0 FAH, harsh near ceiling
+        - fah_penalty: 1 / (1 + (fah/target_fah)²) — smooth Lorentzian decay, always positive
 
         When FAH = 0 → penalty = 1.0 (perfect)
-        When FAH = target → penalty ≈ 0.889
-        When FAH ≥ 3×target → penalty = 0
+        When FAH = target → penalty = 0.5
+        When FAH = 10×target → penalty ≈ 0.01
 
         Args:
             metrics: Computed validation metrics
@@ -996,7 +992,12 @@ class Trainer:
 
             if score_sample_limit > 0:
                 sample_count = min(score_sample_limit, scores_np.shape[0])
-                score_samples = scores_np[:sample_count].tolist()
+                if sample_count < scores_np.shape[0]:
+                    rng = np.random.default_rng(seed=42)
+                    indices = rng.choice(scores_np.shape[0], size=sample_count, replace=False)
+                    score_samples = scores_np[indices].tolist()
+                else:
+                    score_samples = scores_np.tolist()
 
         metrics = self.val_metrics.compute_metrics()
         if self.val_metrics.all_y_true:
@@ -1090,7 +1091,7 @@ class Trainer:
         y_scores = np.array(self.val_metrics.all_y_scores)
         val_paths = self._last_val_paths if hasattr(self, "_last_val_paths") else None
 
-        result = log_false_predictions_to_json(
+        _ = log_false_predictions_to_json(
             epoch=epoch,
             y_true=y_true,
             y_scores=y_scores,
@@ -1404,6 +1405,12 @@ class Trainer:
         # Training complete
         total_time = time.time() - start_time
         progress.stop()
+
+        # Always save final weights as fallback for auto-tuner and post-training tools
+        final_path = os.path.join(self.checkpoint_dir, "final_weights.weights.h5")
+        self.model.save_weights(final_path)
+        self.logger.log_info(f"Final weights saved to {final_path}")
+
         self.logger.log_completion(
             total_time,
             self.best_weights_path or "N/A",
@@ -1534,7 +1541,7 @@ def train(config: dict) -> tf.keras.Model:
                 mining_data_factory=dataset.train_mining_generator_factory(max_time_frames=max_time_frames),
                 test_data_factory=test_factory,
                 input_shape=input_shape,
-                val_file_paths=dataset.get_split_file_paths('val'),
+                val_file_paths=dataset.get_split_file_paths("val"),
             )
         else:
             model = trainer.train(
@@ -1543,7 +1550,7 @@ def train(config: dict) -> tf.keras.Model:
                 mining_data_factory=dataset.train_mining_generator_factory(max_time_frames=max_time_frames),
                 test_data_factory=dataset.test_generator_factory(max_time_frames=max_time_frames),
                 input_shape=input_shape,
-                val_file_paths=dataset.get_split_file_paths('val'),
+                val_file_paths=dataset.get_split_file_paths("val"),
             )
         # Auto-tune post-training if configured and final FAH > target
         at_config = config.get("auto_tuning", {})
@@ -1556,44 +1563,66 @@ def train(config: dict) -> tf.keras.Model:
         # Track if auto-tuning was run to skip top FP extraction (config doesn't propagate back)
         auto_tune_was_run = False
 
+        def _resolve_checkpoint(trainer):
+            """Resolve best available checkpoint with fallback chain."""
+            import glob as _glob
+
+            candidates = [
+                trainer.best_weights_path,
+                os.path.join(trainer.checkpoint_dir, "best_weights.weights.h5"),
+                os.path.join(trainer.checkpoint_dir, "final_weights.weights.h5"),
+            ]
+            for candidate in candidates:
+                if candidate and os.path.exists(candidate):
+                    return candidate
+            # Last resort: latest periodic checkpoint
+            periodic = sorted(_glob.glob(os.path.join(trainer.checkpoint_dir, "checkpoint_step_*.weights.h5")))
+            return periodic[-1] if periodic else None
+
         if auto_tune_enabled and trainer.best_fah > target_min:
             auto_tune_was_run = True
             trainer.logger.log_info(f"auto_tuning.enabled: final FAH={trainer.best_fah:.3f} > target={target_min:.3f} — launching auto-tuner")
-            import subprocess
+            checkpoint = _resolve_checkpoint(trainer)
+            if checkpoint is None:
+                trainer.logger.log_warning("No checkpoint found for auto-tuner — skipping auto-tuning")
+            else:
+                import subprocess
 
-            checkpoint = trainer.best_weights_path or os.path.join(trainer.checkpoint_dir, "best_weights.weights.h5")
-            config_arg = config.get("training", {}).get("_config_preset", "standard")
-            cmd = [
-                sys.executable,
-                "-m",
-                "src.tuning.cli",
-                "--checkpoint",
-                checkpoint,
-                "--config",
-                config_arg,
-            ]
-            # Pass target overrides from auto_tuning config
-            if "target_fah" in at_config:
-                cmd.extend(["--target-fah", str(at_config["target_fah"])])
-            if "target_recall" in at_config:
-                cmd.extend(["--target-recall", str(at_config["target_recall"])])
-            try:
-                subprocess.run(cmd, check=True)  # noqa: S603
-            except subprocess.CalledProcessError as e:
-                trainer.logger.log_warning(f"Auto-tune finished with non-zero exit ({e.returncode}) — see above for details")
-            except Exception as e:
-                trainer.logger.log_warning(f"Auto-tune failed: {e}")
+                config_arg = config.get("training", {}).get("_config_preset", "standard")
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "src.tuning.cli",
+                    "--checkpoint",
+                    checkpoint,
+                    "--config",
+                    config_arg,
+                ]
+                # Pass target overrides from auto_tuning config
+                if "target_fah" in at_config:
+                    cmd.extend(["--target-fah", str(at_config["target_fah"])])
+                if "target_recall" in at_config:
+                    cmd.extend(["--target-recall", str(at_config["target_recall"])])
+                try:
+                    subprocess.run(cmd, check=True)  # noqa: S603
+                except subprocess.CalledProcessError as e:
+                    trainer.logger.log_warning(f"Auto-tune finished with non-zero exit ({e.returncode}) — see above for details")
+                except Exception as e:
+                    trainer.logger.log_warning(f"Auto-tune failed: {e}")
         mining_config = config.get("mining", {})
         if mining_config.get("extract_top_fps", False) and mining_config.get("run_extraction_at_training_end", True) and not auto_tune_was_run:
             try:
                 trainer.logger.log_info("Running top FP extraction from hard negatives...")
-                checkpoint = trainer.best_weights_path or os.path.join(trainer.checkpoint_dir, "best_weights.weights.h5")
-                result = run_top_fp_extraction(config, checkpoint_path=checkpoint)
-                trainer.logger.log_info(
-                    f"Top FP extraction: {result.get('top_fp_count', 0)} files logged "
-                    f"(out of {result.get('total_false_positives', 0)} FPs). "
-                    f"Run 'mww-mine-hard-negatives extract-top-fps' to move them."
-                )
+                checkpoint = _resolve_checkpoint(trainer)
+                if checkpoint is None:
+                    trainer.logger.log_warning("No checkpoint found for top FP extraction — skipping extraction")
+                else:
+                    result = run_top_fp_extraction(config, checkpoint_path=checkpoint)
+                    trainer.logger.log_info(
+                        f"Top FP extraction: {result.get('top_fp_count', 0)} files logged "
+                        f"(out of {result.get('total_false_positives', 0)} FPs). "
+                        f"Run 'mww-mine-hard-negatives extract-top-fps' to move them."
+                    )
             except Exception as e:
                 trainer.logger.log_warning(f"Top FP extraction failed: {e}")
     finally:
