@@ -10,13 +10,16 @@ Quality over speed. Time budget doesn't matter — only final model quality.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import enum
 import io
+import json
 import logging
 import math
 import os
 import pickle
+import re
 import sys
 import tempfile
 import time
@@ -28,6 +31,24 @@ from typing import Any, Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+class ResilientFileHandler(logging.FileHandler):
+    """FileHandler that recovers if underlying stream gets closed unexpectedly."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            super().emit(record)
+        except ValueError as exc:
+            if "closed file" not in str(exc).lower() and "i/o operation on closed file" not in str(exc).lower():
+                raise
+            self.acquire()
+            try:
+                if self.stream is not None:
+                    self.stream = self._open()
+            finally:
+                self.release()
+            super().emit(record)
 
 
 # ============================================================================
@@ -1157,9 +1178,10 @@ class AutoTuner:
         flogger = logging.getLogger(f"autotuner.{id(self)}")
         flogger.setLevel(logging.DEBUG)
         flogger.handlers.clear()
-        fh = logging.FileHandler(self.output_dir / "logs" / "autotune.log", mode="w")
+        fh = ResilientFileHandler(self.output_dir / "logs" / "autotune.log", mode="w")
         fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         flogger.addHandler(fh)
+        flogger.propagate = False
         return flogger
 
     # ------------------------------------------------------------------
@@ -1202,12 +1224,40 @@ class AutoTuner:
         weights = np.concatenate(all_weights, axis=0)
         indices = np.arange(len(labels))
 
+        group_ids: Optional[np.ndarray] = None
+        if self.group_key:
+            val_paths_file = dataset.data_path / "val" / "file_paths.json"
+            if val_paths_file.exists():
+                try:
+                    with open(val_paths_file, "r", encoding="utf-8") as f:
+                        file_paths = json.load(f)
+
+                    if len(file_paths) == len(labels):
+                        if self.group_key == "speaker_id":
+                            parsed_groups = []
+                            for p in file_paths:
+                                p_str = str(p)
+                                match = re.search(r"(?:^|/)speaker_[^/]+(?:/|$)", p_str)
+                                if match:
+                                    parsed_groups.append(match.group(0).strip("/"))
+                                else:
+                                    parsed_groups.append("unknown")
+                            group_ids = np.array(parsed_groups, dtype=object)
+                            known = int(np.sum(group_ids != "unknown"))
+                            self.file_logger.info(f"Loaded group ids for partitioning ({self.group_key}): known={known}, unknown={len(group_ids) - known}, unique_groups={len(np.unique(group_ids))}")
+                        else:
+                            self.file_logger.warning(f"Unsupported group_key='{self.group_key}' for autotuner split; falling back to random partition")
+                    else:
+                        self.file_logger.warning(f"Group metadata length mismatch: file_paths={len(file_paths)} vs labels={len(labels)}; falling back to random partition")
+                except Exception as e:
+                    self.file_logger.warning(f"Failed loading group metadata for partitioning: {e}")
+
         dataset.close()
 
         self.file_logger.info(f"Loaded {len(labels)} samples: {int(np.sum(labels >= 0.5))} positive, {int(np.sum(labels < 0.5))} negative")
-        return features, labels, weights, indices
+        return features, labels, weights, indices, group_ids
 
-    def _partition_data(self, features: np.ndarray, labels: np.ndarray, weights: np.ndarray) -> dict:
+    def _partition_data(self, features: np.ndarray, labels: np.ndarray, weights: np.ndarray, group_ids: Optional[np.ndarray] = None) -> dict:
         """Partition data: calibration 15%, search 60%, confirmation 20%, representative 5%.
 
         Returns dict with keys: cal, search, confirm, repr, fold_indices.
@@ -1215,17 +1265,74 @@ class AutoTuner:
         """
         n = len(labels)
         indices = np.arange(n)
-        np.random.shuffle(indices)
 
         n_cal = max(1, int(n * 0.15))
         n_repr = max(1, int(n * 0.05))
         n_confirm = max(1, int(n * self.confirmation_fraction))
         n_search = n - n_cal - n_repr - n_confirm
 
-        cal_idx = indices[:n_cal]
-        search_idx = indices[n_cal : n_cal + n_search]
-        confirm_idx = indices[n_cal + n_search : n_cal + n_search + n_confirm]
-        repr_idx = indices[n_cal + n_search + n_confirm :]
+        seed = int(self.config.get("training", {}).get("split_seed", 42))
+        rng = np.random.RandomState(seed)
+
+        use_group_partition = False
+        if group_ids is not None and len(group_ids) == n:
+            non_unknown = group_ids[group_ids != "unknown"]
+            if len(np.unique(non_unknown)) >= 2:
+                use_group_partition = True
+
+        if use_group_partition:
+            target_sizes = {
+                "cal": n_cal,
+                "search": n_search,
+                "confirm": n_confirm,
+                "repr": n_repr,
+            }
+            bins: dict[str, list[int]] = {k: [] for k in target_sizes}
+
+            group_to_indices: dict[str, list[int]] = {}
+            for idx, gid in enumerate(group_ids):
+                key = str(gid)
+                group_to_indices.setdefault(key, []).append(idx)
+
+            groups = list(group_to_indices.keys())
+            rng.shuffle(groups)
+
+            # Largest groups first for more stable balancing
+            groups.sort(key=lambda g: len(group_to_indices[g]), reverse=True)
+
+            for gid in groups:
+                gidx = group_to_indices[gid]
+                candidate_bins = []
+                for b in target_sizes:
+                    target = max(target_sizes[b], 1)
+                    ratio = len(bins[b]) / target
+                    candidate_bins.append((ratio, len(bins[b]), b))
+                candidate_bins.sort()
+                chosen = candidate_bins[0][2]
+                bins[chosen].extend(gidx)
+
+            cal_idx = np.array(bins["cal"], dtype=np.int64)
+            search_idx = np.array(bins["search"], dtype=np.int64)
+            confirm_idx = np.array(bins["confirm"], dtype=np.int64)
+            repr_idx = np.array(bins["repr"], dtype=np.int64)
+
+            if min(len(cal_idx), len(search_idx), len(confirm_idx), len(repr_idx)) == 0:
+                self.file_logger.warning("Group-aware partition created an empty bin; falling back to random partition")
+                use_group_partition = False
+            else:
+                self.file_logger.info(f"Group-aware partition enabled ({self.group_key}): cal={len(cal_idx)}, search={len(search_idx)}, confirm={len(confirm_idx)}, repr={len(repr_idx)}")
+
+        if not use_group_partition:
+            indices = rng.permutation(indices)
+            cal_idx = indices[:n_cal]
+            search_idx = indices[n_cal : n_cal + n_search]
+            confirm_idx = indices[n_cal + n_search : n_cal + n_search + n_confirm]
+            repr_idx = indices[n_cal + n_search + n_confirm :]
+
+        n_cal = len(cal_idx)
+        n_search = len(search_idx)
+        n_confirm = len(confirm_idx)
+        n_repr = len(repr_idx)
 
         # Create CV fold indices for the search partition
         fold_indices = []
@@ -1362,6 +1469,10 @@ class AutoTuner:
         losses = []
         swa_snapshots = []
         trainable_vars = model.trainable_variables
+        burst_start = time.time()
+        last_heartbeat = burst_start
+        heartbeat_steps = 500
+        heartbeat_seconds = 60.0
 
         for step in range(n_steps):
             batch_features, batch_labels, batch_weights = sampler.build_batch(
@@ -1398,6 +1509,15 @@ class AutoTuner:
                 )
 
             losses.append(float(loss_val))
+
+            now = time.time()
+            should_log_step = n_steps >= heartbeat_steps and (step + 1) % heartbeat_steps == 0
+            should_log_time = now - last_heartbeat >= heartbeat_seconds
+            if should_log_step or should_log_time:
+                mean_recent = float(np.mean(losses[-100:])) if losses else 0.0
+                elapsed = now - burst_start
+                self.file_logger.info(f"Burst progress: step={step + 1}/{n_steps}, elapsed={elapsed:.1f}s, mean_recent_loss={mean_recent:.6f}, lr={float(optimizer.learning_rate.numpy()):.8f}")
+                last_heartbeat = now
 
             # SWA snapshot collection
             if use_swa and (step + 1) % self.swa_interval == 0:
@@ -1586,30 +1706,67 @@ class AutoTuner:
         import tensorflow as tf
 
         try:
-            from src.export.tflite import (
-                convert_model_saved,
-                convert_saved_model_to_tflite,
-                create_representative_dataset_from_data,
-            )
-        except ImportError:
-            self.file_logger.warning("TFLite export not available, skipping INT8 eval")
-            return None
-
-        try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                # Save weights temporarily
-                weights_path = os.path.join(tmpdir, "temp.weights.h5")
-                model.save_weights(weights_path)
-
-                # Convert to SavedModel
+                # Export current candidate model to SavedModel for quantization
                 saved_model_dir = os.path.join(tmpdir, "saved_model")
-                convert_model_saved(model, self.config, saved_model_dir)
+                if search_features.ndim != 3:
+                    self.file_logger.warning(f"Unexpected search feature rank for INT8 eval: {search_features.shape}; skipping")
+                    return None
 
-                # Representative dataset for INT8 calibration
-                repr_dataset_fn = create_representative_dataset_from_data(repr_features)
+                num_input_frames = int(search_features.shape[1])
+                mel_bins = int(search_features.shape[2])
 
-                # Convert to TFLite
-                tflite_bytes = convert_saved_model_to_tflite(saved_model_dir, repr_dataset_fn)
+                export_archive = tf.keras.export.ExportArchive()
+                export_archive.track(model)
+
+                export_input_sig = [
+                    tf.TensorSpec(
+                        shape=(1, num_input_frames, mel_bins),
+                        dtype=tf.float32,
+                        name="inputs",
+                    )
+                ]
+
+                def serve_fn(inputs: tf.Tensor) -> tf.Tensor:
+                    return model(inputs, training=False)
+
+                export_archive.add_endpoint(
+                    name="serve",
+                    fn=serve_fn,
+                    input_signature=export_input_sig,
+                )
+                with io.StringIO() as _stdout_buf, io.StringIO() as _stderr_buf:
+                    with contextlib.redirect_stdout(_stdout_buf), contextlib.redirect_stderr(_stderr_buf):
+                        export_archive.write_out(saved_model_dir)
+
+                # Build representative dataset from in-memory features for INT8 calibration
+
+                def _representative_dataset():
+                    for i in range(min(len(repr_features), 100)):
+                        sample = repr_features[i].astype(np.float32)
+                        if sample.ndim == 1:
+                            sample = sample.reshape(num_input_frames, mel_bins)
+                        elif sample.ndim == 2:
+                            if sample.shape[1] != mel_bins:
+                                sample = sample[:, :mel_bins]
+                            if sample.shape[0] != num_input_frames:
+                                if sample.shape[0] > num_input_frames:
+                                    sample = sample[:num_input_frames, :]
+                                else:
+                                    pad = np.zeros((num_input_frames - sample.shape[0], sample.shape[1]), dtype=np.float32)
+                                    sample = np.concatenate([sample, pad], axis=0)
+                        sample = sample.reshape(1, num_input_frames, mel_bins)
+                        yield [sample]
+
+                # Convert SavedModel to INT8 TFLite
+                converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
+                converter.optimizations = [tf.lite.Optimize.DEFAULT]
+                converter.representative_dataset = _representative_dataset
+                converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+                converter.inference_input_type = tf.int8
+                converter.inference_output_type = tf.uint8
+                converter._experimental_variable_quantization = True
+                tflite_bytes = converter.convert()
 
                 # Save TFLite for inference
                 tflite_path = os.path.join(tmpdir, "model.tflite")
@@ -1717,9 +1874,9 @@ class AutoTuner:
 
             # Check pass/fail
             float_pass = metrics.meets_target(self.target_fah, self.target_recall)
-            int8_pass = True
-            if self.require_int8_pass and int8_metrics is not None:
-                int8_pass = int8_metrics.fah <= self.target_fah * 1.2 and int8_metrics.recall >= self.target_recall * 0.95
+            int8_pass = not self.require_int8_pass
+            if self.require_int8_pass:
+                int8_pass = int8_metrics is not None and int8_metrics.fah <= self.target_fah * 1.2 and int8_metrics.recall >= self.target_recall * 0.95
 
             passed = float_pass and int8_pass
 
@@ -1971,7 +2128,12 @@ class AutoTuner:
         from src.model.architecture import build_model
         from src.utils.performance import set_threading_config
 
-        set_threading_config(self.config)
+        hw = self.config.get("hardware", {})
+        set_threading_config(
+            inter_op_parallelism=hw.get("inter_op_parallelism", 16),
+            intra_op_parallelism=hw.get("intra_op_parallelism", 16),
+            num_threads=hw.get("num_threads_per_worker", None),
+        )
         wall_start = time.time()
 
         self._log_header()
@@ -1980,20 +2142,41 @@ class AutoTuner:
         self.file_logger.info("=" * 60)
 
         # 1. Build model and load base checkpoint
-        model = build_model(self.config)
+        model_cfg = self.config.get("model", {})
+        hardware_cfg = self.config.get("hardware", {})
+        clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
+        window_step_ms = hardware_cfg.get("window_step_ms", 10)
+        mel_bins = hardware_cfg.get("mel_bins", 40)
+        stride = model_cfg.get("stride", 3)
+        num_time_frames = int(clip_duration_ms / window_step_ms)
+        model = build_model(
+            input_shape=(num_time_frames, mel_bins),
+            num_classes=2,
+            first_conv_filters=model_cfg.get("first_conv_filters", 32),
+            first_conv_kernel_size=model_cfg.get("first_conv_kernel_size", 5),
+            stride=stride,
+            pointwise_filters=model_cfg.get("pointwise_filters", "64,64,64,64"),
+            mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"),
+            repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
+            residual_connection=model_cfg.get("residual_connection", "0,0,0,0"),
+            dropout_rate=model_cfg.get("dropout_rate", 0.0),
+            l2_regularization=model_cfg.get("l2_regularization", 0.0),
+        )
+        # Build model by running a forward pass before loading weights
+        model(tf.zeros((1, num_time_frames, mel_bins), dtype=tf.float32), training=False)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             model.load_weights(str(self.checkpoint_path))
         self.file_logger.info(f"Model loaded from {self.checkpoint_path}")
 
         # 2. Load and partition data
-        features, labels, weights, indices = self._load_evaluation_data()
+        features, labels, weights, indices, group_ids = self._load_evaluation_data()
         ambient_hours = self.config.get("training", {}).get("ambient_duration_hours", 42.02)
         # Scale ambient hours by validation split fraction
         val_split = self.config.get("training", {}).get("val_split", 0.1)
         ambient_hours_val = ambient_hours * val_split
 
-        partition = self._partition_data(features, labels, weights)
+        partition = self._partition_data(features, labels, weights, group_ids=group_ids)
         search_features, search_labels, search_weights, search_indices = partition["search"]
         cal_features, cal_labels = partition["cal"][0], partition["cal"][1]
         confirm_data = partition["confirm"]
@@ -2285,6 +2468,11 @@ class AutoTuner:
             self.best_checkpoint_path = self._save_checkpoint(model, best.eval_results, best.iteration)
 
         elapsed = time.time() - wall_start
+        if self.require_confirmation:
+            target_met = confirmed is not None and confirmed.eval_results is not None and confirmed.eval_results.meets_target(self.target_fah, self.target_recall)
+        else:
+            target_met = best is not None and best.eval_results is not None and best.eval_results.meets_target(self.target_fah, self.target_recall)
+
         result = {
             "best_fah": best.eval_results.fah if best and best.eval_results else float("inf"),
             "best_recall": best.eval_results.recall if best and best.eval_results else 0.0,
@@ -2292,7 +2480,7 @@ class AutoTuner:
             "final_recall": best.eval_results.recall if best and best.eval_results else 0.0,
             "iterations": last_iteration,
             "best_checkpoint": self.best_checkpoint_path or "",
-            "target_met": (best is not None and best.eval_results is not None and best.eval_results.meets_target(self.target_fah, self.target_recall)),
+            "target_met": target_met,
             "pareto_frontier": self.archive.get_frontier_points(),
             "elapsed_seconds": elapsed,
             "total_gradient_steps": self.total_gradient_steps,
