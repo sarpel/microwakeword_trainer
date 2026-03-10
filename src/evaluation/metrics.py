@@ -191,7 +191,11 @@ def compute_recall_at_target_fah(
     target_fah: float,
     n_thresholds: int = 101,
 ) -> tuple[float, float, float]:
-    """Compute recall at the highest threshold meeting target FAH."""
+    """Compute the best recall achievable while meeting target FAH.
+
+    This selects the operating point with maximum recall among all thresholds
+    satisfying ``fah <= target_fah``.
+    """
     thresholds = np.linspace(0, 1, n_thresholds)
     neg_mask = y_true == 0
     pos_mask = y_true == 1
@@ -206,9 +210,17 @@ def compute_recall_at_target_fah(
         if fah <= target_fah:
             tp = np.sum(y_scores[pos_mask] >= thresh)
             recall = tp / pos_total if pos_total > 0 else 0.0
-            best_threshold = float(thresh)
-            best_recall = float(recall)
-            best_fah = float(fah)
+            recall_f = float(recall)
+            fah_f = float(fah)
+            thresh_f = float(thresh)
+
+            if recall_f > best_recall:
+                best_threshold = thresh_f
+                best_recall = recall_f
+                best_fah = fah_f
+            elif np.isclose(recall_f, best_recall) and fah_f < best_fah:
+                best_threshold = thresh_f
+                best_fah = fah_f
 
     return float(best_recall), float(best_threshold), float(best_fah)
 
