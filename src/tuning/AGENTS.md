@@ -121,17 +121,21 @@ autotune(checkpoint_path, config, output_dir, target_fah,
 - **INT8 export**: ExportArchive → SavedModel → TFLiteConverter with uint8 output
 
 ### Critical Bug Fix: Weight Serialization (2026-03-10)
-**Issue**: `_serialize_weights()` originally used `model.trainable_weights` which does NOT include non-trainable state variables (streaming ring buffers). This caused models to appear excellent during tuning (FAH=0.00) but fail catastrophically during confirmation (FAH=129+) because the streaming state was lost.
+**Issue**: `_serialize_weights()` originally used `model.trainable_weights` which does NOT include non-trainable variables like BatchNorm moving statistics (moving_mean, moving_variance). This caused models to appear excellent during tuning (FAH=0.00) but fail catastrophically during confirmation (FAH=129+) because BatchNorm running statistics were lost.
 
-**Root Cause**: MixedNet models have 6 ring buffer state variables for streaming inference. These are non-trainable but critical for correct behavior.
+**Root Cause**: The tuning model runs in NON_STREAM mode (no streaming state variables exist). However, BatchNorm layers have 4 variables: gamma, beta (trainable) + moving_mean, moving_variance (non-trainable). The non-trainable BN state was excluded by `model.trainable_weights`, causing feature normalization to use uninitialized defaults during confirmation.
 
-**Fix**: Changed to `model.variables` which includes BOTH trainable and non-trainable weights:
+**Fix**: Changed to `model.get_weights()` / `model.set_weights()` which includes ALL weights in layer creation order:
 ```python
-# WRONG - only saves trainable weights
+# WRONG - only saves trainable weights (missing BN moving stats)
 weights = [w.numpy() for w in model.trainable_weights]
 
-# CORRECT - saves all weights including state
+# ALSO WRONG - alphabetical ordering doesn't match get_weights()
 weights = [w.numpy() for w in model.variables]
+
+# CORRECT - saves all weights in layer creation order
+weights = model.get_weights()  # serialize
+model.set_weights(weights)      # deserialize
 ```
 
 ## ANTI-PATTERNS (THIS MODULE)
@@ -143,35 +147,10 @@ weights = [w.numpy() for w in model.variables]
 - **⛔ Don't use int8 output dtype** — ESPHome requires uint8 (applies to INT8 shadow eval)
 - **⛔ Don't ignore user-defined hard negatives** — Always use `users_hard_negs_dir` if provided
 - **⛔ Don't set aggressive targets** — Realistic: FAH < 0.5, recall > 0.90
-- **Weight format**: `.weights.h5` via `model.save_weights()` / `model.load_weights()`
-- **BN freezing**: Set `trainable=False` on BatchNormalization layers
-- **Loss**: BinaryCrossentropy(from_logits=False, label_smoothing=...)
-- **Optimizer**: Adam with `optimizer.learning_rate.assign(lr)` for LR changes
-- **Labels**: 0=negative, 1=positive, 2=hard_negative
-- **FAH**: false_positives / ambient_duration_hours
-- **INT8 export**: ExportArchive → SavedModel → TFLiteConverter with uint8 output
-- **Weight format**: `.weights.h5` via `model.save_weights()` / `model.load_weights()`
-- **BN freezing**: Set `trainable=False` on BatchNormalization layers
-- **Loss**: BinaryCrossentropy(from_logits=False, label_smoothing=...)
-- **Optimizer**: Adam with `optimizer.learning_rate.assign(lr)` for LR changes
-- **Labels**: 0=negative, 1=positive, 2=hard_negative
-- **FAH**: false_positives / ambient_duration_hours
-- **INT8 export**: ExportArchive → SavedModel → TFLiteConverter with uint8 output
-
-## ANTI-PATTERNS (THIS MODULE)
-
-- **⛔ Don't perform full retraining** — Auto-tuning uses surgical gradient bursts (20-200 steps), NOT full epochs
-- **⛔ Don't destroy optimizer state** — Use `optimizer.learning_rate.assign()`, don't recreate optimizer
-- **⛔ Don't skip threshold optimization** — Always run 3-pass threshold search after weight changes
-- **⛔ Don't ignore Pareto archive** — Accept candidates only if Pareto-improving or annealing accepts
-- **⛔ Don't use int8 output dtype** — ESPHome requires uint8 (applies to INT8 shadow eval)
-- **⛔ Don't ignore user-defined hard negatives** — Always use `users_hard_negs_dir` if provided
-- **⛔ Don't set aggressive targets** — Realistic: FAH < 0.5, recall > 0.90
 - **⛔ Don't skip confirmation phase** — Final validation on held-out data prevents overfitting
 - **⛔ Don't mix TF and PyTorch** — This module is TensorFlow only
-- **⛔ Don't use `trainable_weights` for serialization** — Use `model.variables` to include streaming state buffers. See Critical Bug Fix section above.
-- **⛔ Don't skip confirmation phase** — Final validation on held-out data prevents overfitting
-- **⛔ Don't mix TF and PyTorch** — This module is TensorFlow only
+- **⛔ Don't use `trainable_weights` for serialization** — Use `model.get_weights()`/`model.set_weights()` to include BatchNorm moving statistics. See Critical Bug Fix section above.
+- **⛔ Don't use `model.variables` for serialization** — Variables are in alphabetical order, not layer creation order. Causes weight misassignment when paired with `model.set_weights()`.
 
 ## CLI USAGE
 ```bash
