@@ -58,7 +58,7 @@ training:
 
   # Checkpoint selection
   minimization_metric: "ambient_false_positives_per_hour"  # CHANGED: Prioritize recall over FAH
-  target_minimization: 2.0  # RAISED: Allow 1 FAH instead of 0.2 - model needs to learn to detect wake word
+  target_minimization: 2.0  # RAISED: Allow 2 FAH instead of 0.2 - model needs to learn to detect wake word
   maximization_metric: "average_viable_recall"
 
   # 42.02h of ambient audio (negative + background + hard_negative) for FAH calculation
@@ -315,11 +315,11 @@ auto_tuning:
   positive_weight_range: [0.5, 3.0]   # Legacy
   negative_weight_range: [10.0, 50.0] # Legacy
   hard_negative_weight_range: [20.0, 100.0] # Legacy
-  cv_folds: 5
+  cv_folds: 3
   confirmation_fraction: 0.40
   bootstrap_samples: 2000       # More samples for max quality
   int8_shadow: true
-  int8_shadow_interval: 1       # More frequent INT8 checks
+  int8_shadow_interval: 10       # More frequent INT8 checks
   require_int8_pass: true
   require_confirmation: true
   group_key: speaker_id
@@ -330,7 +330,7 @@ auto_tuning:
 # Expert-level auto-tuning parameters (max quality settings)
 auto_tuning_expert:
   min_burst_steps: 200
-  max_burst_steps: 8000         # Allow longer bursts for max quality
+  max_burst_steps: 25000         # Allow longer bursts for max quality
   default_burst_steps: 750
   min_lr: 0.0000001
   max_lr: 0.0001

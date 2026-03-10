@@ -60,6 +60,12 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 - **⛔ Don't use int8 output dtype** - ESPHome requires uint8; model silently broken
 - **⛔ Don't use `model.export()`** - Fails with ring buffer states; use `tf.keras.export.ExportArchive`
 - **⛔ Don't modify immutable constants** - No exceptions, no "quick tweaks"
+- **⛔ Don't use `model.trainable_weights` for serialization** - Excludes 6 streaming state buffers (non-trainable). Use `model.variables` for full state. See `src/tuning/AGENTS.md` for details.
+
+- **⛔ Don't contradict ARCHITECTURAL_CONSTITUTION.md** - Silent device failure
+- **⛔ Don't use int8 output dtype** - ESPHome requires uint8; model silently broken
+- **⛔ Don't use `model.export()`** - Fails with ring buffer states; use `tf.keras.export.ExportArchive`
+- **⛔ Don't modify immutable constants** - No exceptions, no "quick tweaks"
 
 ### Environment & Dependencies
 - **⛔ Don't install nvidia-driver inside WSL** - Install on Windows host only
@@ -129,8 +135,17 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 ### Recent Enhancements
 - **User-defined hard negatives in AutoTuner** (commit 2fa00e22e): `--users-hard-negs` CLI flag, `users_hard_negs_dir` parameter
 - **Configuration validation enhancements** (commit f62bb69a3): Improved validation in config/loader.py, better error messages
+- **Critical Bug Fix** (2026-03-10): Auto-tuner `_serialize_weights()` now uses `model.variables` instead of `model.trainable_weights` to include streaming state buffers. Prevents confirmation failures (FAH 0→129).
+- **User-defined hard negatives in AutoTuner** (commit 2fa00e22e): `--users-hard-negs` CLI flag, `users_hard_negs_dir` parameter
+- **Configuration validation enhancements** (commit f62bb69a3): Improved validation in config/loader.py, better error messages
 
 ### Gotchas
+- **CuPy no CPU fallback**: Must have GPU for training (SpecAugment)
+- **uint8 output mandatory**: ESPHome rejects int8 outputs
+- **ExportArchive required**: `model.export()` fails with streaming state variables
+- **Streaming state variables**: 6 ring buffer variables are NON-TRAINABLE. Critical for serialization - use `model.variables`, not `model.trainable_weights`
+- **10-second edit rule**: Re-read files before editing (user edits in background)
+- **Immutable constants**: Never override ARCHITECTURAL_CONSTITUTION.md values
 - **CuPy no CPU fallback**: Must have GPU for training (SpecAugment)
 - **uint8 output mandatory**: ESPHome rejects int8 outputs
 - **ExportArchive required**: `model.export()` fails with streaming state variables

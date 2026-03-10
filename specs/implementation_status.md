@@ -76,7 +76,37 @@ microwakeword_trainer is a **production-ready** GPU-accelerated wake word traini
 - Improved performance configuration for faster training
 - Cleaner, more maintainable codebase
 - Reduced code complexity in logging and export modules
+BR|
+SS|**Status**: ✅ Complete, tested, documented
+JQ|
+XX|---
+YX|
+ZW|#### Critical Bug Fix: Auto-Tuner Weight Serialization (2026-03-10)
 
+MN|**Problem:**
+- `_serialize_weights()` used `model.trainable_weights` which excludes non-trainable streaming state variables
+- This caused models to show excellent metrics during tuning (FAH=0.00) but fail catastrophically during confirmation (FAH=129+)
+- All candidates appeared to fail confirmation because streaming ring buffer state was lost
+
+HT|**Fix:**
+- Changed `_serialize_weights()` to use `model.variables` (includes both trainable and non-trainable weights)
+- Updated `_deserialize_weights()` to restore to `model.variables`
+- This preserves the 6 streaming ring buffer state variables critical for correct inference
+
+HT|**Files Modified:**
+- `src/tuning/autotuner.py`: 4 lines modified in `_serialize_weights()` and `_deserialize_weights()`
+
+SB|**Impact:**
+- Auto-tuning confirmation now works correctly
+- Tuning metrics match confirmation metrics
+- No more silent failures where models appear perfect but fail validation
+- Critical fix for production auto-tuning workflows
+
+SS|**Status**: ✅ Complete, tested, documented in TROUBLESHOOTING.md and AGENTS.md
+JQ|
+XX|---
+YX|
+ZW|## Module-by-Module Implementation Details
 **Status**: ✅ Complete, tested, documented
 
 ---

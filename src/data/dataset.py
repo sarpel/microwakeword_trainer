@@ -70,7 +70,7 @@ class RaggedMmap:
             base_dir: Base directory for storage files
             name: Name for this storage
             dtype: NumPy data type for arrays
-            create: If True, create directory if it doesn't exist
+            create: If True, create directory if it does not exist
         """
         self.base_dir = Path(base_dir)
         self.name = name
@@ -300,8 +300,8 @@ class RaggedMmap:
     def create_from_arrays(
         arrays: List[np.ndarray],
         base_dir: Union[str, Path],
-        name: str = "ragged",
-        dtype: Optional["np.dtype[Any]"] = None,
+        name: str = 'ragged',
+        dtype: Optional[np.dtype] = None,
     ) -> "RaggedMmap":
         """Create RaggedMmap from list of arrays.
 
@@ -865,6 +865,7 @@ class WakeWordDataset:
         Returns:
             Ordered list of file path strings, or None if not available.
         """
+        split_name = self._normalize_split_name(split_name)
         paths_file = Path(self.data_path) / split_name / "file_paths.json"
         if not paths_file.exists():
             logger.warning(f"File paths not found: {paths_file}. Rebuild dataset to enable file path tracking.")
@@ -1207,7 +1208,7 @@ def ensure_processed_directory(
 
     Args:
         base_dir: Base directory for processed data
-        create: If True, create directories that don't exist
+        create: If True, create directories that do not exist
 
     Returns:
         Dictionary mapping directory names to paths

@@ -85,11 +85,11 @@ def test_compute_fah_at_target_recall_prefers_lower_fah():
     # Should pick highest threshold (0.9) where recall still meets target
     # and FAH is as low as possible
     assert recall >= 0.5, f"Recall should meet target, got {recall}"
-    assert fah < float('inf'), f"FAH should be finite, got {fah}"
+    assert fah < float("inf"), f"FAH should be finite, got {fah}"
 
 
-def test_compute_fah_at_target_recall_no_feasible_threshold():
-    """When no threshold meets target recall, return defaults."""
+def test_compute_fah_at_target_recall_with_feasible_threshold():
+    """When a feasible threshold exists that meets target recall, return it."""
     y_true = np.array([1, 0, 0, 0], dtype=np.int32)
     y_scores = np.array([0.1, 0.9, 0.8, 0.7], dtype=np.float32)
 
@@ -97,12 +97,11 @@ def test_compute_fah_at_target_recall_no_feasible_threshold():
         y_true=y_true,
         y_scores=y_scores,
         ambient_duration_hours=1.0,
-        target_recall=0.99,  # Can't achieve — only 1 positive at very low score
+        target_recall=0.99,  # Feasible — threshold=0.0 gives recall=1.0
         n_thresholds=11,
     )
 
     # At threshold=0.0: recall=1.0 (≥0.99), FAH=3.0 — this IS feasible
-    # At threshold=0.1: recall=1.0 (0.1≥0.1), FAH=3.0
-    # At threshold=0.2: recall=0.0 — not feasible
-    # Should find a feasible point (low threshold, high FAH)
-    assert recall >= 0.99 or recall == 0.0, f"Should either meet target or return default, got {recall}"
+    # Should find a feasible point
+    assert recall >= 0.99, f"Should meet target recall, got {recall}"
+    assert threshold is not None, "Should return a valid threshold"

@@ -690,7 +690,7 @@ def ensure_data_directory(base_dir: Union[str, Path], create: bool = True) -> di
 
     Args:
         base_dir: Base directory for data
-        create: If True, create directories that don't exist
+        create: If True, create directories that do not exist
 
     Returns:
         Dictionary mapping directory names to paths

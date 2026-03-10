@@ -893,16 +893,16 @@ mww-autotune --checkpoint checkpoints/best_weights.weights.h5
 
 # Custom targets
 mww-autotune \
-    --checkpoint checkpoints/best_weights.weights.h5 \
-    --config standard \
+    --checkpoint models/checkpoints/best_weights.weights.h5  \
+    --config max_quality \
     --target-fah 0.2 \
     --target-recall 0.95
 
 # With more iterations
 mww-autotune \
-    --checkpoint checkpoints/best_weights.weights.h5 \
-    --config standard \
-    --max-iterations 50 \
+    --checkpoint models/checkpoints/best_weights.weights.h5  \
+    --config max_quality \
+    --max-iterations 20 \
     --output-dir ./tuning_results
 ```
 
