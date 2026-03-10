@@ -426,10 +426,9 @@ class Trainer:
         ema_decay = training_cfg.get("ema_decay")
         if ema_decay is not None:
             self.logger.log_info(f"EMA configured with decay={ema_decay} (will be applied during optimizer creation)")
-        self._ema_enabled = True
-
-        if ema_decay is None:
-            self._ema_enabled = False
+        self._ema_enabled = False
+        if ema_decay is not None:
+            self._ema_enabled = True
 
         # Pre-compute phase boundaries for fast lookup
         self._phase_boundaries: list[int] = []
@@ -744,7 +743,7 @@ class Trainer:
         the un-smoothed weights. Gradients should be applied to raw weights,
         not EMA weights.
         """
-        if not self._ema_enabled or not hasattr(self, '_saved_training_weights'):
+        if not self._ema_enabled or not hasattr(self, "_saved_training_weights"):
             return
         for var, saved in zip(self.model.trainable_variables, self._saved_training_weights):
             var.assign(saved)

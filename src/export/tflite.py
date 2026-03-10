@@ -10,6 +10,7 @@ os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Generator, Optional
 
@@ -18,6 +19,31 @@ import numpy as np
 import tensorflow as tf
 
 from src.export.verification import verify_tflite_model
+
+
+@contextmanager
+def _suppress_tf_flatbuffer_warnings():
+    """Suppress TensorFlow C++ warnings about ignored flatbuffer options.
+
+    tf_tfl_flatbuffer_helpers.cc logs warnings about 'output_format'
+    and 'drop_control_dependency' being ignored. These are harmless
+    internal messages that clutter the export logs.
+
+    These warnings originate from TF's C++ runtime and are written
+    directly to file descriptor 2 (stderr), so Python-level warning
+    filters cannot catch them. We redirect the OS-level fd instead.
+    """
+    stderr_fd = sys.stderr.fileno()
+    saved_fd = os.dup(stderr_fd)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, stderr_fd)
+        yield
+    finally:
+        os.dup2(saved_fd, stderr_fd)
+        os.close(saved_fd)
+        os.close(devnull)
+
 
 # =============================================================================
 # KERAS 3 CHECKPOINT LOADER
@@ -235,6 +261,25 @@ class StreamingExportModel(tf.keras.Model):
         # For non-strided conv (stride = 1): buffer = kernel_size - 1
 
         state_configs = [
+            # stream_0: initial conv ring buffer (was 'stream' for alphabetical ordering)
+            # kernel=5, stride=3 -> 5-3=2 frames
+            ("stream_0", (1, self.first_conv_kernel - self.stride, 1, self.mel_bins)),
+            # stream_1: after initial conv, before block 0
+            # max_kernel=5, stride=1 -> 5-1=4 frames, filters=32
+            ("stream_1", (1, max(self.mixconv_kernel_sizes[0]) - 1, 1, self.first_conv_filters)),
+            # stream_2: after block 0, before block 1
+            # max_kernel=11, stride=1 -> 11-1=10 frames, filters=64
+            ("stream_2", (1, max(self.mixconv_kernel_sizes[1]) - 1, 1, self.pointwise_filters[0])),
+            # stream_3: after block 1, before block 2
+            # max_kernel=15, stride=1 -> 15-1=14 frames, filters=64
+            ("stream_3", (1, max(self.mixconv_kernel_sizes[2]) - 1, 1, self.pointwise_filters[1])),
+            # stream_4: after block 2, before block 3
+            # max_kernel=23, stride=1 -> 23-1=22 frames, filters=64
+            ("stream_4", (1, max(self.mixconv_kernel_sizes[3]) - 1, 1, self.pointwise_filters[2])),
+            # stream_5: temporal pooling
+            # Fixed at 5 frames, filters=64
+            ("stream_5", (1, 5, 1, self.pointwise_filters[3])),
+        ]
             # stream: initial conv ring buffer
             # kernel=5, stride=3 -> 5-3=2 frames
             ("stream", (1, self.first_conv_kernel - self.stride, 1, self.mel_bins)),
@@ -631,7 +676,8 @@ def export_streaming_tflite(
         else:
             converter.experimental_enable_resource_variables = True
 
-        tflite_model = converter.convert()
+        with _suppress_tf_flatbuffer_warnings():
+            tflite_model = converter.convert()
     finally:
         shutil.rmtree(saved_model_dir, ignore_errors=True)
 
@@ -823,7 +869,8 @@ def convert_to_tflite(
         converter.inference_input_type = tf.int8
         converter.inference_output_type = tf.uint8
 
-    tflite_model = converter.convert()
+    with _suppress_tf_flatbuffer_warnings():
+        tflite_model = converter.convert()
 
     dirpath = os.path.dirname(output_path) or "."
     os.makedirs(dirpath, exist_ok=True)

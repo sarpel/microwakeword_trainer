@@ -5,7 +5,7 @@ using surgical gradient bursts, 7 strategy arms with Thompson sampling,
 3-pass threshold optimization, temperature scaling, simulated annealing
 acceptance, Pareto archive, INT8 shadow evaluation, and confirmation phase.
 
-Quality over speed. Time budget doesn't matter — only final model quality.
+Quality over speed. Time budget does not matter — only final model quality.
 """
 
 from __future__ import annotations
@@ -279,21 +279,36 @@ class ParetoArchive:
         if n <= 2:
             return np.full(n, float("inf"))
 
-        objectives = np.array([[-a.eval_results.fah, a.eval_results.recall, a.eval_results.auc_pr] for a in archive if a.eval_results is not None])
+        # Track valid indices (entries with eval_results)
+        valid_indices = [i for i, a in enumerate(archive) if a.eval_results is not None]
+        m = len(valid_indices)
+
+        if m <= 2:
+            # Not enough valid entries for crowding distance
+            distances = np.zeros(n)
+            for i in valid_indices:
+                distances[i] = float("inf")
+            return distances
+
+        objectives = np.array([[-archive[i].eval_results.fah, archive[i].eval_results.recall, archive[i].eval_results.auc_pr] for i in valid_indices])
         distances = np.zeros(n)
 
         for obj_idx in range(objectives.shape[1]):
             sorted_indices = np.argsort(objectives[:, obj_idx])
-            distances[sorted_indices[0]] = float("inf")
-            distances[sorted_indices[-1]] = float("inf")
+            # Map back to original archive indices
+            sorted_orig = [valid_indices[i] for i in sorted_indices]
+
+            distances[sorted_orig[0]] = float("inf")
+            distances[sorted_orig[-1]] = float("inf")
 
             obj_range = objectives[sorted_indices[-1], obj_idx] - objectives[sorted_indices[0], obj_idx]
             if obj_range < 1e-12:
                 continue
 
-            for i in range(1, n - 1):
-                distances[sorted_indices[i]] += (objectives[sorted_indices[i + 1], obj_idx] - objectives[sorted_indices[i - 1], obj_idx]) / obj_range
-
+            for i in range(1, m - 1):
+                # Map index to original archive position
+                orig_idx = valid_indices[sorted_indices[i]]
+                distances[orig_idx] += (objectives[sorted_indices[i + 1], obj_idx] - objectives[sorted_indices[i - 1], obj_idx]) / obj_range
         return distances
 
     def get_best(self, target_fah: float, target_recall: float) -> Optional[CandidateState]:
@@ -912,6 +927,7 @@ class ThresholdOptimizer:
             auc_pr = float(average_precision_score(labels, y_scores))
         except (ValueError, TypeError) as e:
             import logging
+
             logging.getLogger(__name__).warning("AUC computation failed: %s", e)
             auc_roc = 0.0
             auc_pr = 0.0
@@ -1271,6 +1287,23 @@ class AutoTuner:
         n_confirm = max(1, int(n * self.confirmation_fraction))
         n_search = n - n_cal - n_repr - n_confirm
 
+        # Guard against negative or zero search partition for small datasets
+        if n_search < 1:
+            # Adjust allocations deterministically: reduce confirmation first
+            while n_search < 1 and n_confirm > 1:
+                n_confirm -= 1
+                n_search = n - n_cal - n_repr - n_confirm
+            # Then reduce representative
+            while n_search < 1 and n_repr > 1:
+                n_repr -= 1
+                n_search = n - n_cal - n_repr - n_confirm
+            # Finally reduce calibration
+            while n_search < 1 and n_cal > 1:
+                n_cal -= 1
+                n_search = n - n_cal - n_repr - n_confirm
+            if n_search < 1:
+                raise ValueError(f"Dataset too small to partition: n={n}, need at least 4 samples for all partitions")
+
         seed = int(self.config.get("training", {}).get("split_seed", 42))
         rng = np.random.RandomState(seed)
 
@@ -1373,13 +1406,24 @@ class AutoTuner:
     # ------------------------------------------------------------------
 
     def _serialize_weights(self, model) -> bytes:
-        weights = [w.numpy() for w in model.trainable_weights]
+        """Serialize all model weights including non-trainable state variables."""
+        # Use model.variables to include both trainable and non-trainable weights
+        # (e.g., streaming ring buffer state variables)
+        weights = [w.numpy() for w in model.variables]
         return pickle.dumps(weights)
 
     def _deserialize_weights(self, model, weights_bytes: bytes):
+        """Restore all model weights including non-trainable state variables."""
         weights = pickle.loads(weights_bytes)
-        for w, val in zip(model.trainable_weights, weights):
-            w.assign(val)
+        # Handle both old checkpoints (trainable_weights only) and new (all variables)
+        if len(weights) == len(list(model.variables)):
+            # New format: restore all variables including state buffers
+            for w, val in zip(model.variables, weights):
+                w.assign(val)
+        else:
+            # Old format: restore only trainable weights (state will be reset)
+            for w, val in zip(model.trainable_weights, weights):
+                w.assign(val)
 
     def _serialize_optimizer_state(self, optimizer) -> bytes:
         try:

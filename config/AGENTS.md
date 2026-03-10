@@ -14,8 +14,8 @@ config/
 └── __init__.py
 ```
 
+
 ## ConfigLoader (`loader.py`)
-Heavyweight config system supporting:
 Heavyweight config system supporting:
 - **Dataclass validation**: 14 config sections + FullConfig container
 - **Preset loading**: Load base config from `presets/`

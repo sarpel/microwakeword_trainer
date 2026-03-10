@@ -1236,7 +1236,7 @@ def load_prediction_log(log_path: Path) -> dict[str, Any]:
         Dictionary containing the log data.
 
     Raises:
-        FileNotFoundError: If log file doesn't exist.
+        FileNotFoundError: If log file does not exist.
         json.JSONDecodeError: If log file is invalid JSON.
     """
     if not log_path.exists():
@@ -1294,8 +1294,9 @@ def collect_false_predictions(
         top_predictions = sorted_preds[:top_k]
 
         for pred in top_predictions:
-            pred["epoch"] = epoch_num
-            all_predictions.append(pred)
+            new_pred = dict(pred)
+            new_pred["epoch"] = epoch_num
+            all_predictions.append(new_pred)
 
     return all_predictions
 
@@ -1349,7 +1350,7 @@ def copy_files_to_mined_dir(
     Args:
         predictions: List of prediction entries with file_path.
         output_dir: Destination directory.
-        dry_run: If True, don't actually copy files.
+        dry_run: If True, do not actually copy files.
 
     Returns:
         Tuple of (copied_count, skipped_count).
@@ -1749,15 +1750,15 @@ Examples:
             )
         else:
             if args.dry_run:
-                logger.info("DRY RUN — will scan and report but not write log file")
-
-            result = run_top_fp_extraction(
-                config,
-                checkpoint_path=args.checkpoint,
-                top_percent_override=args.top_percent,
-                threshold_override=args.threshold,
-                log_file_override=args.log_file,
-            )
+                logger.info("DRY RUN — skipping extraction (would scan and report)")
+            else:
+                result = run_top_fp_extraction(
+                    config,
+                    checkpoint_path=args.checkpoint,
+                    top_percent_override=args.top_percent,
+                    threshold_override=args.threshold,
+                    log_file_override=args.log_file,
+                )
 
             if args.dry_run:
                 print("\nDRY RUN Results:")

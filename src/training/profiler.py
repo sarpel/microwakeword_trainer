@@ -28,7 +28,7 @@ class TrainingProfiler:
         """Initialize the profiler.
 
         Args:
-            output_dir: Directory to save profile files. Created if it doesn't exist.
+            output_dir: Directory to save profile files. Created if it does not exist.
         """
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)

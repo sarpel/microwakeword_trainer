@@ -33,7 +33,7 @@ def _compute_mcc(tp: int, fp: int, tn: int, fn: int) -> float:
 
 
 def _compute_cohens_kappa(tp: int, fp: int, tn: int, fn: int, total: int) -> float:
-    """Compute Cohen's Kappa."""
+    """Compute Cohen Kappa score."""
     accuracy = (tp + tn) / total if total > 0 else 0.0
     p_pos = (tp + fp) / total if total > 0 else 0.0
     p_neg = (fn + tn) / total if total > 0 else 0.0
