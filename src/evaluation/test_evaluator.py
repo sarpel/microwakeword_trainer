@@ -77,8 +77,8 @@ class TestEvaluator:
         self.processed_dir = paths_config.get("processed_dir", "./data/processed")
         evaluation_config = config.get("evaluation", {})
         self.test_split = training_config.get("test_split", 0.1)
-        self.ambient_duration_hours = training_config.get("ambient_duration_hours", 10.0)
-        self.default_threshold = float(evaluation_config.get("default_threshold", 0.5) or 0.5)
+        self.ambient_duration_hours = training_config.get("ambient_duration_hours", 42.02)
+        self.default_threshold = float(evaluation_config.get("default_threshold", 0.97) or 0.97)
         self.n_thresholds = int(evaluation_config.get("n_thresholds", 101) or 101)
 
     def evaluate(self, test_data_factory: Callable, test_feature_store_path: str | None = None) -> dict[str, Any] | None:

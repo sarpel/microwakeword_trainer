@@ -60,7 +60,7 @@ class OptimizedDataPipeline:
         """
         self.dataset = dataset
         self.config = config
-        self.batch_size = batch_size or config.get("training", {}).get("batch_size", 128)
+        self.batch_size = batch_size or config.get("training", {}).get("batch_size", 384)
         self.max_time_frames = max_time_frames or self._calculate_max_frames()
         self.spec_augment_config = spec_augment_config or {}
 
@@ -77,7 +77,7 @@ class OptimizedDataPipeline:
 
         # Performance settings
         self.autotune = tf.data.AUTOTUNE
-        self.prefetch_buffer = config.get("performance", {}).get("prefetch_buffer", 2)
+        self.prefetch_buffer = config.get("performance", {}).get("prefetch_buffer", 8)
         self.cache_dir = config.get("performance", {}).get("tfdata_cache_dir")
         self.prefetch_to_device = config.get("performance", {}).get("tfdata_prefetch_to_device", True)
         self.prefetch_device = config.get("performance", {}).get("tfdata_prefetch_device", "/GPU:0")
@@ -233,9 +233,9 @@ class OptimizedDataPipeline:
                 fmask_cnt = tf.constant(freq_mask_count, dtype=tf.int32)
 
                 training_cfg = self.config.get("training", {})
-                pos_w = tf.constant(training_cfg.get("positive_class_weight", [1.0]), dtype=tf.float32)
-                neg_w = tf.constant(training_cfg.get("negative_class_weight", [20.0]), dtype=tf.float32)
-                hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [40.0]), dtype=tf.float32)
+                pos_w = tf.constant(training_cfg.get("positive_class_weight", [5.0, 7.0, 9.0]), dtype=tf.float32)
+                neg_w = tf.constant(training_cfg.get("negative_class_weight", [1.5, 1.5, 1.5]), dtype=tf.float32)
+                hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [3.0, 5.0, 7.0]), dtype=tf.float32)
 
                 counter = tf.data.Dataset.counter()
                 ds = tf.data.Dataset.zip((counter, ds))
@@ -280,9 +280,9 @@ class OptimizedDataPipeline:
         else:
             # No SpecAugment: still apply class weights as first-class input
             training_cfg = self.config.get("training", {})
-            pos_w = tf.constant(training_cfg.get("positive_class_weight", [1.0]), dtype=tf.float32)
-            neg_w = tf.constant(training_cfg.get("negative_class_weight", [20.0]), dtype=tf.float32)
-            hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [40.0]), dtype=tf.float32)
+            pos_w = tf.constant(training_cfg.get("positive_class_weight", [5.0, 7.0, 9.0]), dtype=tf.float32)
+            neg_w = tf.constant(training_cfg.get("negative_class_weight", [1.5, 1.5, 1.5]), dtype=tf.float32)
+            hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [3.0, 5.0, 7.0]), dtype=tf.float32)
             phase_boundaries = tf.constant(self.phase_boundaries, dtype=tf.int64)
 
             counter = tf.data.Dataset.counter()
@@ -581,7 +581,7 @@ def benchmark_pipeline(
             x = batch[0]
             y = batch[1]
         else:
-            logger.warning(f"Skipping invalid batch at index {_i}: expected tuple/list with " f"at least 2 elements (x, y), got {type(batch).__name__} " f"with shape={getattr(batch, 'shape', 'N/A')}")
+            logger.warning(f"Skipping invalid batch at index {_i}: expected tuple/list with at least 2 elements (x, y), got {type(batch).__name__} with shape={getattr(batch, 'shape', 'N/A')}")
             continue
         # Simulate training step
         _ = tf.reduce_sum(x) + tf.reduce_sum(y)

@@ -451,11 +451,13 @@ def create_representative_dataset(
     Returns:
         Generator function that yields samples
     """
-    stride = config.get("stride", 3)
-    mel_bins = config.get("mel_bins", 40)
+    stride = int(config.get("stride", 3))
+    mel_bins = int(config.get("mel_bins", 40))
     export_cfg = config.get("export", {})
-    if num_samples is None:
-        num_samples = export_cfg.get("representative_dataset_size", 500)
+    raw_num_samples = num_samples if num_samples is not None else export_cfg.get("representative_dataset_size", 1000)
+    if raw_num_samples is None:
+        raw_num_samples = 1000
+    num_samples = int(raw_num_samples)
 
     def representative_dataset_gen():
         rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
@@ -484,25 +486,27 @@ def create_representative_dataset_from_data(
     stride-sized chunks. This produces calibration data that matches the actual
     feature distribution, resulting in better INT8 quantization ranges.
 
-    Uses ~2000 samples by default — the sweet spot for INT8 calibration quality
+    Uses ~4000 samples by default — the sweet spot for INT8 calibration quality
     per TFLite best practices. With 150k+ files in the dataset, this is trivially
     achievable from real data alone.
 
     Args:
         config: Configuration dict with stride and mel_bins
         data_dir: Path to processed data directory (containing train/ subfolder)
-        num_samples: Number of calibration samples to generate (default 2000)
+        num_samples: Number of calibration samples to generate (default 4000)
 
     Returns:
         Generator function that yields samples
     """
     from src.data.dataset import FeatureStore
 
-    stride = config.get("stride", 3)
-    mel_bins = config.get("mel_bins", 40)
+    stride = int(config.get("stride", 3))
+    mel_bins = int(config.get("mel_bins", 40))
     export_cfg = config.get("export", {})
-    if num_samples is None:
-        num_samples = export_cfg.get("representative_dataset_real_size", 2000)
+    raw_num_samples = num_samples if num_samples is not None else export_cfg.get("representative_dataset_real_size", 4000)
+    if raw_num_samples is None:
+        raw_num_samples = 4000
+    num_samples = int(raw_num_samples)
     store_path = Path(data_dir) / "train"
 
     if not store_path.exists():
@@ -623,7 +627,7 @@ def export_streaming_tflite(
     print("\n[2/5] Loading checkpoint weights...")
     loaded = load_weights_from_keras3_checkpoint(model, checkpoint_path)
     if loaded < 29:
-        raise RuntimeError(f"Weight loading incomplete: expected at least 29 weights, got {loaded}. " f"Checkpoint may be corrupt or incompatible: {checkpoint_path}")
+        raise RuntimeError(f"Weight loading incomplete: expected at least 29 weights, got {loaded}. Checkpoint may be corrupt or incompatible: {checkpoint_path}")
 
     # Fold BN statistics into pointwise conv weights so that no Keras BN
     # variable reads appear in the TFLite export graph (Keras 3 wraps them in
@@ -825,7 +829,7 @@ def convert_model_saved(
     return streaming_model
 
 
-def export_to_tflite(
+def _legacy_export_to_tflite_stage1_stub(
     model: tf.keras.Model,
     config: dict,
     folder: str,

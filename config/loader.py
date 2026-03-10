@@ -45,42 +45,42 @@ class HardwareConfig:
 class PathsConfig:
     """Directory and file paths for data and outputs."""
 
-    positive_dir: str = "./data/raw/positive"
-    negative_dir: str = "./data/raw/negative"
-    hard_negative_dir: str = "./data/raw/hard_negative"
-    background_dir: str = "./data/raw/background"
-    rir_dir: str = "./data/raw/rirs"
-    processed_dir: str = "./data/processed"
-    checkpoint_dir: str = "./checkpoints"
-    export_dir: str = "./models/exported"
+    positive_dir: str = "${DATASET_DIR:-./dataset}/positive"
+    negative_dir: str = "${DATASET_DIR:-./dataset}/negative"
+    hard_negative_dir: str = "${DATASET_DIR:-./dataset}/hard_negative"
+    background_dir: str = "${DATASET_DIR:-./dataset}/background"
+    rir_dir: str = "${DATASET_DIR:-./dataset}/rirs"
+    processed_dir: str = "${DATA_DIR:-./data}/processed"
+    checkpoint_dir: str = "${CHECKPOINT_DIR:-./models/checkpoints}"
+    export_dir: str = "${MODEL_EXPORT_DIR:-./models/exported}"
 
 
 @dataclass
 class TrainingConfig:
     """Training parameters and schedule."""
 
-    training_steps: List[int] = field(default_factory=lambda: [20000, 10000])
-    learning_rates: List[float] = field(default_factory=lambda: [0.001, 0.0001])
-    batch_size: int = 128
+    training_steps: List[int] = field(default_factory=lambda: [40000, 25000, 15000])
+    learning_rates: List[float] = field(default_factory=lambda: [0.0017, 0.00035, 0.00009])
+    batch_size: int = 384
     eval_step_interval: int = 500
-    eval_basic_step_interval: int = 1000
+    eval_basic_step_interval: int = 500
     materialize_metrics_interval: int = 1000
-    eval_advanced_step_interval: int = 5000
+    eval_advanced_step_interval: int = 2000
     eval_confusion_matrix_interval: int = 5000
-    eval_checkpoints_interval: int = 5000
+    eval_checkpoints_interval: int = 1000
     eval_log_every_step: bool = True
     # Class weights
-    positive_class_weight: List[float] = field(default_factory=lambda: [1.0, 1.0])
-    negative_class_weight: List[float] = field(default_factory=lambda: [20.0, 20.0])
-    hard_negative_class_weight: List[float] = field(default_factory=lambda: [40.0, 40.0])  # Higher weight for false positives
+    positive_class_weight: List[float] = field(default_factory=lambda: [5.0, 7.0, 9.0])
+    negative_class_weight: List[float] = field(default_factory=lambda: [1.5, 1.5, 1.5])
+    hard_negative_class_weight: List[float] = field(default_factory=lambda: [3.0, 5.0, 7.0])
     # SpecAugment parameters
-    time_mask_max_size: List[int] = field(default_factory=lambda: [0, 0])
-    time_mask_count: List[int] = field(default_factory=lambda: [0, 0])
-    freq_mask_max_size: List[int] = field(default_factory=lambda: [0, 0])
-    freq_mask_count: List[int] = field(default_factory=lambda: [0, 0])
+    time_mask_max_size: List[int] = field(default_factory=lambda: [1, 2, 3])
+    time_mask_count: List[int] = field(default_factory=lambda: [1, 1, 1])
+    freq_mask_max_size: List[int] = field(default_factory=lambda: [1, 2, 3])
+    freq_mask_count: List[int] = field(default_factory=lambda: [1, 1, 1])
     # Checkpoint selection
     minimization_metric: str = "ambient_false_positives_per_hour"
-    target_minimization: float = 0.5
+    target_minimization: float = 2.0
     maximization_metric: str = "average_viable_recall"
     steps_per_epoch: int = 1000
     ambient_duration_hours: float = 42.02
@@ -89,13 +89,13 @@ class TrainingConfig:
     test_split: float = 0.1
     split_seed: int = 42
     strict_content_hash_leakage_check: bool = True
-    random_seed: Optional[int] = None
-    auto_tune_on_poor_fah: bool = False  # DEPRECATED: use auto_tuning.enabled instead
+    random_seed: Optional[int] = 42
+    auto_tune_on_poor_fah: bool = True  # DEPRECATED: use auto_tuning.enabled instead
     # Optimizer and loss parameters (NEW)
     optimizer: str = "adam"  # Optimizer type (currently only "adam" supported)
-    label_smoothing: float = 0.0  # Label smoothing for BinaryCrossentropy (0.0 = disabled)
-    gradient_clipnorm: Optional[float] = None  # Gradient clipping (None = disabled)
-    ema_decay: Optional[float] = None  # EMA decay rate (None = disabled) - REQUIRES IMPLEMENTATION
+    label_smoothing: float = 0.01  # Label smoothing for BinaryCrossentropy (0.0 = disabled)
+    gradient_clipnorm: Optional[float] = 2.0  # Gradient clipping (None = disabled)
+    ema_decay: Optional[float] = 0.99  # EMA decay rate (None = disabled) - REQUIRES IMPLEMENTATION
 
     def __post_init__(self) -> None:
         if self.batch_size <= 0:
@@ -117,9 +117,9 @@ class ModelConfig:
     pointwise_filters: str = "64,64,64,64"
     mixconv_kernel_sizes: str = "[5],[7,11],[9,15],[23]"
     repeat_in_block: str = "1,1,1,1"
-    residual_connection: str = "0,0,0,0"
-    dropout_rate: float = 0.0
-    l2_regularization: float = 0.0
+    residual_connection: str = "0,1,1,1"
+    dropout_rate: float = 0.08
+    l2_regularization: float = 0.00003
 
     def __post_init__(self) -> None:
         if self.architecture != "mixednet":
@@ -131,37 +131,37 @@ class AugmentationConfig:
     """Audio augmentation parameters."""
 
     # Time-domain augmentations — probabilities
-    SevenBandParametricEQ: float = 0.1
-    TanhDistortion: float = 0.1
-    PitchShift: float = 0.1
+    SevenBandParametricEQ: float = 0.20
+    TanhDistortion: float = 0.08
+    PitchShift: float = 0.10
     BandStopFilter: float = 0.1
-    AddColorNoise: float = 0.1
-    AddBackgroundNoiseFromFile: float = 0.75
+    AddColorNoise: float = 0.20
+    AddBackgroundNoiseFromFile: float = 0.30
     Gain: float = 1.0
-    ApplyImpulseResponse: float = 0.5
+    ApplyImpulseResponse: float = 0.30
     # Noise mixing parameters
     background_min_snr_db: float = -5.0
-    background_max_snr_db: float = 10.0
-    min_jitter_s: float = 0.195
-    max_jitter_s: float = 0.205
+    background_max_snr_db: float = 15.0
+    min_jitter_s: float = 0.15
+    max_jitter_s: float = 0.20
     # Augmentation magnitude ranges
     eq_min_gain_db: float = -6.0
     eq_max_gain_db: float = 6.0
-    distortion_min: float = 0.1
-    distortion_max: float = 0.5
-    pitch_shift_min_semitones: float = -2.0
-    pitch_shift_max_semitones: float = 2.0
-    band_stop_min_center_freq: float = 100.0
-    band_stop_max_center_freq: float = 5000.0
+    distortion_min: float = 0.05
+    distortion_max: float = 0.2
+    pitch_shift_min_semitones: float = -1.2
+    pitch_shift_max_semitones: float = 1.2
+    band_stop_min_center_freq: float = 125.0
+    band_stop_max_center_freq: float = 7500.0
     band_stop_min_bandwidth_fraction: float = 0.5
     band_stop_max_bandwidth_fraction: float = 1.99
-    gain_min_db: float = -3.0
-    gain_max_db: float = 3.0
-    color_noise_min_snr_db: float = 0.0
-    color_noise_max_snr_db: float = 10.0
+    gain_min_db: float = -5.0
+    gain_max_db: float = 5.0
+    color_noise_min_snr_db: float = -10.0
+    color_noise_max_snr_db: float = 20.0
     # Background sources
-    impulse_paths: List[str] = field(default_factory=lambda: ["mit_rirs"])
-    background_paths: List[str] = field(default_factory=lambda: ["fma_16k", "audioset_16k"])
+    impulse_paths: List[str] = field(default_factory=lambda: ["${DATASET_DIR:-./dataset}/rirs"])
+    background_paths: List[str] = field(default_factory=lambda: ["${DATASET_DIR:-./dataset}/background"])
     augmentation_duration_s: float = 3.2
 
 
@@ -169,28 +169,28 @@ class AugmentationConfig:
 class PerformanceConfig:
     """Performance and resource configuration."""
 
-    gpu_only: bool = False
+    gpu_only: bool = True
     spec_augment_backend: str = "tf"
-    async_mining: bool = False  # DEPRECATED: moved to MiningConfig (kept for backward compat)
+    async_mining: bool = True  # DEPRECATED: moved to MiningConfig (kept for backward compat)
     mixed_precision: bool = True
-    num_workers: int = 16
+    num_workers: int = 8
     num_threads_per_worker: int = 2
-    prefetch_factor: int = 8
+    prefetch_factor: int = 12
     pin_memory: bool = True
-    max_memory_gb: int = 60
+    max_memory_gb: int = 40
     inter_op_parallelism: int = 16
     intra_op_parallelism: int = 16
     # Profiling
-    enable_profiling: bool = True
-    profile_every_n_steps: int = 100
+    enable_profiling: bool = False
+    profile_every_n_steps: int = 1000
     profile_output_dir: str = "./profiles"
     tf_profile_start_step: int = 0  # Step to start TF Profiler GPU trace (0 = disabled)
-    gpu_memory_log_interval: int = 0  # Log GPU memory every N steps (0 = disabled)
+    gpu_memory_log_interval: int = 1000  # Log GPU memory every N steps (0 = disabled)
     # TensorBoard
     tensorboard_enabled: bool = True
     tensorboard_log_dir: str = "./logs"
-    tensorboard_log_histograms: bool = True
-    tensorboard_log_images: bool = True
+    tensorboard_log_histograms: bool = False
+    tensorboard_log_images: bool = False
     tensorboard_log_pr_curves: bool = True
     tensorboard_log_graph: bool = True
     tensorboard_log_advanced_scalars: bool = True
@@ -198,14 +198,14 @@ class PerformanceConfig:
     tensorboard_image_interval: int = 5000
     tensorboard_histogram_interval: int = 5000
     # Data pipeline (NEW)
-    prefetch_buffer: int = 2  # Buffer size for tf.data pipeline
+    prefetch_buffer: int = 8  # Buffer size for tf.data pipeline
     use_tfdata: bool = True  # Use tf.data pipeline instead of Python generators
     tfdata_cache_dir: Optional[str] = None  # Cache directory (None = memory cache)
     mmap_readonly: bool = True  # Open feature store mmap as read-only
     tfdata_prefetch_to_device: bool = True  # Use GPU prefetch when available
     tfdata_prefetch_device: str = "/GPU:0"  # Device string for prefetch_to_device
     benchmark_pipeline: bool = False  # Benchmark generator vs tf.data pipeline
-    log_throughput: bool = True  # Log data/step throughput to detect bottlenecks
+    log_throughput: bool = False  # Log data/step throughput to detect bottlenecks
     log_throughput_interval: int = 1000  # Steps between throughput logs
     disable_mmap: bool = False  # Disable feature-store mmap (use on SIGBUS)
 
@@ -216,8 +216,8 @@ class SpeakerClusteringConfig:
 
     enabled: bool = True
     method: str = "adaptive"  # agglomerative, hdbscan, or adaptive
-    embedding_model: str = "speechbrain/ecapa-tdnn-voxceleb"
-    similarity_threshold: float = 0.72
+    embedding_model: str = "speechbrain/spkrec-ecapa-voxceleb"
+    similarity_threshold: float = 0.68
     n_clusters: Optional[int] = None
     leakage_audit_enabled: bool = True
     leakage_similarity_threshold: float = 0.9
@@ -228,7 +228,7 @@ class SpeakerClusteringConfig:
     batch_size: Optional[int] = None  # None = auto-detect from GPU
     num_io_workers: int = 8
     use_mixed_precision: bool = True
-    use_dataloader: bool = False
+    use_dataloader: bool = True
 
     # Adaptive clustering (Phase 3)
     use_adaptive_clustering: bool = True
@@ -248,18 +248,18 @@ class MiningConfig:
 
     # General
     enabled: bool = True
-    async_mining: bool = False
+    async_mining: bool = True
 
     # In-training mining
-    fp_threshold: float = 0.8
+    fp_threshold: float = 0.65
     max_samples: int = 5000
-    mining_interval_epochs: int = 5
+    mining_interval_epochs: int = 1
     collection_mode: str = "log_only"  # "log_only" | "mine_immediately"
 
     # Logging
     log_predictions: bool = True
     log_file: str = "logs/false_predictions.json"
-    top_k_per_epoch: int = 100
+    top_k_per_epoch: int = 150
 
     # Post-training mining
     enable_post_training_mining: bool = True
@@ -270,11 +270,11 @@ class MiningConfig:
     # Top false positive extraction (formerly TopFPExtractionConfig)
     extract_top_fps: bool = True
     top_fp_percent: float = 5.0  # Top N% of false positives to extract
-    extraction_confidence_threshold: float = 0.5  # Min score to consider as FP
-    extraction_output_dir: str = "dataset/top5fps"  # Destination for extracted files
+    extraction_confidence_threshold: float = 0.8  # Min score to consider as FP
+    extraction_output_dir: str = "${DATASET_DIR:-./dataset}/top5fps"  # Destination for extracted files
     extraction_log_file: str = "logs/top_fp_extraction.json"  # JSON log path
     run_extraction_at_training_end: bool = True  # Auto-run at end of training
-    extraction_batch_size: int = 64  # Batch size for inference scan
+    extraction_batch_size: int = 128  # Batch size for inference scan
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -303,8 +303,8 @@ class ExportConfig:
     """Model export settings."""
 
     wake_word: str = "Hey Katya"
-    author: str = "Your Name"
-    website: str = "https://your-repo.com"
+    author: str = "Sarpel GURAY"
+    website: str = "https://github.com/sarpel/microwakeword-trainer"
     trained_languages: List[str] = field(default_factory=lambda: ["en"])
     quantize: bool = True
     inference_input_type: str = "int8"
@@ -314,8 +314,8 @@ class ExportConfig:
     tensor_arena_size: int = 30000
     minimum_esphome_version: str = "2024.7.0"
     # TFLite calibration (NEW)
-    representative_dataset_size: int = 500  # Number of samples for random calibration
-    representative_dataset_real_size: int = 2000  # Number of samples for real-data calibration
+    representative_dataset_size: int = 1000  # Number of samples for random calibration
+    representative_dataset_real_size: int = 4000  # Number of samples for real-data calibration
     arena_size_margin: float = 1.3  # Multiplier for tensor arena size (1.3 = 30% margin)
 
 
@@ -370,11 +370,11 @@ class QualityConfig:
 class EvaluationConfig:
     """Evaluation and metrics configuration."""
 
-    default_threshold: float = 0.5  # Default probability threshold for metrics
+    default_threshold: float = 0.97  # Default probability threshold for metrics
     n_thresholds: int = 101  # Number of thresholds for ROC/PR curves
     max_fah: float = 10.0  # Maximum FAH for average viable recall calculation
-    target_fah: float = 0.5  # Target FAH for recall@FAH metrics
-    target_recall: float = 0.95  # Target recall for FAH@recall metrics
+    target_fah: float = 2.0  # Target FAH for recall@FAH metrics
+    target_recall: float = 0.90  # Target recall for FAH@recall metrics
     gain_window_steps: int = 1000  # Step window for gain metrics
     plateau_window_evals: int = 5  # Rolling evals for plateau detection
     plateau_min_delta: float = 0.001  # Minimum improvement to consider progress
@@ -388,34 +388,34 @@ class AutoTuningConfig:
     """Auto-tuning configuration for post-training fine-tuning."""
 
     # Activation
-    enabled: bool = False
+    enabled: bool = True
 
     # Targets
-    target_fah: float = 0.3
-    target_recall: float = 0.92
+    target_fah: float = 2.0
+    target_recall: float = 0.90
 
     # Iteration control
     max_iterations: int = 50
-    max_gradient_steps: int = 150_000
-    patience: int = 10
+    max_gradient_steps: int = 250_000
+    patience: int = 15
 
     # Legacy fields (kept for backward compat, ignored by MaxQualityAutoTuner)
-    steps_per_iteration: int = 5000
-    initial_lr: float = 0.0001
+    steps_per_iteration: int = 8000
+    initial_lr: float = 0.00005
     lr_decay_factor: float = 0.7
-    min_lr: float = 1e-6
+    min_lr: float = 1e-5
     positive_weight_range: List[float] = field(default_factory=lambda: [0.5, 3.0])
     negative_weight_range: List[float] = field(default_factory=lambda: [10.0, 50.0])
     hard_negative_weight_range: List[float] = field(default_factory=lambda: [20.0, 100.0])
 
     # Cross-validation & confirmation
-    cv_folds: int = 5
-    confirmation_fraction: float = 0.20
-    bootstrap_samples: int = 1000
+    cv_folds: int = 3
+    confirmation_fraction: float = 0.40
+    bootstrap_samples: int = 2000
 
     # INT8 shadow evaluation
     int8_shadow: bool = True
-    int8_shadow_interval: int = 5
+    int8_shadow_interval: int = 10
     require_int8_pass: bool = True
     require_confirmation: bool = True
 
@@ -423,8 +423,8 @@ class AutoTuningConfig:
     group_key: str = "speaker_id"
 
     # Pareto / convergence (legacy)
-    pareto_improvement_threshold: float = 0.005
-    convergence_window: int = 5
+    pareto_improvement_threshold: float = 0.003
+    convergence_window: int = 7
 
     # Output
     output_dir: str = "./tuning_output"
@@ -466,8 +466,8 @@ class AutoTuningExpertConfig:
 
     # Burst step bounds
     min_burst_steps: int = 200
-    max_burst_steps: int = 5000
-    default_burst_steps: int = 500
+    max_burst_steps: int = 25000
+    default_burst_steps: int = 750
 
     # Learning rate bounds
     min_lr: float = 1e-7
@@ -480,13 +480,13 @@ class AutoTuningExpertConfig:
 
     # Simulated annealing
     initial_temperature: float = 0.5
-    cooling_rate: float = 0.95
+    cooling_rate: float = 0.97
     reheat_after: int = 5
     reheat_factor: float = 1.3
 
     # Pool / archive sizes
-    active_pool_size: int = 12
-    pareto_archive_size: int = 24
+    active_pool_size: int = 16
+    pareto_archive_size: int = 32
 
     # Stir level thresholds (stagnation counts)
     stir_level_1: int = 3

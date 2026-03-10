@@ -1123,19 +1123,19 @@ class AutoTuner:
         self.config = config
 
         at = auto_tuning_config or config.get("auto_tuning", {})
-        self.target_fah = at.get("target_fah", 0.3)
-        self.target_recall = at.get("target_recall", 0.92)
+        self.target_fah = at.get("target_fah", 2.0)
+        self.target_recall = at.get("target_recall", 0.90)
         self.max_iterations = at.get("max_iterations", 50)
-        self.max_gradient_steps = at.get("max_gradient_steps", 150_000)
-        self.cv_folds = at.get("cv_folds", 5)
-        self.confirmation_fraction = at.get("confirmation_fraction", 0.20)
-        self.bootstrap_samples = at.get("bootstrap_samples", 1000)
+        self.max_gradient_steps = at.get("max_gradient_steps", 250_000)
+        self.cv_folds = at.get("cv_folds", 3)
+        self.confirmation_fraction = at.get("confirmation_fraction", 0.40)
+        self.bootstrap_samples = at.get("bootstrap_samples", 2000)
         self.int8_shadow_enabled = at.get("int8_shadow", True)
-        self.int8_shadow_interval = at.get("int8_shadow_interval", 5)
+        self.int8_shadow_interval = at.get("int8_shadow_interval", 10)
         self.require_int8_pass = at.get("require_int8_pass", True)
         self.require_confirmation = at.get("require_confirmation", True)
         self.group_key = at.get("group_key", "speaker_id")
-        self.patience = at.get("patience", 10)
+        self.patience = at.get("patience", 15)
         self.output_dir = Path(at.get("output_dir", "./tuning_output"))
         self.users_hard_negs_dir = users_hard_negs_dir
 
@@ -1143,7 +1143,7 @@ class AutoTuner:
         expert = config.get("auto_tuning_expert", {})
         self.burst_steps_range = (
             expert.get("min_burst_steps", 200),
-            expert.get("max_burst_steps", 5000),
+            expert.get("max_burst_steps", 25000),
         )
         self.lr_range = (
             expert.get("min_lr", 1e-7),
@@ -1153,11 +1153,11 @@ class AutoTuner:
         self.sam_rho = expert.get("sam_rho", 0.05)
         self.swa_interval = expert.get("swa_collection_interval", 100)
         self.initial_annealing_temp = expert.get("initial_temperature", 0.5)
-        self.cooling_rate = expert.get("cooling_rate", 0.95)
+        self.cooling_rate = expert.get("cooling_rate", 0.97)
         self.reheat_after = expert.get("reheat_after", 5)
         self.reheat_factor = expert.get("reheat_factor", 1.3)
-        self.active_pool_size = expert.get("active_pool_size", 12)
-        self.archive_size = expert.get("pareto_archive_size", 24)
+        self.active_pool_size = expert.get("active_pool_size", 16)
+        self.archive_size = expert.get("pareto_archive_size", 32)
         stir_defaults = [3, 5, 7, 9, 12]
         self.stir_thresholds = [expert.get(f"stir_level_{i}", d) for i, d in enumerate(stir_defaults, 1)]
         self.curriculum_threshold = expert.get("curriculum_advance_threshold", 0.3)
@@ -1500,10 +1500,10 @@ class AutoTuner:
 
         loss_fn = tf.keras.losses.BinaryCrossentropy(
             from_logits=False,
-            label_smoothing=self.config.get("training", {}).get("label_smoothing", 0.0),
+            label_smoothing=self.config.get("training", {}).get("label_smoothing", 0.01),
         )
         clipnorm = self.config.get("training", {}).get("gradient_clipnorm", None)
-        batch_size = self.config.get("training", {}).get("batch_size", 128)
+        batch_size = self.config.get("training", {}).get("batch_size", 384)
 
         losses = []
         swa_snapshots = []
@@ -1663,7 +1663,7 @@ class AutoTuner:
         import tensorflow as tf
 
         self._unfreeze_bn(model)
-        batch_size = self.config.get("training", {}).get("batch_size", 128)
+        batch_size = self.config.get("training", {}).get("batch_size", 384)
         n = len(features)
 
         for i in range(min(n_batches, n // batch_size + 1)):
@@ -1689,7 +1689,7 @@ class AutoTuner:
         import tensorflow as tf
 
         # Predict in batches
-        batch_size = self.config.get("training", {}).get("batch_size", 128)
+        batch_size = self.config.get("training", {}).get("batch_size", 384)
         all_scores = []
         for i in range(0, len(features), batch_size):
             batch = tf.constant(features[i : i + batch_size], dtype=tf.float32)
@@ -1719,7 +1719,7 @@ class AutoTuner:
         """Get model prediction scores with temperature scaling."""
         import tensorflow as tf
 
-        batch_size = self.config.get("training", {}).get("batch_size", 128)
+        batch_size = self.config.get("training", {}).get("batch_size", 384)
         all_scores = []
         for i in range(0, len(features), batch_size):
             batch = tf.constant(features[i : i + batch_size], dtype=tf.float32)
@@ -2197,9 +2197,9 @@ class AutoTuner:
             pointwise_filters=model_cfg.get("pointwise_filters", "64,64,64,64"),
             mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"),
             repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
-            residual_connection=model_cfg.get("residual_connection", "0,0,0,0"),
-            dropout_rate=model_cfg.get("dropout_rate", 0.0),
-            l2_regularization=model_cfg.get("l2_regularization", 0.0),
+            residual_connection=model_cfg.get("residual_connection", "0,1,1,1"),
+            dropout_rate=model_cfg.get("dropout_rate", 0.08),
+            l2_regularization=model_cfg.get("l2_regularization", 0.00003),
         )
         # Build model by running a forward pass before loading weights
         model(tf.zeros((1, num_time_frames, mel_bins), dtype=tf.float32), training=False)

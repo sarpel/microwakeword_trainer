@@ -268,7 +268,7 @@ def get_optimal_batch_size(config: dict) -> int:
     """
     gpus = tf.config.list_physical_devices("GPU")
     if not gpus:
-        return int(config.get("training", {}).get("batch_size", 128))
+        return int(config.get("training", {}).get("batch_size", 384))
 
     try:
         # Get total GPU VRAM via pynvml for capacity-based batch sizing
@@ -294,4 +294,4 @@ def get_optimal_batch_size(config: dict) -> int:
         else:
             return 32
     except Exception:
-        return int(config.get("training", {}).get("batch_size", 128))
+        return int(config.get("training", {}).get("batch_size", 384))

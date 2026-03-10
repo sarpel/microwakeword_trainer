@@ -1,355 +1,65 @@
 # ─────────────────────────────────────────────────────────────────
-# MAX QUALITY PRESET - Best possible model accuracy
-# Use for: Final production training when quality matters most
+# FAST TEST PRESET - Quick iteration and smoke testing
+# Use for: Rapid testing, CI/CD, verifying pipeline works
 # Hardware: RTX 3060 Ti 8GB, 64GB RAM, Ryzen 9 7950X
 # ─────────────────────────────────────────────────────────────────
+# Only values that DIFFER from loader.py defaults (= max_quality)
+# are listed here. Everything else inherits from dataclass defaults.
+# ─────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────
-# HARDWARE PARAMETERS (IMMUTABLE)
-# ─────────────────────────────────────────────────────────────────
-hardware:
-  sample_rate_hz: 16000
-  mel_bins: 40
-  window_size_ms: 30
-  window_step_ms: 10
-  clip_duration_ms: 1000
-
-# ─────────────────────────────────────────────────────────────────
-# PATHS
-# ─────────────────────────────────────────────────────────────────
-paths:
-  positive_dir: "${DATASET_DIR:-./dataset}/positive"
-  negative_dir: "${DATASET_DIR:-./dataset}/negative"
-  hard_negative_dir: "${DATASET_DIR:-./dataset}/hard_negative"
-  background_dir: "${DATASET_DIR:-./dataset}/background"
-  rir_dir: "${DATASET_DIR:-./dataset}/rirs"
-  processed_dir: "${DATA_DIR:-./data}/processed"
-  checkpoint_dir: "${CHECKPOINT_DIR:-./models/checkpoints}"
-  export_dir: "${MODEL_EXPORT_DIR:-./models/exported}"
-
-# ─────────────────────────────────────────────────────────────────
-# TRAINING PARAMETERS
-# ─────────────────────────────────────────────────────────────────
 training:
-  # 3-phase schedule: Phase 1 learns discrimination, Phase 2 refines boundary, Phase 3 polishes
+  # Minimal training schedule (17k total vs 80k max_quality)
   training_steps: [10000, 5000, 2000]
-  # LR starts at standard 0.001, decays ~5x per phase for stable convergence
   learning_rates: [0.001, 0.0002, 0.00005]
-  batch_size: 128               # Fits 8GB VRAM with mixed precision
-  split_seed: 42
-  eval_step_interval: 500                 # Not directly used as a condition in the training loop.
-  eval_basic_step_interval: 1000          # Main eval trigger. Runs full validation, computes all metrics. Prints 📊 Validation Results table.
-  materialize_metrics_interval: 1000      # Training accuracy computation. Requires full batch evaluation
-  eval_advanced_step_interval: 5000       # Advanced computations: Score distribution, gain metrics, triggers hard negative mining updates.
-  eval_confusion_matrix_interval: 5000    # Prints the confusion matrix table and per-class recall/miss-rate/rejection-rate breakdown.
-  eval_checkpoints_interval: 5000         # Best model checkpoint saving. The `✅ BEST MODEL` message comes from here.
-  eval_log_every_step: true
-  steps_per_epoch: 1000
+  batch_size: 128
 
+  # Less frequent evaluation (faster iterations)
+  eval_basic_step_interval: 1000
+  eval_advanced_step_interval: 5000
+  eval_checkpoints_interval: 5000
+
+  # Different class weighting strategy (recall-biased)
   positive_class_weight: [10.0, 20.0, 30.0]
   negative_class_weight: [1.0, 1.0, 1.0]
-  hard_negative_class_weight: [1.0, 1.0, 1.0]  # REDUCED: Don't overwhelm model with hard negatives
+  hard_negative_class_weight: [1.0, 1.0, 1.0]
 
-  # Progressive SpecAugment: light→moderate→strong
-  time_mask_max_size: [1, 2, 3]
-  time_mask_count: [1, 1, 1]
-  freq_mask_max_size: [1, 2, 3]
-  freq_mask_count: [1, 1, 1]
+  # Checkpoint selection: optimize for recall
+  minimization_metric: "average_viable_recall"
+  target_minimization: 1.0
 
-  # Checkpoint selection
-  minimization_metric: "average_viable_recall"  # CHANGED: Prioritize recall over FAH
-  target_minimization: 1.0  # RAISED: Allow 1 FAH instead of 0.2 - model needs to learn to detect wake word
-  maximization_metric: "average_viable_recall"
-
-  # 42.02h of ambient audio (negative + background + hard_negative) for FAH calculation
-  ambient_duration_hours: 42.02
-  train_split: 0.8
-  val_split: 0.1
-  test_split: 0.1
-  strict_content_hash_leakage_check: true
-
-  # Optimizer and loss parameters
-  optimizer: "adam"
+  # No label smoothing
   label_smoothing: 0.0
-  gradient_clipnorm: 2.0        # Was 0.5 = too aggressive, capped max score at 0.87
-  ema_decay: 0.99               # Half-life ~700 steps, smooths noise without killing convergence
-  random_seed: 42               # Reproducible runs
-  auto_tune_on_poor_fah: true
 
-# ─────────────────────────────────────────────────────────────────
-# MIXEDNET ARCHITECTURE
-# ─────────────────────────────────────────────────────────────────
-model:
-  architecture: "mixednet"
-  first_conv_filters: 32
-  first_conv_kernel_size: 5
-  stride: 3
-  pointwise_filters: "64,64,64,64"
-  mixconv_kernel_sizes: "[5],[7,11],[9,15],[23]"
-  repeat_in_block: "1,1,1,1"
-  residual_connection: "0,1,1,1"  # Residual on blocks 2-4 for gradient flow
-
-  # Moderate regularization (less than before to avoid score compression)
-  dropout_rate: 0.08
-  l2_regularization: 0.00003
-
-# ─────────────────────────────────────────────────────────────────
-# AUGMENTATION (aggressive for max generalization)
-# ─────────────────────────────────────────────────────────────────
 augmentation:
-  SevenBandParametricEQ: 0.20
+  # Slightly more aggressive augmentation probabilities
   TanhDistortion: 0.15
   PitchShift: 0.15
-  BandStopFilter: 0.10
-  AddColorNoise: 0.20
   AddBackgroundNoiseFromFile: 0.35
-  Gain: 1.0
-  ApplyImpulseResponse: 0.30
 
-  # Noise mixing: wider SNR range for robustness
-  background_min_snr_db: -5.0
-  background_max_snr_db: 15.0
-  min_jitter_s: 0.15
-  max_jitter_s: 0.20
-
-  # Augmentation magnitude ranges
-  eq_min_gain_db: -6.0
-  eq_max_gain_db: 6.0
-  distortion_min: 0.05
-  distortion_max: 0.2
+  # Wider pitch shift range
   pitch_shift_min_semitones: -2.0
   pitch_shift_max_semitones: 2.0
-  band_stop_min_center_freq: 125.0
-  band_stop_max_center_freq: 7500.0
-  band_stop_min_bandwidth_fraction: 0.5
-  band_stop_max_bandwidth_fraction: 1.99
-  gain_min_db: -5.0
-  gain_max_db: 5.0
-  color_noise_min_snr_db: -10.0
-  color_noise_max_snr_db: 20.0
 
-  # Background sources
-  impulse_paths: ["${DATASET_DIR:-./dataset}/rirs"]
-  background_paths: ["${DATASET_DIR:-./dataset}/background"]
-  #augmentation_duration_s: 3.2
-
-# ─────────────────────────────────────────────────────────────────
-# PERFORMANCE CONFIGURATION (tuned for RTX 3060 Ti + Ryzen 9 7950X)
-# ─────────────────────────────────────────────────────────────────
 performance:
-  gpu_only: true
-  mixed_precision: true
-  spec_augment_backend: "tf"
-  async_mining: true  # DEPRECATED: moved to mining section
-  num_workers: 8
-  num_threads_per_worker: 2
   prefetch_factor: 8
-  pin_memory: true
-  max_memory_gb: 40
-  inter_op_parallelism: 16
-  intra_op_parallelism: 16
 
-  # Profiling disabled for production training speed
-  enable_profiling: false
-  profile_every_n_steps: 1000
-  profile_output_dir: "./profiles"
-  tf_profile_start_step: 0
-  gpu_memory_log_interval: 1000
-
-  # Full TensorBoard logging for analysis
-  tensorboard_enabled: true
-  tensorboard_log_dir: "./logs"
-  tensorboard_log_histograms: false
-  tensorboard_log_images: false
-  tensorboard_log_pr_curves: true
-  tensorboard_log_graph: true
-  tensorboard_log_advanced_scalars: true
-  tensorboard_log_weight_histograms: false
-  tensorboard_image_interval: 5000
-  tensorboard_histogram_interval: 5000
-
-  # Data pipeline
-  prefetch_buffer: 8
-  use_tfdata: true
-  tfdata_cache_dir: null        # RAM cache (64GB available)
-  mmap_readonly: true
-  tfdata_prefetch_to_device: true
-  tfdata_prefetch_device: "/GPU:0"
-  benchmark_pipeline: false
-  log_throughput: false
-  log_throughput_interval: 1000
-  disable_mmap: false
-
-# ─────────────────────────────────────────────────────────────────
-# SPEAKER CLUSTERING (strict for max quality)
-# ─────────────────────────────────────────────────────────────────
-speaker_clustering:
-  enabled: true
-  method: "adaptive"
-  embedding_model: "speechbrain/spkrec-ecapa-voxceleb"
-  similarity_threshold: 0.68
-  n_clusters: null
-  leakage_audit_enabled: true
-  leakage_similarity_threshold: 0.9
-  use_embedding_cache: true
-  cache_dir: ./cache/speaker_embeddings
-  batch_size: 32
-  num_io_workers: 8
-  use_mixed_precision: true
-  use_dataloader: true
-  use_adaptive_clustering: true
-  hdbscan_min_cluster_size: 5
-  hdbscan_min_samples: 3
-  adaptive_threshold_small: 5000
-  adaptive_threshold_large: 50000
-
-# ─────────────────────────────────────────────────────────────────
-# HARD NEGATIVE MINING (enabled for max quality)
-# ─────────────────────────────────────────────────────────────────
-# MINING (Max quality — mine every epoch, stricter thresholds)
-# ─────────────────────────────────────────────────────────────────
 mining:
-  enabled: true
-  async_mining: true
+  # Less strict FP threshold
   fp_threshold: 0.8
-  max_samples: 5000
-  mining_interval_epochs: 1              # Mine EVERY epoch for max quality
-  collection_mode: "log_only"
-  log_predictions: true
-  log_file: "logs/false_predictions.json"
-  enable_post_training_mining: true
-  mined_subdirectory: "mined"
-  min_epochs_before_mining: 10
   top_k_per_epoch: 100
-  deduplicate_by_hash: true
-  # Top FP extraction with stricter settings for max quality
-  extract_top_fps: true
-  top_fp_percent: 5.0
-  extraction_confidence_threshold: 0.8   # Stricter than standard (0.5)
-  extraction_output_dir: "${DATASET_DIR:-./dataset}/top5fps"
-  extraction_log_file: "logs/top_fp_extraction.json"
-  run_extraction_at_training_end: true
-  extraction_batch_size: 128             # Larger batch for max quality
 
-# ─────────────────────────────────────────────────────────────────
-# EXPORT SETTINGS
-# ─────────────────────────────────────────────────────────────────
-export:
-  wake_word: "Hey Katya"
-  author: "Sarpel GURAY"
-  website: "https://github.com/sarpel/microwakeword-trainer"
-  trained_languages: ["en"]
-
-  quantize: true
-  inference_input_type: "int8"
-  inference_output_type: "uint8"
-
-  probability_cutoff: 0.97
-  sliding_window_size: 5
-  tensor_arena_size: 30000
-  minimum_esphome_version: "2024.7.0"
-
-  # Larger calibration dataset for max quality quantization
-  representative_dataset_size: 1000
-  representative_dataset_real_size: 4000
-  arena_size_margin: 1.3
-
-# ─────────────────────────────────────────────────────────────────
-# PREPROCESSING (strict filtering for max quality)
-# ─────────────────────────────────────────────────────────────────
-preprocessing:
-  min_duration_ms: 300.0
-  max_duration_ms: 2000.0
-  discarded_dir: "./discarded"
-  vad_aggressiveness: 2
-  vad_pad_ms: 200
-  vad_frame_ms: 30
-  split_max_chunk_ms: 2000.0
-  split_min_chunk_ms: 500.0
-  split_target_chunk_ms: 2000.0
-
-# ─────────────────────────────────────────────────────────────────
-# QUALITY SCORING THRESHOLDS (strict for max quality)
-# ─────────────────────────────────────────────────────────────────
-quality:
-  clip_threshold: 0.001
-  max_clip_ratio: 0.01
-  discard_bottom_pct: 5.0
-  min_wqi: 0.0
-  discarded_quality_dir: "./discarded/quality"
-  min_snr_db: -10.0
-  vad_speech_threshold: 0.3
-  dnsmos_min_ovrl: 0.0
-  dnsmos_min_sig: 0.0
-  dnsmos_cache_dir: "~/.cache/dnsmos"
-
-# ─────────────────────────────────────────────────────────────────
-# EVALUATION AND METRICS
-# ─────────────────────────────────────────────────────────────────
 evaluation:
-  default_threshold: 0.97       # Match deployment probability_cutoff
-  n_thresholds: 101
-  max_fah: 10.0
-  warmup_runs: 10
-  n_latency_runs: 100
-  target_fah: 0.2               # Stricter than standard (0.5)
-  target_recall: 0.92
-  gain_window_steps: 1000
-  plateau_window_evals: 5
-  plateau_min_delta: 0.001
-
-# ─────────────────────────────────────────────────────────────────
-# AUTO-TUNING (post-training fine-tuning, aggressive for max quality)
-# ─────────────────────────────────────────────────────────────────
-auto_tuning:
-  enabled: true
+  # Stricter targets than max_quality
   target_fah: 0.2
   target_recall: 0.92
-  max_iterations: 50            # Quality over speed
-  max_gradient_steps: 250000    # Generous budget for max quality
-  patience: 15
-  steps_per_iteration: 8000     # Legacy, ignored by MaxQualityAutoTuner
-  initial_lr: 0.00005           # Legacy, ignored by MaxQualityAutoTuner
-  lr_decay_factor: 0.7          # Legacy, ignored by MaxQualityAutoTuner
-  min_lr: 0.00001               # Legacy, ignored by MaxQualityAutoTuner
-  positive_weight_range: [0.5, 3.0]   # Legacy
-  negative_weight_range: [10.0, 50.0] # Legacy
-  hard_negative_weight_range: [20.0, 100.0] # Legacy
+
+auto_tuning:
+  # Stricter targets than max_quality
+  target_fah: 0.2
+  target_recall: 0.92
   cv_folds: 5
   confirmation_fraction: 0.20
-  bootstrap_samples: 2000       # More samples for max quality
-  int8_shadow: true
-  int8_shadow_interval: 3       # More frequent INT8 checks
-  require_int8_pass: true
-  require_confirmation: true
-  group_key: speaker_id
-  pareto_improvement_threshold: 0.003
-  convergence_window: 7
-  output_dir: ./tuning_output
+  int8_shadow_interval: 3
 
-# Expert-level auto-tuning parameters (max quality settings)
 auto_tuning_expert:
-  min_burst_steps: 200
-  max_burst_steps: 8000         # Allow longer bursts for max quality
-  default_burst_steps: 750
-  min_lr: 0.0000001
-  max_lr: 0.0001
-  default_lr: 0.00001
-  sam_rho: 0.05
-  swa_collection_interval: 100
-  initial_temperature: 0.5
-  cooling_rate: 0.97            # Slower cooling for more exploration
-  reheat_after: 5
-  reheat_factor: 1.3
-  active_pool_size: 16          # Larger pool for max quality
-  pareto_archive_size: 32       # Larger archive for max quality
-  stir_level_1: 3
-  stir_level_2: 5
-  stir_level_3: 7
-  stir_level_4: 9
-  stir_level_5: 12
-  curriculum_advance_threshold: 0.3
-
-# ─────────────────────────────────────────────────────────────────
-# TOP FALSE POSITIVE EXTRACTION (from hard negatives)
-# ─────────────────────────────────────────────────────────────────
+  max_burst_steps: 8000

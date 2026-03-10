@@ -681,13 +681,13 @@ def _build_model(config: dict[str, Any], input_shape: tuple[int, ...]):
         pointwise_filters=model_cfg.get("pointwise_filters", "64,64,64,64"),
         mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"),
         repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
-        residual_connection=model_cfg.get("residual_connection", "0,0,0,0"),
-        dropout_rate=model_cfg.get("dropout_rate", 0.0),
-        l2_regularization=model_cfg.get("l2_regularization", 0.0),
+        residual_connection=model_cfg.get("residual_connection", "0,1,1,1"),
+        dropout_rate=model_cfg.get("dropout_rate", 0.08),
+        l2_regularization=model_cfg.get("l2_regularization", 0.00003),
     )
 
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(training_cfg.get("learning_rates", [0.001])[0]),
+        optimizer=tf.keras.optimizers.Adam(training_cfg.get("learning_rates", [0.0017])[0]),
         loss=tf.keras.losses.BinaryCrossentropy(),
         metrics=["accuracy"],
     )
@@ -740,9 +740,9 @@ def run_top_fp_extraction(
     # ── Config ────────────────────────────────────────────────────────────
     mining_cfg = config.get("mining", {})
     top_percent = top_percent_override or mining_cfg.get("top_fp_percent", 5.0)
-    confidence_threshold = threshold_override or mining_cfg.get("extraction_confidence_threshold", 0.5)
+    confidence_threshold = threshold_override or mining_cfg.get("extraction_confidence_threshold", 0.8)
     log_file = log_file_override or mining_cfg.get("extraction_log_file", "logs/top_fp_extraction.json")
-    batch_size = mining_cfg.get("extraction_batch_size", 64)
+    batch_size = mining_cfg.get("extraction_batch_size", 128)
 
     hard_neg_dir = config.get("paths", {}).get("hard_negative_dir", "dataset/hard_negative")
     hard_neg_path = Path(hard_neg_dir)

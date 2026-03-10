@@ -51,9 +51,9 @@ class RichTrainingLogger:
             )
 
         # Class weights (per-phase lists)
-        pos_w = training.get("positive_class_weight", [1.0])
-        neg_w = training.get("negative_class_weight", [20.0])
-        hard_neg_w = training.get("hard_negative_class_weight", [40.0])
+        pos_w = training.get("positive_class_weight", [5.0, 7.0, 9.0])
+        neg_w = training.get("negative_class_weight", [1.5, 1.5, 1.5])
+        hard_neg_w = training.get("hard_negative_class_weight", [3.0, 5.0, 7.0])
         table.add_row(
             "Class Weights",
             f"pos={pos_w}  neg={neg_w}  hard_neg={hard_neg_w}",

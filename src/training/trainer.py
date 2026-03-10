@@ -200,17 +200,17 @@ class Trainer:
 
         # Extract training config
         training = config.get("training", {})
-        self.training_steps_list = training.get("training_steps", [20000, 10000])
-        self.learning_rates = training.get("learning_rates", [0.001, 0.0001])
-        self.batch_size = training.get("batch_size", 128)
+        self.training_steps_list = training.get("training_steps", [40000, 25000, 15000])
+        self.learning_rates = training.get("learning_rates", [0.0017, 0.00035, 0.00009])
+        self.batch_size = training.get("batch_size", 384)
         self.eval_step_interval = training.get("eval_step_interval", 500)
-        self.eval_basic_step_interval = training.get("eval_basic_step_interval", 1000)
+        self.eval_basic_step_interval = training.get("eval_basic_step_interval", 500)
         self.materialize_metrics_interval = int(training.get("materialize_metrics_interval", self.eval_basic_step_interval) or self.eval_basic_step_interval)
         if self.materialize_metrics_interval <= 0:
             self.materialize_metrics_interval = self.eval_basic_step_interval
-        self.eval_advanced_step_interval = training.get("eval_advanced_step_interval", 5000)
+        self.eval_advanced_step_interval = training.get("eval_advanced_step_interval", 2000)
         self.eval_confusion_matrix_interval = training.get("eval_confusion_matrix_interval", 5000)
-        self.eval_checkpoints_interval = training.get("eval_checkpoints_interval", 5000)
+        self.eval_checkpoints_interval = training.get("eval_checkpoints_interval", 1000)
         self.eval_log_every_step = bool(training.get("eval_log_every_step", True))
         self._last_basic_eval_step = 0
         self._last_advanced_eval_step = 0
@@ -225,9 +225,9 @@ class Trainer:
             seed_everything(int(self.random_seed))
             self._seed_applied = True
         # Class weights (positive upweighted to compensate for class imbalance)
-        self.positive_weights = training.get("positive_class_weight", [1.0, 1.0])
-        self.negative_weights = training.get("negative_class_weight", [20.0, 20.0])
-        self.hard_negative_weights = training.get("hard_negative_class_weight", [40.0, 40.0])
+        self.positive_weights = training.get("positive_class_weight", [5.0, 7.0, 9.0])
+        self.negative_weights = training.get("negative_class_weight", [1.5, 1.5, 1.5])
+        self.hard_negative_weights = training.get("hard_negative_class_weight", [3.0, 5.0, 7.0])
 
         # Ensure all per-phase lists have the same length as training_steps_list
         n_phases = len(self.training_steps_list)
@@ -241,43 +241,43 @@ class Trainer:
             return lst + [lst[-1]] * (n_phases - len(lst))
 
         self.learning_rates = _pad_or_trim(self.learning_rates, 0.0001)
-        self.positive_weights = _pad_or_trim(self.positive_weights, 1.0)
-        self.negative_weights = _pad_or_trim(self.negative_weights, 20.0)
-        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 40.0)
+        self.positive_weights = _pad_or_trim(self.positive_weights, 5.0)
+        self.negative_weights = _pad_or_trim(self.negative_weights, 1.5)
+        self.hard_negative_weights = _pad_or_trim(self.hard_negative_weights, 5.0)
 
         # SpecAugment configuration (per-phase)
-        self.time_mask_max_size = _pad_or_trim(training.get("time_mask_max_size", [0, 0]), 0)
-        self.time_mask_count = _pad_or_trim(training.get("time_mask_count", [0, 0]), 0)
-        self.freq_mask_max_size = _pad_or_trim(training.get("freq_mask_max_size", [0, 0]), 0)
-        self.freq_mask_count = _pad_or_trim(training.get("freq_mask_count", [0, 0]), 0)
+        self.time_mask_max_size = _pad_or_trim(training.get("time_mask_max_size", [1, 2, 3]), 0)
+        self.time_mask_count = _pad_or_trim(training.get("time_mask_count", [1, 1, 1]), 0)
+        self.freq_mask_max_size = _pad_or_trim(training.get("freq_mask_max_size", [1, 2, 3]), 0)
+        self.freq_mask_count = _pad_or_trim(training.get("freq_mask_count", [1, 1, 1]), 0)
         self.spec_augment_enabled = any(self.time_mask_max_size + self.time_mask_count + self.freq_mask_max_size + self.freq_mask_count)
 
         # Checkpoint selection config
         self.minimization_metric = training.get("minimization_metric", "ambient_false_positives_per_hour")
-        self.target_minimization = training.get("target_minimization", 0.5)
+        self.target_minimization = training.get("target_minimization", 2.0)
         self.maximization_metric = training.get("maximization_metric", "average_viable_recall")
 
         # Performance config
         performance = config.get("performance", {})
         self.mixed_precision = performance.get("mixed_precision", True)
         self.enable_profiling = performance.get("enable_profiling", True)
-        self.profile_every_n = performance.get("profile_every_n_steps", 100)
+        self.profile_every_n = performance.get("profile_every_n_steps", 1000)
         self.profile_output_dir = performance.get("profile_output_dir", "./profiles")
-        self.num_workers = performance.get("num_workers", 16)
-        self.prefetch_factor = performance.get("prefetch_factor", 8)
+        self.num_workers = performance.get("num_workers", 8)
+        self.prefetch_factor = performance.get("prefetch_factor", 12)
         self.pin_memory = performance.get("pin_memory", True)
         self.inter_op_parallelism = performance.get("inter_op_parallelism", 16)
         self.intra_op_parallelism = performance.get("intra_op_parallelism", 16)
         self.tensorboard_enabled = performance.get("tensorboard_enabled", True)
         self.tensorboard_log_dir = performance.get("tensorboard_log_dir", "./logs")
-        self.prefetch_buffer = performance.get("prefetch_buffer", 12)
+        self.prefetch_buffer = performance.get("prefetch_buffer", 8)
         self.use_tfdata = performance.get("use_tfdata", True)
         self.log_throughput = performance.get("log_throughput", True)
         mining_cfg = config.get("mining", {})
         self.async_mining = mining_cfg.get("async_mining", performance.get("async_mining", False))
         self.spec_augment_backend = performance.get("spec_augment_backend", "tf")
         self.log_throughput_interval = int(performance.get("log_throughput_interval", 1000) or 1000)
-        self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 100) or 0)
+        self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 0) or 0)
         self.gpu_memory_log_interval = int(performance.get("gpu_memory_log_interval", 1000) or 0)
         self.tensorboard_writer: tf.summary.SummaryWriter | None = None
         self.tensorboard_logger: TensorBoardLogger | None = None
@@ -295,7 +295,7 @@ class Trainer:
 
         # FAH calculation - prefer evaluation config, fall back to training config.
         # Only overwrite if evaluation block explicitly provides a non-zero value.
-        self.ambient_duration_hours = training.get("ambient_duration_hours", 10.0)
+        self.ambient_duration_hours = training.get("ambient_duration_hours", 42.02)
         if self.ambient_duration_hours > 0:
             self.logger.log_info(f"FAH calculation enabled with {self.ambient_duration_hours:.2f} hours of ambient audio")
         evaluation = config.get("evaluation", {})
@@ -329,9 +329,9 @@ class Trainer:
 
         # Metrics trackers
         self.evaluation_config = evaluation
-        default_threshold = float(self.evaluation_config.get("default_threshold", 0.5) or 0.5)
+        default_threshold = float(self.evaluation_config.get("default_threshold", 0.97) or 0.97)
         self.eval_target_fah = float(self.evaluation_config.get("target_fah", self.target_minimization) or self.target_minimization)
-        self.eval_target_recall = float(self.evaluation_config.get("target_recall", 0.95) or 0.95)
+        self.eval_target_recall = float(self.evaluation_config.get("target_recall", 0.90) or 0.90)
         self.eval_gain_window_steps = int(self.evaluation_config.get("gain_window_steps", 1000) or 1000)
         self.eval_plateau_window_evals = int(self.evaluation_config.get("plateau_window_evals", 5) or 5)
         self.eval_plateau_min_delta = float(self.evaluation_config.get("plateau_min_delta", 0.001) or 0.001)
@@ -402,24 +402,24 @@ class Trainer:
             if self.async_mining and collection_mode == "mine_immediately":
                 # Use async miner for non-blocking background mining
                 self._async_miner = AsyncHardExampleMiner(
-                    fp_threshold=hn_config.get("fp_threshold", 0.8),
+                    fp_threshold=hn_config.get("fp_threshold", 0.65),
                     max_samples=hn_config.get("max_samples", 5000),
-                    mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
+                    mining_interval_epochs=hn_config.get("mining_interval_epochs", 1),
                     output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
                 )
                 self.logger.log_info(
-                    f"Async hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}"
+                    f"Async hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.65)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}"
                 )
             else:
                 # Use synchronous miner
                 self.hard_negative_miner = HardExampleMiner(
-                    fp_threshold=hn_config.get("fp_threshold", 0.8),
+                    fp_threshold=hn_config.get("fp_threshold", 0.65),
                     max_samples=hn_config.get("max_samples", 5000),
-                    mining_interval_epochs=hn_config.get("mining_interval_epochs", 5),
+                    mining_interval_epochs=hn_config.get("mining_interval_epochs", 1),
                     output_dir=paths.get("hard_negative_dir", "./dataset/hard_negative"),
                 )
                 self.logger.log_info(
-                    f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.8)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}"
+                    f"Hard negative mining enabled: threshold={hn_config.get('fp_threshold', 0.65)}, max_samples={hn_config.get('max_samples', 5000)}, collection_mode={collection_mode}"
                 )
         # Check for EMA configuration
         training_cfg = config.get("training", {})
@@ -669,9 +669,9 @@ class Trainer:
             pointwise_filters=model_cfg.get("pointwise_filters", "64,64,64,64"),
             mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"),
             repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
-            residual_connection=model_cfg.get("residual_connection", "0,0,0,0"),
-            dropout_rate=model_cfg.get("dropout_rate", 0.0),
-            l2_regularization=model_cfg.get("l2_regularization", 0.0),
+            residual_connection=model_cfg.get("residual_connection", "0,1,1,1"),
+            dropout_rate=model_cfg.get("dropout_rate", 0.08),
+            l2_regularization=model_cfg.get("l2_regularization", 0.00003),
         )
 
         # Get current phase settings
@@ -706,7 +706,7 @@ class Trainer:
             optimizer=optimizer,
             loss=keras.losses.BinaryCrossentropy(
                 from_logits=False,
-                label_smoothing=float(training.get("label_smoothing", 0.0) or 0.0),
+                label_smoothing=float(training.get("label_smoothing", 0.01) or 0.0),
             ),
             metrics=[
                 keras.metrics.BinaryAccuracy(name="accuracy"),
@@ -745,7 +745,7 @@ class Trainer:
         """
         if not self._ema_enabled or not hasattr(self, "_saved_training_weights"):
             return
-        for var, saved in zip(self.model.trainable_variables, self._saved_training_weights):
+        for var, saved in zip(self.model.trainable_variables, self._saved_training_weights, strict=False):
             var.assign(saved)
         del self._saved_training_weights
 
@@ -1125,8 +1125,8 @@ class Trainer:
             epoch=epoch,
             y_true=y_true,
             y_scores=y_scores,
-            fp_threshold=hn_config.get("fp_threshold", 0.8),
-            top_k=hn_config.get("top_k_per_epoch", 100),
+            fp_threshold=hn_config.get("fp_threshold", 0.65),
+            top_k=hn_config.get("top_k_per_epoch", 150),
             log_file=hn_config.get("log_file", "logs/false_predictions.json"),
             val_paths=val_paths,
             best_weights_path=self.best_weights_path,
@@ -1375,7 +1375,7 @@ class Trainer:
                     if advanced_due and step % self.eval_advanced_step_interval == 0:
                         approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
                         collection_mode = self.hn_config.get("collection_mode", "log_only")
-                        mining_interval = self.hn_config.get("mining_interval_epochs", 5)
+                        mining_interval = self.hn_config.get("mining_interval_epochs", 1)
                         min_epochs_before_mining = int(self.hn_config.get("min_epochs_before_mining", 5) or 5)
 
                         if approx_epoch >= min_epochs_before_mining and approx_epoch % mining_interval == 0 and approx_epoch != getattr(self, "_last_mined_epoch", -1):
@@ -1543,10 +1543,10 @@ def train(config: dict) -> tf.keras.Model:
                 spec_augment_config = {
                     "enabled": trainer.spec_augment_enabled,
                     "backend": "tf",
-                    "time_mask_max_size": training_cfg.get("time_mask_max_size", [0, 0]),
-                    "time_mask_count": training_cfg.get("time_mask_count", [0, 0]),
-                    "freq_mask_max_size": training_cfg.get("freq_mask_max_size", [0, 0]),
-                    "freq_mask_count": training_cfg.get("freq_mask_count", [0, 0]),
+                    "time_mask_max_size": training_cfg.get("time_mask_max_size", [1, 2, 3]),
+                    "time_mask_count": training_cfg.get("time_mask_count", [1, 1, 1]),
+                    "freq_mask_max_size": training_cfg.get("freq_mask_max_size", [1, 2, 3]),
+                    "freq_mask_count": training_cfg.get("freq_mask_count", [1, 1, 1]),
                     "seed": training_cfg.get("split_seed", 42),
                 }
 
@@ -1597,7 +1597,7 @@ def train(config: dict) -> tf.keras.Model:
         # Fallback to legacy flag
         if not auto_tune_enabled:
             auto_tune_enabled = config.get("training", {}).get("auto_tune_on_poor_fah", False)
-        target_min = config.get("training", {}).get("target_minimization", 0.5)
+        target_min = config.get("training", {}).get("target_minimization", 2.0)
 
         # Track if auto-tuning was run to skip top FP extraction (config doesn't propagate back)
         auto_tune_was_run = False
