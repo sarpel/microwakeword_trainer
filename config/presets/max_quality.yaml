@@ -350,6 +350,3 @@ auto_tuning_expert:
   stir_level_5: 12
   curriculum_advance_threshold: 0.3
 
-# ─────────────────────────────────────────────────────────────────
-# TOP FALSE POSITIVE EXTRACTION (from hard negatives)
-# ─────────────────────────────────────────────────────────────────
