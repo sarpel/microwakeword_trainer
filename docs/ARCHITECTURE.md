@@ -182,7 +182,7 @@ The representative dataset **must** include forced min/max boundary samples:
 
 ```python
 sample_fingerprints[0][0, 0] = 0.0   # Force minimum
-sample_fingerprints[0][0, 1] = 25.85  # Force maximum (actual range is ~25.85)
+sample_fingerprints[0][0, 1] = 26.0  # Force maximum
 ```
 
 > Without these boundary samples, the quantizer may clip the activation range

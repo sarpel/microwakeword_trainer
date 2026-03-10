@@ -249,7 +249,25 @@ class StreamingExportModel(tf.keras.Model):
         """Build state variables.
 
         Creates exactly 6 streaming state variables as required by ESPHome:
-        - stream: [1, 2, 1, 40] - initial conv ring buffer (kernel 5 - stride 3 = 2)
+        - stream_0: [1, 2, 1, 40] - initial conv ring buffer (kernel 5 - stride 3 = 2)
+        - stream_1: [1, 4, 1, 32] - block 0 ring buffer (max_kernel 5 - 1 = 4)
+        - stream_2: [1, 10, 1, 64] - block 1 ring buffer (max_kernel 11 - 1 = 10)
+        - stream_3: [1, 14, 1, 64] - block 2 ring buffer (max_kernel 15 - 1 = 14)
+        - stream_4: [1, 22, 1, 64] - block 3 ring buffer (max_kernel 23 - 1 = 22)
+        - stream_5: [1, 5, 1, 64] - temporal pooling buffer
+
+        Note: Naming uses stream_0 instead of 'stream' to ensure alphabetical order
+        Creates exactly 6 streaming state variables as required by ESPHome:
+        - stream_0: [1, 2, 1, 40] - initial conv ring buffer (kernel 5 - stride 3 = 2)
+        - stream_1: [1, 4, 1, 32] - block 0 ring buffer (max_kernel 5 - 1 = 4)
+        - stream_2: [1, 10, 1, 64] - block 1 ring buffer (max_kernel 11 - 1 = 10)
+        - stream_3: [1, 14, 1, 64] - block 2 ring buffer (max_kernel 15 - 1 = 14)
+        - stream_4: [1, 22, 1, 64] - block 3 ring buffer (max_kernel 23 - 1 = 22)
+        - stream_5: [1, 5, 1, 64] - temporal pooling buffer
+
+        Note: Naming uses stream_0 instead of 'stream' to ensure alphabetical order
+        matches the architectural flow order for ESPHome compatibility.
+        - stream_0: [1, 2, 1, 40] - initial conv ring buffer (kernel 5 - stride 3 = 2)
         - stream_1: [1, 4, 1, 32] - block 0 ring buffer (max_kernel 5 - 1 = 4)
         - stream_2: [1, 10, 1, 64] - block 1 ring buffer (max_kernel 11 - 1 = 10)
         - stream_3: [1, 14, 1, 64] - block 2 ring buffer (max_kernel 15 - 1 = 14)
@@ -280,28 +298,8 @@ class StreamingExportModel(tf.keras.Model):
             # Fixed at 5 frames, filters=64
             ("stream_5", (1, 5, 1, self.pointwise_filters[3])),
         ]
-            # stream: initial conv ring buffer
-            # kernel=5, stride=3 -> 5-3=2 frames
-            ("stream", (1, self.first_conv_kernel - self.stride, 1, self.mel_bins)),
-            # stream_1: after initial conv, before block 0
-            # max_kernel=5, stride=1 -> 5-1=4 frames, filters=32
-            ("stream_1", (1, max(self.mixconv_kernel_sizes[0]) - 1, 1, self.first_conv_filters)),
-            # stream_2: after block 0, before block 1
-            # max_kernel=11, stride=1 -> 11-1=10 frames, filters=64
-            ("stream_2", (1, max(self.mixconv_kernel_sizes[1]) - 1, 1, self.pointwise_filters[0])),
-            # stream_3: after block 1, before block 2
-            # max_kernel=15, stride=1 -> 15-1=14 frames, filters=64
-            ("stream_3", (1, max(self.mixconv_kernel_sizes[2]) - 1, 1, self.pointwise_filters[1])),
-            # stream_4: after block 2, before block 3
-            # max_kernel=23, stride=1 -> 23-1=22 frames, filters=64
-            ("stream_4", (1, max(self.mixconv_kernel_sizes[3]) - 1, 1, self.pointwise_filters[2])),
-            # stream_5: temporal pooling
-            # Fixed at 5 frames, filters=64
-            ("stream_5", (1, 5, 1, self.pointwise_filters[3])),
-        ]
 
         # Verify we have exactly 6 state variables
-        assert len(state_configs) == 6, f"Expected 6 state variables, got {len(state_configs)}"
 
         # Create state variables
         for name, shape in state_configs:

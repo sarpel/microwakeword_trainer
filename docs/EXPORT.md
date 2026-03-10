@@ -75,7 +75,7 @@ converter.inference_output_type = tf.uint8  # MUST be uint8 for ESPHome compatib
 ### Quantization Range
 
 The representative dataset determines the quantization range. Key boundaries:
-- **Input range**: 0.0 to 25.85 (mel spectrogram values)
+- **Input range**: 0.0 to 26.0 (mel spectrogram values)
 - **Output range**: 0-255 (probability scaled to uint8)
 
 ## Representative Dataset Creation
@@ -111,7 +111,7 @@ converter.representative_dataset = create_representative_dataset(
 
 - Use validation/test data that represents real-world audio distribution
 - Include both positive (wake word) and negative samples
-- Ensure mel spectrogram values are in the expected range (0.0-25.85)
+- Ensure mel spectrogram values are in the expected range (0.0-26.0)
 
 ## Manifest Generation
 

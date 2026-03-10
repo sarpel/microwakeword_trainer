@@ -203,7 +203,7 @@ The representative dataset **must** include forced min/max boundary samples:
 
 ```python
 sample_fingerprints[0][0, 0] = 0.0   # Force minimum
-sample_fingerprints[0][0, 1] = 26.0  # Force maximum (actual range is ~25.85)
+sample_fingerprints[0][0, 1] = 26.0  # Force maximum
 ```
 
 > Without these boundary samples, the quantizer may clip the activation range
@@ -303,7 +303,7 @@ Subgraph [0]: Main Inference Graph
 ├── CALL_ONCE  ──────────────────→  Triggers Subgraph [1] once
 ├── VAR_HANDLE × 6  ─────────────→  Bind handles to state vars
 ├── READ_VARIABLE × 6  ──────────→  Load state buffers
-│     ├── stream   : [1, 2,  1, 40]   (ring buffer before first Conv2D)
+│     ├── stream_0 : [1, 2,  1, 40]   (ring buffer before first Conv2D)
 │     ├── stream_1 : [1, 4,  1, 32]   (MixConv block 0)
 │     ├── stream_2 : [1, 10, 1, 64]   (MixConv block 1)
 │     ├── stream_3 : [1, 14, 1, 64]   (MixConv block 2)
@@ -349,7 +349,7 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 
 | Variable | okay_nabu shape | Ring buffer holds |
 |---|---|---|
-| `stream` | `[1, 2, 1, 40]` | 2 frames before first `Conv2D` |
+| `stream_0` | `[1, 2, 1, 40]` | 2 frames before first `Conv2D` |
 | `stream_1` | `[1, 4, 1, 32]` | MixConv block 0 context |
 | `stream_2` | `[1, 10, 1, 64]` | MixConv block 1 context |
 | `stream_3` | `[1, 14, 1, 64]` | MixConv block 2 context |
@@ -422,7 +422,7 @@ silently produces a misaligned model.
 
 ```python
 first_conv_filters    = 32
-first_conv_kernel_size = 5          # → stream shape [1, 2, 1, 40]  (5-3=2)
+first_conv_kernel_size = 5          # → stream_0 shape [1, 2, 1, 40]  (5-3=2)
 stride                = 3           # GLOBAL IMMUTABLE CONSTANT
 pointwise_filters     = [64, 64, 64, 64]
 mixconv_kernel_sizes  = [[5], [7, 11], [9, 15], [23]]

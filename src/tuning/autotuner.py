@@ -1407,23 +1407,18 @@ class AutoTuner:
 
     def _serialize_weights(self, model) -> bytes:
         """Serialize all model weights including non-trainable state variables."""
-        # Use model.variables to include both trainable and non-trainable weights
-        # (e.g., streaming ring buffer state variables)
-        weights = [w.numpy() for w in model.variables]
+        # Use model.get_weights() to preserve correct ordering
+        # This includes both trainable and non-trainable weights
+        # (e.g., BatchNorm moving_mean/moving_variance)
+        weights = model.get_weights()
         return pickle.dumps(weights)
 
     def _deserialize_weights(self, model, weights_bytes: bytes):
         """Restore all model weights including non-trainable state variables."""
         weights = pickle.loads(weights_bytes)
-        # Handle both old checkpoints (trainable_weights only) and new (all variables)
-        if len(weights) == len(list(model.variables)):
-            # New format: restore all variables including state buffers
-            for w, val in zip(model.variables, weights):
-                w.assign(val)
-        else:
-            # Old format: restore only trainable weights (state will be reset)
-            for w, val in zip(model.trainable_weights, weights):
-                w.assign(val)
+        # Use model.set_weights() to restore in correct order
+        # This matches model.get_weights() ordering (layer creation order)
+        model.set_weights(weights)
 
     def _serialize_optimizer_state(self, optimizer) -> bytes:
         try:

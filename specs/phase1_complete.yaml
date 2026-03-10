@@ -170,7 +170,7 @@ Phase 1 established the foundational infrastructure for the microwakeword_traine
 **Testing:**
 - Manual verification with ESPHome feature extractor
 - Shape validation [time_frames, 40]
-- Range validation (0.0-25.85)
+- Range validation (0.0-26.0)
 
 **Lessons Learned:**
 - pymicro-features is essential for ESPHome compatibility
