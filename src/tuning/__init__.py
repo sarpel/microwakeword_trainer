@@ -1,18 +1,18 @@
 """Auto-tuning module for wake word model post-training optimization."""
 
 from src.tuning.autotuner import (
-    AutoTuner,
-    ParetoArchive,
-    TuneMetrics,
-    CandidateState,
-    StrategyArm,
     STRATEGY_ARMS,
-    ThompsonSampler,
+    AnnealingController,
+    AutoTuner,
+    CandidateState,
     ErrorMemory,
     FocusedSampler,
-    ThresholdOptimizer,
-    AnnealingController,
+    ParetoArchive,
     StirController,
+    StrategyArm,
+    ThompsonSampler,
+    ThresholdOptimizer,
+    TuneMetrics,
     autotune,
     main,
 )

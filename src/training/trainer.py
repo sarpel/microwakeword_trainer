@@ -426,6 +426,10 @@ class Trainer:
         ema_decay = training_cfg.get("ema_decay")
         if ema_decay is not None:
             self.logger.log_info(f"EMA configured with decay={ema_decay} (will be applied during optimizer creation)")
+        self._ema_enabled = True
+
+        if ema_decay is None:
+            self._ema_enabled = False
 
         # Pre-compute phase boundaries for fast lookup
         self._phase_boundaries: list[int] = []
@@ -690,7 +694,7 @@ class Trainer:
             optimizer_kwargs = {
                 "use_ema": True,
                 "ema_momentum": float(ema_decay),
-                "ema_overwrite_frequency": 1,
+                "ema_overwrite_frequency": None,  # Swap to EMA weights only during eval/checkpoint
             }
             self.logger.log_info(f"EMA enabled with decay={ema_decay}")
             optimizer = keras.optimizers.Adam(
@@ -718,6 +722,33 @@ class Trainer:
         )
 
         return model
+
+    def _swap_to_ema_weights(self):
+        """Swap model weights to EMA weights for evaluation/checkpointing.
+
+        Stores the raw training weights so they can be restored after evaluation.
+        Only acts when EMA is enabled (ema_decay is configured).
+        """
+        if not self._ema_enabled:
+            return
+        optimizer = self.model.optimizer
+        # Save raw training weights before overwriting with EMA
+        self._saved_training_weights = [v.numpy().copy() for v in self.model.trainable_variables]
+        # Swap EMA weights into model variables for evaluation
+        optimizer.finalize_variable_values(self.model.trainable_variables)
+
+    def _restore_training_weights(self):
+        """Restore raw training weights after EMA-based evaluation.
+
+        Must be called after _swap_to_ema_weights() to resume training with
+        the un-smoothed weights. Gradients should be applied to raw weights,
+        not EMA weights.
+        """
+        if not self._ema_enabled or not hasattr(self, '_saved_training_weights'):
+            return
+        for var, saved in zip(self.model.trainable_variables, self._saved_training_weights):
+            var.assign(saved)
+        del self._saved_training_weights
 
     def _apply_class_weights(
         self,
@@ -1303,6 +1334,8 @@ class Trainer:
                 basic_due = step % self.eval_basic_step_interval == 0
                 advanced_due = step % self.eval_advanced_step_interval == 0
                 if basic_due or advanced_due:
+                    # Swap to EMA weights for evaluation and checkpointing
+                    self._swap_to_ema_weights()
                     val_metrics = self.validate(val_data_factory)
                     val_metrics = self._augment_quality_metrics(val_metrics, step)
 
@@ -1337,6 +1370,8 @@ class Trainer:
                             )
                             self.tensorboard_logger.log_text_summary("checkpoints/summary", summary_text, step)
 
+                    # Restore raw training weights after evaluation/checkpointing
+                    self._restore_training_weights()
                     # Hard negative mining or logging (based on collection_mode)
                     if advanced_due and step % self.eval_advanced_step_interval == 0:
                         approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
@@ -1407,9 +1442,14 @@ class Trainer:
         progress.stop()
 
         # Always save final weights as fallback for auto-tuner and post-training tools
+        # Swap to EMA weights for final save (so final_weights has smoothed params)
+        self._swap_to_ema_weights()
         final_path = os.path.join(self.checkpoint_dir, "final_weights.weights.h5")
         self.model.save_weights(final_path)
         self.logger.log_info(f"Final weights saved to {final_path}")
+        # Restore raw weights (not strictly needed since training is over,
+        # but keeps state clean for any post-training usage)
+        self._restore_training_weights()
 
         self.logger.log_completion(
             total_time,

@@ -297,6 +297,7 @@ class MiningConfig:
         if self.extraction_batch_size <= 0:
             raise ValueError(f"extraction_batch_size must be positive, got {self.extraction_batch_size}")
 
+
 @dataclass
 class ExportConfig:
     """Model export settings."""

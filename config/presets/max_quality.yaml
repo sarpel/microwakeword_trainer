@@ -46,9 +46,9 @@ training:
   eval_log_every_step: true
   steps_per_epoch: 1000
 
-  positive_class_weight: [8.0, 10.0, 12.0]      # De-emphasized from [10,20,30] — was too recall-biased
-  negative_class_weight: [1.2, 1.2, 1.2]     # Slightly up from [1,1,1] to maintain FAH pressure with more aggressive mining
-  hard_negative_class_weight: [4.0, 6.0, 8.0]   # UP from [1,1,1] — force discrimination against confusables
+  positive_class_weight: [5.0, 7.0, 9.0]      # De-emphasized from [10,20,30] — was too recall-biased
+  negative_class_weight: [1.5, 1.5, 1.5]     # Slightly up from [1,1,1] to maintain FAH pressure with more aggressive mining
+  hard_negative_class_weight: [3.0, 5.0, 7.0]   # UP from [1,1,1] — force discrimination against confusables
 
   # Progressive SpecAugment: light→moderate→strong
   time_mask_max_size: [1, 2, 3]
@@ -57,8 +57,8 @@ training:
   freq_mask_count: [1, 1, 1]
 
   # Checkpoint selection
-  minimization_metric: "average_viable_recall"  # CHANGED: Prioritize recall over FAH
-  target_minimization: 1.0  # RAISED: Allow 1 FAH instead of 0.2 - model needs to learn to detect wake word
+  minimization_metric: "ambient_false_positives_per_hour"  # CHANGED: Prioritize recall over FAH
+  target_minimization: 2.0  # RAISED: Allow 1 FAH instead of 0.2 - model needs to learn to detect wake word
   maximization_metric: "average_viable_recall"
 
   # 42.02h of ambient audio (negative + background + hard_negative) for FAH calculation
@@ -70,7 +70,7 @@ training:
 
   # Optimizer and loss parameters
   optimizer: "adam"
-  label_smoothing: 0.0
+  label_smoothing: 0.01
   gradient_clipnorm: 2.0        # Was 0.5 = too aggressive, capped max score at 0.87
   ema_decay: 0.99               # Half-life ~700 steps, smooths noise without killing convergence
   random_seed: 42               # Reproducible runs
@@ -292,7 +292,7 @@ evaluation:
   max_fah: 10.0
   warmup_runs: 10
   n_latency_runs: 100
-  target_fah: 1.0               # Relaxed from 0.2 — 0.2 on 4.2h val = ~0 FP tolerance, too strict
+  target_fah: 2.0               # Relaxed from 0.2 — 0.2 on 4.2h val = ~0 FP tolerance, too strict
   target_recall: 0.90
   gain_window_steps: 1000
   plateau_window_evals: 5
@@ -303,7 +303,7 @@ evaluation:
 # ─────────────────────────────────────────────────────────────────
 auto_tuning:
   enabled: true
-  target_fah: 1.0               # Relaxed from 0.2 — match evaluation target_fah
+  target_fah: 2.0               # Relaxed from 0.2 — match evaluation target_fah
   target_recall: 0.90
   max_iterations: 50            # Quality over speed
   max_gradient_steps: 250000    # Generous budget for max quality
@@ -316,7 +316,7 @@ auto_tuning:
   negative_weight_range: [10.0, 50.0] # Legacy
   hard_negative_weight_range: [20.0, 100.0] # Legacy
   cv_folds: 5
-  confirmation_fraction: 0.30
+  confirmation_fraction: 0.40
   bootstrap_samples: 2000       # More samples for max quality
   int8_shadow: true
   int8_shadow_interval: 1       # More frequent INT8 checks

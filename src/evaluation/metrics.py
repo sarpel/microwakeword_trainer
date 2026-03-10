@@ -232,7 +232,16 @@ def compute_fah_at_target_recall(
     target_recall: float,
     n_thresholds: int = 101,
 ) -> tuple[float, float, float]:
-    """Compute FAH at the lowest threshold meeting target recall."""
+    """Compute FAH at the best (highest) threshold meeting target recall.
+
+    Sweeps thresholds from low to high. Among all thresholds where
+    recall >= target_recall, selects the one with the HIGHEST threshold
+    (which gives the LOWEST / best FAH). This is the optimal operating
+    point for deployment: meeting the recall target with fewest false alarms.
+
+    Returns:
+        (best_fah, best_threshold, best_recall) tuple.
+    """
     thresholds = np.linspace(0, 1, n_thresholds)
     neg_mask = y_true == 0
     pos_mask = y_true == 1
@@ -247,10 +256,12 @@ def compute_fah_at_target_recall(
         if recall >= target_recall:
             fp = np.sum(y_scores[neg_mask] >= thresh)
             fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else float("inf")
+            # Always update — later (higher) thresholds have lower FAH,
+            # so the last feasible threshold gives the best operating point
             best_threshold = float(thresh)
             best_recall = float(recall)
             best_fah = float(fah)
-            break
+            # Do NOT break — continue to find higher threshold with lower FAH
 
     return float(best_fah), float(best_threshold), float(best_recall)
 

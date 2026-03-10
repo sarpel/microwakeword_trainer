@@ -11,8 +11,6 @@ Quality over speed. Time budget doesn't matter — only final model quality.
 from __future__ import annotations
 
 import contextlib
-import copy
-import enum
 import io
 import json
 import logging
@@ -20,13 +18,12 @@ import math
 import os
 import pickle
 import re
-import sys
 import tempfile
 import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -909,11 +906,13 @@ class ThresholdOptimizer:
 
         # AUC metrics
         try:
-            from sklearn.metrics import roc_auc_score, average_precision_score
+            from sklearn.metrics import average_precision_score, roc_auc_score
 
             auc_roc = float(roc_auc_score(labels, y_scores))
             auc_pr = float(average_precision_score(labels, y_scores))
-        except Exception:
+        except (ValueError, TypeError) as e:
+            import logging
+            logging.getLogger(__name__).warning("AUC computation failed: %s", e)
             auc_roc = 0.0
             auc_pr = 0.0
 
@@ -1194,6 +1193,7 @@ class AutoTuner:
         Returns arrays ready for in-memory evaluation.
         """
         import tensorflow as tf
+
         from src.data.dataset import WakeWordDataset
 
         self.file_logger.info("Loading validation data...")
@@ -2049,7 +2049,6 @@ class AutoTuner:
         stir_level: int,
         burst_info: dict,
     ):
-        from rich.table import Table
 
         status = "✅" if accepted else "❌"
         stir_str = f"⚡L{stir_level}" if stir_level > 0 else ""
@@ -2125,6 +2124,7 @@ class AutoTuner:
     def tune(self) -> dict:
         """Main orchestration loop. Returns results dict."""
         import tensorflow as tf
+
         from src.model.architecture import build_model
         from src.utils.performance import set_threading_config
 

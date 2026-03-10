@@ -1777,7 +1777,7 @@ Examples:
                 mining_cfg = config.get("mining", {})
                 log_file = args.log_file or mining_cfg.get("extraction_log_file", "logs/top_fp_extraction.json")
                 print(f"\n  Results saved to: {log_file}")
-                print(f"  To move files, run: mww-mine-hard-negatives extract-top-fps --move-now")
+                print("  To move files, run: mww-mine-hard-negatives extract-top-fps --move-now")
 
         return 0
 
