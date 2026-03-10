@@ -836,6 +836,89 @@ cat checkpoints/tuned/tuned_metrics.json
 
 ---
 
+### Issue: Auto-Tune Confirmation Failure (FAH 0 → 129+)
+
+**Symptoms:**
+- Tuning iteration shows excellent metrics: FAH=0.00, recall=1.0
+- Final confirmation phase shows catastrophic failure: FAH=129+ or worse
+- Tuned checkpoint performs identically (or worse) than base checkpoint
+- Checkpoint file size differs significantly from base
+
+**Root Cause:**
+
+The auto-tuner's weight serialization was corrupted:
+
+1. **Original bug (fixed):** `_serialize_weights()` used `model.trainable_weights` which excludes non-trainable weights like BatchNorm moving statistics (moving_mean, moving_variance)
+2. **Additional bug (fixed):** Duplicate `_deserialize_weights()` definition — second version used `model.variables` (alphabetical ordering) instead of `model.set_weights()` (layer creation order)
+3. **Result:** Weights were assigned to wrong layers, and BatchNorm running statistics were lost completely
+
+**Why this caused FAH 0 → 129+:**
+- During tuning, the model (with correct BN stats) evaluated perfectly on test data
+- During serialization/deserialization, BN stats were lost or mis-assigned
+- At confirmation, the model had random/uninitialized BN statistics, causing features to be unnormalized
+- Unnormalized features produce garbage predictions → FAH=129+ (maximum alarm rate)
+
+**Diagnosis:**
+```bash
+# Check if you have the fixed version
+grep -A5 "_serialize_weights" src/tuning/autotuner.py | head -7
+# Should see: weights = model.get_weights()  (NOT model.trainable_weights or model.variables)
+
+grep -A5 "_deserialize_weights" src/tuning/autotuner.py | head -7
+# Should see: model.set_weights(weights)  (NOT model.variables or assign())
+```
+
+**Solutions:**
+
+1. **Verify you have the fix (2026-03-10):**
+   ```bash
+   # Check autotuner.py has correct serialization
+   grep -n "_serialize_weights" src/tuning/autotuner.py
+   grep -n "_deserialize_weights" src/tuning/autotuner.py
+   # Only ONE _deserialize_weights should exist, using model.set_weights()
+   ```
+
+2. **Re-run auto-tuning from scratch:**
+   ```bash
+   # Previous tuning results are invalid due to serialization bug
+   mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config standard
+   ```
+
+3. **Verify checkpoint consistency:**
+   ```bash
+   # Check tuned checkpoint size is reasonable
+   ls -lh tuning_results/checkpoints/tuned_*.weights.h5
+   # Should be similar to base checkpoint size (±30%)
+   ```
+
+**Prevention:**
+
+This is now fixed in the codebase. The root cause was:
+- Using `model.trainable_weights` instead of `model.get_weights()` (excludes non-trainable state)
+- Using `model.variables` instead of `model.set_weights()` (alphabetical vs layer creation order mismatch)
+
+**Anti-patterns (don't do this):**
+```python
+# WRONG - excludes BatchNorm moving statistics
+weights = [w.numpy() for w in model.trainable_weights]
+
+# WRONG - alphabetical ordering doesn't match model.get_weights()
+weights = [w.numpy() for w in model.variables]
+
+# WRONG - assign() is for Keras variables, not set_weights()
+for var, w in zip(model.variables, weights):
+    var.assign(w)
+```
+
+**Correct approach:**
+```python
+# CORRECT - includes all weights in layer creation order
+weights = model.get_weights()  # serialize
+model.set_weights(weights)      # deserialize
+```
+
+---
+
 ### Issue: User-Defined Hard Negatives Not Used
 
 **Symptoms:**
@@ -1126,6 +1209,76 @@ esphome:
    ```
 
 ---
+
+### Issue: State Tensor Order Mismatch in TFLite Export
+
+**Symptoms:**
+- `✗ State tensor order mismatch` during ESPHome verification
+- Observed state shapes in wrong order: e.g., `(1,4,1,32)` before `(1,2,1,40)`
+- Expected order: `[(1,2,1,40), (1,4,1,32), ...]` but got different order
+- Verification shows wrong shape for position 0
+
+**Root Cause:**
+
+TFLite converter sorts state variables alphabetically by name when emitting the flatbuffer file. ESPHome accesses state variables positionally (not by name), so the order in the TFLite file must match the architectural order.
+
+With original naming (`stream`, `stream_1`, `stream_2`, ...):
+- Variable names with `_ring_buffer` suffix: `stream_ring_buffer`, `stream_1_ring_buffer`, `stream_2_ring_buffer`, ...
+- Alphabetically: `stream_1_ring_buffer` < `stream_ring_buffer` (because `_1` < `_r`)
+- Result: `stream_1` appears first in TFLite file, but should be second
+
+
+**Fix (2026-03-10):**
+
+Renamed `stream` → `stream_0` in `src/export/tflite.py`. Now:
+- Variable names: `stream_0_ring_buffer`, `stream_1_ring_buffer`, `stream_2_ring_buffer`, ...
+- Alphabetically: `stream_0_ring_buffer` < `stream_1_ring_buffer` < `stream_2_ring_buffer` < ...
+- Result: State variables appear in correct order in TFLite file
+
+**Verification:**
+```bash
+# Check if you have the fix
+grep -n "stream" src/export/tflite.py | head -6
+# Should see: ("stream_0", ...), ("stream_1", ...), ...
+
+# Verify ARCHITECTURAL_CONSTITUTION.md is updated
+grep "stream_0" ARCHITECTURAL_CONSTITUTION.md
+# Should appear in state variable tables
+```
+
+**Re-export required:**
+```bash
+# If you have old exports, re-export after the fix
+mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/
+
+# Verify state order is correct
+python scripts/verify_esphome.py models/exported/wake_word.tflite --verbose
+# Should show all state shapes in correct order
+```
+
+**Prevention:**
+
+The fix is now in the codebase. When working with TFLite exports:
+- State variable names must follow alphabetical naming that matches architectural order
+- ARCHITECTURAL_CONSTITUTION.md is the authoritative source for naming
+- Renaming affects TFLite tensor order due to alphabetical sorting
+
+**Technical Details:**
+
+The export model (`StreamingExportModel.build()`) uses explicit positional list access:
+```python
+self.state_vars = [
+    self.add_weight(...),  # state_vars[0]
+    self.add_weight(...),  # state_vars[1]
+    ...
+]  # Accessed by position in call()
+```
+
+However, TFLite converter discovers and sorts variables by NAME. The `_ring_buffer` suffix added by `add_weight(name=f"{name}_ring_buffer")` affects this sorting.
+
+---
+
+## Configuration Issues
 
 ## Configuration Issues
 
