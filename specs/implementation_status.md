@@ -1,6 +1,6 @@
 # Implementation Status Report
 
-**Last Updated**: 2026-03-08
+**Last Updated**: 2026-03-10 (critical bug fixes in auto-tuning and evaluation)
 **Project Version**: 2.0.0
 **Branch**: consolidation
 
@@ -89,12 +89,14 @@ MN|**Problem:**
 - All candidates appeared to fail confirmation because streaming ring buffer state was lost
 
 HT|**Fix:**
-- Changed `_serialize_weights()` to use `model.variables` (includes both trainable and non-trainable weights)
-- Updated `_deserialize_weights()` to restore to `model.variables`
-- This preserves the 6 streaming ring buffer state variables critical for correct inference
-
+**Fix:**
+- Changed `_serialize_weights()` to use `model.get_weights()` instead of `model.trainable_weights`
+- Changed `_deserialize_weights()` to use `model.set_weights()` instead of `model.variables`
+- This preserves BatchNorm moving statistics (moving_mean/moving_variance) which are non-trainable
+- The tuning model runs in NON_STREAM mode (has 0 streaming state variables), so the real issue was missing BN state, not streaming states
 HT|**Files Modified:**
-- `src/tuning/autotuner.py`: 4 lines modified in `_serialize_weights()` and `_deserialize_weights()`
+**Files Modified:**
+- `src/tuning/autotuner.py`: Removed duplicate `_deserialize_weights()` definition, kept only `model.get_weights()`/`set_weights()` version
 
 SB|**Impact:**
 - Auto-tuning confirmation now works correctly
@@ -104,8 +106,92 @@ SB|**Impact:**
 
 SS|**Status**: ✅ Complete, tested, documented in TROUBLESHOOTING.md and AGENTS.md
 JQ|
-XX|---
-YX|
+---
+
+## Recent Bug Fixes (2026-03-10)
+
+### Bug Fix 1: Auto-Tuner Weight Serialization - Corrected
+
+**Issue:**
+- Auto-tuner `_serialize_weights()` originally used `model.trainable_weights` which does NOT include non-trainable variables like BatchNorm moving statistics (moving_mean, moving_variance)
+- This caused models to appear excellent during tuning (FAH=0.00) but fail catastrophically during confirmation (FAH=129+) because BatchNorm running statistics were lost
+- The tuning model runs in NON_STREAM mode (no streaming state variables exist), so the issue was about BN state, NOT streaming state buffers
+
+**Fix:**
+- Changed `_serialize_weights()` to use `model.get_weights()` instead of `model.trainable_weights`
+- Changed `_deserialize_weights()` to use `model.set_weights()` instead of `model.variables` (which has alphabetical ordering issues)
+- Removed duplicate `_deserialize_weights()` definition (second definition with `model.variables` was overriding correct first definition)
+- `model.get_weights()`/`model.set_weights()` includes ALL weights in layer creation order
+
+**Files Modified:**
+- `src/tuning/autotuner.py`: Fixed `_serialize_weights()` and `_deserialize_weights()` methods
+
+**Impact:**
+- Auto-tuning confirmation now works correctly
+- Tuning metrics match confirmation metrics
+- BatchNorm moving statistics are preserved across serialization
+- No more silent failures where models appear perfect but fail validation
+
+**Status:** ✅ Complete, tested, documented in TROUBLESHOOTING.md and AGENTS.md
+
+---
+
+### Bug Fix 2: TFLite State Variable Naming (stream → stream_0)
+
+**Issue:**
+- TFLite converter sorts state variables alphabetically by name when emitting the flatbuffer
+- Original naming: `stream`, `stream_1`, `stream_2`, ... `stream_5`
+- With `_ring_buffer` suffix: `stream_ring_buffer`, `stream_1_ring_buffer`, `stream_2_ring_buffer`... 
+- Alphabetically: `stream_1_ring_buffer` < `stream_ring_buffer` (because `_1` < `_r`)
+- This caused state variables to appear in wrong order in TFLite file, breaking ESPHome verification
+
+**Fix:**
+- Renamed `stream` → `stream_0` in `src/export/tflite.py`
+- Now `stream_0_ring_buffer` sorts BEFORE `stream_1_ring_buffer` (correct order)
+- Updated `ARCHITECTURAL_CONSTITUTION.md` to document `stream_0` instead of `stream`
+
+**Files Modified:**
+- `src/export/tflite.py`: State variable rename in `state_configs`
+- `ARCHITECTURAL_CONSTITUTION.md`: Updated Article V and VI state variable tables
+
+**Impact:**
+- TFLite export now produces state tensors in correct order
+- ESPHome verification passes state shape checks
+- State variable positional access (`self.state_vars[0..5]`) remains unchanged (only naming changed)
+
+**Status:** ✅ Complete, verified TFLite export, documented in AGENTS.md
+
+---
+
+### Bug Fix 3: evaluate_model.py Generator Exhaustion and Incorrect Model Building
+
+**Issue:**
+- Triple prediction loops (lines 111-130) over same generator
+- Generator exhausts on first loop, loops 2-3 produce nothing (dead code)
+- Loop 2 applied `tf.sigmoid()` (double-sigmoid since model already has sigmoid output)
+- `build_model(model_config=config.get("model", {}))` silently ignored kwarg — `build_model()` doesn't accept `model_config` dict, it accepts individual kwargs
+- Model always built with default architecture even if config had different values
+
+**Fix:**
+- Removed duplicate prediction loops (loops 2-3), kept only correct loop 1
+- Changed model building to pass individual kwargs: `first_conv_filters`, `pointwise_filters`, `mixconv_kernel_sizes`, etc.
+- Removed incorrect sigmoid application (model already has sigmoid output)
+- Fixed duplicate `y_true`/`y_scores` block at end of function
+
+**Files Modified:**
+- `scripts/evaluate_model.py`: Removed dead code, fixed model building, removed duplicates
+
+**Impact:**
+- `evaluate_model.py` now correctly evaluates models with architecture from config
+- Generator exhaustion issue resolved
+- Metrics are now reliable for model comparison
+- Previous evaluation results may have been affected by these bugs
+
+**Status:** ✅ Complete, verified with lsp_diagnostics, documented in AGENTS.md
+
+---
+
+## Module-by-Module Implementation Details
 ZW|## Module-by-Module Implementation Details
 **Status**: ✅ Complete, tested, documented
 
@@ -276,7 +362,7 @@ ZW|## Module-by-Module Implementation Details
 - ESPHome manifest generation
 - Model analysis and verification
 - Streaming subgraph verification
-
+- State variable naming fix (stream → stream_0 for correct alphabetical ordering)
 **Key Files:**
 - `tflite.py` (780 lines) - Main export pipeline
 - `manifest.py` (330 lines) - Manifest generation
@@ -284,12 +370,12 @@ ZW|## Module-by-Module Implementation Details
 - `verification.py` (218 lines) - Verification tools
 
 **Export Requirements:**
+**Export Requirements:**
 - Input dtype: int8, shape: [1, 3, 40]
 - Output dtype: uint8, shape: [1, 1]
 - 2 subgraphs (main + initialization)
-- 6 state variables (int8-quantized)
+- 6 state variables (int8-quantized): stream_0, stream_1, stream_2, stream_3, stream_4, stream_5
 - Only ESPHome-registered ops
-
 **Documentation:**
 - `docs/EXPORT.md` (304 lines) - Complete export guide
 - `ARCHITECTURAL_CONSTITUTION.md` - Immutable requirements
@@ -308,7 +394,7 @@ ZW|## Module-by-Module Implementation Details
 - Probability calibration
 - Test evaluator for comprehensive testing
 - MCC, Cohen's Kappa, EER computation
-
+- Bug fixes: `evaluate_model.py` generator exhaustion removed, model building fixed
 **Key Files:**
 - `metrics.py` (373 lines) - Vectorized metrics
 - `fah_estimator.py` (72 lines) - FAH calculation
@@ -331,7 +417,7 @@ ZW|## Module-by-Module Implementation Details
 - Unit tests for vectorized metrics
 - Unit tests for test evaluator
 - Manual verification on test sets
-
+- Fixed generator exhaustion and duplicate code bugs in `evaluate_model.py`
 **Documentation:**
 - `docs/INDEX.md` - Metrics overview
 - `src/evaluation/AGENTS.md` - Module patterns
@@ -351,7 +437,7 @@ ZW|## Module-by-Module Implementation Details
 - Iterative fine-tuning without full retraining
 
 **Key Files:**
-- `autotuner.py` (691 lines) - Auto-tuning logic
+- `autotuner.py` (2612 lines) - Auto-tuning logic
 - `cli.py` (257 lines) - CLI entry point
 
 **Recent Enhancements:**
@@ -359,6 +445,8 @@ ZW|## Module-by-Module Implementation Details
 - `--users-hard-negs` CLI argument
 - Improved configuration display
 - Better iteration logging
+- **Critical Bug Fix (2026-03-10):** Fixed weight serialization to use `model.get_weights()`/`model.set_weights()` (includes BatchNorm moving statistics, not streaming state buffers)
+- **Critical Bug Fix (2026-03-10):** Removed duplicate `_deserialize_weights()` definition that was using incorrect `model.variables` (alphabetical ordering)
 
 **Documentation:**
 - README.md - Auto-tuning workflow
