@@ -292,6 +292,33 @@ class RaggedMmap:
         array = np.array(self._data[elem_offset : elem_offset + elem_length])
         return array
 
+    def get_batch(self, indices: List[int]) -> List[np.ndarray]:
+        """Get multiple arrays by indices with optimized sequential access.
+
+        This method sorts indices for sequential memory access, which is more
+        efficient than random access when using memory-mapped files. The returned
+        arrays are in the same order as the requested indices.
+
+        Args:
+            indices: List of array indices to retrieve
+
+        Returns:
+            List of arrays in the order of the input indices
+        """
+        if not indices:
+            return []
+
+        # Sort indices for sequential read efficiency
+        sorted_indices = sorted(enumerate(indices), key=lambda x: x[1])
+        result: List[Optional[np.ndarray]] = [None] * len(indices)
+
+        for orig_idx, idx in sorted_indices:
+            result[orig_idx] = self[idx]
+
+        # Filter out None values (shouldn't happen, but type-safe)
+        return [arr for arr in result if arr is not None]
+
+
     def __len__(self) -> int:
         """Get number of stored arrays."""
         return self._num_arrays

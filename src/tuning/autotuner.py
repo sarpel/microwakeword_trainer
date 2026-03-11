@@ -195,15 +195,16 @@ STRATEGY_ARMS = [
     ),
     StrategyArm(
         "hardest_only_shock",
-        200,
-        500,
+        250,  # Increased from 200 to be more conservative
+        350,  # Reduced from 500 to cap aggression
         300,
-        (5e-6, 2e-5),
+        (5e-6, 1.5e-5),  # Reduced max LR from 2e-5 to 1.5e-5
         1e-5,
-        "100% hardest examples",
+        "100% hardest examples (reduced aggression)",
         consecutive_ban=True,
     ),
 ]
+
 
 
 # ============================================================================
@@ -1207,6 +1208,15 @@ class AutoTuner:
         """Load validation data and return (features, labels, sample_weights, indices).
 
         Returns arrays ready for in-memory evaluation.
+        Data is cached after first load to avoid redundant reloading.
+        """
+        # Check cache first
+        if hasattr(self, '_cached_eval_data') and self._cached_eval_data is not None:
+            self.file_logger.info("Using cached validation data")
+            return self._cached_eval_data
+        """Load validation data and return (features, labels, sample_weights, indices).
+
+        Returns arrays ready for in-memory evaluation.
         """
         import tensorflow as tf
 
@@ -1271,7 +1281,10 @@ class AutoTuner:
         dataset.close()
 
         self.file_logger.info(f"Loaded {len(labels)} samples: {int(np.sum(labels >= 0.5))} positive, {int(np.sum(labels < 0.5))} negative")
-        return features, labels, weights, indices, group_ids
+        
+        # Cache the loaded data for future iterations
+        self._cached_eval_data = (features, labels, weights, indices, group_ids)
+        return self._cached_eval_data
 
     def _partition_data(self, features: np.ndarray, labels: np.ndarray, weights: np.ndarray, group_ids: Optional[np.ndarray] = None) -> dict:
         """Partition data: calibration 15%, search 60%, confirmation 20%, representative 5%.
@@ -1513,6 +1526,13 @@ class AutoTuner:
         heartbeat_steps = 500
         heartbeat_seconds = 60.0
 
+        # Early stopping setup for aggressive arms
+        arm_config = STRATEGY_ARMS[strategy_arm]
+        early_stopping_patience = 50 if "hardest" in arm_config.name else 0
+        best_loss = float('inf')
+        patience_counter = 0
+        min_steps_before_stop = max(50, n_steps // 4)  # Don't stop too early
+
         for step in range(n_steps):
             batch_features, batch_labels, batch_weights = sampler.build_batch(
                 strategy_arm,
@@ -1549,6 +1569,18 @@ class AutoTuner:
 
             losses.append(float(loss_val))
 
+            # Early stopping check for aggressive arms
+            if early_stopping_patience > 0 and step >= min_steps_before_stop:
+                current_loss = float(loss_val)
+                if current_loss < best_loss - 1e-5:  # Improved
+                    best_loss = current_loss
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                    if patience_counter >= early_stopping_patience:
+                        self.file_logger.info(f"Early stopping burst at step {step + 1}/{n_steps} (no improvement for {patience_counter} steps)")
+                        break
+
             now = time.time()
             should_log_step = n_steps >= heartbeat_steps and (step + 1) % heartbeat_steps == 0
             should_log_time = now - last_heartbeat >= heartbeat_seconds
@@ -1574,11 +1606,12 @@ class AutoTuner:
         self._unfreeze_bn(model)
 
         return {
-            "steps": n_steps,
+            "steps": len(losses),  # Actual steps completed (may be less due to early stopping)
             "final_loss": losses[-1] if losses else 0.0,
             "mean_loss": float(np.mean(losses)) if losses else 0.0,
             "swa_snapshots": swa_snapshots,
         }
+
 
     def _standard_step(self, model, optimizer, loss_fn, features, labels, weights, clipnorm):
         import tensorflow as tf
@@ -1781,7 +1814,7 @@ class AutoTuner:
                 # Build representative dataset from in-memory features for INT8 calibration
 
                 def _representative_dataset():
-                    for i in range(min(len(repr_features), 100)):
+                    for i in range(min(len(repr_features), 300)):
                         sample = repr_features[i].astype(np.float32)
                         if sample.ndim == 1:
                             sample = sample.reshape(num_input_frames, mel_bins)
@@ -1865,7 +1898,7 @@ class AutoTuner:
         confirm_data: tuple,
         repr_data: tuple,
         ambient_hours: float,
-    ) -> Optional[CandidateState]:
+    ) -> tuple[Optional["CandidateState"], Optional[dict]]:
         """Final confirmation on held-out data."""
         from rich.table import Table
 
@@ -1875,7 +1908,7 @@ class AutoTuner:
 
         if len(self.archive) == 0:
             self.file_logger.warning("No candidates in archive for confirmation")
-            return None
+            return None, None
 
         # Shortlist top 5 (or fewer)
         shortlist = sorted(
@@ -1886,6 +1919,8 @@ class AutoTuner:
         confirm_features, confirm_labels, confirm_weights, _ = confirm_data
         repr_features = repr_data[0]
         best_confirmed = None
+        best_attempt = None
+        best_attempt_metrics = None
         best_score = float("inf")
 
         table = Table(title="🔬 Confirmation Results")
@@ -1936,8 +1971,15 @@ class AutoTuner:
                     candidate.eval_results = metrics
                     candidate.eval_results_int8 = int8_metrics
                     best_confirmed = candidate
+            else:
+                # Track best failed attempt for reporting
+                score = self._scalarized_score(metrics)
+                if best_attempt is None or score < self._scalarized_score(best_attempt_metrics):
+                    best_attempt = candidate
+                    best_attempt_metrics = metrics
 
             self.file_logger.info(f"Confirmation {candidate.id}: FAH={metrics.fah:.4f}, Recall={metrics.recall:.4f}, Status={status}")
+
 
         self.console.print(table)
 
@@ -1945,8 +1987,11 @@ class AutoTuner:
             self.file_logger.info(f"Best confirmed: {best_confirmed.id} — FAH={best_confirmed.eval_results.fah:.4f}, Recall={best_confirmed.eval_results.recall:.4f}")
         else:
             self.file_logger.warning("No candidate passed confirmation phase")
+            if best_attempt and best_attempt_metrics:
+                self.file_logger.info(f"Best failed attempt: {best_attempt.id} — FAH={best_attempt_metrics.fah:.4f}, Recall={best_attempt_metrics.recall:.4f}")
 
-        return best_confirmed
+        return best_confirmed, best_attempt_metrics
+
 
     def _scalarized_score(self, m: Optional[TuneMetrics]) -> float:
         if m is None:
@@ -2121,15 +2166,26 @@ class AutoTuner:
         elapsed = result.get("elapsed_seconds", 0)
         minutes = elapsed / 60
 
-        summary = (
-            f"Target met: {met}\n"
-            f"Best FAH: {result['best_fah']:.4f}\n"
-            f"Best Recall: {result['best_recall']:.4f}\n"
-            f"Total iterations: {result['iterations']}\n"
-            f"Total gradient steps: {self.total_gradient_steps:,}\n"
-            f"Wall clock: {minutes:.1f} min\n"
-            f"Best checkpoint: {result.get('best_checkpoint', 'N/A')}"
-        )
+        # Check if confirmation was attempted but failed
+        confirmation_attempted = result.get("confirmation_attempted", False)
+        confirmation_failed = confirmation_attempted and not result["target_met"]
+
+        if confirmation_failed:
+            # Show confirmation metrics (best failed attempt) instead of search-set metrics
+            conf_fah = result.get("confirmation_best_fah")
+            conf_recall = result.get("confirmation_best_recall")
+            summary = (
+                f"Target met: {met}\n"
+                f"⚠️ Confirmation failed — showing best confirmation attempt:\n"
+                f"Best FAH: {conf_fah:.4f}\n"
+                f"Best Recall: {conf_recall:.4f}\n"
+                f"Search-set metrics (overfit): FAH={result['best_fah']:.4f}, Recall={result['best_recall']:.4f}\n"
+                f"Total iterations: {result['iterations']}\n"
+                f"Total gradient steps: {self.total_gradient_steps:,}\n"
+                f"Wall clock: {minutes:.1f} min\n"
+                f"Best checkpoint: {result.get('best_checkpoint', 'N/A')}"
+            )
+
         self.console.print(Panel(summary, title="📊 Auto-Tuning Results", border_style="green" if result["target_met"] else "red"))
 
         # Pareto frontier table
@@ -2487,8 +2543,9 @@ class AutoTuner:
 
         # 7. Confirmation phase
         confirmed = None
+        best_attempt_metrics = None
         if self.require_confirmation and len(self.archive) > 0:
-            confirmed = self._confirmation_phase(model, confirm_data, repr_data, ambient_hours_val)
+            confirmed, best_attempt_metrics = self._confirmation_phase(model, confirm_data, repr_data, ambient_hours_val)
             if confirmed is not None:
                 # Save confirmed checkpoint
                 self._deserialize_weights(model, confirmed.weights_bytes)
@@ -2523,7 +2580,11 @@ class AutoTuner:
             "pareto_frontier": self.archive.get_frontier_points(),
             "elapsed_seconds": elapsed,
             "total_gradient_steps": self.total_gradient_steps,
+            "confirmation_attempted": self.require_confirmation and len(self.archive) > 0,
+            "confirmation_best_fah": best_attempt_metrics.fah if best_attempt_metrics else None,
+            "confirmation_best_recall": best_attempt_metrics.recall if best_attempt_metrics else None,
         }
+
 
         self._log_final_summary(result)
         return result

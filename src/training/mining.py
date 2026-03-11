@@ -189,10 +189,14 @@ class HardExampleMiner:
             indices (global dataset indices), avg_prediction.
         """
         # Use a heap to track top-K hard negatives by prediction score
-        # Each entry: (negative_score, global_index, feature, label, prediction)
-        # negative_score is -prediction so that highest predictions are popped first
-        hard_negative_heap: list[tuple[float, int, np.ndarray, int, float]] = []
+        # Each entry: (pred_score, global_index, batch_id, local_index, label, prediction)
+        # We store batch_id + local_index instead of feature copies to reduce memory ~80MB
+        hard_negative_heap: list[tuple[float, int, int, int, int, float]] = []
         global_offset = 0
+        batch_counter = 0
+        # Cache batch features keyed by batch_counter; only entries still referenced
+        # in the heap need to be retained (cleaned up after heap is finalized)
+        batch_features_cache: dict[int, np.ndarray] = {}
 
         # Handle both generator factories and direct generators
         if callable(data_generator):
@@ -206,23 +210,33 @@ class HardExampleMiner:
             # Get hard indices local to this batch
             local_hard_indices = self.get_hard_samples(labels, predictions)
 
+            if local_hard_indices:
+                # Store batch features reference (only if we have hard samples from this batch)
+                batch_features_cache[batch_counter] = features
+
             # Add hard negatives to heap
             for local_idx in local_hard_indices:
                 global_idx = global_offset + int(local_idx)
                 pred_score = float(predictions[local_idx])
-                # Store positive pred_score so min-heap root is the lowest-scoring entry
-                heap_entry = (pred_score, global_idx, features[local_idx].copy(), int(labels[local_idx]), pred_score)
+                # Store (pred_score, global_idx, batch_id, local_idx, label, prediction)
+                heap_entry = (pred_score, global_idx, batch_counter, int(local_idx), int(labels[local_idx]), pred_score)
 
                 if len(hard_negative_heap) < self.max_samples:
                     heapq.heappush(hard_negative_heap, heap_entry)
                 elif pred_score > hard_negative_heap[0][0]:
                     # This hard negative has higher score than the lowest in heap
-                    heapq.heapreplace(hard_negative_heap, heap_entry)
+                    evicted = heapq.heapreplace(hard_negative_heap, heap_entry)
+                    # Check if evicted entry's batch can be freed
+                    evicted_batch_id = evicted[2]
+                    if not any(e[2] == evicted_batch_id for e in hard_negative_heap):
+                        batch_features_cache.pop(evicted_batch_id, None)
 
             global_offset += len(features)
+            batch_counter += 1
 
         # Check if we found any hard negatives
         if not hard_negative_heap:
+            batch_features_cache.clear()
             mining_result = {
                 "epoch": epoch,
                 "num_hard_negatives": 0,
@@ -230,7 +244,6 @@ class HardExampleMiner:
                 "avg_prediction": 0.0,
             }
             self.mining_history.append(mining_result)
-            # Limit history size to prevent memory leak
             if len(self.mining_history) > self._max_history_size:
                 self.mining_history = self.mining_history[-self._max_history_size :]
             return mining_result
@@ -240,7 +253,7 @@ class HardExampleMiner:
         sorted_hard = sorted(hard_negative_heap, key=lambda x: x[0], reverse=True)
 
         selected_indices = [int(entry[1]) for entry in sorted_hard]
-        avg_prediction = float(np.mean([entry[4] for entry in sorted_hard]))
+        avg_prediction = float(np.mean([entry[5] for entry in sorted_hard]))
 
         # Store mining result
         mining_result = {
@@ -255,16 +268,20 @@ class HardExampleMiner:
         if len(self.mining_history) > self._max_history_size:
             self.mining_history = self.mining_history[-self._max_history_size :]
 
-        # Create hard negative records
+        # Create hard negative records - fetch features from batch cache using batch_id + local_idx
         hard_negative_records = [
             {
                 "global_index": int(entry[1]),
-                "feature": entry[2],
-                "label": entry[3],
-                "prediction": entry[4],
+                "feature": batch_features_cache[entry[2]][entry[3]].copy(),
+                "label": entry[4],
+                "prediction": entry[5],
             }
             for entry in sorted_hard
+            if entry[2] in batch_features_cache
         ]
+
+        # Free the batch cache now that records have been materialized
+        batch_features_cache.clear()
 
         self.hard_negatives.extend(hard_negative_records)
         if len(self.hard_negatives) > self.max_samples:

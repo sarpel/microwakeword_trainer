@@ -5,7 +5,6 @@ GPU-mandatory: This module requires GPU availability and will raise RuntimeError
 if GPU is not available. No CPU fallback is provided.
 """
 
-import threading
 from typing import Any, cast
 
 import numpy as np
@@ -18,11 +17,6 @@ try:
 except ImportError:
     cp = None
     HAS_GPU = False
-
-# Call counter for periodic memory pool cleanup
-_call_counter = 0
-_cleanup_interval = 100  # Free memory pool every N calls to reduce fragmentation
-_counter_lock = threading.Lock()
 
 
 def spec_augment_gpu(
@@ -48,8 +42,6 @@ def spec_augment_gpu(
     Raises:
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
-    global _call_counter
-
     if cp is None:
         raise RuntimeError("CuPy is not available. Install cupy package: pip install cupy")
 
@@ -77,13 +69,6 @@ def spec_augment_gpu(
     # Transfer back to CPU
     spec_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(spec_gpu))
     del spec_gpu
-
-    # Periodic cleanup to reduce fragmentation (not every call)
-    with _counter_lock:
-        _call_counter += 1
-        should_cleanup = _call_counter % _cleanup_interval == 0
-    if should_cleanup:
-        cp.get_default_memory_pool().free_all_blocks()
 
     return spec_cpu
 
@@ -114,8 +99,6 @@ def batch_spec_augment_gpu(
     Raises:
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
-    global _call_counter
-
     if cp is None:
         raise RuntimeError("CuPy is not available. Install cupy package: pip install cupy")
 
@@ -128,43 +111,48 @@ def batch_spec_augment_gpu(
     # Get dimensions
     batch_size, num_time_frames, num_freq_bins = batch.shape
 
-    # Apply frequency masks - different mask for each sample in batch
+    # Apply frequency masks - fully vectorized across batch
     for _ in range(freq_mask_count):
+        # Generate random mask sizes and starts for entire batch at once
         freq_mask_sizes = cp.random.randint(0, freq_mask_max_size + 1, size=batch_size)
-        freq_mask_start_highs = cp.maximum(1, num_freq_bins - freq_mask_sizes + 1)
-        freq_mask_starts = cp.empty(batch_size, dtype=cp.int64)
-        for i in range(batch_size):
-            freq_mask_starts[i] = cp.random.randint(0, int(freq_mask_start_highs[i]))
+        freq_mask_starts = cp.random.randint(
+            0, 
+            cp.maximum(1, num_freq_bins - freq_mask_sizes + 1)
+        )
 
-        # Vectorized frequency masking across batch
-        for i in range(batch_size):
-            mask_size = freq_mask_sizes[i]
-            mask_start = freq_mask_starts[i]
-            batch_gpu[i, :, mask_start : mask_start + mask_size] = 0
+        # Vectorized masking using advanced indexing
+        # Create batch indices [0, 1, 2, ..., batch_size-1]
+        batch_indices = cp.arange(batch_size)
+        # Apply masks to all time frames simultaneously
+        for t in range(num_time_frames):
+            # Use broadcasting to apply each sample's mask
+            mask_indices = cp.arange(num_freq_bins)
+            mask = (mask_indices >= freq_mask_starts[:, None]) & (
+                mask_indices < (freq_mask_starts + freq_mask_sizes)[:, None]
+            )
+            batch_gpu[:, t, :][mask] = 0
 
-    # Apply time masks - different mask for each sample in batch
+    # Apply time masks - fully vectorized across batch
     for _ in range(time_mask_count):
+        # Generate random mask sizes and starts for entire batch at once
         time_mask_sizes = cp.random.randint(0, time_mask_max_size + 1, size=batch_size)
-        time_mask_start_highs = cp.maximum(1, num_time_frames - time_mask_sizes + 1)
-        time_mask_starts = cp.empty(batch_size, dtype=cp.int64)
-        for i in range(batch_size):
-            time_mask_starts[i] = cp.random.randint(0, int(time_mask_start_highs[i]))
+        time_mask_starts = cp.random.randint(
+            0,
+            cp.maximum(1, num_time_frames - time_mask_sizes + 1)
+        )
 
-        # Vectorized time masking across batch
-        for i in range(batch_size):
-            mask_size = time_mask_sizes[i]
-            mask_start = time_mask_starts[i]
-            batch_gpu[i, mask_start : mask_start + mask_size, :] = 0
+        # Vectorized time masking using advanced indexing
+        batch_indices = cp.arange(batch_size)
+        mask_indices = cp.arange(num_time_frames)
+        mask = (mask_indices >= time_mask_starts[:, None]) & (
+            mask_indices < (time_mask_starts + time_mask_sizes)[:, None]
+        )
+        # Apply mask across all frequency bins
+        for f in range(num_freq_bins):
+            batch_gpu[:, :, f][mask] = 0
 
-    # Transfer back to CPU
+    # Transfer back to CPU using synchronous call (async requires pinned memory)
     batch_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(batch_gpu))
     del batch_gpu
-
-    # Periodic cleanup to reduce fragmentation (not every call)
-    with _counter_lock:
-        _call_counter += 1
-        should_cleanup = _call_counter % _cleanup_interval == 0
-    if should_cleanup:
-        cp.get_default_memory_pool().free_all_blocks()
 
     return batch_cpu

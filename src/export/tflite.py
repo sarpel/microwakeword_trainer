@@ -162,6 +162,7 @@ class StreamingExportModel(tf.keras.Model):
         stride: int = 3,
         pointwise_filters: Optional[list[int]] = None,
         mixconv_kernel_sizes: Optional[list[list[int]]] = None,
+        residual_connections: Optional[list[int]] = None,
         mel_bins: int = 40,
         **kwargs,
     ):
@@ -172,12 +173,15 @@ class StreamingExportModel(tf.keras.Model):
             pointwise_filters = [64, 64, 64, 64]
         if mixconv_kernel_sizes is None:
             mixconv_kernel_sizes = [[5], [7, 11], [9, 15], [23]]
+        if residual_connections is None:
+            residual_connections = [0, 1, 1, 1]
 
         self.first_conv_filters = first_conv_filters
         self.first_conv_kernel = first_conv_kernel
         self.stride = stride
         self.pointwise_filters = pointwise_filters
         self.mixconv_kernel_sizes = mixconv_kernel_sizes
+        self.residual_connections = residual_connections
         self.mel_bins = mel_bins
 
         # Initial convolution
@@ -202,6 +206,7 @@ class StreamingExportModel(tf.keras.Model):
         # BN folding state — set True after calling fold_batch_norms()
         self._bn_folded: bool = False
         self._folded_biases: list = []
+        self._residual_folded_biases: list = []
 
     def _build_mixconv_blocks(self):
         """Build all MixConv blocks with proper naming."""
@@ -209,12 +214,15 @@ class StreamingExportModel(tf.keras.Model):
 
         for i, (filters, kernels) in enumerate(zip(self.pointwise_filters, self.mixconv_kernel_sizes, strict=True)):
             block_name = f"blocks_residual_block{'_' + str(i) if i > 0 else ''}_mixconvs_mix_conv_block"
+            res_block_name = f"blocks_residual_block{'_' + str(i) if i > 0 else ''}"
 
             block_layers = {
                 "depthwise_convs": [],
                 "pointwise": None,
                 "bn": None,
                 "relu": None,
+                "residual_proj": None,
+                "residual_bn": None,
             }
 
             # Depthwise convs for each kernel size
@@ -242,6 +250,20 @@ class StreamingExportModel(tf.keras.Model):
 
             # ReLU activation
             block_layers["relu"] = tf.keras.layers.ReLU(name=f"{block_name}_activations_re_lu")
+
+            # Residual projection and BN (if this block uses residual connections)
+            if self.residual_connections[i]:
+                block_layers["residual_proj"] = tf.keras.layers.Conv2D(
+                    filters,
+                    (1, 1),
+                    strides=(1, 1),
+                    padding="same",
+                    use_bias=False,
+                    name=f"{res_block_name}_residual_proj",
+                )
+                block_layers["residual_bn"] = tf.keras.layers.BatchNormalization(
+                    name=f"{res_block_name}_residual_bn"
+                )
 
             self.mixconv_layers.append(block_layers)
 
@@ -336,6 +358,8 @@ class StreamingExportModel(tf.keras.Model):
         method eliminates BN resource variables from the export graph entirely
         by absorbing gamma/beta/mean/variance into the pointwise conv weights.
 
+        Also folds residual BN into residual projection conv where applicable.
+
         Must be called after weights are loaded from checkpoint.  After this
         the model is mathematically equivalent but BN layers are bypassed in
         call() so no ReadVariableOp is emitted for BN statistics.
@@ -344,7 +368,9 @@ class StreamingExportModel(tf.keras.Model):
             raise RuntimeError("fold_batch_norms() has already been applied on this model instance")
 
         self._folded_biases = []
+        self._residual_folded_biases = []
         for block in self.mixconv_layers:
+            # Fold main path BN into pointwise conv
             bn = block["bn"]
             pw = block["pointwise"]
 
@@ -364,6 +390,29 @@ class StreamingExportModel(tf.keras.Model):
             # Store folded bias as a tf.constant (no tf.Variable → no ReadVariableOp
             # in the traced graph)
             self._folded_biases.append(tf.constant(beta - scale * mean, dtype=tf.float32))
+
+            # Fold residual BN into residual projection conv (if present)
+            if block["residual_proj"] is not None:
+                res_bn = block["residual_bn"]
+                res_pw = block["residual_proj"]
+
+                res_mean = res_bn.moving_mean.numpy()
+                res_variance = res_bn.moving_variance.numpy()
+                res_eps = float(res_bn.epsilon)
+                res_inv_std = 1.0 / np.sqrt(res_variance + res_eps)
+                res_gamma = res_bn.gamma.numpy() if res_bn.gamma is not None else np.ones_like(res_mean)
+                res_beta = res_bn.beta.numpy() if res_bn.beta is not None else np.zeros_like(res_mean)
+
+                res_scale = res_gamma * res_inv_std
+
+                res_kernel = res_pw.kernel.numpy()
+                res_pw.kernel.assign(res_kernel * res_scale[np.newaxis, np.newaxis, np.newaxis, :])
+
+                self._residual_folded_biases.append(
+                    tf.constant(res_beta - res_scale * res_mean, dtype=tf.float32)
+                )
+            else:
+                self._residual_folded_biases.append(None)
 
         self._bn_folded = True
 
@@ -386,6 +435,15 @@ class StreamingExportModel(tf.keras.Model):
             state_var = self.state_vars[i + 1]
             kernels = self.mixconv_kernel_sizes[i]
             max_kernel = max(kernels) if isinstance(kernels, list) else kernels
+
+            # Compute residual BEFORE ring buffer update (on the raw 1-frame input)
+            residual = None
+            if block_layers["residual_proj"] is not None:
+                residual = block_layers["residual_proj"](x)
+                if self._bn_folded:
+                    residual = residual + tf.reshape(self._residual_folded_biases[i], [1, 1, 1, -1])
+                else:
+                    residual = block_layers["residual_bn"](residual, training=is_training)
 
             # Concatenate with state
             x = self._concat_update(state_var, x, max_kernel - 1)
@@ -422,6 +480,10 @@ class StreamingExportModel(tf.keras.Model):
             else:
                 x = block_layers["bn"](x, training=is_training)
             x = block_layers["relu"](x)
+
+            # Add residual skip connection after activation
+            if residual is not None:
+                x = x + residual
 
         # stream_5 (temporal pooling)
         x = self._concat_update(self.state_vars[-1], x, 5)
@@ -606,6 +668,7 @@ def export_streaming_tflite(
             "stride": 3,
             "pointwise_filters": [64, 64, 64, 64],
             "mixconv_kernel_sizes": [[5], [7, 11], [9, 15], [23]],
+            "residual_connections": [0, 1, 1, 1],
             "mel_bins": 40,
         }
 
@@ -616,6 +679,7 @@ def export_streaming_tflite(
         stride=config.get("stride", 3),
         pointwise_filters=config.get("pointwise_filters", [64, 64, 64, 64]),
         mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
+        residual_connections=config.get("residual_connections", [0, 1, 1, 1]),
         mel_bins=config.get("mel_bins", 40),
     )
 
@@ -627,7 +691,10 @@ def export_streaming_tflite(
     print("\n[2/5] Loading checkpoint weights...")
     loaded = load_weights_from_keras3_checkpoint(model, checkpoint_path)
     if loaded < 29:
-        raise RuntimeError(f"Weight loading incomplete: expected at least 29 weights, got {loaded}. Checkpoint may be corrupt or incompatible: {checkpoint_path}")
+        raise RuntimeError(
+            f"Weight loading incomplete: expected at least 29 weights (44 with residuals), got {loaded}. "
+            f"Checkpoint may be corrupt or incompatible: {checkpoint_path}"
+        )
 
     # Fold BN statistics into pointwise conv weights so that no Keras BN
     # variable reads appear in the TFLite export graph (Keras 3 wraps them in
@@ -787,6 +854,7 @@ def convert_model_saved(
         stride=config.get("stride", 3),
         pointwise_filters=config.get("pointwise_filters", [64, 64, 64, 64]),
         mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
+        residual_connections=config.get("residual_connections", [0, 1, 1, 1]),
         mel_bins=config.get("mel_bins", 40),
     )
 
@@ -987,6 +1055,10 @@ def main():
 
                 mc_kernels = model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]")
                 config["mixconv_kernel_sizes"] = ast.literal_eval(f"[{mc_kernels}]")
+
+                # Parse residual_connection
+                res_conn = model_cfg.get("residual_connection", "0,1,1,1")
+                config["residual_connections"] = [int(x.strip()) for x in res_conn.split(",")]
     except Exception as e:
         print(f"Warning: Could not load config: {e}")
         print("Using default okay_nabu configuration")
