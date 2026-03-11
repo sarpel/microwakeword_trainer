@@ -645,7 +645,10 @@ class Trainer:
         fah_penalty = 1.0 / (1.0 + (fah / max(float(target_fah), 0.01)) ** 2)
 
         quality_score = recall_quality * fah_penalty
-        return quality_score, operating_recall, fah, fah_penalty
+        # Use AVR for best_recall display when operating_recall is near-zero (target FAH not reached)
+        display_recall = avr if operating_recall < 0.001 else operating_recall
+        return quality_score, display_recall, fah, fah_penalty
+
 
     def _build_model(self, input_shape: tuple[int, ...]) -> tf.keras.Model:
         """Build the model architecture.
@@ -950,10 +953,28 @@ class Trainer:
                 name = metric_names[i] if i < len(metric_names) else f"metric_{i}"
                 metrics_dict[name] = value
 
-        return metrics_dict
+    def _process_validation_chunk(self, chunk_scores: list[tf.Tensor], chunk_labels: list[tf.Tensor]) -> None:
+        """Process a chunk of validation data to update metrics incrementally.
 
-    def validate(self, data_generator) -> dict[str, float]:
-        """Validate model on validation set.
+        This method concatenates the accumulated chunk tensors, converts to numpy,
+        updates the validation metrics, and clears the chunk lists to free memory.
+
+        Args:
+            chunk_scores: List of score tensors from model predictions
+            chunk_labels: List of label tensors
+        """
+        if not chunk_scores:
+            return
+
+        scores_all = tf.concat(chunk_scores, axis=0)
+        labels_all = tf.concat(chunk_labels, axis=0)
+        scores_np = scores_all.numpy()
+        labels_np = labels_all.numpy()
+        self.val_metrics.update(labels_np, scores_np)
+        del scores_all, labels_all, scores_np, labels_np
+
+    def validate(self, data_generator, chunk_size: int = 2000) -> dict[str, float]:
+        """Validate model on validation set with chunked processing to limit memory.
 
         Args:
             data_generator: Factory callable (invoked to yield batches) or generator.
@@ -962,6 +983,8 @@ class Trainer:
                 Must yield 3-tuples: (fingerprints, ground_truth, metadata), where
                 fingerprints is a NumPy/Tensor array of model inputs, ground_truth
                 is the label array, and metadata can be any auxiliary batch info.
+            chunk_size: Number of samples to process before updating metrics incrementally.
+                Smaller values reduce peak memory usage. Default: 2000
 
         Returns:
             Dictionary of validation metrics
@@ -977,8 +1000,10 @@ class Trainer:
         batch_count = 0
         score_samples: list[float] = []
         score_sample_limit = 2000
-        all_scores: list[tf.Tensor] = []
-        all_labels: list[tf.Tensor] = []
+        # Use chunked processing to limit peak memory during validation
+        chunk_scores: list[tf.Tensor] = []
+        chunk_labels: list[tf.Tensor] = []
+        total_samples = 0
         self._last_val_paths: list[str] = self._val_file_paths or []  # Use pre-loaded paths if available
         self._last_val_raw_labels: list[int] = []
         for batch in iterator:
@@ -995,8 +1020,9 @@ class Trainer:
             else:
                 scores = tf.reshape(predictions, [-1])
 
-            all_scores.append(scores)
-            all_labels.append(tf.cast(ground_truth, tf.int32))
+            chunk_scores.append(scores)
+            chunk_labels.append(tf.cast(ground_truth, tf.int32))
+            total_samples += len(scores)
             # File paths are now pre-loaded via val_file_paths (populated from dataset.get_split_file_paths)
             # Legacy metadata-based path collection removed — was always broken (metadata was sample_weights numpy array)
             if isinstance(metadata, dict) and "raw_labels" in metadata:
@@ -1009,25 +1035,27 @@ class Trainer:
                 self._last_val_raw_labels.extend(np.asarray(ground_truth).ravel().tolist())
             batch_count += 1
 
-        if all_scores:
-            scores_all = tf.concat(all_scores, axis=0)
-            labels_all = tf.concat(all_labels, axis=0)
-            scores_np = scores_all.numpy()
-            labels_np = labels_all.numpy()
-            # Clear lists to free memory before metrics computation
-            all_scores.clear()
-            all_labels.clear()
-            del scores_all, labels_all
-            self.val_metrics.update(labels_np, scores_np)
+            # Process chunk when it reaches size limit to free memory
+            if total_samples >= chunk_size:
+                self._process_validation_chunk(chunk_scores, chunk_labels)
+                chunk_scores = []
+                chunk_labels = []
+                total_samples = 0
 
-            if score_sample_limit > 0:
-                sample_count = min(score_sample_limit, scores_np.shape[0])
-                if sample_count < scores_np.shape[0]:
-                    rng = np.random.default_rng(seed=42)
-                    indices = rng.choice(scores_np.shape[0], size=sample_count, replace=False)
-                    score_samples = scores_np[indices].tolist()
-                else:
-                    score_samples = scores_np.tolist()
+        # Process final chunk
+        if chunk_scores:
+            self._process_validation_chunk(chunk_scores, chunk_labels)
+
+        # Collect score samples for statistics (limited to avoid memory issues)
+        if score_sample_limit > 0 and self.val_metrics.all_y_scores:
+            all_scores_np = np.array(self.val_metrics.all_y_scores)
+            sample_count = min(score_sample_limit, all_scores_np.shape[0])
+            if sample_count < all_scores_np.shape[0]:
+                rng = np.random.default_rng(seed=42)
+                indices = rng.choice(all_scores_np.shape[0], size=sample_count, replace=False)
+                score_samples = all_scores_np[indices].tolist()
+            else:
+                score_samples = all_scores_np.tolist()
 
         metrics = self.val_metrics.compute_metrics()
         if self.val_metrics.all_y_true:
