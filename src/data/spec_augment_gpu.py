@@ -115,38 +115,25 @@ def batch_spec_augment_gpu(
     for _ in range(freq_mask_count):
         # Generate random mask sizes and starts for entire batch at once
         freq_mask_sizes = cp.random.randint(0, freq_mask_max_size + 1, size=batch_size)
-        freq_mask_starts = cp.random.randint(
-            0, 
-            cp.maximum(1, num_freq_bins - freq_mask_sizes + 1)
-        )
+        freq_mask_starts = cp.random.randint(0, cp.maximum(1, num_freq_bins - freq_mask_sizes + 1))
 
         # Vectorized masking using advanced indexing
-        # Create batch indices [0, 1, 2, ..., batch_size-1]
-        batch_indices = cp.arange(batch_size)
         # Apply masks to all time frames simultaneously
         for t in range(num_time_frames):
             # Use broadcasting to apply each sample's mask
             mask_indices = cp.arange(num_freq_bins)
-            mask = (mask_indices >= freq_mask_starts[:, None]) & (
-                mask_indices < (freq_mask_starts + freq_mask_sizes)[:, None]
-            )
+            mask = (mask_indices >= freq_mask_starts[:, None]) & (mask_indices < (freq_mask_starts + freq_mask_sizes)[:, None])
             batch_gpu[:, t, :][mask] = 0
 
     # Apply time masks - fully vectorized across batch
     for _ in range(time_mask_count):
         # Generate random mask sizes and starts for entire batch at once
         time_mask_sizes = cp.random.randint(0, time_mask_max_size + 1, size=batch_size)
-        time_mask_starts = cp.random.randint(
-            0,
-            cp.maximum(1, num_time_frames - time_mask_sizes + 1)
-        )
+        time_mask_starts = cp.random.randint(0, cp.maximum(1, num_time_frames - time_mask_sizes + 1))
 
         # Vectorized time masking using advanced indexing
-        batch_indices = cp.arange(batch_size)
         mask_indices = cp.arange(num_time_frames)
-        mask = (mask_indices >= time_mask_starts[:, None]) & (
-            mask_indices < (time_mask_starts + time_mask_sizes)[:, None]
-        )
+        mask = (mask_indices >= time_mask_starts[:, None]) & (mask_indices < (time_mask_starts + time_mask_sizes)[:, None])
         # Apply mask across all frequency bins
         for f in range(num_freq_bins):
             batch_gpu[:, :, f][mask] = 0
