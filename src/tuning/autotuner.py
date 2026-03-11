@@ -206,7 +206,6 @@ STRATEGY_ARMS = [
 ]
 
 
-
 # ============================================================================
 # Section 2: Pareto Archive
 # ============================================================================
@@ -1211,13 +1210,10 @@ class AutoTuner:
         Data is cached after first load to avoid redundant reloading.
         """
         # Check cache first
-        if hasattr(self, '_cached_eval_data') and self._cached_eval_data is not None:
+        if hasattr(self, "_cached_eval_data") and self._cached_eval_data is not None:
             self.file_logger.info("Using cached validation data")
             return self._cached_eval_data
-        """Load validation data and return (features, labels, sample_weights, indices).
 
-        Returns arrays ready for in-memory evaluation.
-        """
         import tensorflow as tf
 
         from src.data.dataset import WakeWordDataset
@@ -1281,7 +1277,7 @@ class AutoTuner:
         dataset.close()
 
         self.file_logger.info(f"Loaded {len(labels)} samples: {int(np.sum(labels >= 0.5))} positive, {int(np.sum(labels < 0.5))} negative")
-        
+
         # Cache the loaded data for future iterations
         self._cached_eval_data = (features, labels, weights, indices, group_ids)
         return self._cached_eval_data
@@ -1529,7 +1525,7 @@ class AutoTuner:
         # Early stopping setup for aggressive arms
         arm_config = STRATEGY_ARMS[strategy_arm]
         early_stopping_patience = 50 if "hardest" in arm_config.name else 0
-        best_loss = float('inf')
+        best_loss = float("inf")
         patience_counter = 0
         min_steps_before_stop = max(50, n_steps // 4)  # Don't stop too early
 
@@ -1611,7 +1607,6 @@ class AutoTuner:
             "mean_loss": float(np.mean(losses)) if losses else 0.0,
             "swa_snapshots": swa_snapshots,
         }
-
 
     def _standard_step(self, model, optimizer, loss_fn, features, labels, weights, clipnorm):
         import tensorflow as tf
@@ -1814,7 +1809,7 @@ class AutoTuner:
                 # Build representative dataset from in-memory features for INT8 calibration
 
                 def _representative_dataset():
-                    for i in range(min(len(repr_features), 300)):
+                    for i in range(min(len(repr_features), 500)):
                         sample = repr_features[i].astype(np.float32)
                         if sample.ndim == 1:
                             sample = sample.reshape(num_input_frames, mel_bins)
@@ -1980,7 +1975,6 @@ class AutoTuner:
 
             self.file_logger.info(f"Confirmation {candidate.id}: FAH={metrics.fah:.4f}, Recall={metrics.recall:.4f}, Status={status}")
 
-
         self.console.print(table)
 
         if best_confirmed:
@@ -1991,7 +1985,6 @@ class AutoTuner:
                 self.file_logger.info(f"Best failed attempt: {best_attempt.id} — FAH={best_attempt_metrics.fah:.4f}, Recall={best_attempt_metrics.recall:.4f}")
 
         return best_confirmed, best_attempt_metrics
-
 
     def _scalarized_score(self, m: Optional[TuneMetrics]) -> float:
         if m is None:
@@ -2180,6 +2173,17 @@ class AutoTuner:
                 f"Best FAH: {conf_fah:.4f}\n"
                 f"Best Recall: {conf_recall:.4f}\n"
                 f"Search-set metrics (overfit): FAH={result['best_fah']:.4f}, Recall={result['best_recall']:.4f}\n"
+                f"Total iterations: {result['iterations']}\n"
+                f"Total gradient steps: {self.total_gradient_steps:,}\n"
+                f"Wall clock: {minutes:.1f} min\n"
+                f"Best checkpoint: {result.get('best_checkpoint', 'N/A')}"
+            )
+
+        else:
+            summary = (
+                f"Target met: {met}\n"
+                f"Best FAH: {result['best_fah']:.4f}\n"
+                f"Best Recall: {result['best_recall']:.4f}\n"
                 f"Total iterations: {result['iterations']}\n"
                 f"Total gradient steps: {self.total_gradient_steps:,}\n"
                 f"Wall clock: {minutes:.1f} min\n"
@@ -2584,7 +2588,6 @@ class AutoTuner:
             "confirmation_best_fah": best_attempt_metrics.fah if best_attempt_metrics else None,
             "confirmation_best_recall": best_attempt_metrics.recall if best_attempt_metrics else None,
         }
-
 
         self._log_final_summary(result)
         return result

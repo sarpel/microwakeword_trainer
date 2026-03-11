@@ -649,7 +649,6 @@ class Trainer:
         display_recall = avr if operating_recall < 0.001 else operating_recall
         return quality_score, display_recall, fah, fah_penalty
 
-
     def _build_model(self, input_shape: tuple[int, ...]) -> tf.keras.Model:
         """Build the model architecture.
 
@@ -952,6 +951,7 @@ class Trainer:
             for i, value in enumerate(result):
                 name = metric_names[i] if i < len(metric_names) else f"metric_{i}"
                 metrics_dict[name] = value
+        return metrics_dict
 
     def _process_validation_chunk(self, chunk_scores: list[tf.Tensor], chunk_labels: list[tf.Tensor]) -> None:
         """Process a chunk of validation data to update metrics incrementally.

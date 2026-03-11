@@ -175,6 +175,8 @@ class StreamingExportModel(tf.keras.Model):
             mixconv_kernel_sizes = [[5], [7, 11], [9, 15], [23]]
         if residual_connections is None:
             residual_connections = [0, 1, 1, 1]
+        if len(residual_connections) != len(pointwise_filters):
+            raise ValueError(f"residual_connections length ({len(residual_connections)}) must match " f"pointwise_filters length ({len(pointwise_filters)})")
 
         self.first_conv_filters = first_conv_filters
         self.first_conv_kernel = first_conv_kernel
@@ -261,9 +263,7 @@ class StreamingExportModel(tf.keras.Model):
                     use_bias=False,
                     name=f"{res_block_name}_residual_proj",
                 )
-                block_layers["residual_bn"] = tf.keras.layers.BatchNormalization(
-                    name=f"{res_block_name}_residual_bn"
-                )
+                block_layers["residual_bn"] = tf.keras.layers.BatchNormalization(name=f"{res_block_name}_residual_bn")
 
             self.mixconv_layers.append(block_layers)
 
@@ -408,9 +408,7 @@ class StreamingExportModel(tf.keras.Model):
                 res_kernel = res_pw.kernel.numpy()
                 res_pw.kernel.assign(res_kernel * res_scale[np.newaxis, np.newaxis, np.newaxis, :])
 
-                self._residual_folded_biases.append(
-                    tf.constant(res_beta - res_scale * res_mean, dtype=tf.float32)
-                )
+                self._residual_folded_biases.append(tf.constant(res_beta - res_scale * res_mean, dtype=tf.float32))
             else:
                 self._residual_folded_biases.append(None)
 
@@ -691,10 +689,7 @@ def export_streaming_tflite(
     print("\n[2/5] Loading checkpoint weights...")
     loaded = load_weights_from_keras3_checkpoint(model, checkpoint_path)
     if loaded < 29:
-        raise RuntimeError(
-            f"Weight loading incomplete: expected at least 29 weights (44 with residuals), got {loaded}. "
-            f"Checkpoint may be corrupt or incompatible: {checkpoint_path}"
-        )
+        raise RuntimeError(f"Weight loading incomplete: expected at least 29 weights (44 with residuals), got {loaded}. " f"Checkpoint may be corrupt or incompatible: {checkpoint_path}")
 
     # Fold BN statistics into pointwise conv weights so that no Keras BN
     # variable reads appear in the TFLite export graph (Keras 3 wraps them in

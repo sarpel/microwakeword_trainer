@@ -210,7 +210,7 @@ class HardExampleMiner:
             # Get hard indices local to this batch
             local_hard_indices = self.get_hard_samples(labels, predictions)
 
-            if local_hard_indices:
+            if len(local_hard_indices) > 0:
                 # Store batch features reference (only if we have hard samples from this batch)
                 batch_features_cache[batch_counter] = features
 
@@ -267,6 +267,11 @@ class HardExampleMiner:
         # Limit history size to prevent unbounded memory growth
         if len(self.mining_history) > self._max_history_size:
             self.mining_history = self.mining_history[-self._max_history_size :]
+
+            # Track any entries with missing batch cache (should not happen)
+        missing_batch_entries = [entry for entry in sorted_hard if entry[2] not in batch_features_cache]
+        if missing_batch_entries:
+            logger.warning(f"Mining: {len(missing_batch_entries)} entries had missing batch cache references. " f"This may indicate a bug in cache eviction logic.")
 
         # Create hard negative records - fetch features from batch cache using batch_id + local_idx
         hard_negative_records = [
