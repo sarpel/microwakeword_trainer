@@ -390,6 +390,16 @@ class Trainer:
         self.tensorboard_image_interval = int(performance.get("tensorboard_image_interval", 5000) or 5000)
         self.tensorboard_histogram_interval = int(performance.get("tensorboard_histogram_interval", 5000) or 5000)
 
+        # Sophisticated TensorBoard metrics (Phase 4)
+        self.tensorboard_log_learning_rate = bool(performance.get("tensorboard_log_learning_rate", True))
+        self.tensorboard_log_gradient_norms = bool(performance.get("tensorboard_log_gradient_norms", False))
+        self.tensorboard_log_activation_stats = bool(performance.get("tensorboard_log_activation_stats", False))
+        self.tensorboard_log_confidence_drift = bool(performance.get("tensorboard_log_confidence_drift", True))
+        self.tensorboard_log_per_class_accuracy = bool(performance.get("tensorboard_log_per_class_accuracy", True))
+        self.tensorboard_sophisticated_interval = int(performance.get("tensorboard_sophisticated_interval", 2000) or 2000)
+        self.tensorboard_image_interval = int(performance.get("tensorboard_image_interval", 5000) or 5000)
+        self.tensorboard_histogram_interval = int(performance.get("tensorboard_histogram_interval", 5000) or 5000)
+
         # Hard negative mining
         hn_config = config.get("mining", {})
         self.hard_negative_mining_enabled = hn_config.get("enabled", False)
@@ -460,6 +470,13 @@ class Trainer:
             image_interval=self.tensorboard_image_interval,
             histogram_interval=self.tensorboard_histogram_interval,
             log_weight_histograms=self.tensorboard_log_weight_histograms,
+            log_learning_rate=self.tensorboard_log_learning_rate,
+            log_gradient_norms=self.tensorboard_log_gradient_norms,
+            log_activation_stats=self.tensorboard_log_activation_stats,
+            log_confidence_drift=self.tensorboard_log_confidence_drift,
+            log_per_class_accuracy=self.tensorboard_log_per_class_accuracy,
+            sophisticated_interval=self.tensorboard_sophisticated_interval,
+        )
         )
 
     def _log_advanced_tensorboard_metrics(self, metrics: dict[str, float], step: int) -> None:
@@ -494,6 +511,17 @@ class Trainer:
         self.tensorboard_logger.log_advanced_scalars(metrics, step)
 
         if hist_due and self.tensorboard_log_weight_histograms and self.model is not None:
+            self.tensorboard_logger.log_weight_histograms(self.model, step)
+
+        # Log sophisticated metrics at their interval
+        self.tensorboard_logger.log_sophisticated_metrics(
+            step=step,
+            learning_rate=self._last_assigned_lr,
+            y_true=y_true if self.tensorboard_log_confidence_drift else None,
+            y_score=y_score if self.tensorboard_log_confidence_drift else None,
+        )
+
+        self.tensorboard_logger.flush()
             self.tensorboard_logger.log_weight_histograms(self.model, step)
 
         self.tensorboard_logger.flush()

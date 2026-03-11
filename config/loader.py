@@ -197,6 +197,14 @@ class PerformanceConfig:
     tensorboard_log_weight_histograms: bool = False
     tensorboard_image_interval: int = 5000
     tensorboard_histogram_interval: int = 5000
+    tensorboard_histogram_interval: int = 5000
+    # New sophisticated TensorBoard metrics (Phase 4)
+    tensorboard_log_learning_rate: bool = True  # Track LR schedule
+    tensorboard_log_gradient_norms: bool = False  # Gradient norm histograms (expensive)
+    tensorboard_log_activation_stats: bool = False  # Per-layer activation statistics
+    tensorboard_log_confidence_drift: bool = True  # Track prediction confidence over time
+    tensorboard_log_per_class_accuracy: bool = True  # Accuracy breakdown by class
+    tensorboard_sophisticated_interval: int = 2000  # Interval for sophisticated metrics
     # Data pipeline (NEW)
     prefetch_buffer: int = 8  # Buffer size for tf.data pipeline
     use_tfdata: bool = True  # Use tf.data pipeline instead of Python generators

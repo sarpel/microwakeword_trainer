@@ -32,7 +32,7 @@ paths:
 # ─────────────────────────────────────────────────────────────────
 training:
   # 3-phase schedule: Phase 1 learns discrimination, Phase 2 refines boundary, Phase 3 polishes
-  training_steps: [40000, 25000, 15000]
+  training_steps: [30000, 30000, 20000]
   # LR starts at standard 0.001, decays ~5x per phase for stable convergence
   learning_rates: [0.0017, 0.00035, 0.00009]  # Sqrt-scaled for batch_size 384 (×√3 from 128)
   batch_size: 384               # Increased from 128 — fills 8GB VRAM better (~3.5-4GB)
@@ -48,7 +48,7 @@ training:
 
   positive_class_weight: [5.0, 7.0, 9.0]      # De-emphasized from [10,20,30] — was too recall-biased
   negative_class_weight: [1.5, 1.5, 1.5]     # Slightly up from [1,1,1] to maintain FAH pressure with more aggressive mining
-  hard_negative_class_weight: [3.0, 5.0, 7.0]   # UP from [1,1,1] — force discrimination against confusables
+  hard_negative_class_weight: [5.0, 8.0, 12.0]   # UP from [1,1,1] — force discrimination against confusables
 
   # Progressive SpecAugment: light→moderate→strong
   time_mask_max_size: [1, 2, 3]
@@ -70,8 +70,8 @@ training:
 
   # Optimizer and loss parameters
   optimizer: "adam"
-  label_smoothing: 0.01
-  gradient_clipnorm: 2.0        # Was 0.5 = too aggressive, capped max score at 0.87
+  label_smoothing: 0.02
+  gradient_clipnorm: 1.0        # Was 0.5 = too aggressive, capped max score at 0.87
   ema_decay: 0.99               # Half-life ~700 steps, smooths noise without killing convergence
   random_seed: 42               # Reproducible runs
   auto_tune_on_poor_fah: true
@@ -90,8 +90,8 @@ model:
   residual_connection: "0,1,1,1"  # Residual on blocks 2-4 for gradient flow
 
   # Moderate regularization (less than before to avoid score compression)
-  dropout_rate: 0.08
-  l2_regularization: 0.00003
+  dropout_rate: 0.1
+  l2_regularization: 0.00005
 
 # ─────────────────────────────────────────────────────────────────
 # AUGMENTATION (aggressive for max generalization)
@@ -157,6 +157,24 @@ performance:
   gpu_memory_log_interval: 1000
 
   # Full TensorBoard logging for analysis
+  tensorboard_enabled: true
+  tensorboard_log_dir: "./logs"
+  tensorboard_log_histograms: false
+  tensorboard_log_images: false
+  tensorboard_log_pr_curves: true
+  tensorboard_log_graph: true
+  tensorboard_log_advanced_scalars: true
+  tensorboard_log_weight_histograms: false
+  tensorboard_image_interval: 5000
+  tensorboard_histogram_interval: 5000
+
+  # Sophisticated metrics (Phase 4) - disabled by default for cleaner logs
+  tensorboard_log_learning_rate: true
+  tensorboard_log_gradient_norms: false
+  tensorboard_log_activation_stats: false
+  tensorboard_log_confidence_drift: true
+  tensorboard_log_per_class_accuracy: true
+  tensorboard_sophisticated_interval: 2000
   tensorboard_enabled: true
   tensorboard_log_dir: "./logs"
   tensorboard_log_histograms: false

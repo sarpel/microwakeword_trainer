@@ -63,3 +63,21 @@ auto_tuning:
 
 auto_tuning_expert:
   max_burst_steps: 8000
+
+
+  # TensorBoard configuration (Phase 4 sophisticated metrics) - minimal for fast tests
+  tensorboard_enabled: true
+  tensorboard_log_histograms: false
+  tensorboard_log_images: false
+  tensorboard_log_pr_curves: false
+  tensorboard_log_graph: true
+  tensorboard_log_advanced_scalars: false
+  tensorboard_log_weight_histograms: false
+  tensorboard_image_interval: 5000
+  tensorboard_histogram_interval: 5000
+  tensorboard_log_learning_rate: true
+  tensorboard_log_gradient_norms: false
+  tensorboard_log_activation_stats: false
+  tensorboard_log_confidence_drift: false
+  tensorboard_log_per_class_accuracy: false
+  tensorboard_sophisticated_interval: 5000
