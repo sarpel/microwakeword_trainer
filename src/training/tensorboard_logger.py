@@ -49,6 +49,75 @@ class TensorBoardLogger:
         image_interval: int = 5000,
         histogram_interval: int = 5000,
         log_weight_histograms: bool = False,
+        log_learning_rate: bool = True,
+        log_gradient_norms: bool = False,
+        log_activation_stats: bool = False,
+        log_confidence_drift: bool = True,
+        log_per_class_accuracy: bool = True,
+        sophisticated_interval: int = 2000,
+    ):
+        """Initialize TensorBoard logger.
+
+        Args:
+            log_dir: Directory for TensorBoard logs
+            enabled: Whether logging is enabled
+            log_histograms: Enable histogram logging
+            log_images: Enable image logging
+            log_pr_curves: Enable PR curve logging
+            log_graph: Enable model graph logging
+            log_advanced_scalars: Enable advanced scalar metrics
+            image_interval: Steps between image logging
+            histogram_interval: Steps between histogram logging
+            log_weight_histograms: Enable model weight histograms
+            log_learning_rate: Track learning rate schedule
+            log_gradient_norms: Log gradient norm histograms (expensive)
+            log_activation_stats: Log per-layer activation statistics
+            log_confidence_drift: Track prediction confidence over time
+            log_per_class_accuracy: Log accuracy breakdown by class
+            sophisticated_interval: Steps between sophisticated metrics
+        """
+        self.enabled = enabled
+        self.log_histograms = log_histograms
+        self.log_images = log_images
+        self.log_pr_curves = log_pr_curves
+        self.log_graph = log_graph
+        self.log_advanced_scalars_enabled = log_advanced_scalars
+        self.image_interval = image_interval
+        self.histogram_interval = histogram_interval
+        self.log_weight_histograms_enabled = log_weight_histograms
+
+        # Sophisticated metrics (Phase 4)
+        self.log_learning_rate = log_learning_rate
+        self.log_gradient_norms = log_gradient_norms
+        self.log_activation_stats = log_activation_stats
+        self.log_confidence_drift = log_confidence_drift
+        self.log_per_class_accuracy = log_per_class_accuracy
+        self.sophisticated_interval = sophisticated_interval
+
+        self.writer: tf.summary.SummaryWriter | None = None
+        self._log_dir = log_dir
+        self._graph_logged = False
+
+        # Confidence drift tracking
+        self._confidence_history: list[tuple[int, float]] = []
+        self._max_confidence_history = 100
+
+        if enabled:
+            self._setup_writer()
+
+    def _setup_writer(self) -> None:
+            self._setup_writer()
+        self,
+        log_dir: str,
+        enabled: bool = True,
+        log_histograms: bool = True,
+        log_images: bool = True,
+        log_pr_curves: bool = True,
+        log_graph: bool = True,
+        log_advanced_scalars: bool = True,
+        image_interval: int = 5000,
+        histogram_interval: int = 5000,
+        log_weight_histograms: bool = False,
     ):
         """Initialize TensorBoard logger.
 
@@ -684,6 +753,247 @@ class TensorBoardLogger:
 
         except Exception as e:
             logger.warning(f"Failed to log weight histograms: {e}")
+    # ==========================================================================
+    # SOPHISTICATED METRICS (Phase 4)
+    # ==========================================================================
+
+    def log_learning_rate(self, lr: float, step: int) -> None:
+        """Log current learning rate.
+
+        Args:
+            lr: Current learning rate value
+            step: Global step
+        """
+        if not self.enabled or not self.log_learning_rate or self.writer is None:
+            return
+        try:
+            with self.writer.as_default():
+                tf.summary.scalar("train/learning_rate", float(lr), step=step)
+        except Exception as e:
+            logger.warning(f"Failed to log learning rate: {e}")
+
+    def log_gradient_norms(
+        self,
+        gradients: list[tf.Tensor],
+        step: int,
+        model: tf.keras.Model | None = None,
+    ) -> None:
+        """Log gradient norm histograms and statistics.
+
+        Args:
+            gradients: List of gradient tensors from tape.gradients()
+            step: Global step
+            model: Optional model for layer name mapping
+        """
+        if not self.enabled or not self.log_gradient_norms or self.writer is None:
+            return
+        try:
+            with self.writer.as_default():
+                # Global gradient norm
+                global_norm = tf.linalg.global_norm(gradients)
+                tf.summary.scalar("gradients/global_norm", global_norm, step=step)
+
+                # Per-layer gradient norms (if model provided)
+                if model is not None:
+                    for grad, var in zip(gradients, model.trainable_variables, strict=False):
+                        if grad is not None:
+                            var_name = var.name.replace(":", "_")
+                            grad_norm = tf.norm(grad)
+                            tf.summary.scalar(f"gradients/norm/{var_name}", grad_norm, step=step)
+
+                # Gradient norm histogram (all gradients flattened)
+                all_grads = tf.concat([tf.reshape(g, [-1]) for g in gradients if g is not None], axis=0)
+                tf.summary.histogram("gradients/all", all_grads, step=step, buckets=50)
+
+                # Gradient statistics
+                tf.summary.scalar("gradients/mean", tf.reduce_mean(all_grads), step=step)
+                tf.summary.scalar("gradients/std", tf.math.reduce_std(all_grads), step=step)
+                tf.summary.scalar("gradients/max", tf.reduce_max(tf.abs(all_grads)), step=step)
+
+        except Exception as e:
+            logger.warning(f"Failed to log gradient norms: {e}")
+
+    def log_activation_stats(
+        self,
+        activations: dict[str, tf.Tensor],
+        step: int,
+    ) -> None:
+        """Log per-layer activation statistics.
+
+        Args:
+            activations: Dictionary mapping layer names to activation tensors
+            step: Global step
+        """
+        if not self.enabled or not self.log_activation_stats or self.writer is None:
+            return
+        try:
+            with self.writer.as_default():
+                for layer_name, activation in activations.items():
+                    # Clean layer name for TensorBoard
+                    clean_name = layer_name.replace(":", "_").replace("/", "_")
+
+                    # Sparsity (% of zeros)
+                    sparsity = tf.reduce_mean(tf.cast(tf.equal(activation, 0), tf.float32))
+                    tf.summary.scalar(f"activations/{clean_name}/sparsity", sparsity, step=step)
+
+                    # Activation statistics
+                    tf.summary.scalar(f"activations/{clean_name}/mean", tf.reduce_mean(activation), step=step)
+                    tf.summary.scalar(f"activations/{clean_name}/std", tf.math.reduce_std(activation), step=step)
+                    tf.summary.scalar(
+                        f"activations/{clean_name}/saturation",
+                        tf.reduce_mean(tf.cast(tf.abs(activation) > 0.95, tf.float32)),
+                        step=step,
+                    )
+
+                    # Histogram (occasionally)
+                    if step % (self.sophisticated_interval * 5) == 0:
+                        tf.summary.histogram(
+                            f"activations/{clean_name}/distribution",
+                            activation,
+                            step=step,
+                            buckets=50,
+                        )
+
+        except Exception as e:
+            logger.warning(f"Failed to log activation stats: {e}")
+
+    def log_confidence_drift(
+        self,
+        y_score: np.ndarray,
+        step: int,
+    ) -> None:
+        """Track prediction confidence distribution drift over time.
+
+        Args:
+            y_score: Predicted scores
+            step: Global step
+        """
+        if not self.enabled or not self.log_confidence_drift or self.writer is None:
+            return
+        try:
+            # Compute confidence metrics
+            mean_confidence = float(np.mean(y_score))
+            high_confidence_ratio = float(np.mean(y_score > 0.9))
+            low_confidence_ratio = float(np.mean(y_score < 0.1))
+            uncertainty = float(np.mean(np.abs(y_score - 0.5)))
+
+            # Store in history
+            self._confidence_history.append((step, mean_confidence))
+            if len(self._confidence_history) > self._max_confidence_history:
+                self._confidence_history.pop(0)
+
+            with self.writer.as_default():
+                tf.summary.scalar("confidence/mean", mean_confidence, step=step)
+                tf.summary.scalar("confidence/high_ratio", high_confidence_ratio, step=step)
+                tf.summary.scalar("confidence/low_ratio", low_confidence_ratio, step=step)
+                tf.summary.scalar("confidence/uncertainty", uncertainty, step=step)
+
+                # Compute drift if we have history
+                if len(self._confidence_history) >= 10:
+                    recent_mean = np.mean([c for _, c in self._confidence_history[-10:]])
+                    older_mean = np.mean([c for _, c in self._confidence_history[:10]])
+                    drift = abs(recent_mean - older_mean)
+                    tf.summary.scalar("confidence/drift", drift, step=step)
+
+        except Exception as e:
+            logger.warning(f"Failed to log confidence drift: {e}")
+
+    def log_per_class_accuracy(
+        self,
+        y_true: np.ndarray,
+        y_score: np.ndarray,
+        threshold: float = 0.5,
+        step: int = 0,
+    ) -> None:
+        """Log accuracy metrics broken down by class.
+
+        Args:
+            y_true: Ground truth labels
+            y_score: Predicted scores
+            threshold: Classification threshold
+            step: Global step
+        """
+        if not self.enabled or not self.log_per_class_accuracy or self.writer is None:
+            return
+        try:
+            y_pred = (y_score >= threshold).astype(int)
+
+            # Per-class metrics
+            pos_mask = y_true == 1
+            neg_mask = y_true == 0
+
+            pos_correct = np.sum((y_pred == 1) & pos_mask) if np.any(pos_mask) else 0
+            pos_total = np.sum(pos_mask)
+            pos_accuracy = pos_correct / pos_total if pos_total > 0 else 0.0
+
+            neg_correct = np.sum((y_pred == 0) & neg_mask) if np.any(neg_mask) else 0
+            neg_total = np.sum(neg_mask)
+            neg_accuracy = neg_correct / neg_total if neg_total > 0 else 0.0
+
+            with self.writer.as_default():
+                tf.summary.scalar("per_class/positive_accuracy", pos_accuracy, step=step)
+                tf.summary.scalar("per_class/negative_accuracy", neg_accuracy, step=step)
+
+                # Class balance in batch
+                pos_ratio = np.mean(y_true)
+                tf.summary.scalar("train/positive_ratio", float(pos_ratio), step=step)
+
+                # Prediction distribution
+                pred_pos_ratio = np.mean(y_pred)
+                tf.summary.scalar("train/predicted_positive_ratio", float(pred_pos_ratio), step=step)
+
+        except Exception as e:
+            logger.warning(f"Failed to log per-class accuracy: {e}")
+
+    def log_sophisticated_metrics(
+        self,
+        step: int,
+        learning_rate: float | None = None,
+        gradients: list[tf.Tensor] | None = None,
+        model: tf.keras.Model | None = None,
+        activations: dict[str, tf.Tensor] | None = None,
+        y_true: np.ndarray | None = None,
+        y_score: np.ndarray | None = None,
+    ) -> None:
+        """Batch log all sophisticated metrics at the configured interval.
+
+        This is the main entry point for Phase 4 sophisticated metrics.
+        Call this method at the sophisticated_interval to log all enabled metrics.
+
+        Args:
+            step: Global step
+            learning_rate: Current learning rate (optional)
+            gradients: Gradient tensors from tape.gradients() (optional)
+            model: Keras model for weight/gradient mapping (optional)
+            activations: Layer activations dictionary (optional)
+            y_true: Ground truth labels for per-class metrics (optional)
+            y_score: Predicted scores for confidence drift (optional)
+        """
+        if not self.enabled or self.writer is None:
+            return
+
+        # Only log at interval
+        if step % self.sophisticated_interval != 0:
+            return
+
+        try:
+            if learning_rate is not None:
+                self.log_learning_rate(learning_rate, step)
+
+            if gradients is not None:
+                self.log_gradient_norms(gradients, step, model)
+
+            if activations is not None:
+                self.log_activation_stats(activations, step)
+
+            if y_score is not None:
+                self.log_confidence_drift(y_score, step)
+
+            if y_true is not None and y_score is not None:
+                self.log_per_class_accuracy(y_true, y_score, step=step)
+
+        except Exception as e:
+            logger.warning(f"Failed to log sophisticated metrics: {e}")
 
     def log_text_summary(
         self,

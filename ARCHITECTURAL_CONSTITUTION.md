@@ -308,7 +308,7 @@ Subgraph [0]: Main Inference Graph
 │     ├── stream_2 : [1, 10, 1, 64]   (MixConv block 1)
 │     ├── stream_3 : [1, 14, 1, 64]   (MixConv block 2)
 │     ├── stream_4 : [1, 22, 1, 64]   (MixConv block 3)
-│     └── stream_5 : [1, 5,  1, 64]   (Temporal mean pooling)
+│     └── stream_5 : [1, 5,  1, 64]   (Temporal flatten buffer)
 ├── CONCATENATION  ──────────────→  [old_frames | new_input]
 ├── (inference ops: Conv2D, DepthwiseConv2D, FC, Logistic…)
 ├── STRIDED_SLICE × 6  ──────────→  Extract new ring buffer state
@@ -354,7 +354,7 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 | `stream_2` | `[1, 10, 1, 64]` | MixConv block 1 context |
 | `stream_3` | `[1, 14, 1, 64]` | MixConv block 2 context |
 | `stream_4` | `[1, 22, 1, 64]` | MixConv block 3 context |
-| `stream_5` | `[1, 5, 1, 64]` | Temporal mean pooling buffer |
+| `stream_5` | `[1, 5, 1, 64]` | Temporal flatten buffer |
 
 ### Total State Memory
 

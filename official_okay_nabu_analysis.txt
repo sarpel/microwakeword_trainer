@@ -1,0 +1,461 @@
+================================================================================
+🔍 ESPHome microWakeWord Model Analysis: .\okay_nabu.tflite
+================================================================================
+
+📊 MODEL INFORMATION
+--------------------------------------------------------------------------------
+Model Path: C:\Users\Sarpel\Desktop\analyzer\okay_nabu.tflite
+Model Size: 58.85 KB
+Subgraph Count: 2
+
+Input Tensors: 1
+  [0] Shape: [1, 3, 40], Dtype: <class 'numpy.int8'>, Name: serving_default_input_audio:0
+
+Output Tensors: 1
+  [0] Shape: [1, 1], Dtype: <class 'numpy.uint8'>, Name: StatefulPartitionedCall:0
+
+📊 SUBGRAPH DETAILS
+--------------------------------------------------------------------------------
+
+========================================
+SUBGRAPH 0
+========================================
+Total Tensors: 95
+  Input Tensors: 0
+  Output Tensors: 0
+  Variable Tensors: 0
+  Intermediate Tensors: 95
+
+  ALL TENSORS (95):
+  Idx  Name                                Shape                Dtype      Mem(B)
+  ---- ----------------------------------- -------------------- ---------- ----------
+  0    serving_default_input_audio:0       [1, 3, 40]           <dtype: 'int8'> 120
+  1    model/tf.expand_dims/ExpandDims     [4]                  <dtype: 'int32'> 16
+  2    model/stream/strided_slice          [4]                  <dtype: 'int32'> 16
+  3    model/stream/strided_slice1         [4]                  <dtype: 'int32'> 16
+  4    model/strided_keep/strided_slice/.. [4]                  <dtype: 'int32'> 16
+  5    model/stream_1/strided_slice        [4]                  <dtype: 'int32'> 16
+  6    model/stream_1/strided_slice1       [4]                  <dtype: 'int32'> 16
+  7    model/stream_2/strided_slice        [4]                  <dtype: 'int32'> 16
+  8    model/stream_5/strided_slice        [4]                  <dtype: 'int32'> 16
+  9    model/tf.split/Const                [2]                  <dtype: 'int32'> 8
+  10   model/tf.concat/concat/axis         []                   <dtype: 'int32'> 4
+  11   model/strided_keep/strided_slice/.. [4]                  <dtype: 'int32'> 16
+  12   model/strided_keep/strided_slice/.. [4]                  <dtype: 'int32'> 16
+  13   model/strided_keep_1/strided_slic.. [4]                  <dtype: 'int32'> 16
+  14   model/stream_3/strided_slice        [4]                  <dtype: 'int32'> 16
+  15   model/strided_keep_2/strided_slic.. [4]                  <dtype: 'int32'> 16
+  16   model/strided_keep_3/strided_slic.. [4]                  <dtype: 'int32'> 16
+  17   model/stream_4/strided_slice        [4]                  <dtype: 'int32'> 16
+  18   model/stream_5/strided_slice1       [4]                  <dtype: 'int32'> 16
+  19   model/flatten/Const                 [2]                  <dtype: 'int32'> 8
+  20   model/dense/BiasAdd/ReadVariableOp  [1]                  <dtype: 'int32'> 4
+  21   model/dense/MatMul                  [1, 384]             <dtype: 'int8'> 384
+  22   model/batch_normalization_3/Fused.. [64]                 <dtype: 'int32'> 256
+  23   model/conv2d_4/Conv2D               [64, 1, 1, 64]       <dtype: 'int8'> 4096
+  24   model/depthwise_conv2d_5/BiasAdd/.. [64]                 <dtype: 'int32'> 256
+  25   model/depthwise_conv2d_5/depthwise  [1, 23, 1, 64]       <dtype: 'int8'> 1472
+  26   model/batch_normalization_2/Fused.. [64]                 <dtype: 'int32'> 256
+  27   model/conv2d_3/Conv2D               [64, 1, 1, 64]       <dtype: 'int8'> 4096
+  28   model/depthwise_conv2d_4/BiasAdd/.. [32]                 <dtype: 'int32'> 128
+  29   model/depthwise_conv2d_4/depthwise1 [1, 15, 1, 32]       <dtype: 'int8'> 480
+  30   model/depthwise_conv2d_3/BiasAdd/.. [32]                 <dtype: 'int32'> 128
+  31   model/depthwise_conv2d_3/depthwise  [1, 9, 1, 32]        <dtype: 'int8'> 288
+  32   model/batch_normalization_1/Fused.. [64]                 <dtype: 'int32'> 256
+  33   model/conv2d_2/Conv2D               [64, 1, 1, 64]       <dtype: 'int8'> 4096
+  34   model/depthwise_conv2d_2/BiasAdd/.. [32]                 <dtype: 'int32'> 128
+  35   model/depthwise_conv2d_2/depthwise  [1, 11, 1, 32]       <dtype: 'int8'> 352
+  36   model/depthwise_conv2d_1/BiasAdd/.. [32]                 <dtype: 'int32'> 128
+  37   model/depthwise_conv2d_1/depthwise  [1, 7, 1, 32]        <dtype: 'int8'> 224
+  38   model/batch_normalization/FusedBa.. [64]                 <dtype: 'int32'> 256
+  39   model/conv2d_1/Conv2D               [64, 1, 1, 32]       <dtype: 'int8'> 2048
+  40   model/depthwise_conv2d/BiasAdd/Re.. [32]                 <dtype: 'int32'> 128
+  41   model/depthwise_conv2d/depthwise    [1, 5, 1, 32]        <dtype: 'int8'> 160
+  42   model/depthwise_conv2d_4/depthwise  [32]                 <dtype: 'int32'> 128
+  43   model/stream/conv2d/Conv2D          [32, 5, 1, 40]       <dtype: 'int8'> 6400
+  44   stream/states                       []                   <dtype: 'string'> 8
+  45   stream_1/states                     []                   <dtype: 'string'> 8
+  46   stream_2/states                     []                   <dtype: 'string'> 8
+  47   stream_3/states                     []                   <dtype: 'string'> 8
+  48   stream_4/states                     []                   <dtype: 'string'> 8
+  49   stream_5/states                     []                   <dtype: 'string'> 8
+  50   model/tf.expand_dims/ExpandDims1    [1, 3, 1, 40]        <dtype: 'int8'> 120
+  51   model/stream_1/concat/ReadVariabl.. [1, 4, 1, 32]        <dtype: 'int8'> 128
+  52   model/stream_2/concat/ReadVariabl.. [1, 10, 1, 64]       <dtype: 'int8'> 640
+  53   model/stream_3/concat/ReadVariabl.. [1, 14, 1, 64]       <dtype: 'int8'> 896
+  54   model/stream_4/concat/ReadVariabl.. [1, 22, 1, 64]       <dtype: 'int8'> 1408
+  55   model/stream_5/concat/ReadVariabl.. [1, 5, 1, 64]        <dtype: 'int8'> 320
+  56   model/stream/concat/ReadVariableOp  [1, 2, 1, 40]        <dtype: 'int8'> 80
+  57   model/stream/concat                 [1, 5, 1, 40]        <dtype: 'int8'> 200
+  58   model/stream/strided_slice2         [1, 2, 1, 40]        <dtype: 'int8'> 80
+  59   model/activation/Relu;model/strea.. [1, 1, 1, 32]        <dtype: 'int8'> 32
+  60   model/stream_1/concat               [1, 5, 1, 32]        <dtype: 'int8'> 160
+  61   model/stream_1/strided_slice2       [1, 4, 1, 32]        <dtype: 'int8'> 128
+  62   model/depthwise_conv2d/BiasAdd;mo.. [1, 1, 1, 32]        <dtype: 'int8'> 32
+  63   model/activation_1/Relu;model/bat.. [1, 1, 1, 64]        <dtype: 'int8'> 64
+  64   model/stream_2/concat               [1, 11, 1, 64]       <dtype: 'int8'> 704
+  65   model/stream_2/strided_slice1       [1, 10, 1, 64]       <dtype: 'int8'> 640
+  66   model/tf.split/split;model/tf.spl.. [1, 11, 1, 32]       <dtype: 'int8'> 352
+  67   model/tf.split/split;model/tf.spl.. [1, 11, 1, 32]       <dtype: 'int8'> 352
+  68   model/strided_keep/strided_slice    [1, 7, 1, 32]        <dtype: 'int8'> 224
+  69   model/depthwise_conv2d_1/BiasAdd;.. [1, 1, 1, 32]        <dtype: 'int8'> 32
+  70   model/strided_keep_1/strided_slice  [1, 11, 1, 32]       <dtype: 'int8'> 352
+  71   model/depthwise_conv2d_2/BiasAdd;.. [1, 1, 1, 32]        <dtype: 'int8'> 32
+  72   model/tf.concat/concat              [1, 1, 1, 64]        <dtype: 'int8'> 64
+  73   model/activation_2/Relu;model/bat.. [1, 1, 1, 64]        <dtype: 'int8'> 64
+  74   model/stream_3/concat               [1, 15, 1, 64]       <dtype: 'int8'> 960
+  75   model/stream_3/strided_slice1       [1, 14, 1, 64]       <dtype: 'int8'> 896
+  76   model/tf.split_1/split;model/tf.s.. [1, 15, 1, 32]       <dtype: 'int8'> 480
+  77   model/tf.split_1/split;model/tf.s.. [1, 15, 1, 32]       <dtype: 'int8'> 480
+  78   model/strided_keep_2/strided_slice  [1, 9, 1, 32]        <dtype: 'int8'> 288
+  79   model/depthwise_conv2d_3/BiasAdd;.. [1, 1, 1, 32]        <dtype: 'int8'> 32
+  80   model/strided_keep_3/strided_slice  [1, 15, 1, 32]       <dtype: 'int8'> 480
+  81   model/depthwise_conv2d_4/BiasAdd;.. [1, 1, 1, 32]        <dtype: 'int8'> 32
+  82   model/tf.concat_1/concat            [1, 1, 1, 64]        <dtype: 'int8'> 64
+  83   model/activation_3/Relu;model/bat.. [1, 1, 1, 64]        <dtype: 'int8'> 64
+  84   model/stream_4/concat               [1, 23, 1, 64]       <dtype: 'int8'> 1472
+  85   model/stream_4/strided_slice1       [1, 22, 1, 64]       <dtype: 'int8'> 1408
+  86   model/depthwise_conv2d_5/BiasAdd;.. [1, 1, 1, 64]        <dtype: 'int8'> 64
+  87   model/activation_4/Relu;model/bat.. [1, 1, 1, 64]        <dtype: 'int8'> 64
+  88   model/stream_5/concat               [1, 6, 1, 64]        <dtype: 'int8'> 384
+  89   model/stream_5/strided_slice2       [1, 5, 1, 64]        <dtype: 'int8'> 320
+  90   model/flatten/Reshape               [1, 384]             <dtype: 'int8'> 384
+  91   model/dense/MatMul;model/dense/Bi.. [1, 1]               <dtype: 'int8'> 1
+  92   StatefulPartitionedCall:01          [1, 1]               <dtype: 'int8'> 1
+  93   StatefulPartitionedCall:0           [1, 1]               <dtype: 'uint8'> 1
+  94                                       [1, 1, 1, 200]       <dtype: 'int8'> 200
+
+========================================
+SUBGRAPH 1
+========================================
+Total Tensors: 12
+  Input Tensors: 0
+  Output Tensors: 0
+  Variable Tensors: 0
+  Intermediate Tensors: 12
+
+  ALL TENSORS (12):
+  Idx  Name                                Shape                Dtype      Mem(B)
+  ---- ----------------------------------- -------------------- ---------- ----------
+  0    stream_5/states1                    []                   <dtype: 'string'> 8
+  1    tfl.pseudo_qconst                   [1, 5, 1, 64]        <dtype: 'int8'> 320
+  2    stream_4/states1                    []                   <dtype: 'string'> 8
+  3    tfl.pseudo_qconst1                  [1, 22, 1, 64]       <dtype: 'int8'> 1408
+  4    stream_3/states1                    []                   <dtype: 'string'> 8
+  5    tfl.pseudo_qconst2                  [1, 14, 1, 64]       <dtype: 'int8'> 896
+  6    stream_2/states1                    []                   <dtype: 'string'> 8
+  7    tfl.pseudo_qconst3                  [1, 10, 1, 64]       <dtype: 'int8'> 640
+  8    stream_1/states1                    []                   <dtype: 'string'> 8
+  9    tfl.pseudo_qconst4                  [1, 4, 1, 32]        <dtype: 'int8'> 128
+  10   stream/states1                      []                   <dtype: 'string'> 8
+  11   tfl.pseudo_qconst5                  [1, 2, 1, 40]        <dtype: 'int8'> 80
+
+📊 COMPLETE TENSOR INVENTORY
+--------------------------------------------------------------------------------
+
+--- Subgraph 0 ---
+Tensor Subgraph Name                                     Shape                     Dtype        Quant
+------ -------- ---------------------------------------- ------------------------- ------------ --------------------
+0      0        serving_default_input_audio:0            [1, 3, 40]                <dtype: 'int8'> s=0.101961, z=-128
+1      0        model/tf.expand_dims/ExpandDims          [4]                       <dtype: 'int32'> s=0.000000, z=0
+2      0        model/stream/strided_slice               [4]                       <dtype: 'int32'> s=0.000000, z=0
+3      0        model/stream/strided_slice1              [4]                       <dtype: 'int32'> s=0.000000, z=0
+4      0        model/strided_keep/strided_slice/stack_2 [4]                       <dtype: 'int32'> s=0.000000, z=0
+5      0        model/stream_1/strided_slice             [4]                       <dtype: 'int32'> s=0.000000, z=0
+6      0        model/stream_1/strided_slice1            [4]                       <dtype: 'int32'> s=0.000000, z=0
+7      0        model/stream_2/strided_slice             [4]                       <dtype: 'int32'> s=0.000000, z=0
+8      0        model/stream_5/strided_slice             [4]                       <dtype: 'int32'> s=0.000000, z=0
+9      0        model/tf.split/Const                     [2]                       <dtype: 'int32'> s=0.000000, z=0
+10     0        model/tf.concat/concat/axis              []                        <dtype: 'int32'> s=0.000000, z=0
+11     0        model/strided_keep/strided_slice/stack   [4]                       <dtype: 'int32'> s=0.000000, z=0
+12     0        model/strided_keep/strided_slice/stack_1 [4]                       <dtype: 'int32'> s=0.000000, z=0
+13     0        model/strided_keep_1/strided_slice/stack [4]                       <dtype: 'int32'> s=0.000000, z=0
+14     0        model/stream_3/strided_slice             [4]                       <dtype: 'int32'> s=0.000000, z=0
+15     0        model/strided_keep_2/strided_slice/stack [4]                       <dtype: 'int32'> s=0.000000, z=0
+16     0        model/strided_keep_3/strided_slice/stack [4]                       <dtype: 'int32'> s=0.000000, z=0
+17     0        model/stream_4/strided_slice             [4]                       <dtype: 'int32'> s=0.000000, z=0
+18     0        model/stream_5/strided_slice1            [4]                       <dtype: 'int32'> s=0.000000, z=0
+19     0        model/flatten/Const                      [2]                       <dtype: 'int32'> s=0.000000, z=0
+20     0        model/dense/BiasAdd/ReadVariableOp       [1]                       <dtype: 'int32'> s=0.000090, z=0
+21     0        model/dense/MatMul                       [1, 384]                  <dtype: 'int8'> s=0.003439, z=0
+22     0        model/batch_normalization_3/FusedBatch.. [64]                      <dtype: 'int32'> s=0.000000, z=0
+23     0        model/conv2d_4/Conv2D                    [64, 1, 1, 64]            <dtype: 'int8'> s=0.000000, z=0
+24     0        model/depthwise_conv2d_5/BiasAdd/ReadV.. [64]                      <dtype: 'int32'> s=0.000000, z=0
+25     0        model/depthwise_conv2d_5/depthwise       [1, 23, 1, 64]            <dtype: 'int8'> s=0.000000, z=0
+26     0        model/batch_normalization_2/FusedBatch.. [64]                      <dtype: 'int32'> s=0.000000, z=0
+27     0        model/conv2d_3/Conv2D                    [64, 1, 1, 64]            <dtype: 'int8'> s=0.000000, z=0
+28     0        model/depthwise_conv2d_4/BiasAdd/ReadV.. [32]                      <dtype: 'int32'> s=0.000000, z=0
+29     0        model/depthwise_conv2d_4/depthwise1      [1, 15, 1, 32]            <dtype: 'int8'> s=0.000000, z=0
+30     0        model/depthwise_conv2d_3/BiasAdd/ReadV.. [32]                      <dtype: 'int32'> s=0.000000, z=0
+31     0        model/depthwise_conv2d_3/depthwise       [1, 9, 1, 32]             <dtype: 'int8'> s=0.000000, z=0
+32     0        model/batch_normalization_1/FusedBatch.. [64]                      <dtype: 'int32'> s=0.000000, z=0
+33     0        model/conv2d_2/Conv2D                    [64, 1, 1, 64]            <dtype: 'int8'> s=0.000000, z=0
+34     0        model/depthwise_conv2d_2/BiasAdd/ReadV.. [32]                      <dtype: 'int32'> s=0.000000, z=0
+35     0        model/depthwise_conv2d_2/depthwise       [1, 11, 1, 32]            <dtype: 'int8'> s=0.000000, z=0
+36     0        model/depthwise_conv2d_1/BiasAdd/ReadV.. [32]                      <dtype: 'int32'> s=0.000000, z=0
+37     0        model/depthwise_conv2d_1/depthwise       [1, 7, 1, 32]             <dtype: 'int8'> s=0.000000, z=0
+38     0        model/batch_normalization/FusedBatchNo.. [64]                      <dtype: 'int32'> s=0.000000, z=0
+39     0        model/conv2d_1/Conv2D                    [64, 1, 1, 32]            <dtype: 'int8'> s=0.000000, z=0
+40     0        model/depthwise_conv2d/BiasAdd/ReadVar.. [32]                      <dtype: 'int32'> s=0.000000, z=0
+41     0        model/depthwise_conv2d/depthwise         [1, 5, 1, 32]             <dtype: 'int8'> s=0.000000, z=0
+42     0        model/depthwise_conv2d_4/depthwise       [32]                      <dtype: 'int32'> s=0.000000, z=0
+43     0        model/stream/conv2d/Conv2D               [32, 5, 1, 40]            <dtype: 'int8'> s=0.000000, z=0
+44     0        stream/states                            []                        <dtype: 'string'> s=0.000000, z=0
+45     0        stream_1/states                          []                        <dtype: 'string'> s=0.000000, z=0
+46     0        stream_2/states                          []                        <dtype: 'string'> s=0.000000, z=0
+47     0        stream_3/states                          []                        <dtype: 'string'> s=0.000000, z=0
+48     0        stream_4/states                          []                        <dtype: 'string'> s=0.000000, z=0
+49     0        stream_5/states                          []                        <dtype: 'string'> s=0.000000, z=0
+50     0        model/tf.expand_dims/ExpandDims1         [1, 3, 1, 40]             <dtype: 'int8'> s=0.101961, z=-128
+51     0        model/stream_1/concat/ReadVariableOp     [1, 4, 1, 32]             <dtype: 'int8'> s=1.274391, z=-128
+52     0        model/stream_2/concat/ReadVariableOp     [1, 10, 1, 64]            <dtype: 'int8'> s=0.034546, z=-128
+53     0        model/stream_3/concat/ReadVariableOp     [1, 14, 1, 64]            <dtype: 'int8'> s=0.040871, z=-128
+54     0        model/stream_4/concat/ReadVariableOp     [1, 22, 1, 64]            <dtype: 'int8'> s=0.031987, z=-128
+55     0        model/stream_5/concat/ReadVariableOp     [1, 5, 1, 64]             <dtype: 'int8'> s=0.026272, z=-128
+56     0        model/stream/concat/ReadVariableOp       [1, 2, 1, 40]             <dtype: 'int8'> s=0.101961, z=-128
+57     0        model/stream/concat                      [1, 5, 1, 40]             <dtype: 'int8'> s=0.101961, z=-128
+58     0        model/stream/strided_slice2              [1, 2, 1, 40]             <dtype: 'int8'> s=0.101961, z=-128
+59     0        model/activation/Relu;model/stream/con.. [1, 1, 1, 32]             <dtype: 'int8'> s=1.274391, z=-128
+60     0        model/stream_1/concat                    [1, 5, 1, 32]             <dtype: 'int8'> s=1.274391, z=-128
+61     0        model/stream_1/strided_slice2            [1, 4, 1, 32]             <dtype: 'int8'> s=1.274391, z=-128
+62     0        model/depthwise_conv2d/BiasAdd;model/d.. [1, 1, 1, 32]             <dtype: 'int8'> s=1.109315, z=-28
+63     0        model/activation_1/Relu;model/batch_no.. [1, 1, 1, 64]             <dtype: 'int8'> s=0.034546, z=-128
+64     0        model/stream_2/concat                    [1, 11, 1, 64]            <dtype: 'int8'> s=0.034546, z=-128
+65     0        model/stream_2/strided_slice1            [1, 10, 1, 64]            <dtype: 'int8'> s=0.034546, z=-128
+66     0        model/tf.split/split;model/tf.split/sp.. [1, 11, 1, 32]            <dtype: 'int8'> s=0.034546, z=-128
+67     0        model/tf.split/split;model/tf.split/sp.. [1, 11, 1, 32]            <dtype: 'int8'> s=0.034546, z=-128
+68     0        model/strided_keep/strided_slice         [1, 7, 1, 32]             <dtype: 'int8'> s=0.034546, z=-128
+69     0        model/depthwise_conv2d_1/BiasAdd;model.. [1, 1, 1, 32]             <dtype: 'int8'> s=0.047427, z=-18
+70     0        model/strided_keep_1/strided_slice       [1, 11, 1, 32]            <dtype: 'int8'> s=0.034546, z=-128
+71     0        model/depthwise_conv2d_2/BiasAdd;model.. [1, 1, 1, 32]             <dtype: 'int8'> s=0.047427, z=-18
+72     0        model/tf.concat/concat                   [1, 1, 1, 64]             <dtype: 'int8'> s=0.047427, z=-18
+73     0        model/activation_2/Relu;model/batch_no.. [1, 1, 1, 64]             <dtype: 'int8'> s=0.040871, z=-128
+74     0        model/stream_3/concat                    [1, 15, 1, 64]            <dtype: 'int8'> s=0.040871, z=-128
+75     0        model/stream_3/strided_slice1            [1, 14, 1, 64]            <dtype: 'int8'> s=0.040871, z=-128
+76     0        model/tf.split_1/split;model/tf.split_.. [1, 15, 1, 32]            <dtype: 'int8'> s=0.040871, z=-128
+77     0        model/tf.split_1/split;model/tf.split_.. [1, 15, 1, 32]            <dtype: 'int8'> s=0.040871, z=-128
+78     0        model/strided_keep_2/strided_slice       [1, 9, 1, 32]             <dtype: 'int8'> s=0.040871, z=-128
+79     0        model/depthwise_conv2d_3/BiasAdd;model.. [1, 1, 1, 32]             <dtype: 'int8'> s=0.071542, z=4
+80     0        model/strided_keep_3/strided_slice       [1, 15, 1, 32]            <dtype: 'int8'> s=0.040871, z=-128
+81     0        model/depthwise_conv2d_4/BiasAdd;model.. [1, 1, 1, 32]             <dtype: 'int8'> s=0.071542, z=4
+82     0        model/tf.concat_1/concat                 [1, 1, 1, 64]             <dtype: 'int8'> s=0.071542, z=4
+83     0        model/activation_3/Relu;model/batch_no.. [1, 1, 1, 64]             <dtype: 'int8'> s=0.031987, z=-128
+84     0        model/stream_4/concat                    [1, 23, 1, 64]            <dtype: 'int8'> s=0.031987, z=-128
+85     0        model/stream_4/strided_slice1            [1, 22, 1, 64]            <dtype: 'int8'> s=0.031987, z=-128
+86     0        model/depthwise_conv2d_5/BiasAdd;model.. [1, 1, 1, 64]             <dtype: 'int8'> s=0.113524, z=3
+87     0        model/activation_4/Relu;model/batch_no.. [1, 1, 1, 64]             <dtype: 'int8'> s=0.026272, z=-128
+88     0        model/stream_5/concat                    [1, 6, 1, 64]             <dtype: 'int8'> s=0.026272, z=-128
+89     0        model/stream_5/strided_slice2            [1, 5, 1, 64]             <dtype: 'int8'> s=0.026272, z=-128
+90     0        model/flatten/Reshape                    [1, 384]                  <dtype: 'int8'> s=0.026272, z=-128
+91     0        model/dense/MatMul;model/dense/BiasAdd   [1, 1]                    <dtype: 'int8'> s=0.152942, z=46
+92     0        StatefulPartitionedCall:01               [1, 1]                    <dtype: 'int8'> s=0.003906, z=-128
+93     0        StatefulPartitionedCall:0                [1, 1]                    <dtype: 'uint8'> s=0.003906, z=0
+94     0                                                 [1, 1, 1, 200]            <dtype: 'int8'> s=0.000000, z=0
+
+--- Subgraph 1 ---
+Tensor Subgraph Name                                     Shape                     Dtype        Quant
+------ -------- ---------------------------------------- ------------------------- ------------ --------------------
+0      1        stream_5/states1                         []                        <dtype: 'string'> s=0.000000, z=0
+1      1        tfl.pseudo_qconst                        [1, 5, 1, 64]             <dtype: 'int8'> s=0.026272, z=-128
+2      1        stream_4/states1                         []                        <dtype: 'string'> s=0.000000, z=0
+3      1        tfl.pseudo_qconst1                       [1, 22, 1, 64]            <dtype: 'int8'> s=0.031987, z=-128
+4      1        stream_3/states1                         []                        <dtype: 'string'> s=0.000000, z=0
+5      1        tfl.pseudo_qconst2                       [1, 14, 1, 64]            <dtype: 'int8'> s=0.040871, z=-128
+6      1        stream_2/states1                         []                        <dtype: 'string'> s=0.000000, z=0
+7      1        tfl.pseudo_qconst3                       [1, 10, 1, 64]            <dtype: 'int8'> s=0.034546, z=-128
+8      1        stream_1/states1                         []                        <dtype: 'string'> s=0.000000, z=0
+9      1        tfl.pseudo_qconst4                       [1, 4, 1, 32]             <dtype: 'int8'> s=1.274391, z=-128
+10     1        stream/states1                           []                        <dtype: 'string'> s=0.000000, z=0
+11     1        tfl.pseudo_qconst5                       [1, 2, 1, 40]             <dtype: 'int8'> s=0.101961, z=-128
+
+📊 COMPLETE OPERATION INVENTORY
+--------------------------------------------------------------------------------
+
+--- Subgraph 0 Operations ---
+Total Operations: 55
+OpIdx  OpCode                    CustomCode           Inputs          Outputs
+------ ------------------------- -------------------- --------------- ---------------
+0      CALL_ONCE                 N/A                  []              []
+1      VAR_HANDLE                N/A                  []              [44]
+2      VAR_HANDLE                N/A                  []              [45]
+3      VAR_HANDLE                N/A                  []              [46]
+4      VAR_HANDLE                N/A                  []              [47]
+5      VAR_HANDLE                N/A                  []              [48]
+6      VAR_HANDLE                N/A                  []              [49]
+7      RESHAPE                   N/A                  [0 1]           [50]
+8      READ_VARIABLE             N/A                  [45]            [51]
+9      READ_VARIABLE             N/A                  [46]            [52]
+10     READ_VARIABLE             N/A                  [47]            [53]
+11     READ_VARIABLE             N/A                  [48]            [54]
+12     READ_VARIABLE             N/A                  [49]            [55]
+13     READ_VARIABLE             N/A                  [44]            [56]
+14     CONCATENATION             N/A                  [56 50]         [57]
+15     STRIDED_SLICE             N/A                  [57  2  3  4]   [58]
+16     ASSIGN_VARIABLE           N/A                  [44 58]         []
+17     CONV_2D                   N/A                  [57 43 42]      [59]
+18     CONCATENATION             N/A                  [51 59]         [60]
+19     STRIDED_SLICE             N/A                  [60  5  6  4]   [61]
+20     ASSIGN_VARIABLE           N/A                  [45 61]         []
+21     DEPTHWISE_CONV_2D         N/A                  [60 41 40]      [62]
+22     CONV_2D                   N/A                  [62 39 38]      [63]
+23     CONCATENATION             N/A                  [52 63]         [64]
+24     STRIDED_SLICE             N/A                  [64  7  8  4]   [65]
+25     ASSIGN_VARIABLE           N/A                  [46 65]         []
+26     SPLIT_V                   N/A                  [64  9 10]      [66 67]
+27     STRIDED_SLICE             N/A                  [66 11 12  4]   [68]
+28     DEPTHWISE_CONV_2D         N/A                  [68 37 36]      [69]
+29     STRIDED_SLICE             N/A                  [67 13 12  4]   [70]
+30     DEPTHWISE_CONV_2D         N/A                  [70 35 34]      [71]
+31     CONCATENATION             N/A                  [69 71]         [72]
+32     CONV_2D                   N/A                  [72 33 32]      [73]
+33     CONCATENATION             N/A                  [53 73]         [74]
+34     STRIDED_SLICE             N/A                  [74 14  8  4]   [75]
+35     ASSIGN_VARIABLE           N/A                  [47 75]         []
+36     SPLIT_V                   N/A                  [74  9 10]      [76 77]
+37     STRIDED_SLICE             N/A                  [76 15 12  4]   [78]
+38     DEPTHWISE_CONV_2D         N/A                  [78 31 30]      [79]
+39     STRIDED_SLICE             N/A                  [77 16 12  4]   [80]
+40     DEPTHWISE_CONV_2D         N/A                  [80 29 28]      [81]
+41     CONCATENATION             N/A                  [79 81]         [82]
+42     CONV_2D                   N/A                  [82 27 26]      [83]
+43     CONCATENATION             N/A                  [54 83]         [84]
+44     STRIDED_SLICE             N/A                  [84 17  8  4]   [85]
+45     ASSIGN_VARIABLE           N/A                  [48 85]         []
+46     DEPTHWISE_CONV_2D         N/A                  [84 25 24]      [86]
+47     CONV_2D                   N/A                  [86 23 22]      [87]
+48     CONCATENATION             N/A                  [55 87]         [88]
+49     STRIDED_SLICE             N/A                  [88 18  8  4]   [89]
+50     ASSIGN_VARIABLE           N/A                  [49 89]         []
+51     RESHAPE                   N/A                  [88 19]         [90]
+52     FULLY_CONNECTED           N/A                  [90 21 20]      [91]
+53     LOGISTIC                  N/A                  [91]            [92]
+54     QUANTIZE                  N/A                  [92]            [93]
+
+--- Subgraph 1 Operations ---
+  (Direct op access not available, using alternative method)
+Total Operations: 55
+OpIdx  OpCode                    CustomCode           Inputs          Outputs
+------ ------------------------- -------------------- --------------- ---------------
+0      CALL_ONCE                 N/A                  []              []
+1      VAR_HANDLE                N/A                  []              [44]
+2      VAR_HANDLE                N/A                  []              [45]
+3      VAR_HANDLE                N/A                  []              [46]
+4      VAR_HANDLE                N/A                  []              [47]
+5      VAR_HANDLE                N/A                  []              [48]
+6      VAR_HANDLE                N/A                  []              [49]
+7      RESHAPE                   N/A                  [0 1]           [50]
+8      READ_VARIABLE             N/A                  [45]            [51]
+9      READ_VARIABLE             N/A                  [46]            [52]
+10     READ_VARIABLE             N/A                  [47]            [53]
+11     READ_VARIABLE             N/A                  [48]            [54]
+12     READ_VARIABLE             N/A                  [49]            [55]
+13     READ_VARIABLE             N/A                  [44]            [56]
+14     CONCATENATION             N/A                  [56 50]         [57]
+15     STRIDED_SLICE             N/A                  [57  2  3  4]   [58]
+16     ASSIGN_VARIABLE           N/A                  [44 58]         []
+17     CONV_2D                   N/A                  [57 43 42]      [59]
+18     CONCATENATION             N/A                  [51 59]         [60]
+19     STRIDED_SLICE             N/A                  [60  5  6  4]   [61]
+20     ASSIGN_VARIABLE           N/A                  [45 61]         []
+21     DEPTHWISE_CONV_2D         N/A                  [60 41 40]      [62]
+22     CONV_2D                   N/A                  [62 39 38]      [63]
+23     CONCATENATION             N/A                  [52 63]         [64]
+24     STRIDED_SLICE             N/A                  [64  7  8  4]   [65]
+25     ASSIGN_VARIABLE           N/A                  [46 65]         []
+26     SPLIT_V                   N/A                  [64  9 10]      [66 67]
+27     STRIDED_SLICE             N/A                  [66 11 12  4]   [68]
+28     DEPTHWISE_CONV_2D         N/A                  [68 37 36]      [69]
+29     STRIDED_SLICE             N/A                  [67 13 12  4]   [70]
+30     DEPTHWISE_CONV_2D         N/A                  [70 35 34]      [71]
+31     CONCATENATION             N/A                  [69 71]         [72]
+32     CONV_2D                   N/A                  [72 33 32]      [73]
+33     CONCATENATION             N/A                  [53 73]         [74]
+34     STRIDED_SLICE             N/A                  [74 14  8  4]   [75]
+35     ASSIGN_VARIABLE           N/A                  [47 75]         []
+36     SPLIT_V                   N/A                  [74  9 10]      [76 77]
+37     STRIDED_SLICE             N/A                  [76 15 12  4]   [78]
+38     DEPTHWISE_CONV_2D         N/A                  [78 31 30]      [79]
+39     STRIDED_SLICE             N/A                  [77 16 12  4]   [80]
+40     DEPTHWISE_CONV_2D         N/A                  [80 29 28]      [81]
+41     CONCATENATION             N/A                  [79 81]         [82]
+42     CONV_2D                   N/A                  [82 27 26]      [83]
+43     CONCATENATION             N/A                  [54 83]         [84]
+44     STRIDED_SLICE             N/A                  [84 17  8  4]   [85]
+45     ASSIGN_VARIABLE           N/A                  [48 85]         []
+46     DEPTHWISE_CONV_2D         N/A                  [84 25 24]      [86]
+47     CONV_2D                   N/A                  [86 23 22]      [87]
+48     CONCATENATION             N/A                  [55 87]         [88]
+49     STRIDED_SLICE             N/A                  [88 18  8  4]   [89]
+50     ASSIGN_VARIABLE           N/A                  [49 89]         []
+51     RESHAPE                   N/A                  [88 19]         [90]
+52     FULLY_CONNECTED           N/A                  [90 21 20]      [91]
+53     LOGISTIC                  N/A                  [91]            [92]
+54     QUANTIZE                  N/A                  [92]            [93]
+
+--- Unique Operation Types ---
+Op Code                        Count
+------------------------------ ----------
+STRIDED_SLICE                  10
+CONCATENATION                  8
+VAR_HANDLE                     6
+READ_VARIABLE                  6
+ASSIGN_VARIABLE                6
+DEPTHWISE_CONV_2D              6
+CONV_2D                        5
+RESHAPE                        2
+SPLIT_V                        2
+CALL_ONCE                      1
+FULLY_CONNECTED                1
+LOGISTIC                       1
+QUANTIZE                       1
+
+📊 QUANTIZATION PARAMETERS
+--------------------------------------------------------------------------------
+
+Input Tensor Quantization:
+  Input [0]:
+    Legacy: scale=0.10196078568696976, zero_point=-128
+    Scales: [0.10196079]
+    Zero Points: [-128]
+    Dtype: <class 'numpy.int8'>
+
+Output Tensor Quantization:
+  Output [0]:
+    Legacy: scale=0.00390625, zero_point=0
+    Scales: [0.00390625]
+    Zero Points: [0]
+    Dtype: <class 'numpy.uint8'>
+
+All Tensors Quantization Summary:
+  Total Tensors: 107
+  Quantized Tensors: 107
+  Quantization Rate: 100.0%
+
+📊 MEMORY ESTIMATE
+--------------------------------------------------------------------------------
+Subgraph 0: 41,771 bytes (40.79 KB)
+Subgraph 1: 3,520 bytes (3.44 KB)
+
+Total Tensor Memory: 45,291 bytes (44.23 KB)
+Model File Size: 60,264 bytes (58.85 KB)
+
+⚠️ Note: TFLite Micro arena size should be 2-3x tensor memory for safety
+   Recommended Arena: 135,873 bytes (132.69 KB)
+
+📊 ESPHOME COMPATIBILITY CHECK
+--------------------------------------------------------------------------------
+Check                                    Expected             Actual               Status
+---------------------------------------- -------------------- -------------------- ----------
+subgraph_count                           2 subgraphs          2                    ✅ PASS
+input_shape                              [1, 3, 40]           [1, 3, 40]           ✅ PASS
+input_dtype                              int8                 <class 'numpy.int8'> ✅ PASS
+output_shape                             [1, 1]               [1, 1]               ✅ PASS
+output_dtype                             uint8                <class 'numpy.uint8'> ✅ PASS
+quantized                                Yes                  Yes                  ✅ PASS
+
+OVERALL                                                                            ✅ PASS
+================================================================================
+✅ Analysis Complete
+================================================================================
+
+💾 Analysis exported to: okay_nabu_analysis.json

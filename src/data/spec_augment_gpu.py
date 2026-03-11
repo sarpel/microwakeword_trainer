@@ -111,32 +111,38 @@ def batch_spec_augment_gpu(
     # Get dimensions
     batch_size, num_time_frames, num_freq_bins = batch.shape
 
-    # Apply frequency masks - fully vectorized across batch
+    # Apply frequency masks - fully vectorized across batch and time
     for _ in range(freq_mask_count):
         # Generate random mask sizes and starts for entire batch at once
         freq_mask_sizes = cp.random.randint(0, freq_mask_max_size + 1, size=batch_size)
-        freq_mask_starts = cp.random.randint(0, cp.maximum(1, num_freq_bins - freq_mask_sizes + 1))
+        freq_max_starts = cp.maximum(1, num_freq_bins - freq_mask_sizes + 1)
+        freq_mask_starts = (cp.random.random(batch_size) * freq_max_starts).astype(cp.int32)
 
         # Vectorized masking using advanced indexing
-        # Apply masks to all time frames simultaneously
-        for t in range(num_time_frames):
-            # Use broadcasting to apply each sample's mask
-            mask_indices = cp.arange(num_freq_bins)
-            mask = (mask_indices >= freq_mask_starts[:, None]) & (mask_indices < (freq_mask_starts + freq_mask_sizes)[:, None])
-            batch_gpu[:, t, :][mask] = 0
+        # Build 2D per-sample frequency mask and broadcast across all time frames
+        freq_indices = cp.arange(num_freq_bins)
+        # mask shape: (batch_size, num_freq_bins)
+        mask_2d = (freq_indices[None, :] >= freq_mask_starts[:, None]) & (freq_indices[None, :] < (freq_mask_starts + freq_mask_sizes)[:, None])
+        # Expand to 3D: (batch_size, num_time_frames, num_freq_bins) and apply
+        mask_3d = mask_2d[:, None, :]  # Broadcast across time dimension
+        batch_gpu[mask_3d] = 0
 
-    # Apply time masks - fully vectorized across batch
+    # Apply time masks - fully vectorized across batch and frequency
     for _ in range(time_mask_count):
         # Generate random mask sizes and starts for entire batch at once
         time_mask_sizes = cp.random.randint(0, time_mask_max_size + 1, size=batch_size)
-        time_mask_starts = cp.random.randint(0, cp.maximum(1, num_time_frames - time_mask_sizes + 1))
+        time_max_starts = cp.maximum(1, num_time_frames - time_mask_sizes + 1)
+        time_mask_starts = (cp.random.random(batch_size) * time_max_starts).astype(cp.int32)
 
         # Vectorized time masking using advanced indexing
-        mask_indices = cp.arange(num_time_frames)
-        mask = (mask_indices >= time_mask_starts[:, None]) & (mask_indices < (time_mask_starts + time_mask_sizes)[:, None])
-        # Apply mask across all frequency bins
-        for f in range(num_freq_bins):
-            batch_gpu[:, :, f][mask] = 0
+        # Build 2D per-sample time mask and broadcast across all frequency bins
+        time_indices = cp.arange(num_time_frames)
+        # mask shape: (batch_size, num_time_frames)
+        mask_2d = (time_indices[None, :] >= time_mask_starts[:, None]) & \
+                  (time_indices[None, :] < (time_mask_starts + time_mask_sizes)[:, None])
+        # Expand to 3D: (batch_size, num_time_frames, num_freq_bins) and apply
+        mask_3d = mask_2d[:, :, None]  # Broadcast across frequency dimension
+        batch_gpu[mask_3d] = 0
 
     # Transfer back to CPU using synchronous call (async requires pinned memory)
     batch_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(batch_gpu))

@@ -483,11 +483,11 @@ class StreamingExportModel(tf.keras.Model):
             if residual is not None:
                 x = x + residual
 
-        # stream_5 (temporal pooling)
+        # stream_5 (temporal flatten buffer — matching okay_nabu architecture)
+        # _concat_update returns full concat [1, 6, 1, 64] and saves last 5 frames to state
         x = self._concat_update(self.state_vars[-1], x, 5)
-        # Keep last 5 frames and compute mean
-        x = x[:, -5:, :, :]
-        x = tf.reduce_mean(x, axis=[1, 2])
+        # Flatten full concat: [1, 6, 1, 64] → [1, 384] (6 frames × 64 filters)
+        x = tf.reshape(x, [1, -1])
 
         # Dense output
         return self.dense(x)

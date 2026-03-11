@@ -529,8 +529,12 @@ class MixedNet(tf.keras.Model):
             name="temporal_stream",
         )
 
-        # Global pooling (average or flatten)
-        self.pooling = tf.keras.layers.GlobalAveragePooling2D(name="global_pool")
+        # Flatten temporal features (matching okay_nabu architecture)
+        # Instead of GlobalAveragePooling2D which averages all frames,
+        # Flatten preserves per-frame information for the Dense layer.
+        # Dense input = temporal_rb_size_plus_1 * last_pointwise_filters
+        # In streaming: 6 * 64 = 384 (5 buffer frames + 1 new frame)
+        self.pooling = tf.keras.layers.Flatten(name="global_pool")
 
         # Dropout
         if self.dropout_rate > 0:
@@ -541,8 +545,6 @@ class MixedNet(tf.keras.Model):
         # Output layer - must be float32 for numerical stability with mixed precision
         self.output_dense = tf.keras.layers.Dense(1, activation="sigmoid", name="layers_dense", dtype=tf.float32)
 
-        # Flatten layer for dense (created in build to avoid re-creation on each call)
-        self.flatten = tf.keras.layers.Flatten(name="flatten")
 
         super().build(input_shape)
 
@@ -582,8 +584,6 @@ class MixedNet(tf.keras.Model):
         # Global pooling
         net = self.pooling(net)
 
-        # Flatten for dense
-        net = self.flatten(net)
 
         # Dropout
         if self.dropout is not None:
