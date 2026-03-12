@@ -50,3 +50,7 @@ performance:
   tensorboard_log_pr_curves: false
   tensorboard_log_weight_histograms: false
   tensorboard_sophisticated_interval: 5000
+
+evaluation:
+  default_threshold: 0.97       # Match deployment probability_cutoff (legacy name)
+  detection_threshold: 0.97     # Canonical threshold name (alias)
