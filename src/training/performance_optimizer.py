@@ -3,7 +3,6 @@
 Integrates mixed precision and tf.data.Dataset pipeline for maximum performance.
 """
 
-
 import logging
 
 import tensorflow as tf

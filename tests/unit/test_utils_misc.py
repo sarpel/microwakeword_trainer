@@ -59,6 +59,35 @@ def test_seed_everything_with_and_without_cupy(monkeypatch) -> None:
     assert os.environ["TF_DETERMINISTIC_OPS"] == "1"
 
 
+def test_seed_everything_without_cupy(monkeypatch) -> None:
+    """Verify seed_everything works correctly when CuPy is not available."""
+    called = {"tf": None}
+
+    class DummyTFRandom:
+        @staticmethod
+        def set_seed(v):
+            called["tf"] = v
+
+    class DummyTF:
+        random = DummyTFRandom()
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "tensorflow":
+            return DummyTF
+        if name == "cupy":
+            raise ImportError("No module named 'cupy'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    seed.seed_everything(42)
+    assert called["tf"] == 42
+    assert os.environ["TF_DETERMINISTIC_OPS"] == "1"
+
+
 def test_performance_system_and_gpu_checks(monkeypatch) -> None:
     monkeypatch.setattr(performance.psutil, "cpu_count", lambda logical=False: 8 if logical else 4)
     monkeypatch.setattr(performance.psutil, "virtual_memory", lambda: SimpleNamespace(total=16 * 1024**3, available=8 * 1024**3))

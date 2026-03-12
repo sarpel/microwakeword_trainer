@@ -774,6 +774,18 @@ models/exported/
 }
 ```
 
+#### Migrating from V1 (flat) to V2 (nested `micro`) Format
+
+| V1 flat field | V2 location | Notes |
+|---|---|---|
+| `probability_cutoff` | `micro.probability_cutoff` | Moved inside `micro` object |
+| `sliding_window_size` | `micro.sliding_window_size` | Moved inside `micro` object |
+| `feature_step_size` | `micro.feature_step_size` | Moved inside `micro` object |
+| `tensor_arena_size` | `micro.tensor_arena_size` | Moved inside `micro` object; set `0` for auto-resolve |
+| `minimum_esphome_version` | `micro.minimum_esphome_version` | Moved inside `micro` object |
+| `wake_word`, `author`, `website`, `model`, `trained_languages` | Top-level (unchanged) | Already at top level in V1 |
+| `version` | Top-level `"version": 2` | **Must be updated from `1` to `2`** |
+
 ### Programmatic Export
 
 ```python
@@ -1215,7 +1227,7 @@ model:
   first_conv_filters: 20          # Reduced from 30
   pointwise_filters: "40,40,40,40"  # Reduced from 60
 
-# Reduce arena size
+# Auto-calculate arena size from exported model (set > 0 to override with explicit bytes)
 export:
   tensor_arena_size: 0
 ```
