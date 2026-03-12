@@ -1161,28 +1161,24 @@ esphome:
 
 **Root Cause:**
 
-TFLite converter sorts state variables alphabetically by name when emitting the flatbuffer file. ESPHome accesses state variables positionally (not by name), so the order in the TFLite file must match the architectural order.
+Use the official reference naming when validating state tensors.
 
-With original naming (`stream`, `stream_1`, `stream_2`, ...):
-- Variable names with `_ring_buffer` suffix: `stream_ring_buffer`, `stream_1_ring_buffer`, `stream_2_ring_buffer`, ...
-- Alphabetically: `stream_1_ring_buffer` < `stream_ring_buffer` (because `_1` < `_r`)
-- Result: `stream_1` appears first in TFLite file, but should be second
+Expected variable names are:
+- `stream`
+- `stream_1`
+- `stream_2`
+- `stream_3`
+- `stream_4`
+- `stream_5`
 
-
-**Ground-Truth Correction (2026-03-13):**
-
-Official `okay_nabu` flatbuffer analysis shows the first state variable is
-named `stream`, not `stream_0`. When validating against the official reference:
-- Expected variable names are `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`
-- Do not infer architectural truth from older documentation claims about `_0` naming
-- Always verify actual emitted names from the flatbuffer or analyzer output
+Always verify actual emitted names from the flatbuffer or analyzer output.
 
 **Verification:**
 ```bash
 # Verify the official architecture references the correct names
 grep "`stream`" ARCHITECTURAL_CONSTITUTION.md
 grep "stream_1" ARCHITECTURAL_CONSTITUTION.md
-# The first state should be documented as `stream`, not `stream_0`
+# The first state should be documented as `stream`
 ```
 
 **Re-export required:**

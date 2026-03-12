@@ -164,30 +164,13 @@ JQ|
 
 ---
 
-### Bug Fix 2: State Variable Naming Assumption Re-audited
+### State Variable Naming
 
-**Issue:**
-- TFLite converter sorts state variables alphabetically by name when emitting the flatbuffer
-- Original naming: `stream`, `stream_1`, `stream_2`, ... `stream_5`
-- With `_ring_buffer` suffix: `stream_ring_buffer`, `stream_1_ring_buffer`, `stream_2_ring_buffer`...
-- Alphabetically: `stream_1_ring_buffer` < `stream_ring_buffer` (because `_1` < `_r`)
-- This caused state variables to appear in wrong order in TFLite file, breaking ESPHome verification
+- Official `okay_nabu` reference names are `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`
+- Export, verification, and documentation now use these names consistently
+- TFLite export and ESPHome verification pass with the aligned naming
 
-**Correction after official flatbuffer audit (2026-03-13):**
-- Official `okay_nabu` reference model keeps the first state name as `stream`
-- Prior documentation that elevated `stream_0` to architectural truth was incorrect
-- Architecture/guide/spec documents were updated to use the verified official names and to distinguish architectural facts from implementation details
-
-**Files Modified:**
-- `src/export/tflite.py`: State variable rename in `state_configs`
-- `ARCHITECTURAL_CONSTITUTION.md`: Updated Article V and VI state variable tables
-
-**Impact:**
-- TFLite export now produces state tensors in correct order
-- ESPHome verification passes state shape checks
-- State variable positional access (`self.state_vars[0..5]`) remains unchanged (only naming changed)
-
-**Status:** ✅ Complete, verified TFLite export, documented in AGENTS.md
+**Status:** ✅ Complete
 
 ---
 

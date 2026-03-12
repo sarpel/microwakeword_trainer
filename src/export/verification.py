@@ -145,6 +145,7 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
     var_handle_count = op_counts.get("VAR_HANDLE", 0)
     read_var_count = op_counts.get("READ_VARIABLE", 0)
     assign_var_count = op_counts.get("ASSIGN_VARIABLE", 0)
+    details["num_state_handles"] = var_handle_count
     details["num_state_variables"] = var_handle_count
 
     if var_handle_count != 6:

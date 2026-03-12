@@ -14,8 +14,8 @@ Keras Checkpoint → Build StreamingExportModel → Fold BatchNorm → Convert t
 
 1. **Load Keras Checkpoint**: Load the trained model weights from the checkpoint file
 2. **Build StreamingExportModel**: Convert the training model to a streaming variant with ring buffer state variables
-3. **Fold BatchNorm**: Eliminate ReadVariableOp by folding batch normalization layers into preceding convolutions
-4. **Convert to SavedModel**: Export using tf.keras.export.ExportArchive (NOT model.export())". Based on learnings: Use tf.keras.export.ExportArchive (NOT model.export()) and set converter._experimental_variable_quantization = True for TFLite export.
+3. **Fold BatchNorm**: Eliminate BatchNorm-related variable reads by folding batch normalization layers into preceding convolutions
+4. **Convert to SavedModel**: Export using `tf.keras.export.ExportArchive` (NOT `model.export()`), then enable `_experimental_variable_quantization` during TFLite conversion so streaming-state payload tensors are quantized correctly.
 5. **TFLite Conversion**: Convert to TFLite with INT8 quantization using representative dataset
 6. **Generate Manifest**: Create ESPHome-compatible manifest file with model metadata
 7. **Verification**: Validate the exported model meets ESPHome requirements
@@ -29,7 +29,7 @@ The streaming model uses a ring buffer approach to maintain state across inferen
 **Key Features:**
 - 6 state variables for ring buffers (~3.5KB total)
 - Okay_nabu variant: 32/64 filters, [[5],[7,11],[9,15],[23]] kernels
-- BatchNorm folding eliminates ReadVariableOp for better performance
+- BatchNorm folding eliminates BatchNorm-related variable reads for better performance
 
 ### State Variables
 

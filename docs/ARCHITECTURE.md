@@ -193,7 +193,7 @@ sample_fingerprints[0][0, 1] = 26.0  # Force maximum
 
 ```python
 converter.optimizations = {tf.lite.Optimize.DEFAULT}
-converter._experimental_variable_quantization = True   # MANDATORY for state vars
+converter._experimental_variable_quantization = True   # MANDATORY for READ_VARIABLE / ASSIGN_VARIABLE payload tensors
 converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
 converter.inference_input_type  = tf.int8
 converter.inference_output_type = tf.uint8  # ← UINT8. ALWAYS. NON-NEGOTIABLE.

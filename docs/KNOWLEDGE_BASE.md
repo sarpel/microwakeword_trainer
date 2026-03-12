@@ -318,7 +318,7 @@ Keras Checkpoint
     ↓
 Build StreamingExportModel
     ↓
-Fold BatchNorm (eliminates ReadVariableOp)
+Fold BatchNorm (eliminates BatchNorm-related variable reads)
     ↓
 Convert to SavedModel (ExportArchive, NOT model.export())
     ↓
@@ -533,17 +533,10 @@ mww-autotune \
 - Use `model.get_weights()`/`model.set_weights()` for full state
 - Update to code post-2026-03-10
 
-### 8.4 State Tensor Order Mismatch
+### 8.4 Official Streaming State Names
 
-**Symptom:** State shapes in wrong order in TFLite
-
-**Root Cause (Corrected 2026-03-13):**
-- Earlier documentation assumed the first state had to be renamed for ordering
-- Official `okay_nabu` flatbuffer analysis shows the first state is still named `stream`
-
-**Correct Ground Truth:**
 - Official state names are `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`
-- Do not treat `stream_0` as official architectural truth without direct flatbuffer verification
+- Validation and documentation should use these names directly
 
 ---
 
