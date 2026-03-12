@@ -306,14 +306,20 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 └── Initializes all 6 state variables from embedded pseudo_qconst tensors
 ```
 
-### Subgraph Op/Tensor Counts (verified)
+### Subgraph Op/Tensor Counts (project-canonical)
 
 | | okay_nabu |
 |---|---|
 | Subgraph 0 ops | 55 |
-| Subgraph 0 tensors | 95 |
+| Subgraph 0 tensors | 94 |
 | Subgraph 1 ops | 12 |
 | Subgraph 1 tensors | 12 |
+
+For this repository, `94 / 12` is the canonical counting convention because
+the project's export, verification, and evaluation tooling uses the standard
+TensorFlow / `tf.lite.Interpreter` path. Some `ai_edge_litert` interpreter
+builds expose one additional runtime scratch tensor and report `95 / 12` for
+the same model. That difference alone is not an architectural mismatch.
 
 ---
 
@@ -347,14 +353,46 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 |---|---|
 | okay_nabu | **3 472 bytes** |
 
-### Convolution-State Ring Buffer Law
+### State Buffer Rules
+
+There are two different buffer contexts in the streaming graph, and they must
+not be mixed together.
+
+#### 1) Input-side buffer before the first strided convolution
 
 ```
 buffer_frames = kernel_size - stride
 ```
 
-This identity is inviolable for the convolution-derived state variables
-`stream`, `stream_1`, `stream_2`, `stream_3`, and `stream_4`.
+This rule applies only to `stream`, which sits in front of the initial strided
+convolution:
+
+```text
+stream: first_conv_kernel=5, global_stride=3 → 5-3 = 2 → [1, 2, 1, 40]
+```
+
+#### 2) Downstream block buffers before depthwise convolutions
+
+For `stream_1`, `stream_2`, `stream_3`, and `stream_4`, the relevant rule is:
+
+```
+buffer_frames = effective_temporal_kernel - 1
+```
+
+because these buffers feed depthwise convolutions that operate with internal
+stride 1 in the already-streaming graph.
+
+Therefore:
+
+```text
+stream_1: kernel=5            → 5-1       = 4  → [1, 4, 1, 32]
+stream_2: max(7, 11)          → 11-1      = 10 → [1, 10, 1, 64]
+stream_3: max(9, 15)          → 15-1      = 14 → [1, 14, 1, 64]
+stream_4: kernel=23           → 23-1      = 22 → [1, 22, 1, 64]
+```
+
+**Do not apply `kernel - global_stride` to `stream_1` through `stream_4`.**
+That would produce the wrong buffer sizes.
 
 `stream_5` is different: it is the temporal buffer immediately before
 flattening. In `okay_nabu`, the concatenated tensor is `[1, 6, 1, 64]` and the

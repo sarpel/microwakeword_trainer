@@ -2,11 +2,13 @@
 
 ## PREAMBLE: WHAT THIS DOCUMENT IS AND HOW TO USE IT
 
-This file is the **single, authoritative source of architectural truth** for this project. Every constant, shape, dtype, op name, tensor count, and timing value written here was extracted and cross-verified from three independent sources:
+This file is the **single, authoritative source of architectural truth** for this project. Every constant, shape, dtype, op name, tensor count convention, and timing value written here was extracted and cross-verified from three independent sources:
 
 1. **TFLite flatbuffer binary parsing** of the official `okay_nabu.tflite` reference model (60,264 bytes). Not interpreter enumeration — direct `Model.GetRootAsModel()` flatbuffer deserialization.
 2. **ESPHome C++ runtime source code** (`streaming_model.cpp`, `streaming_model.h`, `micro_wake_word.cpp`) from ESPHome 2025.12.5 API documentation.
 3. **OHF-Voice/micro-wake-word Python training pipeline** (`utils.py`, `model_train_eval.py`, `inference.py`, `setup.py`) from the official GitHub repository at `github.com/OHF-Voice/micro-wake-word`.
+
+Where different interpreter implementations expose different **runtime scratch/workspace tensors**, this document states the project's **canonical counting convention** explicitly. Those runtime-only scratch tensors are not treated as architectural signals unless stated otherwise.
 
 **Verification date:** 2026-03-13
 
@@ -241,9 +243,17 @@ All ops show `CustomCode: N/A` in flatbuffer analysis — there are zero custom 
 
 The model contains exactly **2 subgraphs**. Both must be present and intact in the exported `.tflite` file.
 
-**CRITICAL NOTE ON TENSOR COUNTS:** The tensor counts below are from direct flatbuffer binary parsing (`Model.Subgraphs(i).TensorsLength()`), NOT from interpreter enumeration. Some TFLite interpreter versions (both `tf.lite.Interpreter` and `ai_edge_litert.Interpreter`) may report additional scratch/workspace tensors at runtime. These runtime-allocated tensors are NOT part of the flatbuffer schema and should not be counted as model tensors. The ground truth is the flatbuffer.
+**CRITICAL NOTE ON TENSOR COUNTS:** For this project, the canonical tensor counts are the counts observed on the standard TensorFlow / `tf.lite.Interpreter` path used by this repository's export, verification, and evaluation tooling. In that canonical path, okay_nabu presents **94 tensors in Subgraph 0** and **12 tensors in Subgraph 1**.
 
-### Subgraph Metrics (flatbuffer ground truth)
+`ai_edge_litert.Interpreter` may expose an extra runtime scratch/workspace tensor (commonly the `[1, 1, 1, 200]` tensor at index 94) and therefore report **95** tensors for Subgraph 0. That extra tensor is an implementation-specific runtime detail of the `ai_edge_litert` interpreter path. It is **not** the counting convention used by this project, because this project does **not** use `ai_edge_litert` for export or canonical architecture verification.
+
+Rule for this repository:
+
+- If you are documenting or validating the architecture **for this project**, use **94 / 12**.
+- If you inspect the same `.tflite` with `ai_edge_litert` and see **95 / 12**, do **not** treat that as an architectural mismatch by itself.
+- Never infer a model bug from tensor count alone without first checking which interpreter path produced the count.
+
+### Subgraph Metrics (project-canonical counting convention)
 
 | Metric | Subgraph 0 (Main Inference) | Subgraph 1 (Initialization) |
 |---|---|---|
@@ -387,20 +397,41 @@ residual_connection   = [0, 0, 0, 0]
 
 ### How MixConv Kernel Sizes Map to State Variable Shapes
 
-For single-kernel blocks (`[5]`, `[23]`), the state shape follows the ring buffer law directly:
+There are **two different contexts** in the streaming graph, and they must not be mixed up:
+
+1. **The first input-side buffer** (`stream`) sits in front of the initial strided convolution. For that one buffer, the relevant law is:
+
+  ```
+  buffer_frames = kernel_size - global_stride
+  ```
+
+  Therefore:
+
+  ```
+  stream: first_conv_kernel=5, global_stride=3 → 5-3 = 2 → [1, 2, 1, 40]
+  ```
+
+2. **The downstream block buffers** (`stream_1` through `stream_4`) sit in front of depthwise convolutions that operate with **internal stride 1** in the already-streaming graph. For these buffers, the relevant law is:
+
+  ```
+  buffer_frames = effective_temporal_kernel - 1
+  ```
+
+For downstream **single-kernel** blocks (`[5]`, `[23]`), that gives:
 
 ```
-stream_1: kernel=5,  stride=3 → buffer = 5-3 = 2, but actual shape has 4 frames
-           (because the pointwise conv output feeds into the depthwise)
-stream_4: kernel=23, stride=1 (internal) → buffer = 23-1 = 22 → [1, 22, 1, 64]
+stream_1: kernel=5,  internal_stride=1  → 5-1  = 4  → [1, 4, 1, 32]
+stream_4: kernel=23, internal_stride=1  → 23-1 = 22 → [1, 22, 1, 64]
 ```
 
-For dual-kernel blocks (`[7, 11]`, `[9, 15]`), SPLIT_V splits the channel dimension, each half goes through its own depthwise conv with StridedKeep, and results are concatenated. The state buffer holds enough frames for the largest kernel:
+For downstream **dual-kernel** blocks (`[7, 11]`, `[9, 15]`), `SPLIT_V` splits the channel dimension, each half goes through its own depthwise conv with `StridedKeep`, and the buffer must preserve enough context for the **largest** temporal kernel in the pair:
 
 ```
 stream_2: max(7, 11) - 1 = 10 → [1, 10, 1, 64]
 stream_3: max(9, 15) - 1 = 14 → [1, 14, 1, 64]
 ```
+
+**Do not apply the `kernel - global_stride` rule to `stream_1`, `stream_2`, `stream_3`, or `stream_4`.** That rule applies only to the first input-side buffer `stream`. The downstream block buffers are determined by the internal depthwise-kernel context of the streaming graph, which is stride-1 at that stage.
 
 ### Structural Rules (apply to all MixedNet variants)
 
@@ -424,6 +455,9 @@ The export pipeline has two mandatory stages. The official implementation is in 
 
 ```python
 # Source: utils.py, function convert_model_saved()
+# convert_model_saved() is the outer orchestration function.
+# model_to_saved() is the lower-level helper it calls to actually materialize
+# the streaming SavedModel.
 converted_model = model_to_saved(
     model_non_stream = model,
     config           = config,
@@ -550,15 +584,15 @@ If your project uses `tensorflow 2.16.2` with `tf.lite.TFLiteConverter` for expo
 
 ### Tensor Count Discrepancy Explained
 
-Different interpreter implementations may enumerate different numbers of tensors for the same .tflite file:
+Different interpreter implementations may enumerate different numbers of tensors for the same `.tflite` file:
 
 | Source | SG0 Tensors | SG1 Tensors | Why |
 |---|---|---|---|
-| **Flatbuffer binary** (ground truth) | **94** | **12** | `Model.Subgraphs(0).TensorsLength()` |
-| `ai_edge_litert` Interpreter (some versions) | 95 | 12 | May include a runtime scratch tensor (index 94, shape [1,1,1,200]) |
-| `tf.lite.Interpreter` (varies by version) | 94 or 95 | 12 | Version-dependent |
+| **This project's canonical convention** (`tf.lite` export / verification path) | **94** | **12** | The convention used by this repository's tooling and docs |
+| `ai_edge_litert` Interpreter (some versions) | 95 | 12 | May expose a runtime scratch tensor (index 94, shape [1,1,1,200]) |
+| Other interpreter/runtime variants | 94 or 95 | 12 | Implementation-dependent enumeration |
 
-**Always use flatbuffer binary parsing as ground truth.** Interpreter enumeration includes runtime-allocated workspace tensors that do not exist in the model schema.
+**For this repository, always use the project-canonical 94 / 12 convention unless you are explicitly documenting an `ai_edge_litert` runtime observation.** Do not treat the extra `ai_edge_litert` scratch tensor as a model-architecture difference.
 
 ---
 
@@ -626,7 +660,9 @@ Follow the two-stage pipeline in Article IX exactly. Use `tf.lite.TFLiteConverte
 
 ### "I need to count tensors"
 
-Use flatbuffer binary parsing, not interpreter enumeration. The correct count for okay_nabu is 94 tensors in Subgraph 0 and 12 in Subgraph 1.
+For this repository's tooling and documentation, the canonical count for okay_nabu is **94 tensors in Subgraph 0** and **12 in Subgraph 1**.
+
+If `ai_edge_litert` shows **95** tensors in Subgraph 0, that is expected and is usually an exposed runtime scratch tensor rather than a different model architecture.
 
 ### "I need to change the wake word"
 

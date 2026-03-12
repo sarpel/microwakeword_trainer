@@ -11,6 +11,8 @@
 # PINNED: TF 2.16.x is required for ESPHome micro_wake_word compatibility.
 # DO NOT upgrade to 2.17+ — ESPHome TFLite runtime is incompatible.
 # tensorflow[and-cuda] bundles CUDA/cuDNN wheels; no separate CUDA install needed for TF.
+# First do this: pip install --upgrade pip setuptools wheel cffi
+
 tensorflow[and-cuda]==2.16.2
 
 # ESPHome-compatible audio feature extraction (40 mel bins, exact pymicro spec)
@@ -18,7 +20,7 @@ pymicro-features==2.0.2
 
 # Audio/Data Processing
 numpy==1.26.4
-scipy==1.17.1
+scipy==1.15.3
 pyyaml==6.0.3
 # PyPI package name is mmap-ninja (hyphen), NOT mmap_ninja (underscore)
 mmap-ninja==0.8.2

@@ -316,16 +316,23 @@ class StreamingExportModel(tf.keras.Model):
         Creates exactly 6 streaming state variables following the official
         okay_nabu reference naming and shapes:
 
-        - stream:   [1, 2, 1, 40] - initial conv ring buffer (kernel 5 - stride 3 = 2)
-        - stream_1: [1, 4, 1, 32] - block 0 ring buffer (max_kernel 5 - 1 = 4)
-        - stream_2: [1, 10, 1, 64] - block 1 ring buffer (max_kernel 11 - 1 = 10)
-        - stream_3: [1, 14, 1, 64] - block 2 ring buffer (max_kernel 15 - 1 = 14)
-        - stream_4: [1, 22, 1, 64] - block 3 ring buffer (max_kernel 23 - 1 = 22)
+        - stream:   [1, 2, 1, 40] - input-side buffer before the first strided conv
+        - stream_1: [1, 4, 1, 32] - block 0 depthwise-context buffer
+        - stream_2: [1, 10, 1, 64] - block 1 depthwise-context buffer
+        - stream_3: [1, 14, 1, 64] - block 2 depthwise-context buffer
+        - stream_4: [1, 22, 1, 64] - block 3 depthwise-context buffer
         - stream_5: [1, temporal_frames - 1, 1, 64] - pre-flatten temporal buffer
+
+        Buffer rules:
+        - `stream` uses `first_conv_kernel - global_stride`
+        - `stream_1`..`stream_4` use `effective_temporal_kernel - 1`
+        - `stream_5` uses `temporal_frames - 1`
         """
-        # State shapes based on ARCHITECTURAL_CONSTITUTION.md for okay_nabu:
-        # For strided conv (stride > 1): buffer = kernel_size - stride
-        # For non-strided conv (stride = 1): buffer = kernel_size - 1
+        # State shapes based on ARCHITECTURAL_CONSTITUTION.md for okay_nabu.
+        # Important distinction:
+        # - stream is the only input-side buffer that uses kernel_size - stride
+        # - downstream block buffers use max_kernel - 1 because the streaming
+        #   depthwise context at that stage is stride-1
 
         state_configs = [
             # stream: initial conv ring buffer
@@ -343,8 +350,8 @@ class StreamingExportModel(tf.keras.Model):
             # stream_4: after block 2, before block 3
             # max_kernel=23, stride=1 -> 23-1=22 frames, filters=64
             ("stream_4", (1, max(self.mixconv_kernel_sizes[3]) - 1, 1, self.pointwise_filters[2])),
-            # stream_5: temporal pooling buffer (inferred from checkpoint)
-            # temporal_frames - 1 = ring_buffer_size for streaming
+            # stream_5: pre-flatten temporal buffer (inferred from checkpoint)
+            # temporal_frames - 1 = retained history before flatten/dense
             ("stream_5", (1, self.temporal_frames - 1, 1, self.pointwise_filters[3])),
         ]
 
@@ -449,7 +456,7 @@ class StreamingExportModel(tf.keras.Model):
         x = inputs[:, :, tf.newaxis, :]
 
         # stream (initial conv)
-        # For strided conv: buffer = kernel_size - stride = 5 - 3 = 2
+        # This is the only input-side buffer that uses kernel_size - stride.
         x = self._concat_update(self.state_vars[0], x, self.first_conv_kernel - self.stride)
         x = self.initial_conv(x)
         x = self.initial_relu(x)
@@ -509,7 +516,7 @@ class StreamingExportModel(tf.keras.Model):
             if residual is not None:
                 x = x + residual
 
-        # stream_5 (temporal pooling buffer — dimension inferred from checkpoint)
+        # stream_5 (pre-flatten temporal buffer — dimension inferred from checkpoint)
         # Concat new frame with ring buffer: [1, (temporal_frames-1)+1, 1, 64]
         # and save last (temporal_frames-1) frames to state for next call
         x = self._concat_update(self.state_vars[-1], x, self.temporal_frames - 1)
