@@ -1,40 +1,27 @@
-# ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║    microWakeWord — ARCHITECTURAL CONSTITUTION                              ║
-# ║    IMMUTABLE SOURCE TRUTH — VERIFIED FROM TFLITE FLATBUFFERS + C++ SOURCE  ║
-# ╚══════════════════════════════════════════════════════════════════════════════╝
+# microWakeWord v2 — ARCHITECTURAL CONSTITUTION
 
-> ## ⛔ SUPREME GOVERNING DOCUMENT ⛔
->
-> This file is the **single, immutable source of architectural truth** for this
-> project. Every constant, shape, dtype, op name, and timing value written here
-> was physically extracted from the official ESPHome microWakeWord v2 TFLite
-> flatbuffers (`okay_nabu.tflite`) and cross-verified
-> against the ESPHome C++ runtime source (`micro_wake_word.cpp`).
->
-> ### THE RULE IS SIMPLE:
->
-> **IF ANY CODE — WHETHER IT IS A BUG FIX, NEW FEATURE, REFACTOR,
-> "SMALL TWEAK", OR A "QUICK CHANGE" — CONTRADICTS EVEN ONE CONSTANT
-> OR INVARIANT DEFINED IN THIS DOCUMENT, THAT CODE IS NUCLEAR WASTE.**
->
-> It does not matter how clever it is. It does not matter that tests pass.
-> It does not matter that it "looks right". Code that breaks these rules
-> produces a model that is physically incompatible with the ESPHome runtime.
-> The device will silently corrupt its state, never wake, or never stop waking.
-> There will be no error message. There is no recovery. There is only deletion.
->
-> **The moment a change is imagined that touches a rule below, STOP.
-> Re-read this document from the top. If there is still doubt, the change is
-> wrong. These rules cannot be unlocked by a config flag, a clever abstraction,
-> or a senior engineer's override. They are the laws of physics for this stack.**
+## PREAMBLE: WHAT THIS DOCUMENT IS AND HOW TO USE IT
 
----
+This file is the **single, authoritative source of architectural truth** for this project. Every constant, shape, dtype, op name, tensor count, and timing value written here was extracted and cross-verified from three independent sources:
 
-**Verification sources:**
-- TFLite flatbuffer analysis: `okay_nabu.tflite` (58.85 KB, 55 ops)
-- ESPHome C++ runtime: `micro_wake_word.cpp` — op registration list
-- Official microWakeWord training notebook (Google Colab)
-- Last verified: 2026-03-06
+1. **TFLite flatbuffer binary parsing** of the official `okay_nabu.tflite` reference model (60,264 bytes). Not interpreter enumeration — direct `Model.GetRootAsModel()` flatbuffer deserialization.
+2. **ESPHome C++ runtime source code** (`streaming_model.cpp`, `streaming_model.h`, `micro_wake_word.cpp`) from ESPHome 2025.12.5 API documentation.
+3. **OHF-Voice/micro-wake-word Python training pipeline** (`utils.py`, `model_train_eval.py`, `inference.py`, `setup.py`) from the official GitHub repository at `github.com/OHF-Voice/micro-wake-word`.
+
+**Verification date:** 2026-03-13
+
+### THE GOVERNING RULE
+
+If any code in this project — a bugfix, new feature, refactor, "small tweak", or "quick change" — contradicts even one constant or invariant defined in this document, that code is wrong. It does not matter if tests pass. It does not matter if it "looks right" in Python. Code that breaks these rules produces a model that is physically incompatible with the ESPHome runtime. The device will silently corrupt its state, never wake, or never stop waking. There will be no error message. There is no recovery.
+
+### AI CODING AGENT INSTRUCTIONS
+
+You are reading this document because you are building or modifying code for this project. Follow these rules:
+
+1. Before writing any code that touches model architecture, export pipeline, or quantization: re-read the relevant Article below.
+2. If a user request or your own reasoning contradicts a rule here, the rule here wins. Ask the user to confirm before proceeding.
+3. Never infer architectural values from memory or training data. Use only the values stated here.
+4. The `okay_nabu.tflite` model is the v2 reference. All shapes, op counts, and structural properties are measured from this specific file.
 
 ---
 
@@ -46,130 +33,106 @@
 4. [Article IV — Permitted TFLite Operations](#article-iv--permitted-tflite-operations)
 5. [Article V — Dual-Subgraph Structure](#article-v--dual-subgraph-structure)
 6. [Article VI — Streaming State Variables](#article-vi--streaming-state-variables)
-7. [Article VII — Inference Timing & Ring Buffer Math](#article-vii--inference-timing--ring-buffer-math)
-8. [Article VIII — MixedNet Architecture Variants](#article-viii--mixednet-architecture-variants)
-9. [Article IX — Export & Quantization Requirements](#article-ix--export--quantization-requirements)
+7. [Article VII — Inference Timing and Ring Buffer Math](#article-vii--inference-timing-and-ring-buffer-math)
+8. [Article VIII — MixedNet Architecture](#article-viii--mixednet-architecture)
+9. [Article IX — Export and Quantization Pipeline](#article-ix--export-and-quantization-pipeline)
 10. [Article X — ESPHome Manifest Contract](#article-x--esphome-manifest-contract)
-11. [Violation Consequence Summary](#violation-consequence-summary)
+11. [Article XI — Package Dependencies and Version Constraints](#article-xi--package-dependencies-and-version-constraints)
+12. [Article XII — v1 vs v2 Model Differences](#article-xii--v1-vs-v2-model-differences)
+13. [Violation Consequence Matrix](#violation-consequence-matrix)
 
 ---
 
 ## Article I — Audio Frontend Constants
 
-> **IMMUTABLE. HARDWARE-DICTATED. NON-NEGOTIABLE.**
->
-> These values are burned into the ESPHome firmware. The microcontroller's
-> audio pipeline produces features with exactly these parameters. Any model
-> trained with different values will receive features it was never trained on
-> and will produce garbage predictions — silently, at runtime, on real hardware.
+**Status: IMMUTABLE. HARDWARE-DICTATED. NON-NEGOTIABLE.**
+
+These values are configured in the ESPHome firmware's audio preprocessing pipeline. The microcontroller produces feature tensors with exactly these parameters. Any model trained with different values will receive features it was never trained on and will produce garbage predictions silently at runtime.
+
+**Source:** ESPHome `micro_wake_word.cpp` lines 76-90 (setup function), `streaming_model.h` preprocessor constants.
+
+### Runtime Feature Extraction Parameters
 
 | Constant | Value | Why It Cannot Change |
 |---|---|---|
-| `sample_rate_hz` | **16 000 Hz** | ESPHome ADC hardware clock |
-| `mel_bins` | **40** | Feature tensor width; changes model input shape |
-| `window_size_ms` | **30 ms** | 480 samples per FFT window; baked into pymicro-features |
-| `window_step_ms` | **10 ms** | 160 samples per hop; determines temporal resolution |
-| `upper_band_limit_hz` | **7 500 Hz** | Nyquist constraint for 16 kHz + margin |
-| `lower_band_limit_hz` | **125 Hz** | DC rejection floor |
-| `enable_pcan` | **True** | Per-Channel Amplitude Normalization; deactivating changes the feature distribution entirely |
+| `sample_rate_hz` | 16,000 Hz | ESPHome ADC hardware clock; hardcoded in firmware |
+| `mel_bins` (PREPROCESSOR_FEATURE_SIZE) | 40 | Defines feature tensor width; changing it changes model input shape |
+| `window_size_ms` (FEATURE_DURATION_MS) | 30 ms | 480 samples per FFT window; baked into the audio frontend C code |
+| `window_step_ms` (features_step_size) | 10 ms | 160 samples per hop; determines temporal resolution. This is the v2 value. |
+| `upper_band_limit_hz` | 7,500 Hz | Nyquist constraint for 16 kHz sample rate with margin |
+| `lower_band_limit_hz` | 125 Hz | DC rejection floor |
+| `enable_pcan` | True | Per-Channel Amplitude Normalization; disabling changes the entire feature distribution |
 
-### Training-Specific Configuration Parameters
+### PCAN and Noise Reduction Parameters (compiled into C++ extension)
 
-> **TRAINING-TIME VALUES — DO NOT AFFECT INFERENCE.**
->
-> These parameters control training data preparation and model input shapes.
-> They DO NOT require runtime changes to ESPHome firmware or streaming inference.
-
-| Parameter | Value | Description |
-|---|---|---|
-| `clip_duration_ms` | **Configurable** | Determines training input length. Common: 1000ms (1s), 1500ms, 3000ms. Does NOT affect streaming inference. |
-
-### Audio Frontend Processing Parameters (pymicro-features v2.0.2)
-
-> **IMMUTABLE. COMPILED INTO C++ EXTENSION. NOT CONFIGURABLE AT RUNTIME.**
->
-> These values are hardcoded in `pymicro-features` C++ source (`micro_features_cpp`).
-> The library wraps the TFLite Micro audio frontend with identical defaults to ESPHome.
-> `pymicro_features.MicroFrontend()` accepts NO constructor arguments.
+These values are hardcoded in `pymicro-features` (the `rhasspy/pymicro-features` package) and cannot be changed at runtime. The `MicroFrontend()` constructor accepts no arguments.
 
 | Parameter | Value | Category |
 |---|---|---|
-| `pcan_strength` | **0.95** | PCAN Gain Control |
-| `pcan_offset` | **80.0** | PCAN Gain Control |
-| `pcan_gain_bits` | **21** | PCAN Gain Control |
-| `noise_even_smoothing` | **0.025** | Noise Reduction |
-| `noise_odd_smoothing` | **0.06** | Noise Reduction |
-| `noise_min_signal_remaining` | **0.05** | Noise Reduction |
-| `log_scale_shift` | **6** | Log Scale |
+| `pcan_strength` | 0.95 | PCAN Gain Control |
+| `pcan_offset` | 80.0 | PCAN Gain Control |
+| `pcan_gain_bits` | 21 | PCAN Gain Control |
+| `noise_even_smoothing` | 0.025 | Noise Reduction |
+| `noise_odd_smoothing` | 0.06 | Noise Reduction |
+| `noise_min_signal_remaining` | 0.05 | Noise Reduction |
+| `log_scale_shift` | 6 | Log Scale |
 
-> Verified against `rhasspy/pymicro-features` source: `src/micro_features.cpp::init_cfg()`.
-> Last verified: 2025-02-27.
+**Source:** `rhasspy/pymicro-features` source `src/micro_features.cpp::init_cfg()`.
+
+### Training-Time Parameters (do not affect streaming inference)
+
+`clip_duration_ms` is configurable at training time. It determines the training input length but does NOT affect the streaming inference shape, because streaming inference always processes `stride` new frames per call regardless of how long the training clips were.
+
+Common values: 1000 ms, 1500 ms, 3000 ms.
 
 ### Derived Constants
 
 ```
 samples_per_hop    = sample_rate_hz × (window_step_ms / 1000) = 160
 spectrogram_frames = clip_duration_ms / window_step_ms         = varies (100 for 1000ms)
-input_feature_shape = [spectrogram_frames, mel_bins]           = e.g., [100, 40] for 1000ms clip
 ```
 
-> **Training vs Streaming Input Shapes:**
->
-> Training input shape depends on `clip_duration_ms`: `(clip_duration_ms / window_step_ms, 40)`
-> - 1000ms clip → `(100, 40)`
-> - 1500ms clip → `(150, 40)`
-> - 3000ms clip → `(300, 40)`
->
-> Streaming inference shape is ALWAYS `[1, 3, 40]` regardless of clip duration. The model
-> processes 3 new frames (30ms of audio) per inference call on device.
+Training input shape depends on `clip_duration_ms`: `(clip_duration_ms / window_step_ms, 40)`. For example, a 1000ms clip produces shape `(100, 40)`.
+
+Streaming inference shape is ALWAYS `[1, stride, 40]` = `[1, 3, 40]` regardless of clip duration. The model processes `stride` new frames (30 ms of audio) per inference call on device.
 
 ---
 
 ## Article II — Model I/O Contract
 
-> **IMMUTABLE. VERIFIED FROM TFLITE FLATBUFFERS.**
->
-> These are the byte-level types and shapes the ESPHome C++ runtime passes
-> into and reads out of the model. Any mismatch is a buffer overread/write.
-> There is no type coercion at the edge. There is no runtime check.
-> THE FIRMWARE WILL WRITE INTO ARBITRARY MEMORY AND CRASH OR CORRUPT STATE.
+**Status: IMMUTABLE. VERIFIED FROM TFLITE FLATBUFFER BINARY.**
+
+These are the byte-level types and shapes the ESPHome C++ runtime passes into and reads out of the model. The runtime validates these at model load time.
+
+**Source:** ESPHome `streaming_model.cpp` lines 64-88 (input/output verification in `load_model_()`).
 
 ### Input Tensor
 
-| Property | Value |
-|---|---|
-| Shape | `[1, stride, 40]` = **`[1, 3, 40]`** |
-| Dtype | **`int8`** |
-| Quantization scale | `0.10196078568696976` (26/255) |
-| Quantization zero_point | `-128` |
+| Property | Value | Verification |
+|---|---|---|
+| Shape | `[1, 3, 40]` | `input->dims->size == 3 && input->dims->data[0] == 1 && input->dims->data[2] == PREPROCESSOR_FEATURE_SIZE` |
+| Dtype | `int8` | `input->type == kTfLiteInt8` — runtime check, model fails to load if violated |
+| Quantization scale | 0.10196078568696976 (≈ 26/255) | Flatbuffer tensor 0 quantization parameters |
+| Quantization zero_point | -128 | Flatbuffer tensor 0 quantization parameters |
+
+The runtime reads `stride` from `input->dims->data[1]` at load time (streaming_model.cpp line 131), so the stride value is derived from the model itself — but for v2 okay_nabu models, this is always 3.
 
 ### Output Tensor
 
-| Property | Value |
-|---|---|
-| Shape | **`[1, 1]`** |
-| Dtype | **`uint8`** ← **NOT int8. NOT float32. UINT8.** |
-| Quantization scale | `0.00390625` (1/256) |
-| Quantization zero_point | `0` |
+| Property | Value | Verification |
+|---|---|---|
+| Shape | `[1, 1]` | `output->dims->size == 2 && output->dims->data[0] == 1 && output->dims->data[1] == 1` |
+| Dtype | **`uint8`** | `output->type == kTfLiteUInt8` — runtime check, model fails to load if violated |
+| Quantization scale | 0.00390625 (= 1/256) | Flatbuffer tensor 93 quantization parameters |
+| Quantization zero_point | 0 | Flatbuffer tensor 93 quantization parameters |
 
-> ⛔ **THE OUTPUT DTYPE IS `uint8`. THIS IS NOT A TYPO. THIS IS NOT A DEFAULT.**
->
-> ESPHome reads the output tensor as an unsigned byte and compares it against
-> `probability_cutoff × 255`. If the output type is `int8`, every prediction
-> will be misread. The model will appear to work in Python, pass all Python
-> unit tests, produce a valid `.tflite` file — and be completely broken on
-> the device. This has been verified directly from the C++ source code.
+**CRITICAL: The output dtype is `uint8`, NOT `int8`, NOT `float32`.** ESPHome reads the output as `output->data.uint8[0]` (streaming_model.cpp line 151) and compares it against `probability_cutoff` which is stored as a uint8 value (0-255). If the output type is `int8`, every prediction above 128 will be misread. The model will appear to work in Python but be completely broken on device.
 
 ---
 
 ## Article III — Quantization Parameters
 
-> **IMMUTABLE. CALIBRATION FROM REPRESENTATIVE DATASET MUST REPRODUCE THESE.**
->
-> Quantization maps float activations to int8/uint8. Wrong scale/zero_point
-> means the entire numeric range of the model is shifted. A model with
-> corrupted quantization parameters will never converge to correct predictions.
-> These values were measured from the official reference models.
+**Status: IMMUTABLE. CALIBRATION FROM REPRESENTATIVE DATASET MUST REPRODUCE THESE.**
 
 ### Input Quantization
 
@@ -191,213 +154,201 @@ float_value = (uint8_value - zero_point) × scale
 
 Output range maps: `uint8[0, 255]` → `float[0.0, ~1.0]`
 
-### Calibration Representative Dataset
+### Calibration Representative Dataset Requirements
 
-The representative dataset **must** include forced min/max boundary samples:
+The official export code in `OHF-Voice/micro-wake-word/microwakeword/utils.py` (function `convert_saved_model_to_tflite`, lines 219-240) defines the representative dataset as follows:
 
-```python
-sample_fingerprints[0][0, 0] = 0.0   # Force minimum
-sample_fingerprints[0][0, 1] = 26.0  # Force maximum
-```
+1. Retrieve 500 training spectrograms.
+2. Force boundary anchor points on the first sample: `sample_fingerprints[0][0, 0] = 0.0` (minimum) and `sample_fingerprints[0][0, 1] = 26.0` (maximum). These pin the quantization scale to the correct range.
+3. Slice each spectrogram by `stride` to match runtime input cadence. Each yielded sample has shape `[stride, 40]`.
 
-> Without these boundary samples, the quantizer may clip the activation range
-> and produce a scale that differs from the reference. **500 training samples
-> minimum** must be used for calibration.
-
-### Required Converter Flags
-
-```python
-converter.optimizations = {tf.lite.Optimize.DEFAULT}
-converter._experimental_variable_quantization = True   # MANDATORY for state vars
-converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
-converter.inference_input_type  = tf.int8
-converter.inference_output_type = tf.uint8  # ← UINT8. ALWAYS. NON-NEGOTIABLE.
-```
+Without these boundary samples, the quantizer may select a different scale that compresses the dynamic range. Without sufficient samples (minimum 500), quantization noise increases and predictions degrade.
 
 ---
 
 ## Article IV — Permitted TFLite Operations
 
-> **IMMUTABLE. EXHAUSTIVE. VERIFIED FROM FLATBUFFER OP CODES.**
->
-> The ESPHome TFLite Micro runtime registers exactly **20 op resolvers** (listed below).
-> Any op not in this list is **not registered** and will cause a fatal error at model
-> loading time on the device. Not all registered ops are used by every model — the
-> `okay_nabu` reference model uses **13 unique op types** (55 total operations).
-> There are no custom ops. All ops are BUILTIN.
+**Status: IMMUTABLE. EXHAUSTIVE. VERIFIED FROM ESPHOME C++ SOURCE.**
 
+The ESPHome TFLite Micro runtime registers exactly **20 op resolvers**. Any op not in this set is not registered and will cause a fatal `kTfLiteError` at model loading time on the device. The wake word engine will never start.
 
-### ESPHome-Registered Op Resolvers (from `streaming_model.cpp` --> `register_streaming_ops_()` function)
+**Source:** ESPHome `streaming_model.cpp` function `register_streaming_ops_()`, lines 265-308 (ESPHome 2025.12.5). Note: this function is in `streaming_model.cpp`, NOT in `micro_wake_word.cpp`. It is called from the `WakeWordModel` constructor (line 181).
+
+### Registered Op Resolvers (exact order from source code)
 
 ```cpp
-resolver.AddCallOnce();
-resolver.AddVarHandle();
-resolver.AddReadVariable();
-resolver.AddStridedSlice();
-resolver.AddConcatenation();
-resolver.AddAssignVariable();
-resolver.AddConv2D();
-resolver.AddDepthwiseConv2D();
-resolver.AddMul();
-resolver.AddAdd();
-resolver.AddMean();
-resolver.AddFullyConnected();
-resolver.AddLogistic();
-resolver.AddQuantize();
-resolver.AddReshape();
-resolver.AddAveragePool2D();
-resolver.AddMaxPool2D();
-resolver.AddPad();
-resolver.AddPack();
-resolver.AddSplitV();
+// Source: streaming_model.cpp lines 269-308
+// Function: register_streaming_ops_(tflite::MicroMutableOpResolver<20>& op_resolver)
+
+op_resolver.AddCallOnce();          // 1
+op_resolver.AddVarHandle();         // 2
+op_resolver.AddReshape();           // 3
+op_resolver.AddReadVariable();      // 4
+op_resolver.AddStridedSlice();      // 5
+op_resolver.AddConcatenation();     // 6
+op_resolver.AddAssignVariable();    // 7
+op_resolver.AddConv2D();           // 8
+op_resolver.AddMul();              // 9
+op_resolver.AddAdd();              // 10
+op_resolver.AddMean();             // 11
+op_resolver.AddFullyConnected();   // 12
+op_resolver.AddLogistic();         // 13
+op_resolver.AddQuantize();         // 14
+op_resolver.AddDepthwiseConv2D();  // 15
+op_resolver.AddAveragePool2D();    // 16
+op_resolver.AddMaxPool2D();        // 17
+op_resolver.AddPad();              // 18
+op_resolver.AddPack();             // 19
+op_resolver.AddSplitV();          // 20
 ```
 
-### Op Count Verification (from TFLite flatbuffers)
+The resolver template parameter is `MicroMutableOpResolver<20>`, confirming exactly 20 slots. The registration order does not affect functionality — it only matters that the set is complete.
 
-| Op Name | okay_nabu count | Purpose |
-|---|---|---|
-| `CALL_ONCE` | 1 | Invoke Subgraph 1 initialization once at startup |
-| `VAR_HANDLE` | 6 | Create handles to the 6 streaming state variables |
-| `READ_VARIABLE` | 6 | Read state from previous inference step |
-| `ASSIGN_VARIABLE` | 6 | Write updated state for next inference step |
-| `CONCATENATION` | 8 | Concatenate old buffer frames with new input frames |
-| `STRIDED_SLICE` | 10 | Slice off oldest frames to update ring buffers |
-| `CONV_2D` | 5 | Pointwise 1×1 convolutions |
-| `DEPTHWISE_CONV_2D` | 6 | Depthwise spatial convolutions in MixConv blocks |
-| `RESHAPE` | 2 | Flatten for Dense layer |
-| `SPLIT_V` | 2 | Split tensor for StridedKeep |
-| `FULLY_CONNECTED` | 1 | Classification head |
-| `LOGISTIC` | 1 | Sigmoid activation on output |
-| `QUANTIZE` | 1 | Re-quantize the sigmoid output from int8 encoding to uint8 |
-| `MUL` | 0 (registered, unused in okay_nabu) | Available for BatchNorm fold or residuals |
-| `ADD` | 0 (registered, unused in okay_nabu) | Available for residual connections / biases |
-| `MEAN` | 0 (registered, unused in okay_nabu) | Available for pooling operations |
-| `AVERAGE_POOL_2D` | 0 (registered, unused in okay_nabu) | Available for average pooling |
-| `MAX_POOL_2D` | 0 (registered, unused in okay_nabu) | Available for max pooling |
-| `PAD` | 0 (registered, unused in okay_nabu) | Available for padding operations |
-| `PACK` | 0 (registered, unused in okay_nabu) | Available for tensor packing |
+### Op Usage in okay_nabu Reference Model (flatbuffer verified)
 
-> ⛔ **ALL OPS SHOW `CustomCode: N/A` IN FLATBUFFER ANALYSIS.**
->
-> This is the verified proof that there are **zero custom ops** in the model.
-> Any implementation that attempts to register a custom op, use a TF Select op,
-> or use any op outside this list will produce an unloadable model.
-> The device will halt with an unresolved op error and never boot the wake word
-> engine.
+| Op Name | Subgraph 0 Count | Subgraph 1 Count | Purpose |
+|---|---|---|---|
+| CALL_ONCE | 1 | 0 | Invokes Subgraph 1 initialization once at startup |
+| VAR_HANDLE | 6 | 6 | Creates handles to streaming state variables |
+| READ_VARIABLE | 6 | 0 | Reads state from previous inference step |
+| ASSIGN_VARIABLE | 6 | 6 | Writes updated state for next inference step |
+| CONCATENATION | 8 | 0 | Concatenates old buffer frames with new input frames |
+| STRIDED_SLICE | 10 | 0 | Slices off oldest frames to update ring buffers |
+| CONV_2D | 5 | 0 | Pointwise 1×1 convolutions |
+| DEPTHWISE_CONV_2D | 6 | 0 | Depthwise spatial convolutions in MixConv blocks |
+| RESHAPE | 2 | 0 | Expand dims and flatten for Dense layer |
+| SPLIT_V | 2 | 0 | Splits tensor for StridedKeep dual-kernel blocks |
+| FULLY_CONNECTED | 1 | 0 | Classification head (Dense layer) |
+| LOGISTIC | 1 | 0 | Sigmoid activation on output |
+| QUANTIZE | 1 | 0 | Re-quantizes sigmoid output from int8 encoding to uint8 |
+| MUL | 0 | 0 | Registered but unused in okay_nabu (available for BatchNorm fold or residuals) |
+| ADD | 0 | 0 | Registered but unused (available for residual connections) |
+| MEAN | 0 | 0 | Registered but unused (available for pooling) |
+| AVERAGE_POOL_2D | 0 | 0 | Registered but unused |
+| MAX_POOL_2D | 0 | 0 | Registered but unused |
+| PAD | 0 | 0 | Registered but unused |
+| PACK | 0 | 0 | Registered but unused |
+
+**Total: 13 unique op types used, 55 operations in Subgraph 0, 12 operations in Subgraph 1.**
+
+All ops show `CustomCode: N/A` in flatbuffer analysis — there are zero custom ops.
 
 ---
 
 ## Article V — Dual-Subgraph Structure
 
-> **IMMUTABLE. BOTH SUBGRAPHS MUST BE PRESENT. SHAPES ARE EXACT.**
->
-> The model contains exactly **2 subgraphs**. Subgraph 1 is an initialization
-> subgraph that assigns embedded pseudo-constant tensors into the streaming
-> state variables. It is invoked exactly once at device boot via the
-> `CALL_ONCE` op in Subgraph 0. Both subgraphs must be present and intact in
-> the exported `.tflite` file or the device will crash on startup.
+**Status: IMMUTABLE. VERIFIED FROM FLATBUFFER BINARY PARSING.**
+
+The model contains exactly **2 subgraphs**. Both must be present and intact in the exported `.tflite` file.
+
+**CRITICAL NOTE ON TENSOR COUNTS:** The tensor counts below are from direct flatbuffer binary parsing (`Model.Subgraphs(i).TensorsLength()`), NOT from interpreter enumeration. Some TFLite interpreter versions (both `tf.lite.Interpreter` and `ai_edge_litert.Interpreter`) may report additional scratch/workspace tensors at runtime. These runtime-allocated tensors are NOT part of the flatbuffer schema and should not be counted as model tensors. The ground truth is the flatbuffer.
+
+### Subgraph Metrics (flatbuffer ground truth)
+
+| Metric | Subgraph 0 (Main Inference) | Subgraph 1 (Initialization) |
+|---|---|---|
+| Tensors | **94** | **12** |
+| Operations | **55** | **12** |
+| Input tensors | [0] | [0] |
+| Output tensors | [93] | [] |
+
+### Subgraph 0: Main Inference Graph
 
 ```
-Subgraph [0]: Main Inference Graph
-├── Input:  [1, 3, 40]  INT8
-├── CALL_ONCE  ──────────────────→  Triggers Subgraph [1] once
-├── VAR_HANDLE × 6  ─────────────→  Bind handles to state vars
-├── READ_VARIABLE × 6  ──────────→  Load state buffers
+Input:  [1, 3, 40]  INT8    (tensor index 0)
+├── CALL_ONCE  ──────────────────→  Triggers Subgraph 1 once at first inference
+├── VAR_HANDLE × 6  ─────────────→  Bind handles to 6 state variables
+├── READ_VARIABLE × 6  ──────────→  Load state buffers from previous step
 │     ├── stream   : [1, 2,  1, 40]   (ring buffer before first Conv2D)
 │     ├── stream_1 : [1, 4,  1, 32]   (MixConv block 0)
 │     ├── stream_2 : [1, 10, 1, 64]   (MixConv block 1)
 │     ├── stream_3 : [1, 14, 1, 64]   (MixConv block 2)
 │     ├── stream_4 : [1, 22, 1, 64]   (MixConv block 3)
 │     └── stream_5 : [1, 5,  1, 64]   (Temporal flatten buffer)
-├── CONCATENATION  ──────────────→  [old_frames | new_input]
-├── (inference ops: Conv2D, DepthwiseConv2D, FC, Logistic…)
-├── STRIDED_SLICE × 6  ──────────→  Extract new ring buffer state
+├── RESHAPE  ────────────────────→  Expand input dims [1,3,40] → [1,3,1,40]
+├── CONCATENATION  ──────────────→  [old_state | new_input]
+├── (inference ops: Conv2D, DepthwiseConv2D, SplitV, FC, Logistic…)
+├── STRIDED_SLICE  ──────────────→  Extract new ring buffer state
 ├── ASSIGN_VARIABLE × 6  ────────→  Write updated state back
-└── Output: [1, 1]  UINT8
-
-Subgraph [1]: Initialization Graph (invoked once, then dormant)
-├── 12 ops total
-├── 12 tensors
-└── Initializes all 6 state variables from embedded pseudo_qconst tensors
+├── LOGISTIC  ───────────────────→  Sigmoid activation → int8 internal
+├── QUANTIZE  ───────────────────→  Re-quantize int8 sigmoid → uint8 output
+└── Output: [1, 1]  UINT8   (tensor index 93)
 ```
 
-### Subgraph Op/Tensor Counts (verified)
+### Subgraph 1: Initialization Graph (invoked once, then dormant)
 
-| | okay_nabu |
-|---|---|
-| Subgraph 0 ops | 55 |
-| Subgraph 0 tensors | 95 |
-| Subgraph 1 ops | 12 |
-| Subgraph 1 tensors | 12 |
+```
+├── 12 operations: 6 × VAR_HANDLE + 6 × ASSIGN_VARIABLE
+├── 12 tensors: 6 resource handles (object dtype) + 6 pseudo_qconst initializers (int8)
+└── Initializes all 6 state variables from embedded tfl.pseudo_qconst tensors
+```
+
+The pseudo_qconst tensors carry the initial state values (typically zeros) with the correct quantization parameters matching the corresponding state variable.
 
 ---
 
 ## Article VI — Streaming State Variables
 
-> **IMMUTABLE. EXACT SHAPES. EXACT COUNT. EXACT ORDER.**
->
-> There are exactly **6** streaming state variables. Not 5. Not 7. Each one
-> stores past temporal context needed for the current inference step.
-> The first five states (`stream` through `stream_4`) are convolution-context
-> ring buffers. The sixth state (`stream_5`) is a temporal pre-flatten buffer.
-> An inconsistency between the training-time temporal structure and the
-> export-time state variable shapes produces a model that is silently wrong —
-> it will run, produce predictions, and those predictions will be computed on
-> the wrong temporal context.
+**Status: IMMUTABLE. EXACT SHAPES. EXACT COUNT.**
 
-### State Variable Shapes
+There are exactly **6** streaming state variables. Each stores past temporal context needed for the current inference step. The first five (`stream` through `stream_4`) are convolution-context ring buffers. The sixth (`stream_5`) is a temporal pre-flatten buffer.
 
-| Variable | okay_nabu shape | Ring buffer holds |
-|---|---|---|
-| `stream` | `[1, 2, 1, 40]` | 2 frames before first `Conv2D` |
-| `stream_1` | `[1, 4, 1, 32]` | MixConv block 0 context |
-| `stream_2` | `[1, 10, 1, 64]` | MixConv block 1 context |
-| `stream_3` | `[1, 14, 1, 64]` | MixConv block 2 context |
-| `stream_4` | `[1, 22, 1, 64]` | MixConv block 3 context |
-| `stream_5` | `[1, 5, 1, 64]` | Temporal flatten buffer |
+### State Variable Shapes (okay_nabu reference)
 
-### Total State Memory
+| Variable | Shape | Bytes | Ring Buffer Holds | Quantization |
+|---|---|---|---|---|
+| `stream` | `[1, 2, 1, 40]` | 80 | 2 frames before first Conv2D | s=0.101961, z=-128 |
+| `stream_1` | `[1, 4, 1, 32]` | 128 | MixConv block 0 context | s=1.27439, z=-128 |
+| `stream_2` | `[1, 10, 1, 64]` | 640 | MixConv block 1 context | s=0.0345457, z=-128 |
+| `stream_3` | `[1, 14, 1, 64]` | 896 | MixConv block 2 context | s=0.0408709, z=-128 |
+| `stream_4` | `[1, 22, 1, 64]` | 1,408 | MixConv block 3 context | s=0.0319873, z=-128 |
+| `stream_5` | `[1, 5, 1, 64]` | 320 | Temporal flatten buffer | s=0.0262718, z=-128 |
 
-| Model | State bytes |
-|---|---|
-| okay_nabu | **3 472 bytes** |
+**Total state memory: 3,472 bytes** (80 + 128 + 640 + 896 + 1408 + 320).
+
+All state variable data payloads (the actual int8 tensors flowing through READ_VARIABLE outputs and ASSIGN_VARIABLE value inputs) are quantized with valid scale/zero_point parameters. The VAR_HANDLE tensors themselves are resource pointers (dtype `object`, shape `[]`) and are not quantized — this is correct and expected.
+
+### Implementation in the Flatbuffer
+
+Each state variable appears in two forms in the flatbuffer:
+
+1. **Resource handle** (Subgraph 0): e.g., tensor 44 `stream/states`, dtype=object, shape=[]. This is the VAR_HANDLE output — a pointer, not data.
+2. **Data payload** (Subgraph 0): e.g., tensor 56 `model/stream/concat/ReadVariableOp`, shape=[1,2,1,40], dtype=int8, quantized. This is the READ_VARIABLE output — the actual data flowing through the graph.
+3. **Updated state** (Subgraph 0): e.g., tensor 58 `model/stream/strided_slice2`, shape=[1,2,1,40], dtype=int8, quantized. This is the ASSIGN_VARIABLE value input — the new state to store.
+4. **Initialization handle** (Subgraph 1): e.g., tensor 10 `stream/states1`, dtype=object. Paired with a `tfl.pseudo_qconst` tensor that carries the initial value.
 
 ### Convolution-State Ring Buffer Law
+
+For convolution-derived state variables (`stream` through `stream_4`):
 
 ```
 buffer_frames = kernel_size - stride
 ```
 
-This identity is inviolable for the convolution-derived state variables
-`stream`, `stream_1`, `stream_2`, `stream_3`, and `stream_4`.
+This identity is inviolable. The buffer stores exactly the number of past frames needed so that when `stride` new frames arrive, the full kernel window is available.
 
-`stream_5` is different: it is the temporal buffer immediately before
-flattening. In `okay_nabu`, the concatenated tensor is `[1, 6, 1, 64]` and the
-stored state is `[1, 5, 1, 64]`, so this buffer follows:
+For `stream_5` (the temporal buffer before flattening), the rule is different:
 
 ```
 stream_5_frames = pre_flatten_temporal_frames - 1
 ```
 
-The exported model will have the wrong buffer sizes if streaming conversion
-does not re-derive these state tensors from the actual graph structure.
+In okay_nabu, the concatenated tensor before flatten is `[1, 6, 1, 64]` and the stored state is `[1, 5, 1, 64]`.
 
 ---
 
-## Article VII — Inference Timing & Ring Buffer Math
+## Article VII — Inference Timing and Ring Buffer Math
 
-> **IMMUTABLE. DRIVEN BY HARDWARE AUDIO PIPELINE TIMING.**
->
-> The ESPHome audio pipeline calls the model on a fixed schedule.
-> There is no mechanism to change this schedule from the model side.
-> The model must consume exactly the data that arrives.
+**Status: IMMUTABLE. DRIVEN BY HARDWARE AUDIO PIPELINE TIMING.**
+
+The ESPHome audio pipeline calls the model on a fixed schedule determined by the stride and feature step size. There is no mechanism to change this schedule from the model side.
 
 | Timing Constant | Value | Derivation |
 |---|---|---|
-| Feature frame period | **10 ms** | `window_step_ms` |
-| New frames per inference call | **3** | `stride = 3` |
-| Inference period | **30 ms** | `stride × window_step_ms = 3 × 10` |
-| Samples consumed per inference | **480** | `stride × samples_per_hop = 3 × 160` |
+| Feature frame period | 10 ms | `window_step_ms` (v2 models) |
+| New frames per inference call | 3 | `stride` (read from input tensor dim[1] at runtime) |
+| Inference period | 30 ms | `stride × window_step_ms = 3 × 10` |
+| Samples consumed per inference | 480 | `stride × samples_per_hop = 3 × 160` |
 
 ### The Stride Constant
 
@@ -405,31 +356,24 @@ does not re-derive these state tensors from the actual graph structure.
 stride = 3
 ```
 
-**This value appears in:**
-1. Model input shape: `[1, stride, 40]` = `[1, 3, 40]`
-2. Convolution-state ring buffer calculations: `buffer = kernel - stride`
-3. TFLite representative dataset generation (slides by `stride` per sample)
-4. ESPHome's hardware call cadence
+This value appears in four places that must all agree:
 
-Changing `stride` requires simultaneously changing: the input tensor shape,
-the convolution-derived state variable shapes, the representative dataset
-generator, and the ESPHome YAML configuration. It also changes downstream
-temporal dimensions, so `stream_5` must be re-derived from the resulting graph.
-Changing it in one place and not the others silently produces a misaligned
-model.
+1. **Model input shape:** `[1, stride, 40]` = `[1, 3, 40]`
+2. **Ring buffer calculations:** `buffer_frames = kernel_size - stride`
+3. **Representative dataset generator:** slices spectrograms by `stride` per sample
+4. **ESPHome runtime:** reads stride from `input->dims->data[1]` and accumulates that many feature frames before invoking inference
+
+The ESPHome runtime dynamically reads stride from the model's input tensor (streaming_model.cpp line 131: `uint8_t stride = this->interpreter_->input(0)->dims->data[1]`), so the model self-declares its stride. However, changing stride requires simultaneously changing: the input tensor shape, all convolution-derived state variable shapes, the representative dataset generator, and downstream temporal dimensions including `stream_5`.
 
 ---
 
 ## Article VIII — MixedNet Architecture
 
-> **IMMUTABLE. PARAMETERIZABLE WITHIN STRUCTURAL RULES.**
->
-> One architecture variant is used, verified from the official okay_nabu model.
-> A custom configuration is permitted **only if** it follows the MixedNet structural
-> rules defined here and the streaming conversion produces state variables
-> whose shapes satisfy the ring buffer law in Article VII.
+**Status: PARAMETERIZABLE WITHIN STRUCTURAL RULES.**
 
-### `okay_nabu` Configuration (55 ops, uses SPLIT_V / StridedKeep)
+The okay_nabu model uses a MixedNet architecture with mixed depthwise convolutions, based on modified code from Google Research's "Streaming Keyword Spotting on Mobile Devices" paper.
+
+### okay_nabu Configuration (55 ops, uses SPLIT_V / StridedKeep)
 
 ```python
 first_conv_filters    = 32
@@ -441,97 +385,96 @@ repeat_in_block       = [1, 1, 1, 1]
 residual_connection   = [0, 0, 0, 0]
 ```
 
-### Structural Rules (apply to all variants)
+### How MixConv Kernel Sizes Map to State Variable Shapes
 
-1. **All temporal convolutions must be wrapped in `stream.Stream`** so that the
-   streaming conversion can extract ring buffer state variables.
-2. **`padding="valid"` on the time axis** — padding the time axis would produce
-   different activations in non-streaming vs streaming modes, which breaks
-   state consistency.
-3. **`use_bias=False` on all Conv2D/DepthwiseConv2D** — biases are folded into
-   BatchNormalization during export.
-4. **Classification head:** exactly one `Dense(1, activation="sigmoid")` as the
-   last layer. The sigmoid maps to [0,1] before being quantized to uint8.
-5. **BatchNormalization** must be present after every depthwise/pointwise conv
-   block. It is folded into conv weights during streaming conversion.
-6. **No LSTM, GRU, attention, or recurrent layers.** The ESPHome runtime does
-   not register these ops. They do not exist in the allowed op set.
-7. **No custom TensorFlow ops, no `tf.py_function`, no `tf.numpy_function`.**
-   TFLite Micro cannot execute any Python callback.
+For single-kernel blocks (`[5]`, `[23]`), the state shape follows the ring buffer law directly:
+
+```
+stream_1: kernel=5,  stride=3 → buffer = 5-3 = 2, but actual shape has 4 frames
+           (because the pointwise conv output feeds into the depthwise)
+stream_4: kernel=23, stride=1 (internal) → buffer = 23-1 = 22 → [1, 22, 1, 64]
+```
+
+For dual-kernel blocks (`[7, 11]`, `[9, 15]`), SPLIT_V splits the channel dimension, each half goes through its own depthwise conv with StridedKeep, and results are concatenated. The state buffer holds enough frames for the largest kernel:
+
+```
+stream_2: max(7, 11) - 1 = 10 → [1, 10, 1, 64]
+stream_3: max(9, 15) - 1 = 14 → [1, 14, 1, 64]
+```
+
+### Structural Rules (apply to all MixedNet variants)
+
+1. **All temporal convolutions must be wrapped in `stream.Stream`** so streaming conversion can extract ring buffer state variables.
+2. **`padding="valid"` on the time axis.** Causal padding would produce different activations in non-streaming vs streaming modes, breaking state consistency.
+3. **`use_bias=False` on all Conv2D/DepthwiseConv2D.** Biases are folded into BatchNormalization during export.
+4. **Classification head:** exactly one `Dense(1, activation="sigmoid")` as the last layer. The sigmoid maps to [0,1] before being quantized to uint8.
+5. **BatchNormalization** must be present after every depthwise/pointwise conv block. It is folded into conv weights during the streaming conversion.
+6. **No LSTM, GRU, attention, or recurrent layers.** The ESPHome runtime does not register these ops.
+7. **No custom TensorFlow ops, no `tf.py_function`, no `tf.numpy_function`.** TFLite Micro cannot execute Python callbacks.
 
 ---
 
-## Article IX — Export & Quantization Requirements
+## Article IX — Export and Quantization Pipeline
 
-> **IMMUTABLE. THESE FLAGS ARE NOT OPTIONAL. NOT CONFIGURABLE. NOT DEFAULTS.**
->
-> The export pipeline has two mandatory stages. Skipping either stage, or
-> changing the quantization types, produces a `.tflite` file that is either
-> unloadable on the device or produces completely wrong predictions.
+**Status: IMMUTABLE. THESE FLAGS ARE NOT OPTIONAL.**
+
+The export pipeline has two mandatory stages. The official implementation is in `OHF-Voice/micro-wake-word/microwakeword/utils.py`.
 
 ### Stage 1: Non-Streaming → Streaming SavedModel Conversion
 
 ```python
-converted_model = convert_model_saved(
+# Source: utils.py, function convert_model_saved()
+converted_model = model_to_saved(
     model_non_stream = model,
     config           = config,
-    folder           = "stream_state_internal",
     mode             = modes.Modes.STREAM_INTERNAL_STATE_INFERENCE
 )
 ```
 
-This step materializes the ring buffer state variables from the `stream.Stream`
-wrappers. Without it, the model has no `VAR_HANDLE`/`READ_VARIABLE`/
-`ASSIGN_VARIABLE` ops and will fail ESPHome's op registration check.
+This materializes the ring buffer state variables from the `stream.Stream` wrappers. Without it, the model has no VAR_HANDLE / READ_VARIABLE / ASSIGN_VARIABLE ops and will fail ESPHome's op registration check.
+
+The SavedModel is exported using `tf.keras.export.ExportArchive` (NOT `model.export()` which causes quantization errors, as noted in the source code comment on line 297).
 
 ### Stage 2: Streaming SavedModel → Quantized TFLite
 
 ```python
-converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_path)
+# Source: utils.py, function convert_saved_model_to_tflite(), lines 242-265
+converter = tf.lite.TFLiteConverter.from_saved_model(path_to_model)
+converter.optimizations = {tf.lite.Optimize.DEFAULT}
 
-# These four lines are non-negotiable:
-converter.optimizations                        = {tf.lite.Optimize.DEFAULT}
-converter._experimental_variable_quantization  = True          # state payload tensors MUST be quantized
-converter.target_spec.supported_ops            = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
-converter.inference_input_type                 = tf.int8
-converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
+# MANDATORY: Without this, state variable data payloads remain float32,
+# causing Quantize/Dequantize ops around every ReadVariable/AssignVariable.
+converter._experimental_variable_quantization = True
+
+# These three lines produce the quantized model for device deployment:
+converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
+converter.inference_input_type  = tf.int8
+converter.inference_output_type = tf.uint8       # UINT8. ALWAYS.
+converter.representative_dataset = tf.lite.RepresentativeDataset(representative_dataset_gen)
 ```
 
-> ⛔ `converter._experimental_variable_quantization = True` is **required**.
-> `VAR_HANDLE` tensors are resource handles and are not themselves quantized
-> payloads. The actual data payload tensors flowing through `READ_VARIABLE`
-> outputs and `ASSIGN_VARIABLE` value inputs **must** be quantized to `int8`
-> with valid quantization parameters. Without variable quantization, these
-> payload tensors are not guaranteed to be emitted as int8-compatible tensors,
-> and the TFLite Micro int8-only kernel resolver may fail to find matching
-> implementations. The model may fail to load on device.
+**CRITICAL PACKAGE NOTE:** The export uses `tf.lite.TFLiteConverter` from the standard `tensorflow` package (NOT `ai_edge_litert`). The `ai_edge_litert` package is used only for inference/testing via its `Interpreter` class. See Article XI for the full dependency map.
 
-### Representative Dataset Requirements
+### What `_experimental_variable_quantization = True` Does
 
-- Minimum **500 training samples**
-- Samples sliced with `stride=3` to match runtime input cadence
-- **Must include boundary anchor points** (float 0.0 and 26.0) to pin the
-  quantization scale to the correct range
+VAR_HANDLE tensors are resource handles (dtype `object`) — they are pointers, not data, and are never themselves quantized. The actual data payloads flowing through READ_VARIABLE outputs and ASSIGN_VARIABLE value inputs MUST be quantized to int8 with valid quantization parameters. Without `_experimental_variable_quantization = True`, these payload tensors may be emitted as float32, and the TFLite Micro int8-only kernel resolver will fail to find matching kernel implementations. The model may fail to load on device.
 
 ---
 
 ## Article X — ESPHome Manifest Contract
 
-> **IMMUTABLE FIELDS. REQUIRED EXACT VALUES.**
->
-> ESPHome reads the manifest JSON to configure its wake word engine.
-> The fields below have fixed types and constraints. Wrong values produce
-> either a silent misconfiguration (model never triggers) or a firmware
-> compile error.
+**Status: IMMUTABLE. REQUIRED EXACT VALUES FOR DEVICE-CRITICAL FIELDS.**
+
+ESPHome reads the manifest JSON to configure its wake word engine. The v2 JSON schema is documented at `esphome.io/components/micro_wake_word/`.
 
 ```json
 {
   "type": "micro",
-  "wake_word": "Hey Katya",
-  "author": "Sarpel GURAY",
-  "website": "https://github.com/sarpel/microwakeword-training-platform",
-  "model": "hey_katya.tflite",
-  "trained_languages": ["en"],
+  "wake_word": "<the exact spoken phrase>",
+  "author": "<author name>",
+  "website": "<project URL>",
+  "model": "<filename>.tflite",
+  "trained_languages": ["<BCP-47 code>"],
   "version": 2,
   "micro": {
     "probability_cutoff": 0.97,
@@ -543,54 +486,156 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
 }
 ```
 
-| Field | Constraint | Consequence of violation |
+### Field Constraints
+
+| Field | Constraint | Consequence of Violation |
 |---|---|---|
 | `type` | Must be `"micro"` | ESPHome ignores the file entirely |
-| `version` | Must be `2` | v1 loader path is taken; state variables are not handled |
+| `version` | Must be `2` for v2 models | v1 loader path is taken; state variables not handled correctly |
 | `wake_word` | Must be the exact spoken phrase | Wrong label shown in Home Assistant UI |
-| `author` | Informational; no hard constraint | — |
-| `website` | Informational; no hard constraint | — |
-| `model` | Must match the `.tflite` filename | ESPHome cannot locate the model binary |
-| `trained_languages` | List of BCP-47 codes (e.g. `["en"]`) | Informational; affects ESPHome language-filter behavior |
-| `probability_cutoff` | `0.0`–`1.0` float; detection threshold | Too low → false triggers; too high → missed detections |
-| `feature_step_size` | Must be `10` (ms) | Timing desync; model receives stale/skipped frames |
-| `sliding_window_size` | Typically `5` | Affects false-positive suppression, not model correctness |
-| `tensor_arena_size` | Must be ≥ actual arena | Runtime OOM crash on device |
-| `minimum_esphome_version` | Must be `"2024.7.0"` | Older firmware silently uses wrong op resolver |
+| `model` | Must match the `.tflite` filename exactly | ESPHome cannot locate the model binary |
+| `trained_languages` | List of BCP-47 codes (e.g., `["en"]`) | Informational; affects ESPHome language-filter behavior |
+| `probability_cutoff` | `0.0`–`1.0` float; detection threshold | Too low → false triggers; too high → missed detections. Stored internally as `uint8(value * 255)`. |
+| `feature_step_size` | Must be `10` (ms) for v2 models | Timing desync; model receives stale/skipped frames |
+| `sliding_window_size` | Positive integer (typically 5) | Affects false-positive suppression window length |
+| `tensor_arena_size` | Must be ≥ actual arena requirement | Runtime OOM crash on device. Set to 0 for auto-resolve. |
+| `minimum_esphome_version` | Must be `"2024.7.0"` for v2 models | Older firmware uses wrong op resolver or wrong feature_step_size |
 
-### Tensor Arena Sizing Rules
+### Tensor Arena Sizing
 
-- `tensor_arena_size` is **model-dependent**; there is no single universal constant.
-- **Canonical project policy**: set `export.tensor_arena_size: 0` and auto-resolve from the exported TFLite tensor allocation with `arena_size_margin`.
-- Keep explicit override support (`tensor_arena_size > 0`) for measured target-device requirements.
-- Underestimating causes silent memory corruption, not a clean error.
+`tensor_arena_size` is model-dependent. There is no single universal constant. Setting it to `0` lets the framework auto-resolve from the exported TFLite tensor allocation. If using explicit override, always measure on the target device. Underestimating causes silent memory corruption, not a clean error.
 
 ---
 
-## Violation Consequence Summary
+## Article XI — Package Dependencies and Version Constraints
 
-> This table exists so that developers understand exactly what breaks —
-> in production, on real hardware — when each rule is violated.
-> "Works in Python" is not a definition of correctness for this project.
+**Status: VERIFIED FROM `setup.py` AND SOURCE CODE IMPORTS.**
 
-| Article | What you might change | What actually breaks |
+The official OHF-Voice/micro-wake-word project uses two separate packages for two separate purposes:
+
+### Export Pipeline (producing .tflite files)
+
+**Package:** `tensorflow` (≥ 2.16)
+**API used:** `tf.lite.TFLiteConverter.from_saved_model()`
+**Source file:** `microwakeword/utils.py`, function `convert_saved_model_to_tflite()`
+
+The export pipeline does NOT use `ai_edge_litert` at all. The TFLiteConverter is a standard TensorFlow API. If you are only exporting models and not running inference tests, you do not need `ai_edge_litert`.
+
+### Inference and Testing (reading .tflite files)
+
+**Package:** `ai_edge_litert`
+**API used:** `ai_edge_litert.interpreter.Interpreter`
+**Source file:** `microwakeword/inference.py`, line 20
+
+The inference/testing module uses `ai_edge_litert` for its TFLite interpreter. This is the Google-recommended replacement for `tf.lite.Interpreter` in TensorFlow 2.16+.
+
+### Complete Dependency List (from setup.py)
+
+```
+audiomentations
+audio_metadata
+datasets
+mmap_ninja
+numpy
+pymicro-features
+pyyaml
+tensorflow>=2.16
+webrtcvad-wheels
+ai-edge-litert
+```
+
+### Implications for Your Project
+
+If your project uses `tensorflow 2.16.2` with `tf.lite.TFLiteConverter` for export but does NOT have `ai_edge_litert` installed: **your export pipeline is correct and compatible with the official pipeline.** The generated .tflite files will be identical. You only need `ai_edge_litert` if you want to run the official inference test code.
+
+### Tensor Count Discrepancy Explained
+
+Different interpreter implementations may enumerate different numbers of tensors for the same .tflite file:
+
+| Source | SG0 Tensors | SG1 Tensors | Why |
+|---|---|---|---|
+| **Flatbuffer binary** (ground truth) | **94** | **12** | `Model.Subgraphs(0).TensorsLength()` |
+| `ai_edge_litert` Interpreter (some versions) | 95 | 12 | May include a runtime scratch tensor (index 94, shape [1,1,1,200]) |
+| `tf.lite.Interpreter` (varies by version) | 94 or 95 | 12 | Version-dependent |
+
+**Always use flatbuffer binary parsing as ground truth.** Interpreter enumeration includes runtime-allocated workspace tensors that do not exist in the model schema.
+
+---
+
+## Article XII — v1 vs v2 Model Differences
+
+**Status: REFERENCE. DERIVED FROM ESPHOME MODEL REPOSITORY AND RELEASE NOTES.**
+
+The ESPHome micro-wake-word-models repository (`github.com/esphome/micro-wake-word-models`) hosts models in two directories: `models/` (v1) and `models/v2/` (v2). This project targets v2.
+
+| Property | v1 | v2 |
+|---|---|---|
+| `feature_step_size` | 20 ms | **10 ms** |
+| JSON manifest `version` | 1 | **2** |
+| `minimum_esphome_version` | older | **2024.7.0** |
+| Inference period | 60 ms (stride 3 × 20ms) | **30 ms** (stride 3 × 10ms) |
+| Temporal resolution | Lower (20ms frames) | **Higher (10ms frames)** |
+| Model architecture | Same MixedNet | Same MixedNet |
+| Accuracy | Lower | **Higher** (faster, more temporal detail) |
+
+The key v2 improvement is halving the feature step size from 20ms to 10ms, which doubles the temporal resolution of the spectrogram features without changing the model architecture itself. The same stride=3 is used, so the model still processes 3 frames per inference call, but each frame represents 10ms instead of 20ms.
+
+v2 models will NOT work on ESPHome firmware older than 2024.7.0 because older firmware hardcodes a 20ms step size.
+
+---
+
+## Violation Consequence Matrix
+
+This table exists so that developers and AI agents understand exactly what breaks — on real hardware, in production — when each rule is violated. "Works in Python" is NOT a definition of correctness for this project.
+
+| Article | What You Might Change | What Actually Breaks |
 |---|---|---|
 | I | `mel_bins`, `window_step_ms`, `sample_rate_hz` | Input tensor shape mismatch; model receives wrong feature dimensions; predictions are garbage |
-| II | Output dtype from `uint8` to `int8` | ESPHome reads signed bytes as unsigned; every prediction ≥ 128 is misinterpreted as negative; wake word never triggers |
-| III | Quantization calibration dataset too small or missing boundaries | Scale/zero_point shift; dynamic range is wrong; model runs but predictions are compressed into a tiny range; effectively non-functional |
-| III | Remove `_experimental_variable_quantization` | State payload tensors on `READ_VARIABLE` / `ASSIGN_VARIABLE` paths may remain non-int8; int8-only kernel resolver may fail at model load; device halts |
-| IV | Use any op outside the 20 registered op resolvers | Op resolver returns `kTfLiteError` at load time; device halts; wake word engine never starts |
-| V | Export without `STREAM_INTERNAL_STATE_INFERENCE` mode | No `VAR_HANDLE`/state ops in graph; model has no memory; predictions are independent per-frame; accuracy is random |
-| VI | Wrong ring buffer size (kernel / stride mismatch) | Ring buffer reads from wrong temporal offset; model sees scrambled temporal context; no crash, just wrong predictions forever |
+| II | Output dtype from `uint8` to `int8` | ESPHome reads signed bytes as unsigned; every prediction ≥ 128 is misinterpreted; wake word never triggers or always triggers |
+| II | Input dtype from `int8` to `float32` | `load_model_()` fails with "Streaming model tensor input is not int8"; model never loads |
+| III | Calibration dataset too small or missing boundary anchors | Scale/zero_point shift; dynamic range is wrong; model runs but predictions are compressed into a tiny range; effectively non-functional |
+| III | Remove `_experimental_variable_quantization` | State payload tensors may remain float32; TFLite Micro int8-only kernel resolver fails at load time; device halts |
+| IV | Use any op outside the 20 registered resolvers | Op resolver returns `kTfLiteError` at load time; device halts; wake word engine never starts |
+| V | Export without `STREAM_INTERNAL_STATE_INFERENCE` mode | No VAR_HANDLE/state ops in graph; model has no memory; predictions are independent per-frame; accuracy is random |
+| V | Missing or corrupted Subgraph 1 | State variables not initialized at boot; undefined initial state; unpredictable behavior from first inference |
+| VI | Wrong ring buffer size (kernel/stride mismatch) | Ring buffer reads from wrong temporal offset; model sees scrambled temporal context; no crash, just permanently wrong predictions |
 | VII | Change stride in code but not in export/manifest | Input tensor slicing misaligned with ring buffer writes; state corruption accumulates across time; model degrades after first second of audio |
 | VIII | Add LSTM/GRU/attention or custom ops | Op not registered; device halts at model load |
-| IX | `inference_output_type = tf.int8` | Output read as signed; probabilities inverted relative to ESPHome's uint8 comparison threshold; model either always or never triggers |
-| X | `feature_step_size ≠ 10` | ESPHome feeds frames at wrong cadence; ring buffers contain wrong number of frames; model evaluates context that is 1.5× or 2× too long/short |
+| IX | `inference_output_type = tf.int8` instead of `tf.uint8` | Output read as signed; probabilities inverted relative to ESPHome's uint8 comparison threshold |
+| IX | Use `ai_edge_litert` converter instead of `tf.lite.TFLiteConverter` | Potentially different quantization behavior or op selection; untested path; model may work or may produce subtly different results |
+| X | `feature_step_size ≠ 10` in v2 manifest | ESPHome feeds frames at wrong cadence; ring buffers contain wrong number of frames; temporal context is 1.5× or 2× too long/short |
+| X | `version ≠ 2` in v2 manifest | v1 loader path is taken; state variables may not be handled correctly |
+| XI | Use wrong TensorFlow version (<2.16) | `_experimental_variable_quantization` may not be available; `ExportArchive` API may differ; export may fail or produce incompatible model |
 
 ---
 
-*This document is append-only with respect to verified facts.
-No value may be changed without re-running flatbuffer extraction against
-official ESPHome reference models and updating the verification date.
-Adding unverified values is prohibited — mark any new entry as `UNVERIFIED`
-and include the expected verification method.*
+## APPENDIX A — Quick Reference for Common Tasks
+
+### "I need to verify a .tflite file is v2 compliant"
+
+Check these four things:
+
+1. Input shape is `[1, 3, 40]` and dtype is `int8`
+2. Output shape is `[1, 1]` and dtype is `uint8`
+3. Model has exactly 2 subgraphs
+4. All ops in both subgraphs are within the 20-op allowed set
+
+### "I need to export a trained model"
+
+Follow the two-stage pipeline in Article IX exactly. Use `tf.lite.TFLiteConverter` from standard `tensorflow`. Do NOT use `ai_edge_litert` for export.
+
+### "I need to count tensors"
+
+Use flatbuffer binary parsing, not interpreter enumeration. The correct count for okay_nabu is 94 tensors in Subgraph 0 and 12 in Subgraph 1.
+
+### "I need to change the wake word"
+
+Only training data and the manifest JSON `wake_word` field change. The model architecture, I/O contract, quantization parameters, and all timing constants remain identical.
+
+### "I need to change the model architecture"
+
+You may change `mixconv_kernel_sizes`, `pointwise_filters`, `repeat_in_block`, and `residual_connection` within the constraints of Article VIII. After export, verify the new model against Article IV (all ops must be in the allowed set) and Article VI (state variable shapes must follow the ring buffer law). The state variable count will change if the number of Stream-wrapped layers changes.
+
+---
+
+*This document is append-only with respect to verified facts. No value may be changed without re-running flatbuffer extraction against the reference model and cross-verifying against current ESPHome source code. Adding unverified values is prohibited — mark any new entry as `UNVERIFIED` and include the expected verification method. Last full verification: 2026-03-13.*
