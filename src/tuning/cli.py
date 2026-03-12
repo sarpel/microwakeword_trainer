@@ -1,6 +1,5 @@
 """CLI entry point for mww-autotune command."""
 
-
 import os
 
 # Suppress verbose TF/XLA logs before importing tensorflow (via autotuner)
@@ -281,12 +280,26 @@ def main() -> int:
         result_table.add_column("Metric", style="bold")
         result_table.add_column("Value")
 
-        result_table.add_row("Best FAH", f"{result['best_fah']:.4f}")
-        result_table.add_row("Best Recall", f"{result['best_recall']:.4f}")
-        result_table.add_row("Iterations", str(result["iterations"]))
-        result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
-        result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
-        result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))
+        # If confirmation was attempted and failed, surface confirmation metrics
+        conf_attempted = bool(result.get("confirmation_attempted"))
+        target_met = bool(result.get("target_met"))
+        if conf_attempted and not target_met:
+            fah = result.get("confirmation_best_fah", result.get("best_fah"))
+            recall = result.get("confirmation_best_recall", result.get("best_recall"))
+            result_table.add_row("Best FAH", f"{fah:.4f}")
+            result_table.add_row("Best Recall", f"{recall:.4f}")
+            result_table.add_row("Iterations", str(result["iterations"]))
+            result_table.add_row("Notes", "confirmation metrics (failed)")
+            result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
+            result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
+            result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))
+        else:
+            result_table.add_row("Best FAH", f"{result['best_fah']:.4f}")
+            result_table.add_row("Best Recall", f"{result['best_recall']:.4f}")
+            result_table.add_row("Iterations", str(result["iterations"]))
+            result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
+            result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
+            result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))
 
         console.print(result_table)
         return 0 if result["target_met"] else 0  # Success even if target not met

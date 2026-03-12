@@ -43,8 +43,8 @@ class TestConfigLoader:
         training = config.training
         assert hasattr(training, "batch_size")
         assert training.batch_size > 0
-        assert hasattr(training, "epochs")
-        assert training.epochs > 0
+        assert hasattr(training, "training_steps")
+        assert len(training.training_steps) > 0
 
     @pytest.mark.unit
     def test_config_model_has_required_fields(self) -> None:
@@ -53,8 +53,8 @@ class TestConfigLoader:
 
         config = load_full_config("fast_test")
         model = config.model
-        assert hasattr(model, "initial_filters")
-        assert model.initial_filters > 0
+        assert hasattr(model, "first_conv_filters")
+        assert model.first_conv_filters > 0
 
 
 class TestDataPaths:

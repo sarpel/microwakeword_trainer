@@ -536,8 +536,7 @@ class WakeWordDataset:
 
     def __init__(
         self,
-        config: Optional[Dict[str, Any]] = None,
-        data_path: Optional[Union[str, Path]] = None,
+        config: Dict[str, Any],
         split: str = "train",
         batch_size: int = 32,
         feature_dim: int = 40,
@@ -548,38 +547,25 @@ class WakeWordDataset:
             config: Configuration dictionary with paths and hardware settings.
                    When provided, the build() method can be called to process
                    raw audio files into features.
-            data_path: Path to processed data directory (legacy compatibility)
             split: Data split ('train', 'val', 'test')
             batch_size: Batch size for training
             feature_dim: Dimension of feature vectors
         """
-        # Handle config-based initialization
-        self._config: Optional[Dict[str, Any]] = None
-        if config is not None:
-            self._config = config
-            paths_cfg = config.get("paths", {})
-            hardware_cfg = config.get("hardware", {})
-            training_cfg = config.get("training", {})
+        self._config: Dict[str, Any] = config
+        paths_cfg = config.get("paths", {})
+        hardware_cfg = config.get("hardware", {})
+        training_cfg = config.get("training", {})
 
-            self.data_path = Path(paths_cfg.get("processed_dir", "./data/processed"))
-            self.batch_size = training_cfg.get("batch_size", batch_size)
-            self.feature_dim = hardware_cfg.get("mel_bins", feature_dim)
-            self.split = self._normalize_split_name(split)
-            self._is_built = False
+        self.data_path = Path(paths_cfg.get("processed_dir", "./data/processed"))
+        self.batch_size = training_cfg.get("batch_size", batch_size)
+        self.feature_dim = hardware_cfg.get("mel_bins", feature_dim)
+        self.split = self._normalize_split_name(split)
+        self._is_built = False
 
-            # Derive max_time_frames from hardware config
-            clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
-            window_step_ms = hardware_cfg.get("window_step_ms", 10)
-            self.max_time_frames = int(clip_duration_ms / window_step_ms)
-        else:
-            # Legacy initialization
-            # Legacy initialization
-            self.data_path = Path(data_path) if data_path else Path("./data/processed")
-            self.split = self._normalize_split_name(split)
-            self.batch_size = batch_size
-            self.feature_dim = feature_dim
-            self._is_built = False
-            self.max_time_frames = 100  # Default: 1000ms / 10ms
+        # Derive max_time_frames from hardware config
+        clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
+        window_step_ms = hardware_cfg.get("window_step_ms", 10)
+        self.max_time_frames = int(clip_duration_ms / window_step_ms)
 
         # Try to load from store
         self.feature_store: Optional[FeatureStore] = None
@@ -1288,8 +1274,9 @@ class WakeWordDataset:
                 continue
             for ragged_attr in ("features", "labels"):
                 ragged_store = getattr(store, ragged_attr, None)
-                if hasattr(ragged_store, "clear_cache"):
-                    ragged_store.clear_cache()
+                clear_cache = getattr(ragged_store, "clear_cache", None)
+                if callable(clear_cache):
+                    clear_cache()
         logger.debug("Cleared dataset caches at end of epoch")
 
     def __enter__(self) -> "WakeWordDataset":
@@ -1362,18 +1349,16 @@ def create_feature_store(
 
 
 def load_dataset(
-    data_path: Union[str, Path],
+    config: Dict[str, Any],
     split: str = "train",
-    batch_size: int = 32,
 ) -> WakeWordDataset:
     """Convenience function to load wake word dataset.
 
     Args:
-        data_path: Path to processed data directory
+        config: Configuration dictionary with paths/hardware/training sections
         split: Data split to load
-        batch_size: Batch size
 
     Returns:
         WakeWordDataset instance
     """
-    return WakeWordDataset(data_path=data_path, split=split, batch_size=batch_size)
+    return WakeWordDataset(config=config, split=split)

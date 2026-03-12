@@ -2091,18 +2091,26 @@ class AutoTuner:
             threshold = candidate.threshold_float32
             metrics = self.threshold_optimizer._compute_metrics_at_threshold(confirm_labels.flatten(), scores, threshold, ambient_hours)
 
-            # INT8 confirmation
+            # Diagnostic: show what metrics would be with re-optimized threshold (for analysis only)
+            diag_metrics = self.threshold_optimizer.optimize(confirm_labels.flatten(), scores, ambient_hours)
+            if diag_metrics and diag_metrics.recall != metrics.recall:
+                self.file_logger.info(
+                    f"  {candidate.id} diagnostic: fixed-threshold Recall={metrics.recall:.4f} FAH={metrics.fah:.4f} | "
+                    f"re-optimized Recall={diag_metrics.recall:.4f} FAH={diag_metrics.fah:.4f} thr={diag_metrics.threshold:.4f}"
+                )
+
+            # INT8 shadow evaluation (diagnostic only — current INT8 export uses
+            # non-streaming batch model which doesn't match production StreamingExportModel.
+            # INT8 results are logged but do NOT gate confirmation pass/fail.)
             int8_metrics = None
-            if self.require_int8_pass:
+            if self.int8_shadow_enabled:
                 int8_metrics = self._evaluate_int8(model, confirm_features, confirm_labels, repr_features, ambient_hours)
+                if int8_metrics:
+                    self.file_logger.info(f"  INT8 diagnostic (non-gating): FAH={int8_metrics.fah:.4f}, Recall={int8_metrics.recall:.4f}")
 
-            # Check pass/fail
+            # Check pass/fail — Float32 only (INT8 is diagnostic until streaming export is implemented)
             float_pass = metrics.meets_target(self.target_fah, self.target_recall)
-            int8_pass = not self.require_int8_pass
-            if self.require_int8_pass:
-                int8_pass = int8_metrics is not None and int8_metrics.fah <= self.target_fah * 1.2 and int8_metrics.recall >= self.target_recall * 0.95
-
-            passed = float_pass and int8_pass
+            passed = float_pass
 
             status = "✅ PASS" if passed else "❌ FAIL"
             table.add_row(
@@ -2441,6 +2449,11 @@ class AutoTuner:
         search_fraction = len(search_labels) / max(len(labels), 1)
         ambient_hours_search = ambient_hours_val * search_fraction
 
+        # Scale ambient hours for confirmation partition
+        confirm_labels_for_fraction = confirm_data[1]
+        confirm_fraction = len(confirm_labels_for_fraction) / max(len(labels), 1)
+        ambient_hours_confirm = ambient_hours_val * confirm_fraction
+
         # 3. Create optimizer
         optimizer = tf.keras.optimizers.Adam(learning_rate=self.default_lr)
         # Build optimizer state by doing a dummy step
@@ -2593,6 +2606,8 @@ class AutoTuner:
                     temperature=temperature,
                     fold_indices=fold_indices,
                 )
+                # Diagnostic: per-set metrics after search evaluation
+                self.file_logger.info(f"Iter {iteration}: Search FAH={eval_metrics.fah:.4f}, Recall={eval_metrics.recall:.4f}, AUC-PR={eval_metrics.auc_pr:.4f}")
 
                 # n. INT8 shadow evaluation
                 int8_metrics = None
@@ -2604,6 +2619,8 @@ class AutoTuner:
                         repr_data[0],
                         ambient_hours_search,
                     )
+                    if int8_metrics is not None:
+                        self.file_logger.info(f"Iter {iteration}: INT8 shadow FAH={int8_metrics.fah:.4f}, Recall={int8_metrics.recall:.4f}")
 
                 # o. Build new candidate
                 new_candidate = CandidateState(
@@ -2704,7 +2721,7 @@ class AutoTuner:
         confirmed = None
         best_attempt_metrics = None
         if self.require_confirmation and len(self.archive) > 0:
-            confirmed, best_attempt_metrics = self._confirmation_phase(model, confirm_data, repr_data, ambient_hours_val)
+            confirmed, best_attempt_metrics = self._confirmation_phase(model, confirm_data, repr_data, ambient_hours_confirm)
             if confirmed is not None:
                 # Save confirmed checkpoint
                 self._deserialize_weights(model, confirmed.weights_bytes)
