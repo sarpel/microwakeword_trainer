@@ -397,7 +397,8 @@ class QualityConfig:
 class EvaluationConfig:
     """Evaluation and metrics configuration."""
 
-    default_threshold: float = 0.97  # Default probability threshold for metrics
+    default_threshold: float = 0.97  # Default probability threshold for metrics (legacy name)
+    detection_threshold: float = 0.97  # Canonical threshold name (alias for default_threshold)
     n_thresholds: int = 101  # Number of thresholds for ROC/PR curves
     max_fah: float = 10.0  # Maximum FAH for average viable recall calculation
     target_fah: float = 2.0  # Target FAH for recall@FAH metrics
@@ -765,7 +766,7 @@ class ConfigLoader:
         if "training" in config and "export" in config:
             ls = config["training"].get("label_smoothing", 0.0)
             threshold = config["export"].get("probability_cutoff", 0.97)
-            eval_threshold = config.get("evaluation", {}).get("default_threshold", threshold)
+            eval_threshold = config.get("evaluation", {}).get("detection_threshold") or config.get("evaluation", {}).get("default_threshold", threshold)
             deploy_threshold = max(threshold, eval_threshold)
 
             if ls > 0:
