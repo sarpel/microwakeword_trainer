@@ -216,6 +216,17 @@ def load_weights_from_keras3_checkpoint(model: tf.keras.Model, checkpoint_path: 
                 f"Checkpoint has unsupported or unmatched layer variables for this export architecture (examples: {sample}). This usually indicates architecture drift between training and export."
             )
 
+    # Validate minimum weight count to detect incomplete checkpoint loading.
+    # A model with residual connections has >=44 weights; without residuals >=29.
+    # If dramatically fewer weights loaded, something went wrong.
+    min_expected = 29
+    if loaded_count < min_expected:
+        raise ValueError(
+            f"Weight loading failed: only {loaded_count} weights loaded from {checkpoint_path}. "
+            f"Expected at least {min_expected}. This may indicate an architecture mismatch "
+            f"between the checkpoint and the export model."
+        )
+
     print(f"Loaded {loaded_count}/{len(model.weights)} weights")
     return loaded_count
 
@@ -553,16 +564,16 @@ def create_representative_dataset(
     num_samples = int(raw_num_samples)
 
     def representative_dataset_gen():
+        # Boundary anchors for correct INT8 quantization range calibration
+        anchor_min = np.zeros((1, temporal_frames, mel_bins), dtype=np.float32)  # 0.0
+        anchor_max = np.full((1, temporal_frames, mel_bins), 26.0, dtype=np.float32)  # 26.0
+        yield [anchor_min]
+        yield [anchor_max]
+
         rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
-        for i in range(num_samples):
+        for _ in range(num_samples):
             # Shape: (1, temporal_frames, mel_bins) - use actual temporal dimension
             sample = rng.uniform(0.0, 26.0, (1, temporal_frames, mel_bins)).astype(np.float32)
-
-            # Boundary anchors for quantization calibration
-            if i == 0:
-                sample[0, 0, 0] = 0.0  # Force minimum
-                sample[0, 0, 1] = 26.0  # Force maximum (Article III compliance)
-
             yield [sample]
 
     return representative_dataset_gen
@@ -649,13 +660,14 @@ def create_representative_dataset_from_data(
         print(f"  Using {len(chunks)} real-data calibration samples")
 
         def representative_dataset_gen():
-            for i, chunk in enumerate(chunks):
-                # Boundary anchors for quantization calibration
-                sample = chunk.copy()
-                if i == 0:
-                    sample[0, 0, 0] = 0.0
-                    sample[0, 0, 1] = 26.0  # Force maximum
-                yield [sample]
+            # Boundary anchors for correct INT8 quantization range calibration
+            anchor_min = np.zeros((1, temporal_frames, mel_bins), dtype=np.float32)  # 0.0
+            anchor_max = np.full((1, temporal_frames, mel_bins), 26.0, dtype=np.float32)  # 26.0
+            yield [anchor_min]
+            yield [anchor_max]
+
+            for chunk in chunks:
+                yield [chunk]
 
         return representative_dataset_gen
     finally:
@@ -860,6 +872,7 @@ def _build_manifest_config(config: Optional[dict], model_name: str, metadata: di
         export_cfg["probability_cutoff"] = float(tuned_cutoff)
 
     export_cfg.setdefault("wake_word", model_name)
+    export_cfg.setdefault("detection_threshold", config.get("detection_threshold", 0.5) if isinstance(config, dict) else 0.5)
 
     return {
         "export": export_cfg,
