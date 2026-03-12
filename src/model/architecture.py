@@ -419,7 +419,7 @@ class MixedNet(tf.keras.Model):
         pointwise_filters=None,
         mixconv_kernel_sizes=None,
         repeat_in_block=None,
-        residual_connections=None,
+        residual_connections=[0, 1, 1, 1],
         dropout_rate=0.2,
         l2_regularization=0.0001,
         mode=Modes.NON_STREAM_INFERENCE,
@@ -446,7 +446,7 @@ class MixedNet(tf.keras.Model):
         if repeat_in_block is None:
             repeat_in_block = [1, 1, 1, 1]
         if residual_connections is None:
-            residual_connections = [0, 0, 0, 0]
+            residual_connections = [0, 1, 1, 1]
 
         self.pointwise_filters = pointwise_filters
         self.mixconv_kernel_sizes = mixconv_kernel_sizes
