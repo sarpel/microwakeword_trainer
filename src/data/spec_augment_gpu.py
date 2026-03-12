@@ -6,11 +6,16 @@ if GPU is not available. No CPU fallback is provided.
 """
 
 import logging
+import warnings
 from typing import Any, cast
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Suppress FutureWarning from experimental CuPy MemoryAsyncPool
+# The code handles this gracefully with try/except, so we suppress the warning
+warnings.filterwarnings("ignore", category=FutureWarning, message=r".*MemoryAsyncPool.*experimental.*")
 
 # Try to import CuPy and set up GPU availability flag
 try:
@@ -53,7 +58,7 @@ def spec_augment_gpu(
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
     if cp is None or not HAS_GPU:
-        raise RuntimeError("GPU is required for spec_augment_gpu but CuPy/CUDA is not available. " "Please ensure a compatible GPU and CUDA installation.")
+        raise RuntimeError("GPU is required for spec_augment_gpu but CuPy/CUDA is not available. Please ensure a compatible GPU and CUDA installation.")
 
     # Transfer to GPU
     spec_gpu = cp.asarray(spectrogram)
@@ -107,7 +112,7 @@ def batch_spec_augment_gpu(
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
     if cp is None or not HAS_GPU:
-        raise RuntimeError("GPU is required for batch_spec_augment_gpu but CuPy/CUDA is not available. " "Please ensure a compatible GPU and CUDA installation.")
+        raise RuntimeError("GPU is required for batch_spec_augment_gpu but CuPy/CUDA is not available. Please ensure a compatible GPU and CUDA installation.")
 
     # Transfer entire batch to GPU
     batch_gpu = cp.asarray(batch)

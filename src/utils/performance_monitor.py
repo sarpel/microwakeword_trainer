@@ -27,6 +27,9 @@ class PerformanceMonitor:
         self.baseline_metrics = {}
         self.section_history = defaultdict(list)
         self.alerts = []
+        self._last_alert_time: dict[str, float] = {}  # section -> last alert timestamp
+        self._last_alert_msg: dict[str, str] = {}  # section -> last alert message
+        self._alert_cooldown_seconds = 300  # 5 minutes cooldown for same alert
         logger.info(f"Performance monitor initialized: {log_dir}")
 
     @contextmanager
@@ -65,8 +68,15 @@ class PerformanceMonitor:
         ratio = duration_ms / self.baseline_metrics[section]
         if ratio > 2.0:
             alert_msg = f"BOTTLENECK: {section} took {ratio:.1f}x longer than baseline ({duration_ms:.1f}ms vs {self.baseline_metrics[section]:.1f}ms)"
-            self.alerts.append(alert_msg)
-            logger.warning(alert_msg)
+            # Check dedup: only alert if new message or cooldown expired
+            current_time = time.time()
+            last_time = self._last_alert_time.get(section, 0)
+            last_msg = self._last_alert_msg.get(section, "")
+            if alert_msg != last_msg or (current_time - last_time) >= self._alert_cooldown_seconds:
+                self.alerts.append(alert_msg)
+                logger.warning(alert_msg)
+                self._last_alert_time[section] = current_time
+                self._last_alert_msg[section] = alert_msg
 
         # Trend detection (gradual degradation)
         if len(self.section_history[section]) >= 10:
@@ -74,8 +84,15 @@ class PerformanceMonitor:
             overall_avg = sum(self.section_history[section]) / len(self.section_history[section])
             if recent_avg > 1.2 * overall_avg:
                 alert_msg = f"TREND: {section} degrading ({recent_avg:.1f}ms vs {overall_avg:.1f}ms avg)"
-                self.alerts.append(alert_msg)
-                logger.warning(alert_msg)
+                # Check dedup: only alert if new message or cooldown expired
+                current_time = time.time()
+                last_time = self._last_alert_time.get(section, 0)
+                last_msg = self._last_alert_msg.get(section, "")
+                if alert_msg != last_msg or (current_time - last_time) >= self._alert_cooldown_seconds:
+                    self.alerts.append(alert_msg)
+                    logger.warning(alert_msg)
+                    self._last_alert_time[section] = current_time
+                    self._last_alert_msg[section] = alert_msg
 
     def monitor_memory(self) -> dict:
         """Track Python heap memory usage. Returns dict with rss_mb, vms_mb, percent."""
@@ -96,11 +113,18 @@ class PerformanceMonitor:
     def monitor_gpu_memory(self) -> dict:
         """Track GPU memory usage via TensorFlow."""
         try:
+            from src.utils.performance import check_gpu_available, setup_gpu_environment
+
+            # Call setup_gpu_environment before importing TensorFlow
+            setup_gpu_environment()
+
+            # Now import TensorFlow after setup
             import tensorflow as tf
 
-            gpus = tf.config.list_physical_devices("GPU")
-            if not gpus:
+            # Use project canonical check_gpu_available
+            if not check_gpu_available():
                 return {"allocated_mb": 0, "peak_mb": 0}
+
             mem_info = tf.config.experimental.get_memory_info("GPU:0")
             return {
                 "allocated_mb": mem_info["current"] / (1024**2),

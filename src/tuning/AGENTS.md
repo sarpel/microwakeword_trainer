@@ -11,7 +11,7 @@ MaxQualityAutoTuner — a sophisticated post-training auto-tuning system that it
 ## STRUCTURE
 ```
 src/tuning/
-├── autotuner.py        # MaxQualityAutoTuner + all components (2624 lines)
+├── autotuner.py        # MaxQualityAutoTuner + all components (2689 lines)
 ├── cli.py             # mww-autotune CLI entry point (308 lines)
 └── __init__.py        # Module init, exports AutoTuner + autotune
 ```

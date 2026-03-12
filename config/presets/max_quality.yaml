@@ -46,19 +46,19 @@ training:
   eval_log_every_step: true
   steps_per_epoch: 1000
 
-  positive_class_weight: [4.0, 5.0, 6.0]
-  negative_class_weight: [3.0, 5.0, 8.0]
-  hard_negative_class_weight: [5.0, 8.0, 12.0]
+  positive_class_weight: [4.0, 6.0, 8.0] # [4.0, 5.0, 6.0]
+  negative_class_weight: [2.0, 4.0, 6.0] # [3.0, 5.0, 8.0]
+  hard_negative_class_weight: [5.0, 8.0, 12.0] # [5.0, 8.0, 12.0]
 
   # Progressive SpecAugment: light→moderate→strong
-  time_mask_max_size: [2, 4, 6]
-  time_mask_count: [1, 2, 2]
-  freq_mask_max_size: [2, 4, 6]
-  freq_mask_count: [1, 2, 2]
+  time_mask_max_size: [2, 3, 4]
+  time_mask_count: [1, 1, 1]
+  freq_mask_max_size: [2, 3, 4]
+  freq_mask_count: [1, 1, 1]
 
   # Checkpoint selection
   minimization_metric: "ambient_false_positives_per_hour"  # CHANGED: Prioritize recall over FAH
-  target_minimization: 2.0  # RAISED: Allow 2 FAH instead of 0.2 - model needs to learn to detect wake word
+  target_minimization: 5.0  # RAISED: Allow 5 FAH instead of 0.2 - model needs to learn to detect wake word
   maximization_metric: "average_viable_recall"
 
   # 42.02h of ambient audio (negative + background + hard_negative) for FAH calculation
@@ -70,7 +70,7 @@ training:
 
   # Optimizer and loss parameters
   optimizer: "adam"
-  label_smoothing: 0.02
+  label_smoothing: 0.05
   gradient_clipnorm: 1.0        # Was 0.5 = too aggressive, capped max score at 0.87
   ema_decay: 0.999               # Smoother EMA — half-life ~6900 steps (was 0.995, too jittery)
   random_seed: 42               # Reproducible runs
@@ -150,9 +150,9 @@ performance:
   gpu_only: true
   mixed_precision: true
   spec_augment_backend: "tf"
-  num_workers: 8
+  num_workers: 12
   num_threads_per_worker: 2
-  prefetch_factor: 12
+  prefetch_factor: 16
   pin_memory: true
   max_memory_gb: 40
   inter_op_parallelism: 16
@@ -258,7 +258,7 @@ export:
   inference_input_type: "int8"
   inference_output_type: "uint8"
 
-  probability_cutoff: 0.95
+  probability_cutoff: 0.90
   sliding_window_size: 5
   tensor_arena_size: 0  # auto-calculate from exported model
   minimum_esphome_version: "2024.7.0"
@@ -301,8 +301,8 @@ quality:
 # EVALUATION AND METRICS
 # ─────────────────────────────────────────────────────────────────
 evaluation:
-  default_threshold: 0.95       # Match deployment probability_cutoff (legacy name)
-  detection_threshold: 0.95     # Canonical threshold name (alias)
+  default_threshold: 0.90       # Match deployment probability_cutoff (legacy name)
+  detection_threshold: 0.90     # Canonical threshold name (alias)
   n_thresholds: 501
   max_fah: 10.0
   warmup_runs: 10

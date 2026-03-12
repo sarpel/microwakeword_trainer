@@ -30,7 +30,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 | TFLite export | `src/export/tflite.py` (780 lines) | INT8 quantization, dual subgraphs |
 | Data pipeline | `src/data/dataset.py` (962 lines) | RaggedMmap, WakeWordDataset |
 | Speaker clustering | `src/data/clustering.py` (1,212 lines) | ECAPA-TDNN embeddings |
-| Auto-tuning | `src/tuning/autotuner.py` (2333 lines) | MaxQualityAutoTuner: Pareto archive, Thompson sampling, 7 strategy arms |
+| Auto-tuning | `src/tuning/autotuner.py` (2689 lines) | MaxQualityAutoTuner: Pareto archive, Thompson sampling, 7 strategy arms |
 | Evaluation metrics | `src/evaluation/metrics.py` (373 lines) | FAH, ROC-AUC, calibration |
 
 ## CONVENTIONS

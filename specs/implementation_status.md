@@ -111,7 +111,6 @@ microwakeword_trainer is a **production-ready** GPU-accelerated wake word traini
 **Status**: ✅ Complete, tested, documented
 
 ---
-YX|
 #### Critical Bug Fix: Auto-Tuner Weight Serialization (2026-03-10)
 
 **Problem:**

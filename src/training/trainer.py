@@ -52,6 +52,8 @@ class EvaluationMetrics:
         ambient_duration_hours: float = 0.0,
         default_threshold: float = 0.5,
     ):
+        # Initialize validation file paths to None
+        self._val_file_paths: list[str] | None = None
         """Initialize metrics tracker.
 
         Args:
@@ -496,7 +498,7 @@ class Trainer:
         )
         if lazy and not (log_pr_curves or log_roc_curves):
             # Prefer canonical detection_threshold, with backward compat
-            default_threshold = float(self.evaluation_config.get("default_threshold", self.evaluation_config.get("detection_threshold", self.evaluation_config.get("threshold", 0.97))) or 0.97)
+            default_threshold = float(self.evaluation_config.get("detection_threshold", self.evaluation_config.get("default_threshold", self.evaluation_config.get("threshold", 0.97))) or 0.97)
             self.logger.log_info(f"Lazy threshold mode: using default {default_threshold}")
             return [default_threshold]
 

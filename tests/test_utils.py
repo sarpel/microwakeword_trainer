@@ -52,39 +52,47 @@ def tf_non_stream_model_accuracy(flags, folder, time_shift_samples=0, weights_na
     sess = tf.Session(config=config)
     tf.keras.backend.set_session(sess)
 
-    audio_processor = input_data.AudioProcessor(flags)
+    # Preserve original batch size
+    original_batch_size = flags.batch_size
 
-    set_size = audio_processor.set_size("testing")
-    tf.keras.backend.set_learning_phase(0)
-    flags.batch_size = 100  # set batch size for inference
-    set_size = int(set_size / flags.batch_size) * flags.batch_size
-    model = models.MODELS[flags.model_name](flags)
-    model.load_weights(os.path.join(flags.train_dir, weights_name)).expect_partial()
-    total_accuracy = 0.0
-    count = 0.0
-    for i in range(0, set_size, flags.batch_size):
-        test_fingerprints, test_ground_truth = audio_processor.get_data(flags.batch_size, i, flags, 0.0, 0.0, time_shift_samples, "testing", 0.0, 0.0, sess)
+    try:
+        audio_processor = input_data.AudioProcessor(flags)
 
-        predictions = model.predict(test_fingerprints)
-        predicted_labels = np.argmax(predictions, axis=1)
-        total_accuracy = total_accuracy + np.sum(predicted_labels == test_ground_truth)
-        count = count + len(test_ground_truth)
-    total_accuracy = total_accuracy / count if count > 0 else 0.0
+        set_size = audio_processor.set_size("testing")
+        tf.keras.backend.set_learning_phase(0)
+        flags.batch_size = 100  # set batch size for inference
+        set_size = int(set_size / flags.batch_size) * flags.batch_size
+        model = models.MODELS[flags.model_name](flags)
+        model.load_weights(os.path.join(flags.train_dir, weights_name)).expect_partial()
+        total_accuracy = 0.0
+        count = 0.0
+        for i in range(0, set_size, flags.batch_size):
+            test_fingerprints, test_ground_truth = audio_processor.get_data(flags.batch_size, i, flags, 0.0, 0.0, time_shift_samples, "testing", 0.0, 0.0, sess)
 
-    logging.info("TF Final test accuracy on non stream model = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
+            predictions = model.predict(test_fingerprints)
+            predicted_labels = np.argmax(predictions, axis=1)
+            total_accuracy = total_accuracy + np.sum(predicted_labels == test_ground_truth)
+            count = count + len(test_ground_truth)
+        total_accuracy = total_accuracy / count if count > 0 else 0.0
 
-    path = os.path.join(flags.train_dir, folder)
-    if not os.path.exists(path):
-        os.makedirs(path)
+        logging.info("TF Final test accuracy on non stream model = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
 
-    fname_summary = "model_summary_non_stream"
-    utils.save_model_summary(model, path, file_name=fname_summary + ".txt")
+        path = os.path.join(flags.train_dir, folder)
+        if not os.path.exists(path):
+            os.makedirs(path)
 
-    tf.keras.utils.plot_model(model, to_file=os.path.join(path, fname_summary + ".png"), show_shapes=True, expand_nested=True)
+        fname_summary = "model_summary_non_stream"
+        utils.save_model_summary(model, path, file_name=fname_summary + ".txt")
 
-    with open(os.path.join(path, accuracy_name), "wt") as fd:
-        fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
-    sess.close()
+        tf.keras.utils.plot_model(model, to_file=os.path.join(path, fname_summary + ".png"), show_shapes=True, expand_nested=True)
+
+        with open(os.path.join(path, accuracy_name), "wt") as fd:
+            fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
+    finally:
+        # Restore original batch size
+        flags.batch_size = original_batch_size
+        # Always close session
+        sess.close()
     return total_accuracy * 100
 
 
@@ -477,9 +485,12 @@ def convert_model_tflite(flags, folder, mode, fname, weights_name="best_weights"
             fd.write(utils.model_to_tflite(sess, model, flags, mode, path_model, optimizations))
     except IOError as e:
         logging.warning("FAILED to write file: %s", e)
+        raise  # Re-raise to allow caller to detect failure
     except (ValueError, AttributeError, RuntimeError, TypeError) as e:
         logging.warning("FAILED to convert to mode %s, tflite: %s", mode, e)
-    sess.close()
+        raise  # Re-raise to allow caller to detect failure
+    finally:
+        sess.close()
 
 
 def convert_model_saved(flags, folder, mode, weights_name="best_weights"):

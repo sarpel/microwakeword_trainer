@@ -1772,11 +1772,13 @@ Examples:
         else:
             if args.dry_run:
                 logger.info("DRY RUN — skipping extraction (would scan and report)")
+                confidence_threshold = float(args.threshold) if args.threshold is not None else 0.0
+                top_percent = float(args.top_percent) if args.top_percent is not None else 0.0
                 result = {
                     "total_hard_neg_files": 0,
-                    "confidence_threshold": float(args.threshold),
+                    "confidence_threshold": confidence_threshold,
                     "total_false_positives": 0,
-                    "top_percent": float(args.top_percent),
+                    "top_percent": top_percent,
                     "top_fp_count": 0,
                     "files": [],
                 }
