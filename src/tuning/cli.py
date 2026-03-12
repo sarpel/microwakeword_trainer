@@ -288,6 +288,18 @@ def main() -> int:
             recall = result.get("confirmation_best_recall", result.get("best_recall"))
             result_table.add_row("Best FAH", f"{fah:.4f}")
             result_table.add_row("Best Recall", f"{recall:.4f}")
+            cutoff = result.get("recommended_probability_cutoff")
+            cutoff_u8 = result.get("recommended_probability_cutoff_uint8")
+            if cutoff is not None:
+                result_table.add_row(
+                    "Recommended Cutoff",
+                    f"{float(cutoff):.4f} ({cutoff_u8 if cutoff_u8 is not None else 'N/A'})",
+                )
+            int8_fah = result.get("int8_diagnostic_fah")
+            int8_recall = result.get("int8_diagnostic_recall")
+            if int8_fah is not None and int8_recall is not None:
+                result_table.add_row("INT8 FAH (diag)", f"{float(int8_fah):.4f}")
+                result_table.add_row("INT8 Recall (diag)", f"{float(int8_recall):.4f}")
             result_table.add_row("Iterations", str(result["iterations"]))
             result_table.add_row("Notes", "confirmation metrics (failed)")
             result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
@@ -296,6 +308,18 @@ def main() -> int:
         else:
             result_table.add_row("Best FAH", f"{result['best_fah']:.4f}")
             result_table.add_row("Best Recall", f"{result['best_recall']:.4f}")
+            cutoff = result.get("recommended_probability_cutoff")
+            cutoff_u8 = result.get("recommended_probability_cutoff_uint8")
+            if cutoff is not None:
+                result_table.add_row(
+                    "Recommended Cutoff",
+                    f"{float(cutoff):.4f} ({cutoff_u8 if cutoff_u8 is not None else 'N/A'})",
+                )
+            int8_fah = result.get("int8_diagnostic_fah")
+            int8_recall = result.get("int8_diagnostic_recall")
+            if int8_fah is not None and int8_recall is not None:
+                result_table.add_row("INT8 FAH (diag)", f"{float(int8_fah):.4f}")
+                result_table.add_row("INT8 Recall (diag)", f"{float(int8_recall):.4f}")
             result_table.add_row("Iterations", str(result["iterations"]))
             result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
             result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))

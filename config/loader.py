@@ -331,7 +331,7 @@ class ExportConfig:
 
     wake_word: str = "Hey Katya"
     author: str = "Sarpel GURAY"
-    website: str = "https://github.com/sarpel/microwakeword-trainer"
+    website: str = "https://github.com/sarpel/microwakeword-training-platform"
     trained_languages: List[str] = field(default_factory=lambda: ["en"])
     quantize: bool = True
     inference_input_type: str = "int8"

@@ -10,8 +10,8 @@ import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
-# Default tensor arena size in bytes per ARCHITECTURAL_CONSTITUTION.md Article X
-DEFAULT_TENSOR_ARENA_SIZE = 30000
+# Default tensor arena size in bytes (official okay_nabu baseline)
+DEFAULT_TENSOR_ARENA_SIZE = 22860
 
 
 def generate_manifest(
@@ -56,12 +56,12 @@ def generate_manifest(
         "type": "micro",
         "wake_word": export_config.get("wake_word", "Hey Katya"),
         "author": export_config.get("author", "Sarpel GURAY"),
-        "website": export_config.get("website", "https://github.com/sarpel/microwakeword_trainer"),
+        "website": export_config.get("website", "https://github.com/sarpel/microwakeword-training-platform"),
         "model": model_filename,
         "trained_languages": export_config.get("trained_languages", ["en"]),
         "version": 2,
         "micro": {
-            "probability_cutoff": export_config.get("probability_cutoff", 0.97),
+            "probability_cutoff": float(export_config.get("probability_cutoff", 0.97)),
             "sliding_window_size": export_config.get("sliding_window_size", 5),
             "feature_step_size": feature_step_size,
             "tensor_arena_size": arena_size,
@@ -292,30 +292,6 @@ def create_esphome_package(
         config=config,
         tflite_path=tflite_path,
     )
-
-    # Add TFLite analysis results to manifest if provided
-    if analysis_results is not None:
-        # Include key validation metrics in manifest metadata
-        validation = analysis_results.get("validation_results", {})
-        performance = analysis_results.get("performance_estimation", {})
-        architecture = analysis_results.get("architecture_analysis", {})
-
-        manifest["_metadata"] = {
-            "model_valid": analysis_results.get("model_valid"),
-            "analysis": {
-                "layer_count": architecture.get("layer_count"),
-                "operators": architecture.get("operators"),
-                "quantized": architecture.get("has_quantization"),
-                "model_size_kb": performance.get("model_size_kb"),
-                "estimated_latency_ms": performance.get("estimated_latency_ms"),
-                "tensor_arena_estimate_kb": performance.get("tensor_arena_estimate_kb"),
-            },
-            "validation": {
-                "errors": validation.get("errors", []),
-                "warnings": validation.get("warnings", []),
-                "info": validation.get("info", {}),
-            },
-        }
 
     # Save manifest
     manifest_path = str(Path(output_dir) / "manifest.json")

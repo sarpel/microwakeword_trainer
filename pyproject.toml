@@ -195,27 +195,14 @@ filterwarnings = [
     "ignore::DeprecationWarning:tensorflow.*",
     "ignore::FutureWarning:tensorflow.*",
     "ignore::UserWarning:numpy.*",
+    "ignore:cupy\\.cuda\\.MemoryAsyncPool is experimental.*:FutureWarning",
 ]
 
 # =============================================================================
 # COVERAGE CONFIGURATION
 # =============================================================================
 [tool.coverage.run]
-source = [
-    "config.loader",
-    "src.pipeline",
-    "src.tuning.autotuner",
-    "src.tuning.cli",
-    "src.export.manifest",
-    "src.export.model_analyzer",
-    "src.export.verification",
-    "src.model.architecture",
-    "src.model.streaming",
-    "src.utils.performance",
-    "src.utils.performance_monitor",
-    "src.utils.seed",
-    "src.utils.optional_deps",
-]
+source = ["src", "config"]
 branch = true
 parallel = true
 omit = [
@@ -227,6 +214,21 @@ omit = [
 ]
 
 [tool.coverage.report]
+include = [
+    "config/loader.py",
+    "src/pipeline.py",
+    "src/tuning/autotuner.py",
+    "src/tuning/cli.py",
+    "src/export/manifest.py",
+    "src/export/model_analyzer.py",
+    "src/export/verification.py",
+    "src/model/architecture.py",
+    "src/model/streaming.py",
+    "src/utils/performance.py",
+    "src/utils/performance_monitor.py",
+    "src/utils/seed.py",
+    "src/utils/optional_deps.py",
+]
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

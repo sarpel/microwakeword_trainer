@@ -38,13 +38,28 @@ def get_checkpoint_metadata(checkpoint_path: str, pointwise_filters: int = 64) -
     """
     cache_path = Path(checkpoint_path).with_suffix(".metadata.json")
 
+    required_keys = {
+        "temporal_frames",
+        "dense_input_features",
+        "dense_output_features",
+        "pointwise_filters",
+    }
+    cached_extras: dict = {}
+
     # Check cache first
     if cache_path.exists():
         try:
             with open(cache_path, "r") as f:
                 metadata = json.load(f)
-            logger.info(f"Loaded checkpoint metadata from cache: {cache_path}")
-            return metadata
+            if isinstance(metadata, dict):
+                if required_keys.issubset(metadata.keys()):
+                    logger.info(f"Loaded checkpoint metadata from cache: {cache_path}")
+                    return metadata
+                # Keep extra fields (e.g. autotune threshold metadata) and rescan required keys.
+                cached_extras = {k: v for k, v in metadata.items() if k not in required_keys}
+                logger.info(f"Metadata cache missing required keys, rescanning checkpoint: {cache_path}")
+            else:
+                logger.info(f"Metadata cache is not an object, rescanning checkpoint: {cache_path}")
         except Exception as e:
             logger.warning(f"Failed to load metadata cache, will rescan: {e}")
 
@@ -74,6 +89,8 @@ def get_checkpoint_metadata(checkpoint_path: str, pointwise_filters: int = 64) -
         "dense_output_features": int(dense_output_features),
         "pointwise_filters": int(pointwise_filters),
     }
+    if cached_extras:
+        metadata.update(cached_extras)
 
     # Cache for future exports
     try:
@@ -854,9 +871,14 @@ def export_streaming_tflite(
     try:
         from src.export.manifest import create_esphome_package
 
+        manifest_config = _build_manifest_config(config, model_name, metadata)
+        tuned_cutoff = manifest_config.get("export", {}).get("probability_cutoff")
+        if isinstance(tuned_cutoff, float):
+            print(f"  Manifest probability_cutoff: {tuned_cutoff:.4f}")
+
         pkg = create_esphome_package(
             model=None,
-            config={"export": {"wake_word": model_name}},
+            config=manifest_config,
             output_dir=output_dir,
             model_name=model_name,
             tflite_path=str(tflite_file),
@@ -877,6 +899,23 @@ def export_streaming_tflite(
         "model_valid": verification.get("valid", False),
         "verification": verification,
         "size_kb": len(tflite_model) / 1024,
+    }
+
+
+def _build_manifest_config(config: Optional[dict], model_name: str, metadata: dict) -> dict:
+    """Build manifest-relevant config with optional tuned cutoff override."""
+    export_cfg: dict = dict(config.get("export", {}) if isinstance(config, dict) else {})
+    hardware_cfg: dict = dict(config.get("hardware", {}) if isinstance(config, dict) else {})
+
+    tuned_cutoff = metadata.get("tuned_probability_cutoff")
+    if isinstance(tuned_cutoff, (int, float)) and 0.0 < float(tuned_cutoff) <= 1.0:
+        export_cfg["probability_cutoff"] = float(tuned_cutoff)
+
+    export_cfg.setdefault("wake_word", model_name)
+
+    return {
+        "export": export_cfg,
+        "hardware": hardware_cfg,
     }
 
 
@@ -1099,6 +1138,21 @@ def main():
                     "first_conv_kernel": model_cfg.get("first_conv_kernel_size", 5),
                     "stride": model_cfg.get("stride", 3),
                     "mel_bins": yaml_config.get("hardware", {}).get("mel_bins", 40),
+                }
+                export_cfg = yaml_config.get("export", {})
+                config["export"] = {
+                    "wake_word": export_cfg.get("wake_word", args.model_name),
+                    "author": export_cfg.get("author", "Sarpel GURAY"),
+                    "website": export_cfg.get("website", "https://github.com/sarpel/microwakeword-training-platform"),
+                    "trained_languages": export_cfg.get("trained_languages", ["en"]),
+                    "probability_cutoff": export_cfg.get("probability_cutoff", 0.97),
+                    "sliding_window_size": export_cfg.get("sliding_window_size", 5),
+                    "tensor_arena_size": export_cfg.get("tensor_arena_size"),
+                    "minimum_esphome_version": export_cfg.get("minimum_esphome_version", "2024.7.0"),
+                    "arena_size_margin": export_cfg.get("arena_size_margin", 1.3),
+                }
+                config["hardware"] = {
+                    "window_step_ms": yaml_config.get("hardware", {}).get("window_step_ms", 10),
                 }
 
                 # Parse pointwise_filters
