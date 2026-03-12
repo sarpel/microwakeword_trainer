@@ -122,7 +122,7 @@ This means:
 - Representative dataset includes boundary anchors 0.0 and 26.0 for correct INT8 quantization range.
 - Representative dataset requires minimum **500 training samples** with forced min/max boundary anchors (0.0 and 26.0)
 - `model_analyzer.py` can compare models, estimate performance, and generate full reports
-- DEFAULT_TENSOR_ARENA_SIZE = 22860 bytes in manifest.py (add 10% margin to measured value). Official okay_nabu recommended arena = 135,873 bytes (~136KB). Subgraph 0 uses 41,771 bytes, Subgraph 1 uses 3,520 bytes.
+- DEFAULT_TENSOR_ARENA_SIZE = 22860 bytes in manifest.py. Canonical policy: set `export.tensor_arena_size: 0` to auto-resolve from exported model tensor allocations with `arena_size_margin`; keep explicit override for target-specific measurements.
 - Verification also available via `scripts/verify_esphome.py` (standalone, 168 lines)
 
 
@@ -134,7 +134,7 @@ This means:
 - **6 state variables**: stream_0 [1,2,1,40], stream_1 [1,4,1,32], stream_2 [1,10,1,64], stream_3 [1,14,1,64], stream_4 [1,22,1,64], stream_5 [1,5,1,64]
 - **Input**: int8 [1,3,40], scale=0.101961, zero_point=-128
 - **Output**: uint8 [1,1], scale=0.00390625, zero_point=0
-- **Memory**: Subgraph 0 = 41,771 bytes, Subgraph 1 = 3,520 bytes, Recommended arena = 135,873 bytes
+- **Memory**: `tensor_arena_size` is model-dependent and must be >= required arena; use auto-resolution (or explicit measured override).
 ## Related Documentation
 
 - [Export Guide](../../docs/EXPORT.md) - Complete export documentation
