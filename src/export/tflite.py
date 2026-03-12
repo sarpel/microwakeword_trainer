@@ -20,6 +20,7 @@ import numpy as np
 import tensorflow as tf
 
 from src.export.verification import verify_tflite_model
+from src.model.architecture import build_core_layers
 
 logger = logging.getLogger(__name__)
 
@@ -270,22 +271,26 @@ class StreamingExportModel(tf.keras.Model):
         self.residual_connections = residual_connections
         self.mel_bins = mel_bins
 
-        # Initial convolution
-        self.initial_conv = tf.keras.layers.Conv2D(
-            first_conv_filters,
-            (first_conv_kernel, 1),
-            strides=(stride, 1),
-            padding="valid",
-            use_bias=False,
-            name="initial_conv_cell",
+        core_layers = build_core_layers(
+            first_conv_filters=first_conv_filters,
+            first_conv_kernel_size=first_conv_kernel,
+            stride=stride,
+            pointwise_filters=self.pointwise_filters,
+            mixconv_kernel_sizes=self.mixconv_kernel_sizes,
+            repeat_in_block=[1] * len(self.pointwise_filters),
+            residual_connections=self.residual_connections,
+            l2_regularization=0.0,
         )
-        self.initial_relu = tf.keras.layers.ReLU(name="initial_activation")
 
-        # Build MixConv blocks
-        self._build_mixconv_blocks()
+        # Initial convolution and activation (shared factory)
+        self.initial_conv = core_layers["initial_conv_cell"]
+        self.initial_relu = core_layers["initial_relu"]
+
+        # Export model call() expects list[dict] with depthwise/pointwise/bn/relu/residual* keys
+        self.mixconv_layers = [cfg["export_layers"] for cfg in core_layers["blocks"]]
 
         # Output dense layer
-        self.dense = tf.keras.layers.Dense(1, activation="sigmoid", name="layers_dense", dtype=tf.float32)
+        self.dense = core_layers["dense"]
 
         # State variables will be created in build()
         self.state_vars: list[tf.Variable] = []
@@ -293,63 +298,6 @@ class StreamingExportModel(tf.keras.Model):
         self._bn_folded: bool = False
         self._folded_biases: list = []
         self._residual_folded_biases: list = []
-
-    def _build_mixconv_blocks(self):
-        """Build all MixConv blocks with proper naming."""
-        self.mixconv_layers = []
-
-        for i, (filters, kernels) in enumerate(zip(self.pointwise_filters, self.mixconv_kernel_sizes, strict=True)):
-            block_name = f"blocks_residual_block{'_' + str(i) if i > 0 else ''}_mixconvs_mix_conv_block"
-            res_block_name = f"blocks_residual_block{'_' + str(i) if i > 0 else ''}"
-
-            block_layers = {
-                "depthwise_convs": [],
-                "pointwise": None,
-                "bn": None,
-                "relu": None,
-                "residual_proj": None,
-                "residual_bn": None,
-            }
-
-            # Depthwise convs for each kernel size
-            for j, ks in enumerate(kernels):
-                suffix = "" if j == 0 else f"_{j}"
-                dw = tf.keras.layers.DepthwiseConv2D(
-                    (ks, 1),
-                    strides=(1, 1),
-                    padding="valid",
-                    use_bias=False,
-                    name=f"{block_name}_depthwise_convs_depthwise_conv2d{suffix}",
-                )
-                block_layers["depthwise_convs"].append((ks, dw))
-
-            # Pointwise conv
-            block_layers["pointwise"] = tf.keras.layers.Conv2D(
-                filters,
-                (1, 1),
-                use_bias=False,
-                name=f"{block_name}_pointwise",
-            )
-
-            # Batch normalization
-            block_layers["bn"] = tf.keras.layers.BatchNormalization(name=f"{block_name}_bn")
-
-            # ReLU activation
-            block_layers["relu"] = tf.keras.layers.ReLU(name=f"{block_name}_activations_re_lu")
-
-            # Residual projection and BN (if this block uses residual connections)
-            if self.residual_connections[i]:
-                block_layers["residual_proj"] = tf.keras.layers.Conv2D(
-                    filters,
-                    (1, 1),
-                    strides=(1, 1),
-                    padding="same",
-                    use_bias=False,
-                    name=f"{res_block_name}_residual_proj",
-                )
-                block_layers["residual_bn"] = tf.keras.layers.BatchNormalization(name=f"{res_block_name}_residual_bn")
-
-            self.mixconv_layers.append(block_layers)
 
     def build(self, input_shape):
         """Build state variables.
