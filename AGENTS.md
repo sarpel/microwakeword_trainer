@@ -26,7 +26,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 | Training loop | `src/training/trainer.py` (951 lines) | Two-phase, hard negative mining |
 | Mining & FP extraction | `src/training/mining.py` (1859 lines) | Unified: HardExampleMiner, AsyncMiner, FP logging, top-FP extraction, consolidation |
 | Config system | `config/loader.py` (736 lines) | 14 dataclasses, env var substitution |
-| Model architecture | `src/model/architecture.py` (694 lines) | MixedNet, streaming layers |
+| Model architecture | `src/model/architecture.py` (694 lines) | MixedNet, streaming layers, `build_core_layers()` factory |
 | TFLite export | `src/export/tflite.py` (780 lines) | INT8 quantization, dual subgraphs |
 | Data pipeline | `src/data/dataset.py` (962 lines) | RaggedMmap, WakeWordDataset |
 | Speaker clustering | `src/data/clustering.py` (1,212 lines) | ECAPA-TDNN embeddings |
@@ -134,6 +134,7 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 - **Critical Bug Fix** (2026-03-10): Auto-tuner weight serialization now uses `model.get_weights()`/`model.set_weights()` instead of `model.trainable_weights` to include BatchNorm moving statistics. The tuning model runs in NON_STREAM mode (no streaming states), but BatchNorm moving_mean/moving_variance are non-trainable and were lost. Prevents confirmation failures (FAH 0→129).
 - **Two-Stage Checkpoint Strategy** (2026-03-12): Replaced `quality_score`-based checkpoint selection with a principled two-stage approach. Stage 1 (warm-up): saves by PR-AUC (`auc_pr`) until FAH budget is first met. Stage 2 (operational): saves by `recall_at_target_fah` when FAH ≤ `target_fah × 1.1`. `quality_score` is retained for logging/display only. Eliminates arbitrary 0.7/0.3 weights, Lorentzian config-sensitivity, and AGENTS.md/code contradictions. See `src/training/trainer.py::_is_best_model()`.
 - **Ground Truth Audit** (2026-03-12): Verified all documentation against `official_okay_nabu_analysis.txt`. Key corrections: 95 tensors in Subgraph 0 (not 94), 13 unique op types used by okay_nabu, 20 registered op resolvers in ESPHome (not 14), MUL/ADD ops registered but unused. Fixed in ARCHITECTURAL_CONSTITUTION.md and docs/ARCHITECTURE.md.
+- **Pipeline Alignment** (2026-03-12): `build_core_layers()` factory extracted to architecture.py — both `MixedNet` and `StreamingExportModel` use it. `convert_to_tflite()` dead code removed from tflite.py. INT8 shadow evaluation removed from AutoTuner (float32 eval only). PCAN hardcoded ON in pymicro-features C++ backend (no Python flag). All residual_connections defaults aligned to `[0,1,1,1]`.
 
 ### Gotchas
 - **CuPy no CPU fallback**: Must have GPU for training (SpecAugment)
@@ -144,6 +145,7 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 - **Old checkpoint incompatibility**: Checkpoints trained before the Flatten architecture fix (2026-03-11) have Dense layer shape `(64, 1)` and are incompatible with the current export pipeline which expects `(temporal_frames × 64, 1)`. Must retrain with current code.
 - **temporal_frames inference**: Export pipeline infers `temporal_frames = dense_input_features // 64` from checkpoint Dense kernel shape. Dense layer input size = `temporal_frames × 64` (64 = last pointwise filter count).
 - **State variable naming**: Variables are named `stream_0` through `stream_5` (not `stream`, `stream_1`...). The `_0` suffix ensures correct alphabetical ordering in TFLite flatbuffer.
+- **convert_to_tflite() removed**: Legacy function deleted in pipeline-alignment. Use `export_streaming_tflite()` or `convert_model_saved()` instead.
 
 ### Module AGENTS.md Files
 - `src/data/AGENTS.md` - Data pipeline, augmentation, clustering, quality
