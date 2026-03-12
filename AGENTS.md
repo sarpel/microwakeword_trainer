@@ -85,6 +85,10 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 - **Separate data directories**: dataset/ (raw) vs data/processed/ (features)
 - **Quality scoring**: Pre-filtering pipeline (SNR, clipping, WQI)
 
+### PCAN (Per-Channel Normalization)
+- PCAN is always ON in the pymicro-features C++ backend; there is no Python flag to enable or disable.
+- This matches the ESPHome okay_nabu model configuration.
+
 ### Training Pipeline
 - **AsyncHardExampleMiner**: Background hard negative mining (no training interruption)
 - **Two-phase training**: Phase 1 (feature learning) + Phase 2 (fine-tuning)
