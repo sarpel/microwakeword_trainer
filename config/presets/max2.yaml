@@ -290,7 +290,8 @@ quality:
 # EVALUATION AND METRICS
 # ─────────────────────────────────────────────────────────────────
 evaluation:
-  default_threshold: 0.97       # Match deployment probability_cutoff
+  default_threshold: 0.97       # Match deployment probability_cutoff (legacy name)
+  detection_threshold: 0.97     # Canonical threshold name (alias)
   n_thresholds: 501
   max_fah: 10.0
   warmup_runs: 10
