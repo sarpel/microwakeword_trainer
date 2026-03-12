@@ -178,33 +178,74 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
         (1, 5, 1, 64),
     ]
     all_tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
-    observed_state_shapes: list[tuple[int, ...]] = []
-    observed_state_dtypes: list[str] = []  # NEW: Track dtypes
+    observed_state_payload_shapes: list[tuple[int, ...]] = []
+    observed_read_payload_dtypes: list[str] = []
+    observed_read_payload_quantized: list[bool] = []
+    observed_assign_payload_dtypes: list[str] = []
+    observed_assign_payload_quantized: list[bool] = []
 
     for op in ops_details:
         if op.get("op_name") == "READ_VARIABLE":
             out_idx = op["outputs"][0]
             tensor = all_tensors.get(out_idx)
             if tensor is not None:
-                observed_state_shapes.append(tuple(int(v) for v in tensor.get("shape", [])))
-                # NEW: Check dtype
+                observed_state_payload_shapes.append(tuple(int(v) for v in tensor.get("shape", [])))
                 dtype = tensor.get("dtype")
-                observed_state_dtypes.append(str(dtype))
+                observed_read_payload_dtypes.append(str(dtype))
+                quant = tensor.get("quantization_parameters", {}) or {}
+                scales = np.asarray(quant.get("scales", []))
+                zero_points = np.asarray(quant.get("zero_points", []))
+                observed_read_payload_quantized.append(scales.size > 0 and zero_points.size > 0)
+        elif op.get("op_name") == "ASSIGN_VARIABLE":
+            inputs = op.get("inputs", [])
+            if len(inputs) >= 2:
+                payload_idx = inputs[1]
+                tensor = all_tensors.get(payload_idx)
+                if tensor is not None:
+                    dtype = tensor.get("dtype")
+                    observed_assign_payload_dtypes.append(str(dtype))
+                    quant = tensor.get("quantization_parameters", {}) or {}
+                    scales = np.asarray(quant.get("scales", []))
+                    zero_points = np.asarray(quant.get("zero_points", []))
+                    observed_assign_payload_quantized.append(scales.size > 0 and zero_points.size > 0)
 
-    details["observed_state_shapes"] = observed_state_shapes
-    details["observed_state_dtypes"] = observed_state_dtypes
+    details["observed_state_payload_shapes"] = observed_state_payload_shapes
+    details["observed_read_payload_dtypes"] = observed_read_payload_dtypes
+    details["observed_read_payload_quantized"] = observed_read_payload_quantized
+    details["observed_assign_payload_dtypes"] = observed_assign_payload_dtypes
+    details["observed_assign_payload_quantized"] = observed_assign_payload_quantized
 
-    # NEW: Check state variable dtypes are int8 (Article VI compliance)
-    checks["state_dtypes_int8"] = all(dt == "<class 'numpy.int8'>" for dt in observed_state_dtypes)
-    if not checks["state_dtypes_int8"]:
-        errors.append(f"State variables must be int8, got dtypes: {observed_state_dtypes}")
+    checks["state_payload_dtypes_int8"] = all(dt == "<class 'numpy.int8'>" for dt in observed_read_payload_dtypes)
+    checks["state_dtypes_int8"] = checks["state_payload_dtypes_int8"]
+    if not checks["state_payload_dtypes_int8"]:
+        errors.append(f"READ_VARIABLE payload tensors must be int8, got dtypes: {observed_read_payload_dtypes}")
         valid = False
+
+    checks["read_payload_quant_params"] = all(observed_read_payload_quantized) and len(observed_read_payload_quantized) == 6
+    if not checks["read_payload_quant_params"]:
+        errors.append("READ_VARIABLE payload tensors must carry quantization parameters")
+        valid = False
+
+    if observed_assign_payload_dtypes:
+        checks["assign_payload_dtypes_int8"] = all(dt == "<class 'numpy.int8'>" for dt in observed_assign_payload_dtypes)
+        if not checks["assign_payload_dtypes_int8"]:
+            errors.append(f"ASSIGN_VARIABLE payload tensors must be int8, got dtypes: {observed_assign_payload_dtypes}")
+            valid = False
+
+        checks["assign_payload_quant_params"] = all(observed_assign_payload_quantized) and len(observed_assign_payload_quantized) == 6
+        if not checks["assign_payload_quant_params"]:
+            errors.append("ASSIGN_VARIABLE payload tensors must carry quantization parameters")
+            valid = False
+    else:
+        checks["assign_payload_dtypes_int8"] = True
+        checks["assign_payload_quant_params"] = True
+        warnings.append("ASSIGN_VARIABLE payload tensors unavailable from interpreter op details; skipped direct payload validation")
 
     # Check shapes as a set (TFLite graph traversal order for READ_VARIABLE ops
     # is not guaranteed to match variable creation order)
-    checks["state_shapes"] = sorted(observed_state_shapes) == sorted(expected_state_shapes)
+    checks["state_shapes"] = sorted(observed_state_payload_shapes) == sorted(expected_state_shapes)
     if not checks["state_shapes"]:
-        errors.append(f"State tensor shape mismatch: observed={sorted(observed_state_shapes)}, expected={sorted(expected_state_shapes)}")
+        errors.append(f"State payload tensor shape mismatch: observed={sorted(observed_state_payload_shapes)}, expected={sorted(expected_state_shapes)}")
         valid = False
 
     try:

@@ -1041,8 +1041,30 @@ class WakeWordDataset:
             total_elements = features.shape[0]
             time_frames = total_elements // self.feature_dim
             if time_frames * self.feature_dim != total_elements:
-                raise ValueError("Cannot reshape flattened array")
+                # Try to infer the actual stored feature_dim for a helpful error message.
+                # mel_bins=40 is mandatory (ARCHITECTURAL_CONSTITUTION.md).
+                # Common wrong value is 48; check a few candidates to give a clear hint.
+                for candidate in (48, 32, 64, 80):
+                    if total_elements % candidate == 0:
+                        raise ValueError(
+                            f"Stored feature dimension ({candidate}) does not match "
+                            f"configured mel_bins ({self.feature_dim}). "
+                            f"mel_bins={self.feature_dim} is mandatory per ARCHITECTURAL_CONSTITUTION.md. "
+                            f"Re-run preprocessing with the correct mel_bins setting."
+                        )
+                raise ValueError(f"Cannot reshape flattened array of {total_elements} elements using feature_dim={self.feature_dim} (mel_bins={self.feature_dim} is mandatory). Re-run preprocessing.")
             features = features.reshape(time_frames, self.feature_dim)
+
+        # Defensive check: 2-D features must match the configured feature_dim (mel_bins).
+        # Stale preprocessed data (e.g. generated with mel_bins=48) will be caught here
+        # instead of silently producing wrong shapes and cryptic broadcast errors later.
+        if features.ndim == 2 and features.shape[1] != self.feature_dim:
+            raise ValueError(
+                f"Stored feature_dim={features.shape[1]} does not match "
+                f"configured mel_bins={self.feature_dim}. "
+                f"mel_bins={self.feature_dim} is mandatory per ARCHITECTURAL_CONSTITUTION.md. "
+                f"Re-run preprocessing with the correct mel_bins setting."
+            )
 
         current_length = features.shape[0]
         if current_length > max_time_frames:
@@ -1143,6 +1165,8 @@ class WakeWordDataset:
                     )
                     if not added:
                         # Flush and yield the full batch until sample can be added
+                        max_retries = 2  # Prevent infinite loop if buffer is misconfigured
+                        retry_count = 0
                         while True:
                             batch = self._flush_batch()
                             if batch is not None:
@@ -1160,6 +1184,11 @@ class WakeWordDataset:
                                         ground_truth.astype(np.int32, copy=False),
                                         sample_weights,
                                     )
+                                retry_count = 0  # Reset counter after successful flush
+                            else:
+                                retry_count += 1
+                                if retry_count > max_retries:
+                                    raise RuntimeError(f"Failed to add sample after {max_retries} retries. Check batch_size ({self.batch_size}) is positive.")
                             # Retry adding the sample after flushing
                             added = self._add_to_batch(
                                 fixed_feature,

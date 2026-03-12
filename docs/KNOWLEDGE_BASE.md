@@ -129,17 +129,22 @@ The exported TFLite model uses **streaming inference** with ring buffers:
 **6 State Variables (Ring Buffers):**
 | Variable | Shape | Purpose |
 |----------|-------|---------|
-| `stream_0` | [1, 2, 1, 40] | Initial conv buffer |
+| `stream` | [1, 2, 1, 40] | Initial conv buffer |
 | `stream_1` | [1, 4, 1, 32] | MixConv block 0 |
 | `stream_2` | [1, 10, 1, 64] | MixConv block 1 |
 | `stream_3` | [1, 14, 1, 64] | MixConv block 2 |
 | `stream_4` | [1, 22, 1, 64] | MixConv block 3 |
 | `stream_5` | [1, 5, 1, 64] | Temporal flatten buffer |
 
-**Ring Buffer Law:**
+**Convolution-State Ring Buffer Law:**
 ```
 buffer_frames = kernel_size - stride
 ```
+
+This applies to the convolution-derived states `stream` through `stream_4`.
+`stream_5` is a pre-flatten temporal buffer; in the official model it comes
+from `[1, 6, 1, 64] → [1, 5, 1, 64]`, so it must be derived from the graph,
+not assumed from `kernel - stride`.
 
 ### 2.4 Quantization
 
@@ -156,7 +161,7 @@ buffer_frames = kernel_size - stride
 **Critical Export Flags:**
 ```python
 converter.optimizations = {tf.lite.Optimize.DEFAULT}
-converter._experimental_variable_quantization = True  # REQUIRED
+converter._experimental_variable_quantization = True  # REQUIRED for variable payload quantization
 converter.inference_input_type = tf.int8
 converter.inference_output_type = tf.uint8  # MUST be uint8
 ```
@@ -329,7 +334,7 @@ Verification
 **Critical Settings:**
 ```python
 converter.optimizations = {tf.lite.Optimize.DEFAULT}
-converter._experimental_variable_quantization = True  # REQUIRED for state vars
+converter._experimental_variable_quantization = True  # REQUIRED for READ_VARIABLE / ASSIGN_VARIABLE payload tensors
 converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
 converter.inference_input_type = tf.int8
 converter.inference_output_type = tf.uint8  # NOT int8!
@@ -532,13 +537,13 @@ mww-autotune \
 
 **Symptom:** State shapes in wrong order in TFLite
 
-**Root Cause (Fixed 2026-03-10):**
-- TFLite sorts variables alphabetically
-- `stream` vs `stream_1` ordering issue
+**Root Cause (Corrected 2026-03-13):**
+- Earlier documentation assumed the first state had to be renamed for ordering
+- Official `okay_nabu` flatbuffer analysis shows the first state is still named `stream`
 
-**Solution:**
-- Renamed `stream` → `stream_0`
-- Now sorts correctly: `stream_0` < `stream_1` < ...
+**Correct Ground Truth:**
+- Official state names are `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`
+- Do not treat `stream_0` as official architectural truth without direct flatbuffer verification
 
 ---
 

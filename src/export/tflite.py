@@ -544,19 +544,18 @@ class StreamingExportModel(tf.keras.Model):
 def create_representative_dataset(
     config: dict,
     num_samples: int | None = None,
-    temporal_frames: int = 32,  # Added: actual temporal dimension from checkpoint
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset generator for quantization.
 
     Args:
         config: Configuration dict with mel_bins
         num_samples: Number of samples to generate
-        temporal_frames: Temporal dimension for input shape (inferred from checkpoint)
 
     Returns:
         Generator function that yields samples
     """
     mel_bins = int(config.get("mel_bins", 40))
+    stride = int(config.get("stride", 3))
     export_cfg = config.get("export", {})
     raw_num_samples = num_samples if num_samples is not None else export_cfg.get("representative_dataset_size", 1000)
     if raw_num_samples is None:
@@ -565,15 +564,15 @@ def create_representative_dataset(
 
     def representative_dataset_gen():
         # Boundary anchors for correct INT8 quantization range calibration
-        anchor_min = np.zeros((1, temporal_frames, mel_bins), dtype=np.float32)  # 0.0
-        anchor_max = np.full((1, temporal_frames, mel_bins), 26.0, dtype=np.float32)  # 26.0
+        anchor_min = np.zeros((1, stride, mel_bins), dtype=np.float32)  # 0.0
+        anchor_max = np.full((1, stride, mel_bins), 26.0, dtype=np.float32)  # 26.0
         yield [anchor_min]
         yield [anchor_max]
 
         rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
         for _ in range(num_samples):
-            # Shape: (1, temporal_frames, mel_bins) - use actual temporal dimension
-            sample = rng.uniform(0.0, 26.0, (1, temporal_frames, mel_bins)).astype(np.float32)
+            # Shape: (1, stride, mel_bins) - matches streaming model input shape
+            sample = rng.uniform(0.0, 26.0, (1, stride, mel_bins)).astype(np.float32)
             yield [sample]
 
     return representative_dataset_gen
@@ -583,12 +582,11 @@ def create_representative_dataset_from_data(
     config: dict,
     data_dir: str,
     num_samples: int | None = None,
-    temporal_frames: int = 32,  # Added: actual temporal dimension from checkpoint
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset from real training features for quantization.
 
     Loads preprocessed spectrograms from FeatureStore and slices them into
-    temporal_frames-sized chunks. This produces calibration data that matches the
+    stride-sized chunks. This produces calibration data that matches the
     actual feature distribution and model input shape.
 
     Uses ~4000 samples by default — the sweet spot for INT8 calibration quality
@@ -599,7 +597,6 @@ def create_representative_dataset_from_data(
         config: Configuration dict with mel_bins
         data_dir: Path to processed data directory (containing train/ subfolder)
         num_samples: Number of calibration samples to generate (default 4000)
-        temporal_frames: Temporal dimension for input shape (inferred from checkpoint)
 
     Returns:
         Generator function that yields samples
@@ -607,6 +604,7 @@ def create_representative_dataset_from_data(
     from src.data.dataset import FeatureStore
 
     mel_bins = int(config.get("mel_bins", 40))
+    stride = int(config.get("stride", 3))
     export_cfg = config.get("export", {})
     raw_num_samples = num_samples if num_samples is not None else export_cfg.get("representative_dataset_real_size", 4000)
     if raw_num_samples is None:
@@ -616,22 +614,22 @@ def create_representative_dataset_from_data(
 
     if not store_path.exists():
         print(f"  Warning: No training data at {store_path}, falling back to random calibration")
-        return create_representative_dataset(config, num_samples, temporal_frames)
+        return create_representative_dataset(config, num_samples)
 
     store = FeatureStore(store_path)
     try:
         store.open()
     except (FileNotFoundError, OSError) as e:
         print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
-        return create_representative_dataset(config, num_samples, temporal_frames)
+        return create_representative_dataset(config, num_samples)
 
     try:
         n_stored = len(store)
         if n_stored == 0:
             print("  Warning: Feature store is empty, falling back to random calibration")
-            return create_representative_dataset(config, num_samples, temporal_frames)
+            return create_representative_dataset(config, num_samples)
 
-        # Pre-extract temporal_frames-sized chunks from real spectrograms
+        # Pre-extract stride-sized chunks from real spectrograms
         chunks: list[np.ndarray] = []
         rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
         indices = rng.permutation(n_stored)
@@ -646,23 +644,23 @@ def create_representative_dataset_from_data(
                     continue
                 spec = spec.reshape(-1, mel_bins)
             n_frames = spec.shape[0]
-            if n_frames < temporal_frames:
+            if n_frames < stride:
                 continue
-            # Extract non-overlapping temporal_frames-sized chunks from this spectrogram
-            n_possible = n_frames // temporal_frames
+            # Extract non-overlapping stride-sized chunks from this spectrogram
+            n_possible = n_frames // stride
             remaining = num_samples - len(chunks)
             n_to_take = min(n_possible, remaining)
-            starts = np.arange(n_to_take) * temporal_frames
+            starts = np.arange(n_to_take) * stride
             for t in starts:
-                chunk = spec[t : t + temporal_frames].reshape(1, temporal_frames, mel_bins).astype(np.float32)
+                chunk = spec[t : t + stride].reshape(1, stride, mel_bins).astype(np.float32)
                 chunks.append(chunk)
 
         print(f"  Using {len(chunks)} real-data calibration samples")
 
         def representative_dataset_gen():
             # Boundary anchors for correct INT8 quantization range calibration
-            anchor_min = np.zeros((1, temporal_frames, mel_bins), dtype=np.float32)  # 0.0
-            anchor_max = np.full((1, temporal_frames, mel_bins), 26.0, dtype=np.float32)  # 26.0
+            anchor_min = np.zeros((1, stride, mel_bins), dtype=np.float32)  # 0.0
+            anchor_max = np.full((1, stride, mel_bins), 26.0, dtype=np.float32)  # 26.0
             yield [anchor_min]
             yield [anchor_max]
 
@@ -795,14 +793,17 @@ def export_streaming_tflite(
         if quantize:
             converter.optimizations = {tf.lite.Optimize.DEFAULT}
             converter.experimental_enable_resource_variables = True
+            # Quantize the payload tensors flowing through READ_VARIABLE /
+            # ASSIGN_VARIABLE. VAR_HANDLE resource handles themselves are not
+            # quantized payload data.
             converter._experimental_variable_quantization = True
             converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
             converter.inference_input_type = tf.int8
             converter.inference_output_type = tf.uint8
             if data_dir:
-                converter.representative_dataset = create_representative_dataset_from_data(config, data_dir, temporal_frames=temporal_frames)
+                converter.representative_dataset = create_representative_dataset_from_data(config, data_dir)
             else:
-                converter.representative_dataset = create_representative_dataset(config, temporal_frames=temporal_frames)
+                converter.representative_dataset = create_representative_dataset(config)
         else:
             converter.experimental_enable_resource_variables = True
 

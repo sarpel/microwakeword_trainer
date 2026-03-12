@@ -952,10 +952,12 @@ class Trainer:
         is_hard_negative: np.ndarray | None = None,
     ) -> tf.Tensor:
         """Apply class weights to sample weights (GPU-accelerated)."""
-        y_true_t = tf.cast(tf.constant(y_true), tf.float32)
-        sw_t = tf.cast(tf.constant(sample_weights), tf.float32)
+        # Flatten to 1D to avoid SelectV2 broadcastability failures when tensors
+        # arrive with shape (batch, 1) from different code paths (e.g. tfdata prefetch)
+        y_true_t = tf.cast(tf.reshape(tf.constant(y_true), [-1]), tf.float32)
+        sw_t = tf.cast(tf.reshape(tf.constant(sample_weights), [-1]), tf.float32)
         if is_hard_negative is not None:
-            hn_t = tf.cast(tf.constant(is_hard_negative), tf.bool)
+            hn_t = tf.cast(tf.reshape(tf.constant(is_hard_negative), [-1]), tf.bool)
             class_weights = tf.where(
                 y_true_t == 1,
                 positive_weight,

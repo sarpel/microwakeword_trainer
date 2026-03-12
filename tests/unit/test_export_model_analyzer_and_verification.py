@@ -189,12 +189,12 @@ def test_verification_estimate_and_verify(monkeypatch) -> None:
                 {"op_name": "READ_VARIABLE", "outputs": [23]},
                 {"op_name": "READ_VARIABLE", "outputs": [24]},
                 {"op_name": "READ_VARIABLE", "outputs": [25]},
-                {"op_name": "ASSIGN_VARIABLE", "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [11, 20], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [12, 21], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [13, 22], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [14, 23], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [15, 24], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [16, 25], "outputs": [0]},
                 {"op_name": "CONV_2D", "outputs": [0]},
             ]
 
@@ -209,7 +209,18 @@ def test_verification_estimate_and_verify(monkeypatch) -> None:
                 (25, (1, 5, 1, 64)),
             ]
             for idx, shp in expected:
-                details.append({"index": idx, "shape": np.array(shp), "dtype": np.int8, "name": f"state_{idx}"})
+                details.append(
+                    {
+                        "index": idx,
+                        "shape": np.array(shp),
+                        "dtype": np.int8,
+                        "name": f"state_{idx}",
+                        "quantization_parameters": {
+                            "scales": np.array([0.1], dtype=np.float32),
+                            "zero_points": np.array([-128], dtype=np.int32),
+                        },
+                    }
+                )
             details += [
                 {"index": 0, "shape": np.array([1, 3, 40]), "dtype": np.int8, "name": "input"},
                 {"index": 1, "shape": np.array([1, 1]), "dtype": np.uint8, "name": "output"},
@@ -239,3 +250,7 @@ def test_verification_estimate_and_verify(monkeypatch) -> None:
     assert res["checks"]["input_shape"] is True
     assert res["checks"]["output_dtype"] is True
     assert res["checks"]["state_shapes"] is True
+    assert res["checks"]["state_payload_dtypes_int8"] is True
+    assert res["checks"]["read_payload_quant_params"] is True
+    assert res["checks"]["assign_payload_dtypes_int8"] is True
+    assert res["checks"]["assign_payload_quant_params"] is True

@@ -76,7 +76,7 @@ These settings are **required** for ESPHome compatibility:
 ```python
 converter.inference_input_type = tf.int8      # REQUIRED
 converter.inference_output_type = tf.uint8    # MUST be uint8 (not int8!)
-converter._experimental_variable_quantization = True  # REQUIRED for streaming state
+converter._experimental_variable_quantization = True  # REQUIRED for variable payload tensors used by streaming state ops
 ```
 
 Input shape: `[1, 3, 40]` (int8) — stride=3, 40 mel bins
@@ -107,7 +107,7 @@ This means:
 ## Anti-Patterns
 
 - **Don't use int8 output** - ESPHome requires uint8 output tensors
-- **Don't skip `_experimental_variable_quantization`** - Required for streaming state management
+- **Don't skip `_experimental_variable_quantization`** - Required so `READ_VARIABLE` / `ASSIGN_VARIABLE` payload tensors are int8-compatible for streaming state management
 - **Don't use non-streaming models** - Must convert to streaming with `convert_model_saved()` first
 - **Don't forget representative dataset** - Required for INT8 calibration; use real training data if available
 - **Don't use wrong input shape** - Must be [1, stride, mel_bins] for streaming inference
@@ -130,7 +130,7 @@ This means:
 - **95 tensors** in Subgraph 0 (indices 0-94), **12 tensors** in Subgraph 1 (initialization)
 - **13 unique op types**: STRIDED_SLICE(10), CONCATENATION(8), VAR_HANDLE(6), READ_VARIABLE(6), ASSIGN_VARIABLE(6), DEPTHWISE_CONV_2D(6), CONV_2D(5), RESHAPE(2), SPLIT_V(2), CALL_ONCE(1), FULLY_CONNECTED(1), LOGISTIC(1), QUANTIZE(1)
 - **20 op resolvers** registered in ESPHome (MUL/ADD registered but unused in okay_nabu)
-- **6 state variables**: stream_0 [1,2,1,40], stream_1 [1,4,1,32], stream_2 [1,10,1,64], stream_3 [1,14,1,64], stream_4 [1,22,1,64], stream_5 [1,5,1,64]
+- **6 official reference state variables**: stream [1,2,1,40], stream_1 [1,4,1,32], stream_2 [1,10,1,64], stream_3 [1,14,1,64], stream_4 [1,22,1,64], stream_5 [1,5,1,64]
 - **Input**: int8 [1,3,40], scale=0.101961, zero_point=-128
 - **Output**: uint8 [1,1], scale=0.00390625, zero_point=0
 - **Memory**: `tensor_arena_size` is model-dependent and must be >= required arena; use auto-resolution (or explicit measured override).
