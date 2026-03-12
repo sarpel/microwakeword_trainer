@@ -440,10 +440,6 @@ class AutoTuningConfig:
     confirmation_fraction: float = 0.40
     bootstrap_samples: int = 2000
 
-    # INT8 shadow evaluation
-    int8_shadow: bool = True
-    int8_shadow_interval: int = 10
-    require_int8_pass: bool = True
     require_confirmation: bool = True
 
     # Grouping
