@@ -368,7 +368,7 @@ class StreamingExportModel(tf.keras.Model):
         # Create state variables
         for name, shape in state_configs:
             state_var = self.add_weight(
-                name=f"{name}_ring_buffer",
+                name=name,
                 shape=shape,
                 dtype=tf.float32,
                 initializer=tf.keras.initializers.Zeros(),
