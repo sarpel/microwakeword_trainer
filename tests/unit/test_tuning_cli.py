@@ -169,6 +169,7 @@ def test_main_success_and_overrides(monkeypatch, tmp_path: Path) -> None:
     assert at["patience"] == 7
     assert at["max_gradient_steps"] == 123
     assert at["cv_folds"] == 2
+    assert at["int8_shadow"] is False
     assert at["require_confirmation"] is False
 
 

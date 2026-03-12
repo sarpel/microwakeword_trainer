@@ -72,7 +72,9 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 
 **Tensor Shapes**: Training shape is `(clip_duration_ms / window_step_ms, 40)` — e.g., `(100, 40)` for 1000ms clip, `(150, 40)` for 1500ms. Streaming: `[batch, 3, 40]` per step. Channel dim added internally: `[batch, time, 1, features]`.
 
-**Temporal Frames**: Training shape is `(clip_duration_ms / window_step_ms, 40)`. Streaming: `[batch, 3, 40]` per step. The export pipeline infers `temporal_frames = dense_input_features // 64` from checkpoint Dense kernel shape. Dense layer input = `temporal_frames × 64`. Old checkpoints (pre-2026-03-11 Flatten fix) are incompatible with current export.
+**Temporal Frames**: Training shape is `(clip_duration_ms / window_step_ms, 40)`. Streaming: `[batch, 3, 40]` per step. The export pipeline infers `temporal_frames = dense_input_features // 64` from checkpoint Dense kernel shape. Dense layer input = `temporal_frames × 64`.
+
+⚠️ **Checkpoint Compatibility**: Checkpoints created before 2026-03-11 used Flatten() before Dense layer, causing shape mismatches during export. Current export expects GlobalAveragePooling2D or explicit reshape. Export script will raise `ValueError` with details if incompatible checkpoint is detected. To fix: retrain model with updated architecture or manually convert checkpoint (see MIGRATION.md).
 
 **Ring Buffer Law**: `buffer_frames = kernel_size - stride` — inviolable identity from ARCHITECTURAL_CONSTITUTION.md.
 

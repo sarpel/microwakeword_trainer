@@ -97,7 +97,7 @@ paths:
 - Validates against known architectures (defined in loader)
 - `_substitute_env_vars()` and `_resolve_path()` handle all path/env processing
 - **14 dataclass sections**: Hardware, Paths, Training, Model, Augmentation, Performance, SpeakerClustering, HardNegativeMining, Export, Preprocessing, Quality, Evaluation, AutoTune
-- **Removed fields** (pipeline-alignment branch): legacy INT8 shadow evaluation settings were removed from `AutotuningConfig`; AutoTuner now evaluates float32 only.
+- **Removed fields** (pipeline-alignment branch): legacy INT8 shadow evaluation settings (e.g., `int8_shadow_enabled`, `int8_evaluation_threshold`) were removed from `AutoTuneConfig`; AutoTuner now evaluates float32 only.
 - **Recent enhancements** (commit f62bb69a3): Improved configuration validation, better error messages
 
 

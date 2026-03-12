@@ -755,15 +755,16 @@ class TensorBoardLogger:
                             var_name = var.name.replace(":", "_")
                             grad_norm = tf.norm(grad)
                             tf.summary.scalar(f"gradients/norm/{var_name}", grad_norm, step=step)
-
                 # Gradient norm histogram (all gradients flattened)
-                all_grads = tf.concat([tf.reshape(g, [-1]) for g in gradients if g is not None], axis=0)
-                tf.summary.histogram("gradients/all", all_grads, step=step, buckets=50)
+                grad_list = [tf.reshape(g, [-1]) for g in gradients if g is not None]
+                if grad_list:
+                    all_grads = tf.concat(grad_list, axis=0)
+                    tf.summary.histogram("gradients/all", all_grads, step=step, buckets=50)
 
-                # Gradient statistics
-                tf.summary.scalar("gradients/mean", tf.reduce_mean(all_grads), step=step)
-                tf.summary.scalar("gradients/std", tf.math.reduce_std(all_grads), step=step)
-                tf.summary.scalar("gradients/max", tf.reduce_max(tf.abs(all_grads)), step=step)
+                    # Gradient statistics
+                    tf.summary.scalar("gradients/mean", tf.reduce_mean(all_grads), step=step)
+                    tf.summary.scalar("gradients/std", tf.math.reduce_std(all_grads), step=step)
+                    tf.summary.scalar("gradients/max", tf.reduce_max(tf.abs(all_grads)), step=step)
 
         except Exception as e:
             logger.warning(f"Failed to log gradient norms: {e}")

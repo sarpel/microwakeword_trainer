@@ -191,8 +191,10 @@ Config → Trainer.__init__() → _build_model() → train()
 - Two-phase training: typically [20000, 10000] steps with [0.001, 0.0001] LR
 - **Checkpoint selection uses a two-stage strategy** (implemented 2026-03-12):
   - **Stage 1 — Warm-up** (no epoch has yet met the FAH budget): saves by `auc_pr` (PR-AUC) improvement. Threshold-free and robust to class imbalance. Provides a stable training signal before the model learns to meet the FAH constraint.
-  - **Stage 2 — Operational** (≥1 epoch has met FAH ≤ `target_fah × 1.1`): saves by `recall_at_target_fah` improvement, ONLY when the current epoch also meets the FAH budget. Directly maps to production semantics: best recall of all models that deploy within FAH budget.
-  - Transition is automatic via `self.fah_budget_ever_met` flag.
+  - **Stage 2 — Operational** (≥1 epoch has met FAH ≤ `target_fah × 1.1`): saves by `recall_at_target_fah` improvement, ONLY when the current epoch also meets the FAH budget. Directly maps to production semantics: best recall of all models that deploy within FAH budget. **Note**: If no subsequent epochs meet the FAH budget after transition, no new checkpoints will be saved; the best Stage 1 checkpoint remains as fallback.
+  - Transition is automatic and permanent via `self.fah_budget_ever_met` flag (one-way, never reverts to Stage 1).
+  - `target_fah` is configured via `training.target_fah` in config; FAH budget includes 10% tolerance to accommodate training noise.
+  - `recall_at_target_fah` is the recall achieved at the target FAH threshold (see `src/evaluation/metrics.py` for metric definition).
   - `quality_score` (composite) is still computed and logged for display/plateau tracking but no longer drives checkpoint decisions.
   - New instance vars: `best_auc_pr`, `best_constrained_recall`, `fah_budget_ever_met`
 - **Validation file path tracking**: `WakeWordDataset.get_split_file_paths('val')` provides ordered file paths for mapping prediction indices to files. Passed to `Trainer.train()` via `val_file_paths` parameter.

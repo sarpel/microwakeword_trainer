@@ -285,7 +285,6 @@ class OptimizedDataPipeline:
     def create_training_pipeline_with_spec_augment(
         self,
         spec_augment_config: dict,
-        class_weights: dict | None = None,
     ) -> tf.data.Dataset:
         """Create optimized training pipeline with SpecAugment in tf.data graph.
 
@@ -299,8 +298,6 @@ class OptimizedDataPipeline:
                 - freq_mask_max_size: int
                 - freq_mask_count: int
                 - seed: Optional int
-            class_weights: Dict with keys 'positive', 'negative', 'hard_negative'.
-                Defaults to {'positive': 1.0, 'negative': 20.0, 'hard_negative': 40.0}.
 
         Returns:
             tf.data.Dataset yielding (features, labels, sample_weights, is_hard_neg)
@@ -308,11 +305,19 @@ class OptimizedDataPipeline:
         """
         from src.data.spec_augment_tf import batch_spec_augment_tf
 
-        if class_weights is None:
-            class_weights = {"positive": 1.0, "negative": 20.0, "hard_negative": 40.0}
+        # Temporarily disable in-pipeline SpecAugment to avoid double augmentation
+        # since create_training_pipeline may already apply SpecAugment via self.spec_augment_config
+        original_enabled = self.spec_augment_config.get("enabled")
+        self.spec_augment_config["enabled"] = False
 
         # Base training dataset preserving existing cache/shuffle/prefetch behavior.
         ds = self.create_training_pipeline()
+
+        # Restore original SpecAugment enabled state
+        if original_enabled is not None:
+            self.spec_augment_config["enabled"] = original_enabled
+        else:
+            del self.spec_augment_config["enabled"]
 
         def apply_spec_augment(features, labels, sample_weights, *rest):
             augmented = batch_spec_augment_tf(
@@ -326,7 +331,6 @@ class OptimizedDataPipeline:
 
             # Class weights are applied in Trainer._apply_class_weights() (phase-aware).
             # Keep sample_weights passthrough here to avoid double weighting.
-            _ = class_weights
 
             return (augmented, labels, sample_weights) + rest if rest else (augmented, labels, sample_weights)
 

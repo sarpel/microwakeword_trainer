@@ -299,7 +299,7 @@ print('GPU devices:', tf.config.experimental.list_physical_devices('GPU'))
    ```bash
    # Look for multiple CUDA versions
    ls -la /usr/local/ | grep cuda
-   
+
    # Ensure correct version is in PATH
    export PATH=/usr/local/cuda-12.0/bin:$PATH
    export LD_LIBRARY_PATH=/usr/local/cuda-12.0/lib64:$LD_LIBRARY_PATH
@@ -481,10 +481,10 @@ print('Total files:', len(positive))
    # Check that no speaker appears in both train and test
    python -c "
    import json
-   
+
    with open('cluster_output/positive_namelist.json') as f:
        speakers = json.load(f)
-   
+
    # TODO: Compare with actual train/test splits
    print('Files organized by speaker')
    "
@@ -579,7 +579,7 @@ tail -f logs/terminal_*.log
    ```python
    # Add to training script temporarily
    import tensorflow as tf
-   
+
    # Check a few batches
    for batch in dataset.take(10):
        features, labels = batch
@@ -988,7 +988,7 @@ grep -E "(FAH.*0\.0000|FAH.*129|No candidate passed)" tuning_results/autotune.lo
    ```bash
    # Pull the latest code that includes the fix
    git pull origin main
-   
+
    # Verify the fix is in place
    grep -A2 "def _serialize_weights" src/tuning/autotuner.py
    # Should show: weights = model.get_weights()
@@ -1000,17 +1000,17 @@ grep -E "(FAH.*0\.0000|FAH.*129|No candidate passed)" tuning_results/autotune.lo
    ```python
    # Change FROM:
    weights = [w.numpy() for w in model.trainable_weights]
-   
+
    # Change TO:
    weights = model.get_weights()
    ```
-   
+
    And update `_deserialize_weights()`:
    ```python
    # Change FROM:
    for w, val in zip(model.trainable_weights, weights):
        w.assign(val)
-   
+
    # Change TO:
    model.set_weights(weights)
    ```
@@ -1022,7 +1022,7 @@ grep -E "(FAH.*0\.0000|FAH.*129|No candidate passed)" tuning_results/autotune.lo
        --checkpoint checkpoints/best_weights.weights.h5 \
        --config standard \
        --max-iterations 10
-   
+
    # Check that confirmation metrics now match tuning metrics
    ```
 
@@ -1178,7 +1178,7 @@ python scripts/verify_esphome.py official_models/okay_nabu.tflite --verbose
    # ESP32 has limited RAM
    python scripts/verify_esphome.py model.tflite
    # Look for "tensor_arena_size"
-   
+
    # Should be < 30000 for ESP32, < 50000 for ESP32-S3
    ```
 
@@ -1197,7 +1197,7 @@ python scripts/verify_esphome.py official_models/okay_nabu.tflite --verbose
    # In ESPHome config, enable verbose logging
    logger:
      level: VERBOSE
-   
+
    micro_wake_word:
      models:
        - model: wake_word.tflite
@@ -1319,7 +1319,7 @@ python -c "import yaml; yaml.safe_load(open('my_config.yaml'))"
    ```bash
    # Wrong
    mww-train --config standard  # Without .yaml
-   
+
    # Correct
    mww-train --config config/presets/standard.yaml
    # OR use just the name if implemented:
@@ -1332,7 +1332,7 @@ python -c "import yaml; yaml.safe_load(open('my_config.yaml'))"
    training:
      batch_size: 64
    	learning_rate: 0.001  # Tab instead of spaces
-   
+
    # Correct - use spaces only
    training:
      batch_size: 64
@@ -1344,7 +1344,7 @@ python -c "import yaml; yaml.safe_load(open('my_config.yaml'))"
    # Wrong - string instead of list
    training:
      training_steps: "10000, 5000"
-   
+
    # Correct
    training:
      training_steps: [10000, 5000]
@@ -1526,7 +1526,7 @@ python -m cProfile -o profile.stats -m src.training.trainer --config standard
    ```bash
    # Lower threshold = fewer, larger clusters
    mww-cluster-analyze --config standard --threshold 0.65  # Default is 0.70
-   
+
    # Higher threshold = more, smaller clusters
    mww-cluster-analyze --config standard --threshold 0.75
    ```
@@ -1541,7 +1541,7 @@ python -m cProfile -o profile.stats -m src.training.trainer --config standard
    ```bash
    # Always review the report first
    cat cluster_output/positive_cluster_report.txt
-   
+
    # Preview changes
    mww-cluster-apply --namelist cluster_output/positive_namelist.json --dry-run
    ```
@@ -1642,7 +1642,7 @@ python -c "
 import re
 with open('logs/terminal_20260306_061107.log') as f:
     content = f.read()
-    
+
 # Find all FAH values
 fah_values = re.findall(r'FAH:\\s*([0-9.]+)', content)
 print('FAH values:', fah_values[-10:])  # Last 10
@@ -1771,7 +1771,7 @@ When reporting an issue, include:
 | `ImportError: torch` | Switch to PyTorch env: `mww-torch` |
 | `Permission denied` | `chmod +x scripts/*.py` |
 | `Config not found` | Use full path: `config/presets/standard.yaml` |
-|| `Permission denied` | `chmod +x scripts/*.py` |
+
 
 ---
 
@@ -1818,6 +1818,6 @@ When reporting an issue, include:
 **Status:** ✅ Resolved, documented in `specs/implementation_status.md`, `specs/testing_plan.md`
 ---
 
-**Last Updated:** 2026-03-06  
-**Version:** v2.0.0  
+**Last Updated:** 2026-03-06
+**Version:** v2.0.0
 **Maintainer:** Project Team
