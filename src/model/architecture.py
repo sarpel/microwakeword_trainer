@@ -387,6 +387,153 @@ class ResidualBlock(tf.keras.layers.Layer):
 
 
 # =============================================================================
+# SHARED CORE LAYER FACTORY
+# =============================================================================
+
+
+def build_core_layers(
+    first_conv_filters: int,
+    first_conv_kernel_size: int,
+    stride: int,
+    pointwise_filters: list,
+    mixconv_kernel_sizes: list,
+    repeat_in_block: list,
+    residual_connections: list,
+    l2_regularization: float = 0.0001,
+) -> dict:
+    """Create shared core layers for MixedNet and StreamingExportModel.
+
+    Returns a dict with keys:
+      - 'initial_conv_cell': tf.keras.layers.Conv2D (unwrapped) — for StreamingExportModel
+      - 'initial_conv_stream': Stream wrapper — for MixedNet
+      - 'initial_relu': tf.keras.layers.ReLU
+      - 'blocks': list of block configs
+      - 'dense': tf.keras.layers.Dense
+    """
+    num_blocks = len(pointwise_filters)
+    for name, param in [
+        ("repeat_in_block", repeat_in_block),
+        ("mixconv_kernel_sizes", mixconv_kernel_sizes),
+        ("residual_connections", residual_connections),
+    ]:
+        if len(param) != num_blocks:
+            raise ValueError(f"{name} length ({len(param)}) must match pointwise_filters length ({num_blocks})")
+
+    regularizer = tf.keras.regularizers.l2(l2_regularization) if l2_regularization else None
+
+    initial_conv_cell = None
+    initial_conv_stream = None
+    initial_relu = None
+    if first_conv_filters > 0:
+        initial_conv_cell = tf.keras.layers.Conv2D(
+            first_conv_filters,
+            (first_conv_kernel_size, 1),
+            strides=(stride, 1),
+            padding="valid",
+            use_bias=False,
+            kernel_regularizer=regularizer,
+            name="initial_conv_cell",
+        )
+        initial_conv_stream = Stream(
+            cell=tf.keras.layers.Conv2D(
+                first_conv_filters,
+                (first_conv_kernel_size, 1),
+                strides=(stride, 1),
+                padding="valid",
+                use_bias=False,
+                kernel_regularizer=regularizer,
+                name="cell",
+            ),
+            mode=Modes.NON_STREAM_INFERENCE,
+            use_one_step=False,
+            pad_time_dim=None,
+            pad_freq_dim="valid",
+            name="initial_conv_cell",
+        )
+        initial_relu = tf.keras.layers.ReLU(name="initial_relu")
+
+    blocks = []
+    for i, (filters, repeat, ksize, res) in enumerate(
+        zip(
+            pointwise_filters,
+            repeat_in_block,
+            mixconv_kernel_sizes,
+            residual_connections,
+            strict=False,
+        ),
+    ):
+        block_name = "residual_block" if i == 0 else f"residual_block_{i}"
+        block_prefix = f"blocks_{block_name}"
+        residual_block = ResidualBlock(
+            filters=filters,
+            kernel_sizes=ksize,
+            repeat=repeat,
+            use_residual=bool(res),
+            mode=Modes.NON_STREAM_INFERENCE,
+            name=block_prefix,
+        )
+
+        mixconv_prefix = f"{block_prefix}_mixconvs_mix_conv_block"
+        export_layers = {
+            "depthwise_convs": [],
+            "pointwise": tf.keras.layers.Conv2D(
+                filters,
+                (1, 1),
+                use_bias=False,
+                name=f"{mixconv_prefix}_pointwise",
+            ),
+            "bn": tf.keras.layers.BatchNormalization(name=f"{mixconv_prefix}_bn"),
+            "relu": tf.keras.layers.ReLU(name=f"{mixconv_prefix}_activations_re_lu"),
+            "residual_proj": None,
+            "residual_bn": None,
+        }
+
+        kernels = ksize if isinstance(ksize, list) else [ksize]
+        for j, kernel_size in enumerate(kernels):
+            suffix = "" if j == 0 else f"_{j}"
+            export_layers["depthwise_convs"].append(
+                (
+                    kernel_size,
+                    tf.keras.layers.DepthwiseConv2D(
+                        (kernel_size, 1),
+                        strides=(1, 1),
+                        padding="valid",
+                        use_bias=False,
+                        name=f"{mixconv_prefix}_depthwise_convs_depthwise_conv2d{suffix}",
+                    ),
+                )
+            )
+
+        if bool(res):
+            export_layers["residual_proj"] = tf.keras.layers.Conv2D(
+                filters,
+                (1, 1),
+                strides=(1, 1),
+                padding="same",
+                use_bias=False,
+                name=f"{block_prefix}_residual_proj",
+            )
+            export_layers["residual_bn"] = tf.keras.layers.BatchNormalization(name=f"{block_prefix}_residual_bn")
+
+        blocks.append(
+            {
+                "residual_block": residual_block,
+                "export_layers": export_layers,
+            }
+        )
+
+    dense = tf.keras.layers.Dense(1, activation="sigmoid", name="layers_dense", dtype=tf.float32)
+
+    return {
+        "initial_conv_cell": initial_conv_cell,
+        "initial_conv_stream": initial_conv_stream,
+        "initial_relu": initial_relu,
+        "blocks": blocks,
+        "dense": dense,
+    }
+
+
+# =============================================================================
 # MIXEDNET MODEL
 # =============================================================================
 
@@ -419,7 +566,7 @@ class MixedNet(tf.keras.Model):
         pointwise_filters=None,
         mixconv_kernel_sizes=None,
         repeat_in_block=None,
-        residual_connections=[0, 1, 1, 1],
+        residual_connections=None,
         dropout_rate=0.2,
         l2_regularization=0.0001,
         mode=Modes.NON_STREAM_INFERENCE,
@@ -471,47 +618,32 @@ class MixedNet(tf.keras.Model):
         # Input reshape: [batch, time, features] -> [batch, time, 1, features]
         # This adds channel dimension for Conv2D operations
 
+        core_layers = build_core_layers(
+            first_conv_filters=self.first_conv_filters,
+            first_conv_kernel_size=self.first_conv_kernel_size,
+            stride=self.stride,
+            pointwise_filters=self.pointwise_filters,
+            mixconv_kernel_sizes=self.mixconv_kernel_sizes,
+            repeat_in_block=self.repeat_in_block,
+            residual_connections=self.residual_connections,
+            l2_regularization=self.l2_regularization,
+        )
+
         # Initial Conv2D with streaming wrapper
         if self.first_conv_filters > 0:
-            self.initial_conv = Stream(
-                cell=tf.keras.layers.Conv2D(
-                    self.first_conv_filters,
-                    (self.first_conv_kernel_size, 1),
-                    strides=(self.stride, 1),
-                    padding="valid",
-                    use_bias=False,
-                    kernel_regularizer=(tf.keras.regularizers.l2(self.l2_regularization) if self.l2_regularization else None),
-                    name="cell",
-                ),
-                mode=self.mode,
-                use_one_step=False,
-                pad_time_dim=None,
-                pad_freq_dim="valid",
-                name="initial_conv_cell",
-            )
-            self.initial_activation = tf.keras.layers.ReLU(name="initial_relu")
+            initial_stream = core_layers["initial_conv_stream"]
+            if initial_stream is None:
+                raise ValueError("build_core_layers() did not return initial_conv_stream")
+            initial_stream.mode = self.mode
+            self.initial_conv = initial_stream
+            self.initial_activation = core_layers["initial_relu"]
 
         # MixConv blocks
-        self.blocks = []
-        for i, (filters, repeat, ksize, res) in enumerate(
-            zip(
-                self.pointwise_filters,
-                self.repeat_in_block,
-                self.mixconv_kernel_sizes,
-                self.residual_connections,
-                strict=False,
-            ),
-        ):
-            block_name = "residual_block" if i == 0 else f"residual_block_{i}"
-            block = ResidualBlock(
-                filters=filters,
-                kernel_sizes=ksize,
-                repeat=repeat,
-                use_residual=bool(res),
-                mode=self.mode,
-                name=f"blocks_{block_name}",
-            )
-            self.blocks.append(block)
+        self.blocks = [cfg["residual_block"] for cfg in core_layers["blocks"]]
+        for block in self.blocks:
+            block.mode = self.mode
+            for mixconv in block.mixconvs if hasattr(block, "mixconvs") else []:
+                mixconv.mode = self.mode
 
         # Streaming for temporal pooling
         # Calculate ring_buffer_size based on input shape and stride
@@ -545,7 +677,7 @@ class MixedNet(tf.keras.Model):
             self.dropout = None
 
         # Output layer - must be float32 for numerical stability with mixed precision
-        self.output_dense = tf.keras.layers.Dense(1, activation="sigmoid", name="layers_dense", dtype=tf.float32)
+        self.output_dense = core_layers["dense"]
 
         super().build(input_shape)
 
