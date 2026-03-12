@@ -59,6 +59,9 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 - Do not name state variables `stream`, `stream_1`... — use `stream_0` through `stream_5` for correct alphabetical ordering in TFLite flatbuffer
 - Do not assume 14 ESPHome ops — there are 20 registered op resolvers (13 unique ops used by okay_nabu, 7 registered but unused: MUL, ADD, MEAN, AVERAGE_POOL_2D, MAX_POOL_2D, PAD, PACK)
 
+### Shared Layer Factory
+`build_core_layers()` creates shared layer objects for both `MixedNet` (training) and `StreamingExportModel` (export). Takes parameters like `first_conv_filters`, `pointwise_filters`, `mixconv_kernel_sizes`, `residual_connections`, etc. Returns a dict with keys: `initial_conv_cell`, `initial_relu`, `blocks`, `dense`. Stream wrappers and ring buffer states are added by each model class independently.
+
 ## Notes
 
 **Streaming State Variables**: TFLite export creates 6 state vars named `stream_0` through `stream_5` (NOT `stream`, `stream_1`...). The `_0` suffix ensures correct alphabetical ordering in TFLite flatbuffer. State shapes: [1,2,1,40], [1,4,1,32], [1,10,1,64], [1,14,1,64], [1,22,1,64], [1,5,1,64]. Total memory ~3.5KB.

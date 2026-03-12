@@ -117,6 +117,9 @@ This means:
 
 ## Notes
 
+- `convert_to_tflite()` removed (dead code since pipeline-alignment branch) — was wrong approach, missing critical flags. Use `export_streaming_tflite()` for CLI export.
+- `load_weights_from_keras3_checkpoint()`: now validates loaded_count >= 29 — raises ValueError on architecture mismatch.
+- Representative dataset includes boundary anchors 0.0 and 26.0 for correct INT8 quantization range.
 - Representative dataset requires minimum **500 training samples** with forced min/max boundary anchors (0.0 and 26.0)
 - `model_analyzer.py` can compare models, estimate performance, and generate full reports
 - DEFAULT_TENSOR_ARENA_SIZE = 22860 bytes in manifest.py (add 10% margin to measured value). Official okay_nabu recommended arena = 135,873 bytes (~136KB). Subgraph 0 uses 41,771 bytes, Subgraph 1 uses 3,520 bytes.
