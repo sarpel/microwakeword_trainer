@@ -295,7 +295,7 @@ step_train -> step_autotune -> step_export -> step_verify_esphome
 | `create_representative_dataset(...)` | function | Calibration data generator for INT8 quantization |
 | `verify_exported_model(path, config)` | function | Validates subgraphs, dtypes, shapes |
 | `verify_esphome_compatibility(path)` | function | Strict ESPHome format check |
-| `export_to_tflite(checkpoint, config)` | function | Full export: load weights -> stream -> quantize -> verify |
+| `export_streaming_tflite(model, config)` | function | Full export: stream conversion -> quantize -> verify |
 | `calculate_tensor_arena_size(path)` | function | Estimates tensor arena for manifest |
 | `main()` | function | CLI entry point (`mww-export`) |
 

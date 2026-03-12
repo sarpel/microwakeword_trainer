@@ -9,8 +9,7 @@ Note on embedding model choice: This module uses SpeechBrain ECAPA-TDNN embeddin
 (via `extract_speaker_embeddings`) as the primary speaker embedding method. Although
 some guidelines suggest WavLM, ECAPA-TDNN was chosen because it achieves state-of-the-art
 speaker verification performance with lower inference overhead and does not require
-the Hugging Face `transformers` library. A `extract_wavlm_embeddings` compatibility
-wrapper is provided but internally delegates to ECAPA-TDNN.
+the Hugging Face `transformers` library.
 """
 
 import hashlib
@@ -174,41 +173,6 @@ def extract_speaker_embeddings(
             torch.cuda.empty_cache()
 
     return np.concatenate(embeddings, axis=0)
-
-
-def extract_wavlm_embeddings(
-    audio_paths: List[str],
-    model_name: str = "microsoft/wavlm-base-plus",
-    device: Optional[str] = None,
-    batch_size: Optional[int] = None,
-    num_io_workers: int = 8,
-    use_mixed_precision: bool = True,
-) -> np.ndarray:
-    """Extract speaker embeddings using WavLM (legacy wrapper).
-
-    This function is kept for backward compatibility.
-    Use extract_speaker_embeddings() for SpeechBrain ECAPA-TDNN.
-
-    Args:
-        audio_paths: List of paths to audio files
-        model_name: WavLM model name (ignored, kept for compatibility)
-        device: Device to run model on ("cuda" or "cpu"). If None, auto-detect.
-        batch_size: Batch size for processing. If None, auto-detect based on GPU.
-        num_io_workers: Number of parallel I/O workers for audio loading
-        use_mixed_precision: Whether to use FP16 mixed precision on GPU
-
-    Returns:
-        Array of embeddings [n_samples, embedding_dim]
-    """
-    # Redirect to the new SpeechBrain implementation
-    return extract_speaker_embeddings(
-        audio_paths,
-        model_name="speechbrain/ecapa-tdnn-voxceleb",
-        device=device,
-        batch_size=batch_size,
-        num_io_workers=num_io_workers,
-        use_mixed_precision=use_mixed_precision,
-    )
 
 
 def cluster_samples(

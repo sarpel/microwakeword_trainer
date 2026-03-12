@@ -23,7 +23,6 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
 import numpy as np
-from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -288,7 +287,6 @@ def main() -> None:
     hardware_cfg = config.get("hardware", {})
     clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
     window_step_ms = hardware_cfg.get("window_step_ms", 10)
-    mel_bins = hardware_cfg.get("mel_bins", 40)
     max_time_frames = int(clip_duration_ms / window_step_ms)
 
     console.print(Panel.fit("[bold]Wake Word Model Comparison[/bold]", border_style="magenta"))

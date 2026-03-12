@@ -11,8 +11,6 @@ Usage:
 """
 
 import argparse
-import glob
-import os
 import sys
 from pathlib import Path
 
@@ -109,7 +107,7 @@ def main():
                 print(f"  Error deleting {f}: {e}")
         print(f"Deleted {deleted} file(s), freed {total_gb:.2f} GB")
     else:
-        print(f"\nDry run - no files deleted.")
+        print("\nDry run - no files deleted.")
         print(f"To actually delete, run: python {sys.argv[0]} --path {cache_dir} --delete")
 
 

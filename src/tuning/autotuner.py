@@ -8,7 +8,6 @@ acceptance, Pareto archive, INT8 shadow evaluation, and confirmation phase.
 Quality over speed. Time budget does not matter — only final model quality.
 """
 
-
 import contextlib
 import io
 import json
@@ -71,7 +70,7 @@ class TuneMetrics:
     false_negatives: int = 0
     ambient_duration_hours: float = 0.0
 
-    def dominates(self, other: TuneMetrics) -> bool:
+    def dominates(self, other: "TuneMetrics") -> bool:
         """Pareto dominance: self dominates other if better in all objectives."""
         return self.fah <= other.fah and self.recall >= other.recall and self.auc_pr >= other.auc_pr and (self.fah < other.fah or self.recall > other.recall or self.auc_pr > other.auc_pr)
 
@@ -699,11 +698,34 @@ class ThresholdOptimizer:
         target_recall: float,
         cv_folds: int = 5,
         fold_indices: Optional[list] = None,
+        use_binary_search: bool = False,
     ) -> tuple:
-        """3-pass threshold optimization.
+        """Threshold optimization.
+
+        Uses existing 3-pass optimization by default. Optionally enables a
+        fast binary-search path with caching.
 
         Returns: (threshold_float32, threshold_uint8, TuneMetrics)
         """
+        if len(y_true) == 0 or len(y_scores) == 0:
+            logger.warning("Threshold optimization received empty arrays; using default threshold=0.5")
+            best_threshold = 0.5
+            threshold_uint8 = self._float_to_uint8(best_threshold)
+            metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours)
+            return best_threshold, threshold_uint8, metrics
+
+        if use_binary_search:
+            best_threshold = self._optimize_threshold_cached(
+                y_scores=y_scores,
+                y_true=y_true,
+                target_fah=target_fah,
+                val_ambient_duration_hours=ambient_duration_hours,
+            )
+
+            threshold_uint8 = self._float_to_uint8(best_threshold)
+            metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours)
+            return best_threshold, threshold_uint8, metrics
+
         # Pass 1: Coarse quantile sweep
         region = self._coarse_sweep(y_true, y_scores, ambient_duration_hours, target_fah, target_recall)
 
@@ -734,6 +756,142 @@ class ThresholdOptimizer:
 
         return best_threshold, threshold_uint8, metrics
 
+    def _optimize_threshold_binary_search(
+        self,
+        y_scores: np.ndarray,
+        y_true: np.ndarray,
+        target_fah: float,
+        val_ambient_duration_hours: float,
+    ) -> float:
+        """Optimize threshold using binary search instead of linear sweep.
+
+        Reduces coarse threshold evaluations dramatically while preserving
+        objective: maximize recall subject to FAH <= target_fah.
+
+        Args:
+            y_scores: Model prediction scores.
+            y_true: Ground-truth labels.
+            target_fah: Target false accepts per hour.
+            val_ambient_duration_hours: Ambient validation duration in hours.
+
+        Returns:
+            Optimal threshold value.
+        """
+        if len(y_scores) == 0 or len(y_true) == 0:
+            logger.warning("Binary search threshold optimization received empty arrays; using default threshold=0.5")
+            return 0.5
+
+        low, high = 0.0, 1.0
+        labels = (y_true >= 0.5).astype(np.int32)
+        total_positives = int(np.sum(labels == 1))
+
+        best_threshold = 0.5
+        best_metric = float("-inf")
+        lowest_fah = float("inf")
+        lowest_fah_threshold = 1.0
+
+        for iteration in range(15):  # ~3e-5 resolution in [0, 1]
+            mid = (low + high) / 2.0
+            predictions = (y_scores >= mid).astype(np.int32)
+
+            false_positives = int(np.sum((predictions == 1) & (labels == 0)))
+            fah = false_positives / val_ambient_duration_hours if val_ambient_duration_hours > 0 else float("inf")
+
+            true_positives = int(np.sum((predictions == 1) & (labels == 1)))
+            recall = true_positives / total_positives if total_positives > 0 else 0.0
+
+            if fah < lowest_fah:
+                lowest_fah = fah
+                lowest_fah_threshold = mid
+
+            # Maximize recall subject to FAH constraint.
+            if fah <= target_fah:
+                if recall > best_metric:
+                    best_metric = recall
+                    best_threshold = mid
+                # Lower threshold tends to increase recall.
+                high = mid
+            else:
+                # Increase threshold to suppress false accepts.
+                low = mid
+
+            logger.debug(
+                "Binary search iter %d: threshold=%.6f, FAH=%.6f, recall=%.6f",
+                iteration,
+                mid,
+                fah,
+                recall,
+            )
+
+        if best_metric == float("-inf"):
+            logger.warning(
+                "Binary search found no feasible threshold for target_fah=%.6f; falling back to lowest-FAH threshold=%.6f (FAH=%.6f)",
+                target_fah,
+                lowest_fah_threshold,
+                lowest_fah,
+            )
+            best_threshold = lowest_fah_threshold
+            best_metric = 0.0 if total_positives == 0 else best_metric
+
+        logger.info(
+            "Binary search threshold: %.6f (best_recall=%.6f)",
+            best_threshold,
+            best_metric,
+        )
+        return float(best_threshold)
+
+    def _optimize_threshold_cached(
+        self,
+        y_scores: np.ndarray,
+        y_true: np.ndarray,
+        target_fah: float,
+        val_ambient_duration_hours: float,
+    ) -> float:
+        """Optimize threshold with result caching.
+
+        Caches optimization results to avoid recomputing for effectively
+        identical score/label distributions.
+        """
+        if not hasattr(self, "_threshold_cache"):
+            self._threshold_cache = {}
+
+        if len(y_scores) == 0 or len(y_true) == 0:
+            return 0.5
+
+        n_samples = min(1000, len(y_scores))
+        sample_indices = np.linspace(0, len(y_scores) - 1, n_samples, dtype=int)
+        sampled_scores = tuple(np.round(y_scores[sample_indices], 4))
+        sampled_labels = tuple((y_true[sample_indices] >= 0.5).astype(np.int32))
+
+        cache_key = hash(
+            (
+                sampled_scores,
+                sampled_labels,
+                round(float(target_fah), 4),
+                round(float(val_ambient_duration_hours), 4),
+            )
+        )
+
+        if cache_key in self._threshold_cache:
+            logger.info("Using cached threshold optimization result")
+            return float(self._threshold_cache[cache_key])
+
+        result = self._optimize_threshold_binary_search(
+            y_scores=y_scores,
+            y_true=y_true,
+            target_fah=target_fah,
+            val_ambient_duration_hours=val_ambient_duration_hours,
+        )
+
+        self._threshold_cache[cache_key] = float(result)
+
+        if len(self._threshold_cache) > 50:
+            keys = list(self._threshold_cache.keys())
+            for key in keys[: len(keys) // 2]:
+                del self._threshold_cache[key]
+
+        return float(result)
+
     def _coarse_sweep(
         self,
         y_true: np.ndarray,
@@ -750,7 +908,6 @@ class ThresholdOptimizer:
         labels = (y_true >= 0.5).astype(int)
         n_pos = np.sum(labels)
         best_score = -1.0
-        best_threshold = 0.5
         region_low = 0.0
         region_high = 1.0
 
@@ -766,7 +923,6 @@ class ThresholdOptimizer:
                 feasible_thresholds.append((t, recall, fah))
                 if recall > best_score:
                     best_score = recall
-                    best_threshold = t
 
         if feasible_thresholds:
             feas_t = [f[0] for f in feasible_thresholds]
@@ -1270,7 +1426,7 @@ class AutoTuner:
                             self.file_logger.warning(f"Unsupported group_key='{self.group_key}' for autotuner split; falling back to random partition")
                     else:
                         self.file_logger.warning(f"Group metadata length mismatch: file_paths={len(file_paths)} vs labels={len(labels)}; falling back to random partition")
-                except Exception as e:
+                except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
                     self.file_logger.warning(f"Failed loading group metadata for partitioning: {e}")
 
         dataset.close()
@@ -1432,7 +1588,8 @@ class AutoTuner:
         try:
             state = [v.numpy() for v in optimizer.variables]
             return pickle.dumps(state)
-        except Exception:
+        except (AttributeError, TypeError, ValueError, RuntimeError, pickle.PickleError) as e:
+            logger.warning(f"Could not serialize optimizer state, continuing without it: {e}")
             return pickle.dumps([])
 
     def _deserialize_optimizer_state(self, optimizer, state_bytes: bytes):
@@ -1441,8 +1598,8 @@ class AutoTuner:
             if state:
                 for v, val in zip(optimizer.variables, state):
                     v.assign(val)
-        except Exception:
-            pass
+        except (AttributeError, TypeError, ValueError, RuntimeError, EOFError, pickle.PickleError) as e:
+            logger.warning(f"Could not restore optimizer state, continuing without it: {e}")
 
     def _save_bn_state(self, model) -> dict:
         import tensorflow as tf
@@ -1515,7 +1672,6 @@ class AutoTuner:
 
         losses = []
         swa_snapshots = []
-        trainable_vars = model.trainable_variables
         burst_start = time.time()
         last_heartbeat = burst_start
         heartbeat_steps = 500
@@ -1878,7 +2034,7 @@ class AutoTuner:
                 self.file_logger.info(f"INT8 eval: FAH={metrics.fah:.4f}, Recall={metrics.recall:.4f}, Threshold={metrics.threshold:.4f}")
                 return metrics
 
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError, IndexError) as e:
             self.file_logger.error(f"INT8 evaluation failed: {e}")
             return None
 
@@ -2376,7 +2532,7 @@ class AutoTuner:
                 use_sam = arm.use_sam or stir_level >= 2
                 use_swa = arm.use_swa or stir_level >= 1
 
-                stir_info = self._apply_stir(
+                self._apply_stir(
                     model,
                     optimizer,
                     parent,
@@ -2412,7 +2568,7 @@ class AutoTuner:
                 swa_snapshots = burst_info.get("swa_snapshots", [])
                 if swa_snapshots and len(swa_snapshots) >= 2:
                     # Save pre-SWA weights
-                    pre_swa_weights = self._serialize_weights(model)
+                    _ = self._serialize_weights(model)
                     self._apply_swa(model, swa_snapshots)
 
                 # j. Refresh BN statistics

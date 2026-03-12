@@ -24,7 +24,6 @@ Usage:
     mww-mine-hard-negatives consolidate-logs --config standard
 """
 
-
 __all__ = [
     "HardExampleMiner",
     "AsyncHardExampleMiner",
@@ -270,7 +269,7 @@ class HardExampleMiner:
             # Track any entries with missing batch cache (should not happen)
         missing_batch_entries = [entry for entry in sorted_hard if entry[2] not in batch_features_cache]
         if missing_batch_entries:
-            logger.warning(f"Mining: {len(missing_batch_entries)} entries had missing batch cache references. " f"This may indicate a bug in cache eviction logic.")
+            logger.warning(f"Mining: {len(missing_batch_entries)} entries had missing batch cache references. This may indicate a bug in cache eviction logic.")
 
         # Create hard negative records - fetch features from batch cache using batch_id + local_idx
         hard_negative_records = [
@@ -417,16 +416,17 @@ class AsyncHardExampleMiner:
             data_generator: Generator yielding (features, labels, weights) tuples
             epoch: Current training epoch
         """
+        result: dict[str, Any] | None = None
         try:
             result = self._miner.mine_from_dataset(model, data_generator, epoch)
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError) as e:
             logger.exception(f"Mining failed at epoch {epoch}: {e}")
             result = None
         finally:
             # Clean up model to free memory
             try:
                 del model
-            except Exception:
+            except (NameError, UnboundLocalError):
                 pass
             with self._lock:
                 self._result = result
@@ -456,7 +456,7 @@ class AsyncHardExampleMiner:
         try:
             cloned_model = tf.keras.models.clone_model(model)
             cloned_model.set_weights(model.get_weights())
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError) as e:
             logger.exception(f"Model cloning failed: {e}")
             with self._lock:
                 self._result = None
@@ -478,7 +478,7 @@ class AsyncHardExampleMiner:
                 daemon=False,
             )
             self._thread.start()
-        except Exception as e:
+        except RuntimeError as e:
             with self._lock:
                 self._is_running = False
             logger.exception(f"Failed to start mining thread: {e}")
@@ -523,7 +523,7 @@ class AsyncHardExampleMiner:
         """Ensure mining thread is cleaned up on destruction."""
         try:
             self.wait_for_completion(timeout=1.0)
-        except Exception:
+        except (RuntimeError, AttributeError):
             pass  # Ignore errors during cleanup
 
 
@@ -814,7 +814,7 @@ def run_top_fp_extraction(
             features = _pad_or_truncate(features, max_time_frames)
             batch_features.append(features)
             batch_paths.append(str(audio_file))
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError, TypeError) as e:
             logger.warning(f"Failed to process {audio_file}: {e}")
             continue
 
@@ -948,7 +948,7 @@ def move_extracted_files(
                 shutil.move(str(src), str(dst))
                 moved_count += 1
                 print(f"  MOVED: {src} → {dst}  (score={score:.4f})")
-            except Exception as e:
+            except (OSError, shutil.Error) as e:
                 errors.append(f"{src}: {e}")
                 print(f"  ERROR: {src}: {e}")
 
@@ -1401,7 +1401,7 @@ def copy_files_to_mined_dir(
                 shutil.copy2(file_path, dest_path)
                 logger.debug(f"Copied: {file_path} -> {dest_path}")
                 copied += 1
-            except Exception as e:
+            except (OSError, shutil.Error) as e:
                 logger.warning(f"Failed to copy {file_path}: {e}")
                 skipped += 1
 
@@ -1545,7 +1545,7 @@ def mine_from_prediction_logs(
     except json.JSONDecodeError as e:
         console.print(f"[bold red]Error: Invalid JSON in prediction log: {e}[/bold red]")
         return 1
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError, TypeError) as e:
         console.print(f"[bold red]Unexpected error: {e}[/bold red]")
         logger.exception("Full traceback:")
         return 1
@@ -1772,6 +1772,14 @@ Examples:
         else:
             if args.dry_run:
                 logger.info("DRY RUN — skipping extraction (would scan and report)")
+                result = {
+                    "total_hard_neg_files": 0,
+                    "confidence_threshold": float(args.threshold),
+                    "total_false_positives": 0,
+                    "top_percent": float(args.top_percent),
+                    "top_fp_count": 0,
+                    "files": [],
+                }
             else:
                 result = run_top_fp_extraction(
                     config,

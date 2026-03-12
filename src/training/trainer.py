@@ -10,8 +10,10 @@ Step-based training loop with:
 
 import os
 import sys
+import threading
 import time
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -356,12 +358,12 @@ class Trainer:
         self.eval_plateau_slope_eps = float(self.evaluation_config.get("plateau_slope_eps", 0.0001) or 0.0001)
         self._eval_history: list[tuple[int, dict[str, float]]] = []
         self.train_metrics = TrainingMetrics(
-            cutoffs=self._get_cutoffs(),
+            cutoffs=self._get_cutoffs(lazy=True),
             ambient_duration_hours=self.ambient_duration_hours,
             default_threshold=default_threshold,
         )
         self.val_metrics = TrainingMetrics(
-            cutoffs=self._get_cutoffs(),
+            cutoffs=self._get_cutoffs(lazy=True),
             ambient_duration_hours=self.val_ambient_duration_hours,
             default_threshold=default_threshold,
         )
@@ -402,6 +404,7 @@ class Trainer:
         self.tensorboard_log_histograms = bool(performance.get("tensorboard_log_histograms", True))
         self.tensorboard_log_images = bool(performance.get("tensorboard_log_images", True))
         self.tensorboard_log_pr_curves = bool(performance.get("tensorboard_log_pr_curves", True))
+        self.tensorboard_log_roc_curves = bool(performance.get("tensorboard_log_roc_curves", True))
         self.tensorboard_log_graph = bool(performance.get("tensorboard_log_graph", True))
         self.tensorboard_log_advanced_scalars = bool(performance.get("tensorboard_log_advanced_scalars", True))
         self.tensorboard_log_weight_histograms = bool(performance.get("tensorboard_log_weight_histograms", False))
@@ -463,13 +466,49 @@ class Trainer:
             self._phase_boundaries.append(cumulative)
         self._cached_phase: int = -1
         self._cached_phase_settings: dict[str, Any] = {}
+        self._validation_executor = ThreadPoolExecutor(max_workers=1)
+        self._pending_validation = None
+        self._validation_lock = threading.Lock()
+        self._async_early_stop_requested = False
+        self._use_compiled_train_on_batch = True
 
-    def _get_cutoffs(self) -> list[float]:
-        """Generate cutoff thresholds for evaluation metrics."""
+    def _get_cutoffs(self, lazy: bool = True) -> list[float]:
+        """Generate cutoff thresholds for evaluation metrics.
+
+        Args:
+            lazy: If True, only compute thresholds when needed for TensorBoard curves.
+                Returns single default threshold for FAH calculation.
+        """
         n_thresholds = int(self.evaluation_config.get("n_thresholds", 101) or 101)
         if n_thresholds < 2:
             n_thresholds = 2
+
+        log_pr_curves = getattr(
+            self,
+            "tensorboard_log_pr_curves",
+            bool(self.config.get("performance", {}).get("tensorboard_log_pr_curves", True)),
+        )
+        log_roc_curves = getattr(
+            self,
+            "tensorboard_log_roc_curves",
+            bool(self.config.get("performance", {}).get("tensorboard_log_roc_curves", True)),
+        )
+        if lazy and not (log_pr_curves or log_roc_curves):
+            default_threshold = float(self.evaluation_config.get("threshold", 0.5) or 0.5)
+            self.logger.log_info(f"Lazy threshold mode: using default {default_threshold}")
+            return [default_threshold]
+
         return np.linspace(0.0, 1.0, n_thresholds).tolist()
+
+    @tf.function(jit_compile=True)
+    def _compiled_train_on_batch(self, features, labels, sample_weights):
+        """XLA-compiled training step wrapper around train_on_batch."""
+        return self.model.train_on_batch(
+            features,
+            labels,
+            sample_weight=sample_weights,
+            return_dict=True,
+        )
 
     def _init_tensorboard_logger(self, log_dir: Path) -> None:
         if not self.tensorboard_enabled:
@@ -1110,12 +1149,26 @@ class Trainer:
             is_hard_negative=is_hard_negative,
         )
 
-        result = self.model.train_on_batch(
-            train_fingerprints,
-            tf.reshape(train_ground_truth, [-1, 1]),
-            sample_weight=combined_weights,
-            return_dict=True,
-        )
+        labels = tf.reshape(train_ground_truth, [-1, 1])
+        if self._use_compiled_train_on_batch:
+            try:
+                result = self._compiled_train_on_batch(train_fingerprints, labels, combined_weights)
+            except Exception as exc:
+                self._use_compiled_train_on_batch = False
+                self.logger.log_warning(f"XLA train_on_batch disabled due to incompatibility: {exc}")
+                result = self.model.train_on_batch(
+                    train_fingerprints,
+                    labels,
+                    sample_weight=combined_weights,
+                    return_dict=True,
+                )
+        else:
+            result = self.model.train_on_batch(
+                train_fingerprints,
+                labels,
+                sample_weight=combined_weights,
+                return_dict=True,
+            )
 
         # Build metrics dict
         metrics_dict: dict[str, float] = {}
@@ -1131,13 +1184,19 @@ class Trainer:
                 metrics_dict[name] = value
         return metrics_dict
 
-    def _process_validation_chunk(self, chunk_scores: list[tf.Tensor], chunk_labels: list[tf.Tensor]) -> None:
+    def _process_validation_chunk(
+        self,
+        metrics_tracker: TrainingMetrics,
+        chunk_scores: list[tf.Tensor],
+        chunk_labels: list[tf.Tensor],
+    ) -> None:
         """Process a chunk of validation data to update metrics incrementally.
 
         This method concatenates the accumulated chunk tensors, converts to numpy,
         updates the validation metrics, and clears the chunk lists to free memory.
 
         Args:
+            metrics_tracker: Metrics accumulator to update
             chunk_scores: List of score tensors from model predictions
             chunk_labels: List of label tensors
         """
@@ -1148,8 +1207,143 @@ class Trainer:
         labels_all = tf.concat(chunk_labels, axis=0)
         scores_np = scores_all.numpy()
         labels_np = labels_all.numpy()
-        self.val_metrics.update(labels_np, scores_np)
+        metrics_tracker.update(labels_np, scores_np)
         del scores_all, labels_all, scores_np, labels_np
+
+    def _validate_with_model(
+        self,
+        model: tf.keras.Model,
+        data_generator,
+        chunk_size: int = 2000,
+    ) -> tuple[dict[str, float], TrainingMetrics, list[int], list[str]]:
+        """Validate using a provided model and return detached validation artifacts."""
+        metrics_tracker = TrainingMetrics(
+            cutoffs=list(self.val_metrics.cutoffs),
+            ambient_duration_hours=self.val_ambient_duration_hours,
+            default_threshold=self.val_metrics.default_threshold,
+        )
+
+        iterator = data_generator() if callable(data_generator) else data_generator
+        if not isinstance(iterator, Iterable):
+            raise ValueError("Trainer.validate() expected an iterable or generator from data_generator")
+
+        score_samples: list[float] = []
+        score_sample_limit = 2000
+        chunk_scores: list[tf.Tensor] = []
+        chunk_labels: list[tf.Tensor] = []
+        total_samples = 0
+        last_val_paths: list[str] = self._val_file_paths or []
+        last_val_raw_labels: list[int] = []
+
+        for batch in iterator:
+            if not isinstance(batch, tuple) or len(batch) != 3:
+                raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
+            fingerprints, ground_truth, metadata = batch
+            predictions = model(fingerprints, training=False)
+
+            if predictions.ndim == 2 and predictions.shape[1] > 1:
+                scores = predictions[:, 1]
+            else:
+                scores = tf.reshape(predictions, [-1])
+
+            chunk_scores.append(scores)
+            chunk_labels.append(tf.cast(ground_truth, tf.int32))
+            total_samples += len(scores)
+            if isinstance(metadata, dict) and "raw_labels" in metadata:
+                raw_labels = metadata["raw_labels"]
+                if isinstance(raw_labels, list):
+                    last_val_raw_labels.extend(raw_labels)
+                else:
+                    last_val_raw_labels.extend(np.asarray(raw_labels).ravel().tolist())
+            else:
+                last_val_raw_labels.extend(np.asarray(ground_truth).ravel().tolist())
+
+            if total_samples >= chunk_size:
+                self._process_validation_chunk(metrics_tracker, chunk_scores, chunk_labels)
+                chunk_scores = []
+                chunk_labels = []
+                total_samples = 0
+
+        if chunk_scores:
+            self._process_validation_chunk(metrics_tracker, chunk_scores, chunk_labels)
+
+        if score_sample_limit > 0 and metrics_tracker.all_y_scores:
+            all_scores_np = np.array(metrics_tracker.all_y_scores)
+            sample_count = min(score_sample_limit, all_scores_np.shape[0])
+            if sample_count < all_scores_np.shape[0]:
+                rng = np.random.default_rng(seed=42)
+                indices = rng.choice(all_scores_np.shape[0], size=sample_count, replace=False)
+                score_samples = all_scores_np[indices].tolist()
+            else:
+                score_samples = all_scores_np.tolist()
+
+        metrics = metrics_tracker.compute_metrics()
+        if metrics_tracker.all_y_true:
+            y_true = np.array(metrics_tracker.all_y_true)
+            y_score = np.array(metrics_tracker.all_y_scores)
+            pos_count = int(np.sum(y_true == 1))
+            neg_count = int(np.sum(y_true == 0))
+            total_count = int(y_true.shape[0])
+            metrics["val_positive_count"] = float(pos_count)
+            metrics["val_negative_count"] = float(neg_count)
+            metrics["val_total_count"] = float(total_count)
+            metrics["score_mean"] = float(np.mean(y_score))
+            metrics["score_std"] = float(np.std(y_score))
+            metrics["score_median"] = float(np.median(y_score))
+            try:
+                metrics["brier_score"] = compute_brier_score(y_true, y_score)
+            except ValueError as exc:
+                self.logger.log_warning(f"Brier score computation skipped: {exc}")
+            if len(np.unique(y_true)) >= 2 and len(metrics_tracker.cutoffs) >= 2:
+                calc = MetricsCalculator(
+                    y_true=y_true,
+                    y_score=y_score,
+                    ambient_duration_hours=self.val_ambient_duration_hours,
+                )
+                curves = calc.compute_roc_pr_curves(n_thresholds=len(metrics_tracker.cutoffs))
+                fpr = curves["fpr"]
+                tpr = curves["tpr"]
+                thresholds = curves["thresholds"]
+                if fpr.size > 0:
+                    fnr = 1.0 - tpr
+                    idx = int(np.argmin(np.abs(fpr - fnr)))
+                    metrics["eer"] = float(fpr[idx])
+                    metrics["eer_threshold"] = float(thresholds[idx])
+        if score_samples:
+            scores_arr = np.array(score_samples, dtype=np.float32)
+            metrics["score_min"] = float(np.min(scores_arr))
+            metrics["score_p05"] = float(np.percentile(scores_arr, 5))
+            metrics["score_p50"] = float(np.percentile(scores_arr, 50))
+            metrics["score_p95"] = float(np.percentile(scores_arr, 95))
+            metrics["score_max"] = float(np.max(scores_arr))
+            metrics["score_sample_count"] = float(scores_arr.shape[0])
+
+        if self.val_ambient_duration_hours > 0 and self.eval_target_fah > 0 and metrics_tracker.all_y_true:
+            calc = MetricsCalculator(
+                y_true=np.array(metrics_tracker.all_y_true),
+                y_score=np.array(metrics_tracker.all_y_scores),
+                ambient_duration_hours=self.val_ambient_duration_hours,
+            )
+            recall_at_fah, threshold_at_fah, _ = calc.compute_recall_at_target_fah(
+                ambient_duration_hours=self.val_ambient_duration_hours,
+                target_fah=self.eval_target_fah,
+                n_thresholds=len(metrics_tracker.cutoffs),
+            )
+            metrics["recall_at_target_fah"] = float(recall_at_fah)
+            metrics["threshold_for_target_fah"] = float(threshold_at_fah)
+            metrics["operating_threshold"] = float(threshold_at_fah)
+            metrics["operating_recall"] = float(recall_at_fah)
+            metrics["operating_target_fah"] = float(self.eval_target_fah)
+
+            fah_at_recall, threshold_at_recall, _ = calc.compute_fah_at_target_recall(
+                ambient_duration_hours=self.val_ambient_duration_hours,
+                target_recall=self.eval_target_recall,
+                n_thresholds=len(metrics_tracker.cutoffs),
+            )
+            metrics["fah_at_target_recall"] = float(fah_at_recall)
+            metrics["threshold_for_target_recall"] = float(threshold_at_recall)
+
+        return metrics, metrics_tracker, last_val_raw_labels, last_val_paths
 
     def validate(self, data_generator, chunk_size: int = 2000) -> dict[str, float]:
         """Validate model on validation set with chunked processing to limit memory.
@@ -1168,140 +1362,201 @@ class Trainer:
             Dictionary of validation metrics
         """
         assert self.model is not None, "validate called before model was built"
-        # Accept both a callable factory and a plain generator
-        self.val_metrics.reset()
-
-        iterator = data_generator() if callable(data_generator) else data_generator
-        if not isinstance(iterator, Iterable):
-            raise ValueError("Trainer.validate() expected an iterable or generator from data_generator")
-
-        batch_count = 0
-        score_samples: list[float] = []
-        score_sample_limit = 2000
-        # Use chunked processing to limit peak memory during validation
-        chunk_scores: list[tf.Tensor] = []
-        chunk_labels: list[tf.Tensor] = []
-        total_samples = 0
-        self._last_val_paths: list[str] = self._val_file_paths or []  # Use pre-loaded paths if available
-        self._last_val_raw_labels: list[int] = []
-        for batch in iterator:
-            if not isinstance(batch, tuple) or len(batch) != 3:
-                raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
-            fingerprints, ground_truth, metadata = batch
-            # Get predictions (TF-only; materialize once at end)
-            predictions = self.model(fingerprints, training=False)
-
-            # Handle both binary [N] and multi-class [N, C] output shapes.
-            # For multi-class (softmax), column 1 is the positive-class probability.
-            if predictions.ndim == 2 and predictions.shape[1] > 1:
-                scores = predictions[:, 1]
-            else:
-                scores = tf.reshape(predictions, [-1])
-
-            chunk_scores.append(scores)
-            chunk_labels.append(tf.cast(ground_truth, tf.int32))
-            total_samples += len(scores)
-            # File paths are now pre-loaded via val_file_paths (populated from dataset.get_split_file_paths)
-            # Legacy metadata-based path collection removed — was always broken (metadata was sample_weights numpy array)
-            if isinstance(metadata, dict) and "raw_labels" in metadata:
-                raw_labels = metadata["raw_labels"]
-                if isinstance(raw_labels, list):
-                    self._last_val_raw_labels.extend(raw_labels)
-                else:
-                    self._last_val_raw_labels.extend(np.asarray(raw_labels).ravel().tolist())
-            else:
-                self._last_val_raw_labels.extend(np.asarray(ground_truth).ravel().tolist())
-            batch_count += 1
-
-            # Process chunk when it reaches size limit to free memory
-            if total_samples >= chunk_size:
-                self._process_validation_chunk(chunk_scores, chunk_labels)
-                chunk_scores = []
-                chunk_labels = []
-                total_samples = 0
-
-        # Process final chunk
-        if chunk_scores:
-            self._process_validation_chunk(chunk_scores, chunk_labels)
-
-        # Collect score samples for statistics (limited to avoid memory issues)
-        if score_sample_limit > 0 and self.val_metrics.all_y_scores:
-            all_scores_np = np.array(self.val_metrics.all_y_scores)
-            sample_count = min(score_sample_limit, all_scores_np.shape[0])
-            if sample_count < all_scores_np.shape[0]:
-                rng = np.random.default_rng(seed=42)
-                indices = rng.choice(all_scores_np.shape[0], size=sample_count, replace=False)
-                score_samples = all_scores_np[indices].tolist()
-            else:
-                score_samples = all_scores_np.tolist()
-
-        metrics = self.val_metrics.compute_metrics()
-        if self.val_metrics.all_y_true:
-            y_true = np.array(self.val_metrics.all_y_true)
-            y_score = np.array(self.val_metrics.all_y_scores)
-            pos_count = int(np.sum(y_true == 1))
-            neg_count = int(np.sum(y_true == 0))
-            total_count = int(y_true.shape[0])
-            metrics["val_positive_count"] = float(pos_count)
-            metrics["val_negative_count"] = float(neg_count)
-            metrics["val_total_count"] = float(total_count)
-            metrics["score_mean"] = float(np.mean(y_score))
-            metrics["score_std"] = float(np.std(y_score))
-            metrics["score_median"] = float(np.median(y_score))
-            try:
-                metrics["brier_score"] = compute_brier_score(y_true, y_score)
-            except ValueError as exc:
-                self.logger.log_warning(f"Brier score computation skipped: {exc}")
-            if len(np.unique(y_true)) >= 2:
-                calc = MetricsCalculator(
-                    y_true=y_true,
-                    y_score=y_score,
-                    ambient_duration_hours=self.val_ambient_duration_hours,
-                )
-                curves = calc.compute_roc_pr_curves(n_thresholds=len(self.val_metrics.cutoffs))
-                fpr = curves["fpr"]
-                tpr = curves["tpr"]
-                thresholds = curves["thresholds"]
-                if fpr.size > 0:
-                    fnr = 1.0 - tpr
-                    idx = int(np.argmin(np.abs(fpr - fnr)))
-                    metrics["eer"] = float(fpr[idx])
-                    metrics["eer_threshold"] = float(thresholds[idx])
-        if score_samples:
-            scores_arr = np.array(score_samples, dtype=np.float32)
-            metrics["score_min"] = float(np.min(scores_arr))
-            metrics["score_p05"] = float(np.percentile(scores_arr, 5))
-            metrics["score_p50"] = float(np.percentile(scores_arr, 50))
-            metrics["score_p95"] = float(np.percentile(scores_arr, 95))
-            metrics["score_max"] = float(np.max(scores_arr))
-            metrics["score_sample_count"] = float(scores_arr.shape[0])
-
-        if self.val_ambient_duration_hours > 0 and self.eval_target_fah > 0:
-            calc = MetricsCalculator(
-                y_true=np.array(self.val_metrics.all_y_true),
-                y_score=np.array(self.val_metrics.all_y_scores),
-                ambient_duration_hours=self.val_ambient_duration_hours,
-            )
-            recall_at_fah, threshold_at_fah, _ = calc.compute_recall_at_target_fah(
-                ambient_duration_hours=self.val_ambient_duration_hours,
-                target_fah=self.eval_target_fah,
-                n_thresholds=len(self.val_metrics.cutoffs),
-            )
-            metrics["recall_at_target_fah"] = float(recall_at_fah)
-            metrics["threshold_for_target_fah"] = float(threshold_at_fah)
-            metrics["operating_threshold"] = float(threshold_at_fah)
-            metrics["operating_recall"] = float(recall_at_fah)
-            metrics["operating_target_fah"] = float(self.eval_target_fah)
-
-            fah_at_recall, threshold_at_recall, _ = calc.compute_fah_at_target_recall(
-                ambient_duration_hours=self.val_ambient_duration_hours,
-                target_recall=self.eval_target_recall,
-                n_thresholds=len(self.val_metrics.cutoffs),
-            )
-            metrics["fah_at_target_recall"] = float(fah_at_recall)
-            metrics["threshold_for_target_recall"] = float(threshold_at_recall)
-
+        metrics, metrics_tracker, last_val_raw_labels, last_val_paths = self._validate_with_model(
+            model=self.model,
+            data_generator=data_generator,
+            chunk_size=chunk_size,
+        )
+        self.val_metrics = metrics_tracker
+        self._last_val_raw_labels = last_val_raw_labels
+        self._last_val_paths = last_val_paths
         return metrics
+
+    def _compute_metrics_background(self, step: int, weights_snapshot: list[np.ndarray], val_data_factory) -> dict[str, Any]:
+        """Run validation in background on a cloned model with copied weights."""
+        assert self.model is not None, "_compute_metrics_background called before model was built"
+        eval_model = keras.models.clone_model(self.model)
+        _ = eval_model(tf.zeros((1, *self.input_shape), dtype=tf.float32), training=False)
+        eval_model.set_weights(weights_snapshot)
+        metrics, metrics_tracker, last_val_raw_labels, last_val_paths = self._validate_with_model(
+            model=eval_model,
+            data_generator=val_data_factory,
+        )
+        return {
+            "step": step,
+            "metrics": metrics,
+            "metrics_tracker": metrics_tracker,
+            "last_val_raw_labels": last_val_raw_labels,
+            "last_val_paths": last_val_paths,
+        }
+
+    def _schedule_validation(
+        self,
+        step: int,
+        basic_due: bool,
+        advanced_due: bool,
+        total_steps: int,
+        val_data_factory,
+        mining_data_factory,
+    ) -> bool:
+        """Schedule validation work in background when no job is currently pending."""
+        assert self.model is not None, "_schedule_validation called before model was built"
+        with self._validation_lock:
+            if self._pending_validation is not None and not self._pending_validation["future"].done():
+                return False
+
+            try:
+                self._swap_to_ema_weights()
+                weights_snapshot = [np.array(w, copy=True) for w in self.model.get_weights()]
+            except Exception as exc:
+                self.logger.log_warning(f"Async validation scheduling failed during EMA snapshot: {exc}")
+                self._restore_training_weights()
+                return False
+            finally:
+                self._restore_training_weights()
+
+            try:
+                future = self._validation_executor.submit(
+                    self._compute_metrics_background,
+                    step,
+                    weights_snapshot,
+                    val_data_factory,
+                )
+            except Exception as exc:
+                self.logger.log_warning(f"Async validation scheduling failed: {exc}")
+                return False
+
+            self._pending_validation = {
+                "future": future,
+                "step": step,
+                "basic_due": basic_due,
+                "advanced_due": advanced_due,
+                "total_steps": total_steps,
+                "val_data_factory": val_data_factory,
+                "mining_data_factory": mining_data_factory,
+            }
+            return True
+
+    def _handle_validation_results(
+        self,
+        val_metrics: dict[str, float],
+        step: int,
+        total_steps: int,
+        basic_due: bool,
+        advanced_due: bool,
+        val_data_factory,
+        mining_data_factory,
+    ) -> None:
+        """Consume completed validation metrics (logging/checkpointing/mining)."""
+        val_metrics = self._augment_quality_metrics(val_metrics, step)
+
+        if advanced_due and self._check_and_act_on_plateau(val_metrics, step):
+            self._save_checkpoint(val_metrics, is_best=False, reason="early_stop_plateau")
+            self._async_early_stop_requested = True
+            return
+
+        if basic_due:
+            self.logger.log_validation_results(val_metrics, step, total_steps)
+
+        if advanced_due and self.eval_confusion_matrix_interval and step % self.eval_confusion_matrix_interval == 0:
+            tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
+            self.logger.log_confusion_matrix(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
+            self.logger.log_per_class_analysis(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
+
+        if self.tensorboard_writer is not None:
+            self._log_tensorboard_metrics("val", val_metrics, step, self._tb_val_metric_keys)
+            self.tensorboard_writer.flush()
+        if advanced_due and self.tensorboard_logger is not None:
+            self._log_advanced_tensorboard_metrics(val_metrics, step)
+
+        if advanced_due and self.eval_checkpoints_interval and step % self.eval_checkpoints_interval == 0:
+            is_best, reason = self._is_best_model(val_metrics, self.eval_target_fah, self.best_recall)
+            self._save_checkpoint(val_metrics, is_best, reason)
+            if self.tensorboard_logger is not None:
+                summary_text = "\n".join(
+                    [
+                        f"Checkpoint at step {step}",
+                        f"Best FAH: {self.best_fah:.4f}",
+                        f"Best Recall: {self.best_recall:.4f}",
+                        f"Best Quality Score (display): {self.best_quality_score:.4f} | Best PR-AUC: {self.best_auc_pr:.4f} | Best Constrained Recall: {self.best_constrained_recall:.4f}",
+                        f"Best weights path: {self.best_weights_path or 'N/A'}",
+                        f"Reason: {reason}",
+                    ]
+                )
+                self.tensorboard_logger.log_text_summary("checkpoints/summary", summary_text, step)
+
+        if advanced_due and step % self.eval_advanced_step_interval == 0:
+            approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
+            collection_mode = self.hn_config.get("collection_mode", "log_only")
+            mining_interval = self.hn_config.get("mining_interval_epochs", 1)
+            min_epochs_before_mining = int(self.hn_config.get("min_epochs_before_mining", 5) or 5)
+
+            if approx_epoch >= min_epochs_before_mining and approx_epoch % mining_interval == 0 and approx_epoch != getattr(self, "_last_mined_epoch", -1):
+                if collection_mode == "log_only":
+                    self._log_false_predictions_to_json(approx_epoch)
+                    self._last_mined_epoch = approx_epoch
+                elif collection_mode == "mine_immediately":
+                    if self.async_mining and self._async_miner is not None:
+                        if not self._async_miner.is_mining():
+                            self.logger.log_mining(f"Starting async mining at epoch {approx_epoch}...")
+                            mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
+                            self._async_miner.start_mining(self.model, mining_source_factory, approx_epoch)
+                        else:
+                            mining_result = self._async_miner.get_result()
+                            if mining_result is not None:
+                                self.logger.log_mining(
+                                    f"Completed async mining at epoch {approx_epoch}",
+                                    count=mining_result["num_hard_negatives"],
+                                )
+                                self._last_mined_epoch = approx_epoch
+                    elif self.hard_negative_miner is not None:
+                        self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
+                        try:
+                            mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
+                            mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
+                            self.logger.log_mining(
+                                f"Completed at epoch {approx_epoch}",
+                                count=mining_result["num_hard_negatives"],
+                            )
+                            self._last_mined_epoch = approx_epoch
+                        except OSError as e:
+                            self.logger.log_warning(f"Hard negative mining failed (IOError): {e}")
+                        except RuntimeError as e:
+                            self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
+                        except Exception:
+                            raise
+
+    def _check_validation(self, block: bool = False) -> None:
+        """Check pending validation; consume results when complete."""
+        pending = None
+        with self._validation_lock:
+            if self._pending_validation is None:
+                return
+            future = self._pending_validation["future"]
+            if not block and not future.done():
+                return
+            pending = self._pending_validation
+            self._pending_validation = None
+
+        future = pending["future"]
+        try:
+            result = future.result()
+        except Exception as exc:
+            self.logger.log_warning(f"Asynchronous validation failed: {exc}")
+            return
+
+        self.val_metrics = result["metrics_tracker"]
+        self._last_val_raw_labels = result.get("last_val_raw_labels", [])
+        self._last_val_paths = result.get("last_val_paths", self._val_file_paths or [])
+        self._handle_validation_results(
+            val_metrics=result["metrics"],
+            step=pending["step"],
+            total_steps=pending["total_steps"],
+            basic_due=pending["basic_due"],
+            advanced_due=pending["advanced_due"],
+            val_data_factory=pending["val_data_factory"],
+            mining_data_factory=pending["mining_data_factory"],
+        )
 
     def _log_false_predictions_to_json(self, epoch: int) -> None:
         """Log false positive predictions to JSON file for post-training mining.
@@ -1416,6 +1671,9 @@ class Trainer:
         try:
             for step in range(1, total_steps + 1):
                 self.current_step = step
+                self._check_validation()
+                if self._async_early_stop_requested:
+                    break
                 step_start = time.perf_counter()
                 _t0 = step_start
 
@@ -1541,102 +1799,41 @@ class Trainer:
                 basic_due = step % self.eval_basic_step_interval == 0
                 advanced_due = step % self.eval_advanced_step_interval == 0
                 if basic_due or advanced_due:
-                    # Swap to EMA weights for evaluation and checkpointing
-                    self._swap_to_ema_weights()
-                    val_metrics = self.validate(val_data_factory)
-                    val_metrics = self._augment_quality_metrics(val_metrics, step)
+                    scheduled = self._schedule_validation(
+                        step=step,
+                        basic_due=basic_due,
+                        advanced_due=advanced_due,
+                        total_steps=total_steps,
+                        val_data_factory=val_data_factory,
+                        mining_data_factory=mining_data_factory,
+                    )
+                    if not scheduled and self._pending_validation is None:
+                        self._swap_to_ema_weights()
+                        try:
+                            val_metrics = self.validate(val_data_factory)
+                        finally:
+                            self._restore_training_weights()
+                        self._handle_validation_results(
+                            val_metrics=val_metrics,
+                            step=step,
+                            total_steps=total_steps,
+                            basic_due=basic_due,
+                            advanced_due=advanced_due,
+                            val_data_factory=val_data_factory,
+                            mining_data_factory=mining_data_factory,
+                        )
+                        if self._async_early_stop_requested:
+                            break
 
-                    # Check for plateau and take action (LR reduction, BN freeze, early stop)
-                    if advanced_due and self._check_and_act_on_plateau(val_metrics, step):
-                        # Early stopping triggered — save final checkpoint and exit
-                        self._save_checkpoint(val_metrics, is_best=False, reason="early_stop_plateau")
-                        self._restore_training_weights()
-                        break
+                self._check_validation()
+                if self._async_early_stop_requested:
+                    break
 
-                    if basic_due:
-                        self.logger.log_validation_results(val_metrics, step, total_steps)
-
-                    if advanced_due:
-                        if self.eval_confusion_matrix_interval and step % self.eval_confusion_matrix_interval == 0:
-                            tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
-                            self.logger.log_confusion_matrix(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
-                            self.logger.log_per_class_analysis(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
-
-                    if self.tensorboard_writer is not None:
-                        self._log_tensorboard_metrics("val", val_metrics, step, self._tb_val_metric_keys)
-                        self.tensorboard_writer.flush()
-                    if advanced_due and self.tensorboard_logger is not None:
-                        self._log_advanced_tensorboard_metrics(val_metrics, step)
-
-                    if advanced_due and self.eval_checkpoints_interval and step % self.eval_checkpoints_interval == 0:
-                        is_best, reason = self._is_best_model(val_metrics, self.eval_target_fah, self.best_recall)
-                        self._save_checkpoint(val_metrics, is_best, reason)
-                        if self.tensorboard_logger is not None:
-                            summary_text = "\n".join(
-                                [
-                                    f"Checkpoint at step {step}",
-                                    f"Best FAH: {self.best_fah:.4f}",
-                                    f"Best Recall: {self.best_recall:.4f}",
-                                    f"Best Quality Score (display): {self.best_quality_score:.4f} | Best PR-AUC: {self.best_auc_pr:.4f} | Best Constrained Recall: {self.best_constrained_recall:.4f}",
-                                    f"Best weights path: {self.best_weights_path or 'N/A'}",
-                                    f"Reason: {reason}",
-                                ]
-                            )
-                            self.tensorboard_logger.log_text_summary("checkpoints/summary", summary_text, step)
-
-                    # Restore raw training weights after evaluation/checkpointing
-                    self._restore_training_weights()
-                    # Hard negative mining or logging (based on collection_mode)
-                    if advanced_due and step % self.eval_advanced_step_interval == 0:
-                        approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
-                        collection_mode = self.hn_config.get("collection_mode", "log_only")
-                        mining_interval = self.hn_config.get("mining_interval_epochs", 1)
-                        min_epochs_before_mining = int(self.hn_config.get("min_epochs_before_mining", 5) or 5)
-
-                        if approx_epoch >= min_epochs_before_mining and approx_epoch % mining_interval == 0 and approx_epoch != getattr(self, "_last_mined_epoch", -1):
-                            if collection_mode == "log_only":
-                                # Log false predictions to JSON for post-training mining
-                                self._log_false_predictions_to_json(approx_epoch)
-                                self._last_mined_epoch = approx_epoch
-                            elif collection_mode == "mine_immediately":
-                                if self.async_mining and self._async_miner is not None:
-                                    # Async mining path
-                                    if not self._async_miner.is_mining():
-                                        # Start async mining
-                                        self.logger.log_mining(f"Starting async mining at epoch {approx_epoch}...")
-                                        mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
-                                        self._async_miner.start_mining(self.model, mining_source_factory, approx_epoch)
-                                    else:
-                                        # Poll for results
-                                        mining_result = self._async_miner.get_result()
-                                        if mining_result is not None:
-                                            self.logger.log_mining(
-                                                f"Completed async mining at epoch {approx_epoch}",
-                                                count=mining_result["num_hard_negatives"],
-                                            )
-                                            self._last_mined_epoch = approx_epoch
-                                elif self.hard_negative_miner is not None:
-                                    # Synchronous mining path
-                                    self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
-                                    try:
-                                        mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
-                                        mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
-                                        self.logger.log_mining(
-                                            f"Completed at epoch {approx_epoch}",
-                                            count=mining_result["num_hard_negatives"],
-                                        )
-                                        self._last_mined_epoch = approx_epoch
-                                    except OSError as e:
-                                        self.logger.log_warning(f"Hard negative mining failed (IOError): {e}")
-                                    except RuntimeError as e:
-                                        self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
-                                    except Exception:
-                                        raise
-                        # (duplicate mining block removed)
-
-                    # Resume progress bar
-                    progress.start()
+                # Resume progress bar
+                progress.start()
         finally:
+            self._check_validation(block=True)
+            self._validation_executor.shutdown(wait=True)
             if self.tensorboard_logger is not None:
                 self.tensorboard_logger.close()
                 self.tensorboard_logger = None

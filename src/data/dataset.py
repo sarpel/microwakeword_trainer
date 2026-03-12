@@ -198,7 +198,6 @@ class RaggedMmap:
         self.close()
         return False
 
-
     def append(self, arrays: List[np.ndarray]):
         """Append arrays to storage.
 
@@ -292,6 +291,13 @@ class RaggedMmap:
         array = np.array(self._data[elem_offset : elem_offset + elem_length])
         return array
 
+    def clear_cache(self):
+        """Clear memory cache to release memory between epochs."""
+        if self._memory_cache is not None:
+            cache_size = len(self._memory_cache)
+            self._memory_cache.clear()
+            logger.debug(f"Cleared RaggedMmap cache ({cache_size} items)")
+
     def get_batch(self, indices: List[int]) -> List[np.ndarray]:
         """Get multiple arrays by indices with optimized sequential access.
 
@@ -318,7 +324,6 @@ class RaggedMmap:
         # Filter out None values (shouldn't happen, but type-safe)
         return [arr for arr in result if arr is not None]
 
-
     def __len__(self) -> int:
         """Get number of stored arrays."""
         return self._num_arrays
@@ -327,7 +332,7 @@ class RaggedMmap:
     def create_from_arrays(
         arrays: List[np.ndarray],
         base_dir: Union[str, Path],
-        name: str = 'ragged',
+        name: str = "ragged",
         dtype: Optional[np.dtype] = None,
     ) -> "RaggedMmap":
         """Create RaggedMmap from list of arrays.
@@ -579,6 +584,17 @@ class WakeWordDataset:
         # Try to load from store
         self.feature_store: Optional[FeatureStore] = None
         self._load_store()
+
+        # Pre-allocate batch buffers to avoid repeated allocation
+        max_batch_size = self.batch_size
+        self._batch_buffer = {
+            "features": np.empty((max_batch_size, self.max_time_frames, self.feature_dim), dtype=np.float32),
+            "labels": np.empty(max_batch_size, dtype=np.int64),
+            "weights": np.empty(max_batch_size, dtype=np.float32),
+            "is_hard_neg": np.empty(max_batch_size, dtype=np.bool_),
+        }
+        self._batch_idx = 0
+        logger.info(f"Batch buffer pre-allocated: {max_batch_size}x{self.max_time_frames}x{self.feature_dim}")
 
     @staticmethod
     def _normalize_split_name(split: str) -> str:
@@ -1051,6 +1067,44 @@ class WakeWordDataset:
             return np.vstack([features, padding])
         return features
 
+    def _add_to_batch(self, feature: np.ndarray, label: int, weight: float = 1.0, is_hard_neg: bool = False) -> bool:
+        """Add sample to pre-allocated buffer. Returns True if added, False if buffer full."""
+        if self._batch_idx >= len(self._batch_buffer["features"]):
+            return False
+        self._batch_buffer["features"][self._batch_idx] = feature
+        self._batch_buffer["labels"][self._batch_idx] = label
+        self._batch_buffer["weights"][self._batch_idx] = weight
+        self._batch_buffer["is_hard_neg"][self._batch_idx] = is_hard_neg
+        self._batch_idx += 1
+        return True
+
+    def _flush_batch(self):
+        """Return current batch contents and reset buffer index."""
+        if self._batch_idx == 0:
+            return None
+        result = (
+            self._batch_buffer["features"][: self._batch_idx].copy(),
+            self._batch_buffer["labels"][: self._batch_idx].copy(),
+            self._batch_buffer["weights"][: self._batch_idx].copy(),
+            self._batch_buffer["is_hard_neg"][: self._batch_idx].copy(),
+        )
+        self._batch_idx = 0
+        return result
+
+    def _ensure_batch_buffer(self, max_time_frames: int) -> None:
+        """Ensure pre-allocated batch buffer shape matches current generation settings."""
+        features_buffer = self._batch_buffer["features"]
+        expected_shape = (self.batch_size, max_time_frames, self.feature_dim)
+        if features_buffer.shape != expected_shape:
+            self._batch_buffer = {
+                "features": np.empty(expected_shape, dtype=np.float32),
+                "labels": np.empty(self.batch_size, dtype=np.int64),
+                "weights": np.empty(self.batch_size, dtype=np.float32),
+                "is_hard_neg": np.empty(self.batch_size, dtype=np.bool_),
+            }
+            logger.info(f"Batch buffer resized: {self.batch_size}x{max_time_frames}x{self.feature_dim}")
+        self._batch_idx = 0
+
     def _iter_split_batches(
         self,
         split: str,
@@ -1060,6 +1114,7 @@ class WakeWordDataset:
         shuffle: bool,
         include_hard_negative_flag: bool,
     ):
+        self._ensure_batch_buffer(max_time_frames)
         split_name = self._normalize_split_name(split)
         store_path = self.data_path / split_name
         if not store_path.exists():
@@ -1083,9 +1138,7 @@ class WakeWordDataset:
 
             while True:
                 epoch_indices = rng.permutation(indices).tolist() if shuffle else indices
-                batch_features = []
-                batch_labels = []
-                batch_is_hard_neg = []
+                self._batch_idx = 0
 
                 for idx in epoch_indices:
                     try:
@@ -1094,33 +1147,52 @@ class WakeWordDataset:
                         continue
 
                     fixed_feature = self._pad_or_truncate(feature, max_time_frames)
-                    batch_features.append(fixed_feature)
-                    batch_labels.append(label & 1)
-                    if include_hard_negative_flag:
-                        batch_is_hard_neg.append(label == 2)
+                    added = self._add_to_batch(
+                        fixed_feature,
+                        label & 1,
+                        weight=1.0,
+                        is_hard_neg=(label == 2),
+                    )
+                    if not added:
+                        batch = self._flush_batch()
+                        if batch is not None:
+                            fingerprints, ground_truth, sample_weights, is_hard_neg = batch
+                            if include_hard_negative_flag:
+                                yield (
+                                    fingerprints,
+                                    ground_truth.astype(np.int32, copy=False),
+                                    sample_weights,
+                                    is_hard_neg,
+                                )
+                            else:
+                                yield (
+                                    fingerprints,
+                                    ground_truth.astype(np.int32, copy=False),
+                                    sample_weights,
+                                )
+                        self._add_to_batch(
+                            fixed_feature,
+                            label & 1,
+                            weight=1.0,
+                            is_hard_neg=(label == 2),
+                        )
 
-                    if len(batch_features) >= self.batch_size:
-                        fingerprints = np.array(batch_features, dtype=np.float32)
-                        ground_truth = np.array(batch_labels, dtype=np.int32)
-                        sample_weights = np.ones(len(batch_labels), dtype=np.float32)
-                        if include_hard_negative_flag:
-                            is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
-                            yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
-                        else:
-                            yield (fingerprints, ground_truth, sample_weights)
-                        batch_features = []
-                        batch_labels = []
-                        batch_is_hard_neg = []
-
-                if batch_features:
-                    fingerprints = np.array(batch_features, dtype=np.float32)
-                    ground_truth = np.array(batch_labels, dtype=np.int32)
-                    sample_weights = np.ones(len(batch_labels), dtype=np.float32)
+                batch = self._flush_batch()
+                if batch is not None:
+                    fingerprints, ground_truth, sample_weights, is_hard_neg = batch
                     if include_hard_negative_flag:
-                        is_hard_neg = np.array(batch_is_hard_neg, dtype=np.bool_)
-                        yield (fingerprints, ground_truth, sample_weights, is_hard_neg)
+                        yield (
+                            fingerprints,
+                            ground_truth.astype(np.int32, copy=False),
+                            sample_weights,
+                            is_hard_neg,
+                        )
                     else:
-                        yield (fingerprints, ground_truth, sample_weights)
+                        yield (
+                            fingerprints,
+                            ground_truth.astype(np.int32, copy=False),
+                            sample_weights,
+                        )
 
                 if not infinite:
                     break
@@ -1207,6 +1279,18 @@ class WakeWordDataset:
         if self.feature_store is not None:
             self.feature_store.close()
             self.feature_store = None
+
+    def on_epoch_end(self):
+        """Called at end of each epoch to release cached data."""
+        stores = [self.feature_store]
+        for store in stores:
+            if store is None:
+                continue
+            for ragged_attr in ("features", "labels"):
+                ragged_store = getattr(store, ragged_attr, None)
+                if hasattr(ragged_store, "clear_cache"):
+                    ragged_store.clear_cache()
+        logger.debug("Cleared dataset caches at end of epoch")
 
     def __enter__(self) -> "WakeWordDataset":
         """Context manager entry."""

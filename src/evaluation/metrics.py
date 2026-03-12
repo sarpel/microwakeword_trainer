@@ -11,11 +11,26 @@ from .fah_estimator import FAHEstimator
 logger = logging.getLogger(__name__)
 
 
-def compute_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Compute classification accuracy."""
+def compute_accuracy(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    sample_weight: np.ndarray | None = None,
+) -> float:
+    """Compute classification accuracy, optionally weighted per sample."""
     if len(y_true) == 0:
         return 0.0
-    return float(np.mean((y_true == y_pred).astype(float)))
+    correct = (y_true == y_pred).astype(float)
+    if sample_weight is None:
+        return float(np.mean(correct))
+
+    weights = np.asarray(sample_weight, dtype=float).reshape(-1)
+    if len(weights) != len(correct):
+        raise ValueError(f"sample_weight length ({len(weights)}) must match number of samples ({len(correct)})")
+
+    total_weight = float(np.sum(weights))
+    if total_weight <= 0.0:
+        return 0.0
+    return float(np.sum(correct * weights) / total_weight)
 
 
 def compute_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
@@ -51,11 +66,19 @@ def _manual_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
 def compute_precision_recall(
     y_true: np.ndarray,
     y_pred: np.ndarray,
+    sample_weight: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
-    """Compute precision, recall, and F1 score."""
-    tp = np.sum((y_true == 1) & (y_pred == 1))
-    fp = np.sum((y_true == 0) & (y_pred == 1))
-    fn = np.sum((y_true == 1) & (y_pred == 0))
+    """Compute precision, recall, and F1 score, optionally weighted per sample."""
+    if sample_weight is None:
+        weights = np.ones_like(y_true, dtype=float)
+    else:
+        weights = np.asarray(sample_weight, dtype=float).reshape(-1)
+        if len(weights) != len(y_true):
+            raise ValueError(f"sample_weight length ({len(weights)}) must match number of samples ({len(y_true)})")
+
+    tp = np.sum(weights * ((y_true == 1) & (y_pred == 1)).astype(float))
+    fp = np.sum(weights * ((y_true == 0) & (y_pred == 1)).astype(float))
+    fn = np.sum(weights * ((y_true == 1) & (y_pred == 0)).astype(float))
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
@@ -407,10 +430,12 @@ class MetricsCalculator:
 
         y_pred = (self.y_score >= threshold).astype(int)
 
-        # TODO: propagate self.sample_weight to compute_accuracy / compute_precision_recall
-        # when the underlying helpers support per-sample weights.
-        accuracy = compute_accuracy(self.y_true, y_pred)
-        precision, recall, f1 = compute_precision_recall(self.y_true, y_pred)
+        accuracy = compute_accuracy(self.y_true, y_pred, sample_weight=self.sample_weight)
+        precision, recall, f1 = compute_precision_recall(
+            self.y_true,
+            y_pred,
+            sample_weight=self.sample_weight,
+        )
         auc_roc = compute_roc_auc(self.y_true, self.y_score)
 
         auc_pr: float | None = None
@@ -458,7 +483,7 @@ class MetricsCalculator:
     def compute_precision_recall(self) -> tuple[float, float, float]:
         if self.y_pred is None:
             raise ValueError("MetricsCalculator.compute_precision_recall requires y_pred")
-        return compute_precision_recall(self.y_true, self.y_pred)
+        return compute_precision_recall(self.y_true, self.y_pred, sample_weight=self.sample_weight)
 
 
 # Backward-compatible wrappers
@@ -483,8 +508,9 @@ def compute_all_metrics(
     y_scores: np.ndarray,
     ambient_duration_hours: float = 0.0,
     threshold: float = 0.5,
+    sample_weight: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    calculator = MetricsCalculator(y_true=y_true, y_score=y_scores)
+    calculator = MetricsCalculator(y_true=y_true, y_score=y_scores, sample_weight=sample_weight)
     return calculator.compute_all_metrics(
         ambient_duration_hours=ambient_duration_hours,
         threshold=threshold,

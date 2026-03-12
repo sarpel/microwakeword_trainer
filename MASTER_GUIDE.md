@@ -889,7 +889,7 @@ Argument | Type | Default | Description
 
 ```bash
 # Basic auto-tuning with defaults
-mww-autotune --checkpoint checkpoints/best_weights.weights.h5
+mww-autotune --checkpoint ./models/checkpoints/best_weights.weights.h5
 
 # Custom targets
 mww-autotune \

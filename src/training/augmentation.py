@@ -2,22 +2,11 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import Callable, List, Optional
 
 import numpy as np
 
 # Import audiomentations for audio augmentations
-if TYPE_CHECKING:
-    from audiomentations import (
-        AddBackgroundNoise,
-        AddColorNoise,
-        ApplyImpulseResponse,
-        BandStopFilter,
-        Gain,
-        PitchShift,
-        SevenBandParametricEQ,
-        TanhDistortion,
-    )
 try:
     from audiomentations import (
         AddBackgroundNoise,
@@ -33,6 +22,18 @@ try:
     HAS_AUDIOMENTATIONS = True
 except ImportError:
     HAS_AUDIOMENTATIONS = False
+
+    def _missing_audiomentations(*args, **kwargs):
+        raise ImportError("audiomentations is required. Install: pip install audiomentations")
+
+    AddBackgroundNoise = _missing_audiomentations
+    AddColorNoise = _missing_audiomentations
+    ApplyImpulseResponse = _missing_audiomentations
+    BandStopFilter = _missing_audiomentations
+    Gain = _missing_audiomentations
+    PitchShift = _missing_audiomentations
+    SevenBandParametricEQ = _missing_audiomentations
+    TanhDistortion = _missing_audiomentations
 
 
 logger = logging.getLogger(__name__)

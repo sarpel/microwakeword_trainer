@@ -1,12 +1,8 @@
 """Export module for model conversion to TFLite."""
 
+import json
+import logging
 import os
-
-# Suppress verbose TF/XLA logs before importing tensorflow
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
-os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
-
 import shutil
 import sys
 import tempfile
@@ -14,11 +10,80 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Generator, Optional
 
+# Suppress verbose TF/XLA logs before importing tensorflow
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
 import h5py
 import numpy as np
 import tensorflow as tf
 
 from src.export.verification import verify_tflite_model
+
+logger = logging.getLogger(__name__)
+
+
+def get_checkpoint_metadata(checkpoint_path: str, pointwise_filters: int = 64) -> dict:
+    """Get checkpoint metadata from cache or scan checkpoint.
+
+    Caches metadata to a sidecar .metadata.json file for faster subsequent access.
+
+    Args:
+        checkpoint_path: Path to .weights.h5 checkpoint
+        pointwise_filters: Number of pointwise convolution filters (default 64, matches architecture)
+
+    Returns:
+        Dict with temporal_frames, dense_input_features, dense_output_features
+    """
+    cache_path = Path(checkpoint_path).with_suffix(".metadata.json")
+
+    # Check cache first
+    if cache_path.exists():
+        try:
+            with open(cache_path, "r") as f:
+                metadata = json.load(f)
+            logger.info(f"Loaded checkpoint metadata from cache: {cache_path}")
+            return metadata
+        except Exception as e:
+            logger.warning(f"Failed to load metadata cache, will rescan: {e}")
+
+    # Scan checkpoint to extract metadata
+    logger.info(f"Scanning checkpoint for metadata: {checkpoint_path}")
+    dense_input_features = None
+    dense_output_features = None
+
+    def find_dense_kernel(name, obj):
+        nonlocal dense_input_features, dense_output_features
+        if name == "layers/dense/vars/0" and isinstance(obj, h5py.Dataset):
+            kernel_shape = obj.shape
+            dense_input_features = kernel_shape[0]
+            dense_output_features = kernel_shape[1]
+
+    with h5py.File(checkpoint_path, "r") as f:
+        f.visititems(find_dense_kernel)
+
+    if dense_input_features is None or dense_output_features is None:
+        raise ValueError(f"Dense layer kernel not found in checkpoint: {checkpoint_path}")
+
+    temporal_frames = dense_input_features // pointwise_filters
+
+    metadata = {
+        "temporal_frames": int(temporal_frames),
+        "dense_input_features": int(dense_input_features),
+        "dense_output_features": int(dense_output_features),
+        "pointwise_filters": int(pointwise_filters),
+    }
+
+    # Cache for future exports
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        logger.info(f"Cached checkpoint metadata: {cache_path}")
+    except Exception as e:
+        logger.warning(f"Failed to cache metadata: {e}")
+
+    return metadata
 
 
 @contextmanager
@@ -178,7 +243,7 @@ class StreamingExportModel(tf.keras.Model):
         if residual_connections is None:
             residual_connections = [0, 1, 1, 1]
         if len(residual_connections) != len(pointwise_filters):
-            raise ValueError(f"residual_connections length ({len(residual_connections)}) must match " f"pointwise_filters length ({len(pointwise_filters)})")
+            raise ValueError(f"residual_connections length ({len(residual_connections)}) must match pointwise_filters length ({len(pointwise_filters)})")
 
         self.first_conv_filters = first_conv_filters
         self.first_conv_kernel = first_conv_kernel
@@ -664,35 +729,25 @@ def export_streaming_tflite(
     print("Streaming TFLite Export for ESPHome")
     print("=" * 60)
 
-    # First, read checkpoint to infer temporal dimensions
+    # First, read checkpoint metadata to infer temporal dimensions
     print("\n[0/5] Analyzing checkpoint architecture...")
-    with h5py.File(checkpoint_path, "r") as f:
-        # Read Dense kernel shape to infer temporal dimension
-        dense_kernel_shape = None
+    # Assume 64 pointwise filters in last block (standard architecture)
+    if config is not None:
+        pw_filters_list = config.get("pointwise_filters", [64, 64, 64, 64])
+        pointwise_filters = pw_filters_list[-1] if pw_filters_list else 64
+    else:
+        pointwise_filters = 64  # Standard architecture default
 
-        def find_dense_kernel(name, obj):
-            nonlocal dense_kernel_shape
-            if name == "layers/dense/vars/0" and isinstance(obj, h5py.Dataset):
-                dense_kernel_shape = obj.shape
+    metadata = get_checkpoint_metadata(checkpoint_path, pointwise_filters=pointwise_filters)
+    temporal_frames = metadata["temporal_frames"]
+    dense_input_features = metadata["dense_input_features"]
+    dense_output_features = metadata["dense_output_features"]
 
-        f.visititems(find_dense_kernel)
+    if dense_input_features % pointwise_filters != 0:
+        raise ValueError(f"Dense input features ({dense_input_features}) is not divisible by pointwise_filters ({pointwise_filters}). Architecture mismatch?")
 
-        if dense_kernel_shape is None:
-            raise RuntimeError(f"Could not find Dense layer in checkpoint {checkpoint_path}. " "Checkpoint may be corrupt or from a different training run.")
-
-        dense_input_features, dense_output_features = dense_kernel_shape
-        # Assume 64 pointwise filters in last block (standard architecture)
-        if config is not None:
-            pw_filters_list = config.get("pointwise_filters", [64, 64, 64, 64])
-            pointwise_filters = pw_filters_list[-1] if pw_filters_list else 64
-        else:
-            pointwise_filters = 64  # Standard architecture default
-        temporal_frames = dense_input_features // pointwise_filters
-        if dense_input_features % pointwise_filters != 0:
-            raise ValueError(f"Dense input features ({dense_input_features}) is not divisible by " f"pointwise_filters ({pointwise_filters}). Architecture mismatch?")
-
-        print(f"  Checkpoint Dense layer: ({dense_input_features}, {dense_output_features})")
-        print(f"  Inferred temporal frames: {temporal_frames} (from {dense_input_features} / {pointwise_filters})")
+    print(f"  Checkpoint Dense layer: ({dense_input_features}, {dense_output_features})")
+    print(f"  Inferred temporal frames: {temporal_frames} (from {dense_input_features} / {pointwise_filters})")
 
     # Default config (okay_nabu variant)
     if config is None:
@@ -723,7 +778,7 @@ def export_streaming_tflite(
     print("\n[2/5] Loading checkpoint weights...")
     loaded = load_weights_from_keras3_checkpoint(model, checkpoint_path)
     if loaded < 29:
-        raise RuntimeError(f"Weight loading incomplete: expected at least 29 weights (44 with residuals), got {loaded}. " f"Checkpoint may be corrupt or incompatible: {checkpoint_path}")
+        raise RuntimeError(f"Weight loading incomplete: expected at least 29 weights (44 with residuals), got {loaded}. Checkpoint may be corrupt or incompatible: {checkpoint_path}")
 
     # Fold BN statistics into pointwise conv weights so that no Keras BN
     # variable reads appear in the TFLite export graph (Keras 3 wraps them in
@@ -923,34 +978,6 @@ def convert_model_saved(
     print(f"  ✓ Model has {len(streaming_model.state_vars)} state variables")
 
     return streaming_model
-
-
-def _legacy_export_to_tflite_stage1_stub(
-    model: tf.keras.Model,
-    config: dict,
-    folder: str,
-    mode: str = "stream_internal_state_inference",
-) -> tf.keras.Model:
-    """Convert non-streaming model to streaming SavedModel (legacy API).
-
-    This function is deprecated. Use export_streaming_tflite() instead.
-    """
-    raise NotImplementedError("convert_model_saved is deprecated. Use export_streaming_tflite() instead.")
-
-
-def export_to_tflite(
-    model: tf.keras.Model,
-    config: dict,
-    output_dir: str,
-    model_name: str = "wake_word",
-    quantize: bool = True,
-    representative_data: Optional[np.ndarray] = None,
-) -> dict:
-    """Export trained model to ESPHome-compatible TFLite (legacy API).
-
-    This function is deprecated. Use export_streaming_tflite() instead.
-    """
-    raise NotImplementedError("export_to_tflite is deprecated. Use export_streaming_tflite() instead.")
 
 
 def convert_to_tflite(
