@@ -53,18 +53,7 @@ def spec_augment_gpu(
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
     if cp is None or not HAS_GPU:
-        logger.warning("GPU unavailable, falling back to TF SpecAugment")
-        import tensorflow as tf
-        from src.data.spec_augment_tf import spec_augment_tf
-
-        tf_result = spec_augment_tf(
-            tf.convert_to_tensor(spectrogram, dtype=tf.float32),
-            time_mask_max_size,
-            time_mask_count,
-            freq_mask_max_size,
-            freq_mask_count,
-        )
-        return tf_result.numpy()
+        raise RuntimeError("GPU is required for spec_augment_gpu but CuPy/CUDA is not available. " "Please ensure a compatible GPU and CUDA installation.")
 
     # Transfer to GPU
     spec_gpu = cp.asarray(spectrogram)
@@ -118,18 +107,7 @@ def batch_spec_augment_gpu(
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
     if cp is None or not HAS_GPU:
-        logger.warning("GPU unavailable, falling back to TF batch SpecAugment")
-        import tensorflow as tf
-        from src.data.spec_augment_tf import batch_spec_augment_tf
-
-        tf_result = batch_spec_augment_tf(
-            tf.convert_to_tensor(batch, dtype=tf.float32),
-            time_mask_max_size,
-            time_mask_count,
-            freq_mask_max_size,
-            freq_mask_count,
-        )
-        return tf_result.numpy()
+        raise RuntimeError("GPU is required for batch_spec_augment_gpu but CuPy/CUDA is not available. " "Please ensure a compatible GPU and CUDA installation.")
 
     # Transfer entire batch to GPU
     batch_gpu = cp.asarray(batch)

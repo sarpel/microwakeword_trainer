@@ -336,7 +336,7 @@ pytest tests/integration/test_training.py -v
 - ✅ Improvement over baseline (FAH reduction)
 - ✅ User-defined hard negatives used (if provided)
 
-### 3.5: Architecture Alignment Verification
+### 3.5 Architecture Alignment Verification
 
 **Purpose**: Verify that model architecture matches official okay_nabu TFLite model to eliminate AUC gap between training and export.
 

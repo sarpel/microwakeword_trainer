@@ -1,2 +1,8 @@
 epic.txt
 eval.txt
+*.pyc
+tests/unit/__pycache__/test_async_miner.cpython-311-pytest-9.0.2.pyc
+tests/unit/__pycache__/test_config.cpython-311-pytest-9.0.2.pyc
+tests/unit/__pycache__/test_spec_augment_tf.cpython-311-pytest-9.0.2.pyc
+tests/unit/__pycache__/test_test_evaluator.cpython-311-pytest-9.0.2.pyc
+tests/unit/__pycache__/test_vectorized_metrics.cpython-311-pytest-9.0.2.pyc

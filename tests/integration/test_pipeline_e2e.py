@@ -66,6 +66,7 @@ def test_pipeline_build_save_export_verify(tmp_path: Path) -> None:
 
     verify_result = verify_esphome_compatibility(str(tflite_path))
     assert "valid" in verify_result and "checks" in verify_result
+    assert verify_result["valid"], f"ESPHome uyumluluk doğrulaması başarısız: {verify_result['checks']}"
 
     verify_script = Path(__file__).resolve().parents[2] / "scripts" / "verify_esphome.py"
     proc = subprocess.run(
@@ -73,6 +74,7 @@ def test_pipeline_build_save_export_verify(tmp_path: Path) -> None:
         check=False,
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert proc.returncode == 0, f"verify_esphome.py failed: {proc.stderr}\n{proc.stdout}"
 

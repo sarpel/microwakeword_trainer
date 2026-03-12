@@ -565,6 +565,8 @@ class WakeWordDataset:
         # Derive max_time_frames from hardware config
         clip_duration_ms = hardware_cfg.get("clip_duration_ms", 1000)
         window_step_ms = hardware_cfg.get("window_step_ms", 10)
+        if window_step_ms <= 0:
+            raise ValueError(f"window_step_ms must be positive, got {window_step_ms}")
         self.max_time_frames = int(clip_duration_ms / window_step_ms)
 
         # Try to load from store
