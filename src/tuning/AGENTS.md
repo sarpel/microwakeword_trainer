@@ -86,7 +86,7 @@ src/tuning/
 ## CONVENTIONS
 
 ### Configuration
-- **AutoTuningConfig** in `config/loader.py` — Core config (max_iterations, target_fah, target_recall, max_gradient_steps, cv_folds, int8_shadow, etc.)
+- **AutoTuningConfig** in `config/loader.py` — Core config (max_iterations, target_fah, target_recall, max_gradient_steps, cv_folds, etc.)
 - **AutoTuningExpertConfig** in `config/loader.py` — Expert-only knobs (22 fields: annealing, stir, SAM, SWA, Thompson prior, etc.)
 - **All three presets** have both sections: fast_test (reduced), standard, max_quality (enhanced)
 
@@ -137,6 +137,9 @@ weights = [w.numpy() for w in model.variables]
 weights = model.get_weights()  # serialize
 model.set_weights(weights)      # deserialize
 ```
+
+- AutoTuner only performs float32 evaluations. No INT8 conversion during tuning.
+- `threshold_uint8` is KEPT — it is the ESPHome-compatible uint8 threshold value, separate from INT8 model conversion.
 
 ## ANTI-PATTERNS (THIS MODULE)
 

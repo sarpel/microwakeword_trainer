@@ -314,9 +314,6 @@ auto_tuning:
   cv_folds: 3
   confirmation_fraction: 0.40
   bootstrap_samples: 2000       # More samples for max quality
-  int8_shadow: true
-  int8_shadow_interval: 10       # More frequent INT8 checks
-  require_int8_pass: true
   require_confirmation: true
   group_key: speaker_id
   pareto_improvement_threshold: 0.003
