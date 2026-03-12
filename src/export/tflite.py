@@ -164,9 +164,11 @@ class StreamingExportModel(tf.keras.Model):
         mixconv_kernel_sizes: Optional[list[list[int]]] = None,
         residual_connections: Optional[list[int]] = None,
         mel_bins: int = 40,
+        temporal_frames: int = 32,  # Added: inferred from checkpoint during export
         **kwargs,
     ):
         super().__init__(name="streaming_model", **kwargs)
+        self.temporal_frames = temporal_frames  # Save for use in build() method
 
         # Default to okay_nabu architecture
         if pointwise_filters is None:
@@ -316,13 +318,12 @@ class StreamingExportModel(tf.keras.Model):
             # stream_4: after block 2, before block 3
             # max_kernel=23, stride=1 -> 23-1=22 frames, filters=64
             ("stream_4", (1, max(self.mixconv_kernel_sizes[3]) - 1, 1, self.pointwise_filters[2])),
-            # stream_5: temporal pooling
-            # Fixed at 5 frames, filters=64
-            ("stream_5", (1, 5, 1, self.pointwise_filters[3])),
+            # stream_5: temporal pooling buffer (inferred from checkpoint)
+            # temporal_frames - 1 = ring_buffer_size for streaming
+            ("stream_5", (1, self.temporal_frames - 1, 1, self.pointwise_filters[3])),
         ]
 
         # Verify we have exactly 6 state variables
-
         # Create state variables
         for name, shape in state_configs:
             state_var = self.add_weight(
@@ -483,10 +484,11 @@ class StreamingExportModel(tf.keras.Model):
             if residual is not None:
                 x = x + residual
 
-        # stream_5 (temporal flatten buffer — matching okay_nabu architecture)
-        # _concat_update returns full concat [1, 6, 1, 64] and saves last 5 frames to state
-        x = self._concat_update(self.state_vars[-1], x, 5)
-        # Flatten full concat: [1, 6, 1, 64] → [1, 384] (6 frames × 64 filters)
+        # stream_5 (temporal pooling buffer — dimension inferred from checkpoint)
+        # Concat new frame with ring buffer: [1, (temporal_frames-1)+1, 1, 64]
+        # and save last (temporal_frames-1) frames to state for next call
+        x = self._concat_update(self.state_vars[-1], x, self.temporal_frames - 1)
+        # Flatten full concat: [1, temporal_frames, 1, 64] → [1, temporal_frames*64]
         x = tf.reshape(x, [1, -1])
 
         # Dense output
@@ -501,17 +503,18 @@ class StreamingExportModel(tf.keras.Model):
 def create_representative_dataset(
     config: dict,
     num_samples: int | None = None,
+    temporal_frames: int = 32,  # Added: actual temporal dimension from checkpoint
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset generator for quantization.
 
     Args:
-        config: Configuration dict with stride and mel_bins
+        config: Configuration dict with mel_bins
         num_samples: Number of samples to generate
+        temporal_frames: Temporal dimension for input shape (inferred from checkpoint)
 
     Returns:
         Generator function that yields samples
     """
-    stride = int(config.get("stride", 3))
     mel_bins = int(config.get("mel_bins", 40))
     export_cfg = config.get("export", {})
     raw_num_samples = num_samples if num_samples is not None else export_cfg.get("representative_dataset_size", 1000)
@@ -522,8 +525,8 @@ def create_representative_dataset(
     def representative_dataset_gen():
         rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
         for i in range(num_samples):
-            # Shape: (1, stride, mel_bins)
-            sample = rng.uniform(0.0, 26.0, (1, stride, mel_bins)).astype(np.float32)
+            # Shape: (1, temporal_frames, mel_bins) - use actual temporal dimension
+            sample = rng.uniform(0.0, 26.0, (1, temporal_frames, mel_bins)).astype(np.float32)
 
             # Boundary anchors for quantization calibration
             if i == 0:
@@ -539,28 +542,29 @@ def create_representative_dataset_from_data(
     config: dict,
     data_dir: str,
     num_samples: int | None = None,
+    temporal_frames: int = 32,  # Added: actual temporal dimension from checkpoint
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset from real training features for quantization.
 
-    Loads preprocessed spectrograms from the FeatureStore and slices them into
-    stride-sized chunks. This produces calibration data that matches the actual
-    feature distribution, resulting in better INT8 quantization ranges.
+    Loads preprocessed spectrograms from FeatureStore and slices them into
+    temporal_frames-sized chunks. This produces calibration data that matches the
+    actual feature distribution and model input shape.
 
     Uses ~4000 samples by default — the sweet spot for INT8 calibration quality
     per TFLite best practices. With 150k+ files in the dataset, this is trivially
     achievable from real data alone.
 
     Args:
-        config: Configuration dict with stride and mel_bins
+        config: Configuration dict with mel_bins
         data_dir: Path to processed data directory (containing train/ subfolder)
         num_samples: Number of calibration samples to generate (default 4000)
+        temporal_frames: Temporal dimension for input shape (inferred from checkpoint)
 
     Returns:
         Generator function that yields samples
     """
     from src.data.dataset import FeatureStore
 
-    stride = int(config.get("stride", 3))
     mel_bins = int(config.get("mel_bins", 40))
     export_cfg = config.get("export", {})
     raw_num_samples = num_samples if num_samples is not None else export_cfg.get("representative_dataset_real_size", 4000)
@@ -571,22 +575,22 @@ def create_representative_dataset_from_data(
 
     if not store_path.exists():
         print(f"  Warning: No training data at {store_path}, falling back to random calibration")
-        return create_representative_dataset(config, num_samples)
+        return create_representative_dataset(config, num_samples, temporal_frames)
 
     store = FeatureStore(store_path)
     try:
         store.open()
     except (FileNotFoundError, OSError) as e:
         print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
-        return create_representative_dataset(config, num_samples)
+        return create_representative_dataset(config, num_samples, temporal_frames)
 
     try:
         n_stored = len(store)
         if n_stored == 0:
             print("  Warning: Feature store is empty, falling back to random calibration")
-            return create_representative_dataset(config, num_samples)
+            return create_representative_dataset(config, num_samples, temporal_frames)
 
-        # Pre-extract stride-sized chunks from real spectrograms
+        # Pre-extract temporal_frames-sized chunks from real spectrograms
         chunks: list[np.ndarray] = []
         rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
         indices = rng.permutation(n_stored)
@@ -601,15 +605,15 @@ def create_representative_dataset_from_data(
                     continue
                 spec = spec.reshape(-1, mel_bins)
             n_frames = spec.shape[0]
-            if n_frames < stride:
+            if n_frames < temporal_frames:
                 continue
-            # Extract all non-overlapping stride-sized chunks from this spectrogram
-            n_possible = n_frames // stride
+            # Extract non-overlapping temporal_frames-sized chunks from this spectrogram
+            n_possible = n_frames // temporal_frames
             remaining = num_samples - len(chunks)
             n_to_take = min(n_possible, remaining)
-            starts = np.arange(n_to_take) * stride
+            starts = np.arange(n_to_take) * temporal_frames
             for t in starts:
-                chunk = spec[t : t + stride].reshape(1, stride, mel_bins).astype(np.float32)
+                chunk = spec[t : t + temporal_frames].reshape(1, temporal_frames, mel_bins).astype(np.float32)
                 chunks.append(chunk)
 
         print(f"  Using {len(chunks)} real-data calibration samples")
@@ -644,6 +648,7 @@ def export_streaming_tflite(
     3. Converts to quantized TFLite with proper settings
     4. Verifies the exported model
 
+
     Args:
         checkpoint_path: Path to .weights.h5 checkpoint
         output_dir: Output directory for exported model
@@ -651,12 +656,37 @@ def export_streaming_tflite(
         config: Optional configuration dict with model parameters
         data_dir: Optional path to processed data dir for real-data quantization calibration
 
+
     Returns:
         Dict with export results including paths and validation info
     """
     print("=" * 60)
     print("Streaming TFLite Export for ESPHome")
     print("=" * 60)
+
+    # First, read checkpoint to infer temporal dimensions
+    print("\n[0/5] Analyzing checkpoint architecture...")
+    with h5py.File(checkpoint_path, "r") as f:
+        # Read Dense kernel shape to infer temporal dimension
+        dense_kernel_shape = None
+
+        def find_dense_kernel(name, obj):
+            nonlocal dense_kernel_shape
+            if name == "layers/dense/vars/0" and isinstance(obj, h5py.Dataset):
+                dense_kernel_shape = obj.shape
+
+        f.visititems(find_dense_kernel)
+
+        if dense_kernel_shape is None:
+            raise RuntimeError(f"Could not find Dense layer in checkpoint {checkpoint_path}. " "Checkpoint may be corrupt or from a different training run.")
+
+        dense_input_features, dense_output_features = dense_kernel_shape
+        # Assume 64 pointwise filters in last block (standard architecture)
+        pointwise_filters = 64
+        temporal_frames = dense_input_features // pointwise_filters
+
+        print(f"  Checkpoint Dense layer: ({dense_input_features}, {dense_output_features})")
+        print(f"  Inferred temporal frames: {temporal_frames} (from {dense_input_features} / {pointwise_filters})")
 
     # Default config (okay_nabu variant)
     if config is None:
@@ -669,7 +699,6 @@ def export_streaming_tflite(
             "residual_connections": [0, 1, 1, 1],
             "mel_bins": 40,
         }
-
     print("\n[1/5] Building streaming model...")
     model = StreamingExportModel(
         first_conv_filters=config.get("first_conv_filters", 32),
@@ -679,12 +708,11 @@ def export_streaming_tflite(
         mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
         residual_connections=config.get("residual_connections", [0, 1, 1, 1]),
         mel_bins=config.get("mel_bins", 40),
+        temporal_frames=temporal_frames,  # Pass inferred temporal dimension from checkpoint
     )
 
-    # Build the model
-    input_shape = (config.get("stride", 3), config.get("mel_bins", 40))
-    _ = model(tf.zeros((1, input_shape[0], input_shape[1]), dtype=tf.float32))
-    print(f"Model has {len(model.weights)} total weights")
+    # Build model with correct temporal dimension (inferred from checkpoint)
+    _ = model(tf.zeros((1, temporal_frames, config.get("mel_bins", 40)), dtype=tf.float32))
 
     print("\n[2/5] Loading checkpoint weights...")
     loaded = load_weights_from_keras3_checkpoint(model, checkpoint_path)
@@ -708,7 +736,7 @@ def export_streaming_tflite(
 
         export_input_sig = [
             tf.TensorSpec(
-                shape=(1, input_shape[0], input_shape[1]),
+                shape=(1, temporal_frames, config.get("mel_bins", 40)),  # Use temporal_frames from checkpoint
                 dtype=tf.float32,
                 name="inputs",
             )
@@ -734,9 +762,9 @@ def export_streaming_tflite(
             converter.inference_input_type = tf.int8
             converter.inference_output_type = tf.uint8
             if data_dir:
-                converter.representative_dataset = create_representative_dataset_from_data(config, data_dir)
+                converter.representative_dataset = create_representative_dataset_from_data(config, data_dir, temporal_frames=temporal_frames)
             else:
-                converter.representative_dataset = create_representative_dataset(config)
+                converter.representative_dataset = create_representative_dataset(config, temporal_frames=temporal_frames)
         else:
             converter.experimental_enable_resource_variables = True
 

@@ -13,7 +13,11 @@
 9. [Performance & Optimization](#performance--optimization)
 10. [Speaker Clustering Issues](#speaker-clustering-issues)
 11. [Diagnostic Tools & Commands](#diagnostic-tools--commands)
-
+11. [Diagnostic Tools & Commands](#diagnostic-tools--commands)
+16. |
+9. [Training-Export AUC Gap](#training-export-auc-gap)
+17. |
+18. ---
 ---
 
 ## Quick Diagnostic Checklist
@@ -1767,7 +1771,51 @@ When reporting an issue, include:
 | `ImportError: torch` | Switch to PyTorch env: `mww-torch` |
 | `Permission denied` | `chmod +x scripts/*.py` |
 | `Config not found` | Use full path: `config/presets/standard.yaml` |
+|| `Permission denied` | `chmod +x scripts/*.py` |
 
+---
+
+## Training-Export AUC Gap
+
+**Symptom:** Training model achieves AUC 0.9941 but exported TFLite model achieves AUC 0.8482 (~15% gap).
+
+**Root Cause:** Temporal pooling mismatch between training and export.
+- Training model (`architecture.py`) used `GlobalAveragePooling2D` — averages all 33 frames to single value
+- Export model (`tflite.py`) used `tf.reduce_mean` — averaged 5 buffer frames to single value
+- Official okay_nabu TFLite model uses `Flatten` (not average pooling) — reshapes [1,6,1,64]→[1,384]
+- This caused Dense layer weight shape mismatch: [1, 64] in training vs [1, 384] required for Flatten
+
+**Solution Implemented (2026-03-11):**
+1. Changed `architecture.py` line 537: `GlobalAveragePooling2D` → `Flatten(name="global_pool")`
+2. Changed `tflite.py` lines 486-493: `tf.reduce_mean` → `tf.reshape(x, [1, -1])`
+3. Removed redundant `self.flatten` layer from `architecture.py`
+4. Updated documentation: `ARCHITECTURAL_CONSTITUTION.md` and `docs/ARCHITECTURE.md` now describe "Temporal flatten buffer" instead of "Temporal mean pooling"
+
+**Codebase Audit (2026-03-11):**
+- Full audit of all files (training, export, evaluation, auto-tuner, config, docs, scripts)
+- All 6 state variables verified correct (stream_0 through stream_5)
+- All ops verified correct (58 total: 55 base + 3 residual ADDs for residual_connection=[0,1,1,1])
+- BN folding verified numerically perfect (diff < 1e-6)
+- Dense input shapes verified correct (384 inputs)
+- uint8 output, int8 input, representative dataset with boundaries all confirmed
+- No stale `GlobalAveragePooling` or architectural `reduce_mean` references remain
+- Minor finding: `ring_buffer_length = max(self.kernel_sizes) - 1` is dead code (never referenced) — harmless
+
+**Retraining Required:**
+- **Critical**: Because Dense layer input changed from 64→384 (Flatten instead of AveragePooling), **you must retrain model** before export will show correct AUC
+- The old checkpoint will produce incorrect results with new Flatten architecture
+
+- Run: `mww-train --config config/presets/max_quality.yaml`
+- This will train a new Dense layer with 384 inputs (correct for Flatten)
+- After retraining: `mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/`
+- Then: `mww-evaluate --checkpoint models/exported/wake_word.weights.h5`
+
+**Verification:**
+- Run `scripts/debug_streaming_gap.py` to numerically compare training vs export models
+- Expected: Both models should now have < 0.01 mean abs diff (down from 0.17)
+- Expected: AUC gap should be eliminated (< 1% difference)
+
+**Status:** ✅ Resolved, documented in `specs/implementation_status.md`, `specs/testing_plan.md`
 ---
 
 **Last Updated:** 2026-03-06  

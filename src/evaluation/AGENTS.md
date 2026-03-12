@@ -73,7 +73,11 @@ fah_rate = estimator.estimate_false_activations_per_hour(false_positives, durati
 - Maintain backward compatibility via standalone wrapper functions in `metrics.py`.
 - Prefer centralized ROC/AUC and PR handling through `MetricsCalculator.compute_all_metrics()`.
 - Used by `src/training/trainer.py` during validation steps.
-- Best model selection based on FAH (false activations per hour), then recall at thresholds.
+- **Checkpoint selection** in the trainer uses a two-stage strategy (not a single FAH-then-recall heuristic):
+  - Stage 1 (warm-up): `auc_pr` (PR-AUC) — PR-AUC is robust to class imbalance and is threshold-free.
+  - Stage 2 (operational): `recall_at_target_fah` with FAH guard — best recall of models meeting the FAH budget.
+  - The composite `quality_score` is still logged but does NOT drive checkpoint decisions.
+  - See `src/training/trainer.py::_is_best_model()` for full logic.
 
 
 ## Related Documentation

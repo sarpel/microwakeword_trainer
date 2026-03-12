@@ -30,7 +30,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 | TFLite export | `src/export/tflite.py` (780 lines) | INT8 quantization, dual subgraphs |
 | Data pipeline | `src/data/dataset.py` (962 lines) | RaggedMmap, WakeWordDataset |
 | Speaker clustering | `src/data/clustering.py` (1,212 lines) | ECAPA-TDNN embeddings |
-| Auto-tuning | `src/tuning/autotuner.py` (691 lines) | Optuna-based FAH/recall optimization |
+| Auto-tuning | `src/tuning/autotuner.py` (2333 lines) | MaxQualityAutoTuner: Pareto archive, Thompson sampling, 7 strategy arms |
 | Evaluation metrics | `src/evaluation/metrics.py` (373 lines) | FAH, ROC-AUC, calibration |
 
 ## CONVENTIONS
@@ -132,6 +132,7 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 - **User-defined hard negatives in AutoTuner** (commit 2fa00e22e): `--users-hard-negs` CLI flag, `users_hard_negs_dir` parameter
 - **Configuration validation enhancements** (commit f62bb69a3): Improved validation in config/loader.py, better error messages
 - **Critical Bug Fix** (2026-03-10): Auto-tuner weight serialization now uses `model.get_weights()`/`model.set_weights()` instead of `model.trainable_weights` to include BatchNorm moving statistics. The tuning model runs in NON_STREAM mode (no streaming states), but BatchNorm moving_mean/moving_variance are non-trainable and were lost. Prevents confirmation failures (FAH 0→129).
+- **Two-Stage Checkpoint Strategy** (2026-03-12): Replaced `quality_score`-based checkpoint selection with a principled two-stage approach. Stage 1 (warm-up): saves by PR-AUC (`auc_pr`) until FAH budget is first met. Stage 2 (operational): saves by `recall_at_target_fah` when FAH ≤ `target_fah × 1.1`. `quality_score` is retained for logging/display only. Eliminates arbitrary 0.7/0.3 weights, Lorentzian config-sensitivity, and AGENTS.md/code contradictions. See `src/training/trainer.py::_is_best_model()`.
 
 ### Gotchas
 - **CuPy no CPU fallback**: Must have GPU for training (SpecAugment)

@@ -46,9 +46,9 @@ training:
   eval_log_every_step: true
   steps_per_epoch: 1000
 
-  positive_class_weight: [4.0, 5.0, 6.0]
-  negative_class_weight: [3.0, 5.0, 8.0]
-  hard_negative_class_weight: [5.0, 8.0, 12.0]
+  positive_class_weight: [4.0, 5.0, 6.0]      # De-emphasized from [10,20,30] — was too recall-biased
+  negative_class_weight: [3.0, 5.0, 8.0]     # Slightly up from [1,1,1] to maintain FAH pressure with more aggressive mining
+  hard_negative_class_weight: [5.0, 8.0, 12.0]   # UP from [1,1,1] — force discrimination against confusables
 
   # Progressive SpecAugment: light→moderate→strong
   time_mask_max_size: [2, 4, 6]
@@ -72,19 +72,9 @@ training:
   optimizer: "adam"
   label_smoothing: 0.02
   gradient_clipnorm: 1.0        # Was 0.5 = too aggressive, capped max score at 0.87
-  ema_decay: 0.999               # Smoother EMA — half-life ~6900 steps (was 0.995, too jittery)
+  ema_decay: 0.995               # Half-life ~700 steps, smooths noise without killing convergence
   random_seed: 42               # Reproducible runs
   auto_tune_on_poor_fah: true
-  # Intra-phase cosine LR decay (prevents flat LR stagnation)
-  cosine_decay_alpha: 0.1         # Decay to 10% of phase LR by phase end
-  # Plateau-based LR reduction and early stopping
-  plateau_lr_factor: 0.3           # Reduce LR to 30% on plateau
-  plateau_patience: 3              # 3 consecutive plateau evals before reduction
-  plateau_max_reductions: 2        # Stop after 2 reductions (0 = disabled)
-  # Phase transition staggering
-  phase_stagger_steps: 2000        # Delay class weights + augmentation 2k steps after LR change
-  # BatchNorm freezing
-  freeze_bn_on_plateau: true       # Freeze BN when plateau detected for stability
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -180,8 +170,8 @@ performance:
 
   # Sophisticated metrics (Phase 4) - disabled by default for cleaner logs
   tensorboard_log_learning_rate: true
-  tensorboard_log_gradient_norms: true
-  tensorboard_log_activation_stats: true
+  tensorboard_log_gradient_norms: false
+  tensorboard_log_activation_stats: false
   tensorboard_log_confidence_drift: true
   tensorboard_log_per_class_accuracy: true
   tensorboard_sophisticated_interval: 2000
@@ -259,7 +249,7 @@ export:
   inference_input_type: "int8"
   inference_output_type: "uint8"
 
-  probability_cutoff: 0.95
+  probability_cutoff: 0.97
   sliding_window_size: 5
   tensor_arena_size: 30000
   minimum_esphome_version: "2024.7.0"
@@ -302,7 +292,7 @@ quality:
 # EVALUATION AND METRICS
 # ─────────────────────────────────────────────────────────────────
 evaluation:
-  default_threshold: 0.95       # Match deployment probability_cutoff
+  default_threshold: 0.97       # Match deployment probability_cutoff
   n_thresholds: 501
   max_fah: 10.0
   warmup_runs: 10

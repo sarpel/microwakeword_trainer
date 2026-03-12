@@ -188,7 +188,12 @@ Config → Trainer.__init__() → _build_model() → train()
 - External callers that only need offline/post-training metrics should import `MetricsCalculator` directly from `src.evaluation.metrics`.
 - Supports TensorBoard logging (controlled via config)
 - Two-phase training: typically [20000, 10000] steps with [0.001, 0.0001] LR
-- Best model selection by FAH (false activations/hour) then recall
+- **Checkpoint selection uses a two-stage strategy** (implemented 2026-03-12):
+  - **Stage 1 — Warm-up** (no epoch has yet met the FAH budget): saves by `auc_pr` (PR-AUC) improvement. Threshold-free and robust to class imbalance. Provides a stable training signal before the model learns to meet the FAH constraint.
+  - **Stage 2 — Operational** (≥1 epoch has met FAH ≤ `target_fah × 1.1`): saves by `recall_at_target_fah` improvement, ONLY when the current epoch also meets the FAH budget. Directly maps to production semantics: best recall of all models that deploy within FAH budget.
+  - Transition is automatic via `self.fah_budget_ever_met` flag.
+  - `quality_score` (composite) is still computed and logged for display/plateau tracking but no longer drives checkpoint decisions.
+  - New instance vars: `best_auc_pr`, `best_constrained_recall`, `fah_budget_ever_met`
 - **Validation file path tracking**: `WakeWordDataset.get_split_file_paths('val')` provides ordered file paths for mapping prediction indices to files. Passed to `Trainer.train()` via `val_file_paths` parameter.
 
 ## Related Documentation

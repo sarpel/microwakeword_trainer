@@ -95,7 +95,17 @@ class TrainingConfig:
     optimizer: str = "adam"  # Optimizer type (currently only "adam" supported)
     label_smoothing: float = 0.01  # Label smoothing for BinaryCrossentropy (0.0 = disabled)
     gradient_clipnorm: Optional[float] = 2.0  # Gradient clipping (None = disabled)
-    ema_decay: Optional[float] = 0.99  # EMA decay rate (None = disabled) - REQUIRES IMPLEMENTATION
+    ema_decay: Optional[float] = 0.999  # EMA decay rate (None = disabled)
+    # Intra-phase cosine LR decay
+    cosine_decay_alpha: float = 0.0  # Min LR fraction within each phase (0.0 = decay to 0, 1.0 = no decay/flat LR)
+    # Plateau-based LR reduction and early stopping
+    plateau_lr_factor: float = 0.3  # Factor to multiply LR on plateau (e.g., 0.3 = reduce to 30%)
+    plateau_patience: int = 3  # Number of consecutive plateau evaluations before LR reduction
+    plateau_max_reductions: int = 2  # Max LR reductions before early stopping (0 = disabled)
+    # Phase transition staggering
+    phase_stagger_steps: int = 2000  # Steps to delay class weights and augmentation after LR transition
+    # BatchNorm freezing
+    freeze_bn_on_plateau: bool = True  # Freeze BatchNorm layers when plateau detected
 
     def __post_init__(self) -> None:
         if self.batch_size <= 0:

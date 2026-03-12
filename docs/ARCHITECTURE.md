@@ -205,10 +205,11 @@ converter.inference_output_type = tf.uint8  # ← UINT8. ALWAYS. NON-NEGOTIABLE.
 
 > **IMMUTABLE. EXHAUSTIVE. VERIFIED FROM FLATBUFFER OP CODES.**
 >
-> The ESPHome TFLite Micro runtime registers exactly **20 op resolvers**. Any op
-> not in this list is **not registered** and will cause a fatal error at model
-> loading time on the device. There are no custom ops. All ops are BUILTIN.
->
+> The ESPHome TFLite Micro runtime registers exactly **20 op resolvers** (listed below).
+> Any op not in this list is **not registered** and will cause a fatal error at model
+> loading time on the device. Not all registered ops are used by every model — the
+> `okay_nabu` reference model uses **13 unique op types** (55 total operations).
+> There are no custom ops. All ops are BUILTIN.
 
 
 ### ESPHome-Registered Op Resolvers (from `micro_wake_word.cpp`)
@@ -253,8 +254,13 @@ resolver.AddSplitV();
 | `FULLY_CONNECTED` | 1 | Classification head |
 | `LOGISTIC` | 1 | Sigmoid activation on output |
 | `QUANTIZE` | 1 | Cast float32 output to uint8 |
-| `MUL` | varies | BatchNormalization fold or residuals |
-| `ADD` | varies | Residual connections / biases |
+| `MUL` | 0 (registered, unused in okay_nabu) | Available for BatchNorm fold or residuals |
+| `ADD` | 0 (registered, unused in okay_nabu) | Available for residual connections / biases |
+| `MEAN` | 0 (registered, unused in okay_nabu) | Available for pooling operations |
+| `AVERAGE_POOL_2D` | 0 (registered, unused in okay_nabu) | Available for average pooling |
+| `MAX_POOL_2D` | 0 (registered, unused in okay_nabu) | Available for max pooling |
+| `PAD` | 0 (registered, unused in okay_nabu) | Available for padding operations |
+| `PACK` | 0 (registered, unused in okay_nabu) | Available for tensor packing |
 
 > ⛔ **ALL OPS SHOW `CustomCode: N/A` IN FLATBUFFER ANALYSIS.**
 >
@@ -305,7 +311,7 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 | | okay_nabu |
 |---|---|
 | Subgraph 0 ops | 55 |
-| Subgraph 0 tensors | 94 |
+| Subgraph 0 tensors | 95 |
 | Subgraph 1 ops | 12 |
 | Subgraph 1 tensors | 12 |
 
@@ -532,7 +538,7 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
 | II | Output dtype from `uint8` to `int8` | ESPHome reads signed bytes as unsigned; every prediction ≥ 128 is misinterpreted as negative; wake word never triggers |
 | III | Quantization calibration dataset too small or missing boundaries | Scale/zero_point shift; dynamic range is wrong; model runs but predictions are compressed into a tiny range; effectively non-functional |
 | III | Remove `_experimental_variable_quantization` | State variables stay float32; int8-only kernel resolver fails at model load; device halts |
-| IV | Use any op outside the 14 registered ops | Op resolver returns `kTfLiteError` at load time; device halts; wake word engine never starts |
+| IV | Use any op outside the 20 registered op resolvers | Op resolver returns `kTfLiteError` at load time; device halts; wake word engine never starts |
 | V | Export without `STREAM_INTERNAL_STATE_INFERENCE` mode | No `VAR_HANDLE`/state ops in graph; model has no memory; predictions are independent per-frame; accuracy is random |
 | VI | Wrong ring buffer size (kernel / stride mismatch) | Ring buffer reads from wrong temporal offset; model sees scrambled temporal context; no crash, just wrong predictions forever |
 | VII | Change stride in code but not in export/manifest | Input tensor slicing misaligned with ring buffer writes; state corruption accumulates across time; model degrades after first second of audio |

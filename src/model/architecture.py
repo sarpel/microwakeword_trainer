@@ -545,7 +545,6 @@ class MixedNet(tf.keras.Model):
         # Output layer - must be float32 for numerical stability with mixed precision
         self.output_dense = tf.keras.layers.Dense(1, activation="sigmoid", name="layers_dense", dtype=tf.float32)
 
-
         super().build(input_shape)
 
     def call(self, inputs, training=None, mask=None):
@@ -583,7 +582,6 @@ class MixedNet(tf.keras.Model):
             net = self.temporal_stream(net)
         # Global pooling
         net = self.pooling(net)
-
 
         # Dropout
         if self.dropout is not None:
