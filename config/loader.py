@@ -338,12 +338,19 @@ class ExportConfig:
     inference_output_type: str = "uint8"
     probability_cutoff: float = 0.97
     sliding_window_size: int = 5
-    tensor_arena_size: int = 30000
+    tensor_arena_size: int = 0  # 0 means auto-calculate from exported TFLite
     minimum_esphome_version: str = "2024.7.0"
     # TFLite calibration (NEW)
     representative_dataset_size: int = 1000  # Number of samples for random calibration
     representative_dataset_real_size: int = 4000  # Number of samples for real-data calibration
     arena_size_margin: float = 1.3  # Multiplier for tensor arena size (1.3 = 30% margin)
+
+    def __post_init__(self):
+        """Validate export configuration."""
+        if self.tensor_arena_size < 0:
+            raise ValueError(f"export.tensor_arena_size must be >= 0, got {self.tensor_arena_size}")
+        if self.arena_size_margin <= 0.0:
+            raise ValueError(f"export.arena_size_margin must be > 0.0, got {self.arena_size_margin}")
 
 
 @dataclass
@@ -409,6 +416,15 @@ class EvaluationConfig:
     plateau_slope_eps: float = 0.0001  # Slope epsilon for plateau detection
     warmup_runs: int = 10  # Warmup runs for latency measurement
     n_latency_runs: int = 100  # Number of runs for latency measurement
+
+    # Backwards-compatibility alias: expose canonical name via property
+    @property
+    def detection_threshold(self) -> float:
+        return self.default_threshold
+
+    @detection_threshold.setter
+    def detection_threshold(self, value: float) -> None:
+        self.default_threshold = float(value)
 
 
 @dataclass

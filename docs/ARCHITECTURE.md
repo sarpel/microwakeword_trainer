@@ -498,11 +498,17 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
 ```json
 {
   "type": "micro",
+  "wake_word": "Hey Katya",
+  "author": "Sarpel GURAY",
+  "website": "https://github.com/sarpel/microwakeword-training-platform",
+  "model": "hey_katya.tflite",
+  "trained_languages": ["en"],
   "version": 2,
   "micro": {
+    "probability_cutoff": 0.97,
     "feature_step_size": 10,
     "sliding_window_size": 5,
-    "tensor_arena_size": 26080,
+    "tensor_arena_size": 22860,
     "minimum_esphome_version": "2024.7.0"
   }
 }
@@ -519,9 +525,9 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
 
 ### Tensor Arena Sizing Rules
 
-- `okay_nabu` reference: ~28 000–30 000 bytes
-- **Measure empirically** using `tflite_micro_arena_size` tool
-- **Add 10% margin** to the measured value
+- `tensor_arena_size` is model-dependent (no universal fixed constant)
+- Recommended policy: set `export.tensor_arena_size: 0` and auto-resolve from exported TFLite tensor allocations with `arena_size_margin`
+- Keep explicit override support (`tensor_arena_size > 0`) for measured target-device requirements
 - Underestimating causes silent memory corruption, not a clean error
 
 ---

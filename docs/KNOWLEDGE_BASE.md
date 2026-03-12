@@ -344,19 +344,25 @@ converter.inference_output_type = tf.uint8  # NOT int8!
 ```json
 {
   "type": "micro",
+  "wake_word": "Hey Katya",
+  "author": "Sarpel GURAY",
+  "website": "https://github.com/sarpel/microwakeword-training-platform",
+  "model": "hey_katya.tflite",
+  "trained_languages": ["en"],
   "version": 2,
   "micro": {
+    "probability_cutoff": 0.97,
     "feature_step_size": 10,
     "sliding_window_size": 5,
-    "tensor_arena_size": 26080,
+    "tensor_arena_size": 22860,
     "minimum_esphome_version": "2024.7.0"
   }
 }
 ```
 
 **Tensor Arena Sizing:**
-- `okay_nabu` reference: ~135,873 bytes
-- Add 10% margin to measured value
+- `tensor_arena_size` is model-dependent and should be auto-resolved when `export.tensor_arena_size: 0`
+- Add margin via `export.arena_size_margin`
 - Underestimating causes silent memory corruption
 
 ### 5.4 Verification Checklist

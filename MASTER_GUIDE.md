@@ -520,7 +520,7 @@ export:
   inference_output_type: "uint8" # IMMUTABLE: ESPHome requirement (NOT int8!)
   probability_cutoff: 0.97       # 0.70 for testing, 0.95-0.98 for production
   sliding_window_size: 5
-  tensor_arena_size: 22860       # Auto-calculated if 0
+  tensor_arena_size: 0           # Auto-calculate from exported TFLite (recommended)
   minimum_esphome_version: "2024.7.0"
 ```
 
@@ -757,14 +757,20 @@ models/exported/
 
 ```json
 {
-  "name": "Hey Computer",
+  "type": "micro",
+  "wake_word": "Hey Computer",
   "author": "Your Name",
-  "version": "1.0.0",
+  "website": "https://github.com/sarpel/microwakeword-training-platform",
   "model": "hey_computer.tflite",
-  "minimum_esphome_version": "2024.7.0",
-  "tensor_arena_size": 26080,
-  "probability_cutoff": 0.97,
-  "sliding_window_size": 5
+  "trained_languages": ["en"],
+  "version": 2,
+  "micro": {
+    "probability_cutoff": 0.97,
+    "sliding_window_size": 5,
+    "feature_step_size": 10,
+    "tensor_arena_size": 22860,
+    "minimum_esphome_version": "2024.7.0"
+  }
 }
 ```
 
@@ -1211,7 +1217,7 @@ model:
 
 # Reduce arena size
 export:
-  tensor_arena_size: 18000
+  tensor_arena_size: 0
 ```
 
 ---

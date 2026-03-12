@@ -683,7 +683,7 @@ export:
   quantize: true
   inference_input_type: "int8"
   inference_output_type: "uint8"
-  tensor_arena_size: 26080
+  tensor_arena_size: 0  # auto-calculate from exported model
 ```
 
 ### Custom Configuration
@@ -731,16 +731,24 @@ models/exported/
 
 ```json
 {
-  "name": "Hey Computer",
+  "type": "micro",
+  "wake_word": "Hey Computer",
   "author": "Your Name",
-  "version": "1.0.0",
+  "website": "https://github.com/sarpel/microwakeword-training-platform",
   "model": "wake_word.tflite",
-  "minimum_esphome_version": "2024.7.0",
-  "tensor_arena_size": 26080,
-  "probability_cutoff": 0.97,
-  "sliding_window_size": 5
+  "trained_languages": ["en"],
+  "version": 2,
+  "micro": {
+    "probability_cutoff": 0.97,
+    "sliding_window_size": 5,
+    "feature_step_size": 10,
+    "tensor_arena_size": 22860,
+    "minimum_esphome_version": "2024.7.0"
+  }
 }
 ```
+
+`tensor_arena_size` is auto-resolved during export when `export.tensor_arena_size: 0`.
 
 ### ESPHome Configuration
 
@@ -845,7 +853,7 @@ model:
   pointwise_filters: "40,40,40,40"  # Smaller than default 60
 
 export:
-  tensor_arena_size: 20000  # Smaller arena
+  tensor_arena_size: 0  # keep auto-calculated unless you measured a custom value
 ```
 
 ---
