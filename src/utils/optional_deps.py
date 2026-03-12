@@ -1,6 +1,5 @@
 """Optional dependency loader with helpful error messages."""
 
-
 import importlib
 from typing import Any
 

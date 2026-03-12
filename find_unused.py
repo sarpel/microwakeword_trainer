@@ -1,9 +1,10 @@
-import os
 import ast
+import os
+
 
 def get_defined_names(file_path):
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             tree = ast.parse(f.read())
     except:
         return []
@@ -15,28 +16,30 @@ def get_defined_names(file_path):
             names.append(node.name)
     return names
 
+
 def is_used(name, file_path, all_files):
     for f in all_files:
         if f == file_path:
             continue
         try:
-            with open(f, 'r') as file:
+            with open(f, "r") as file:
                 content = file.read()
                 # Simple check, but to avoid false positives, check if name is word
-                if re.search(r'\b' + re.escape(name) + r'\b', content):
+                if re.search(r"\b" + re.escape(name) + r"\b", content):
                     return True
         except:
             pass
     return False
 
+
 all_files = []
-for root, dirs, files in os.walk('src'):
+for root, dirs, files in os.walk("src"):
     for file in files:
-        if file.endswith('.py'):
+        if file.endswith(".py"):
             all_files.append(os.path.join(root, file))
-for root, dirs, files in os.walk('scripts'):
+for root, dirs, files in os.walk("scripts"):
     for file in files:
-        if file.endswith('.py'):
+        if file.endswith(".py"):
             all_files.append(os.path.join(root, file))
 
 unused = []

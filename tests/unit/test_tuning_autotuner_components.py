@@ -165,7 +165,9 @@ def test_stir_and_annealing_controllers() -> None:
     ann.temperature = 1e-9
     assert not ann.should_accept(worse, better, target_fah=1.0, target_recall=0.9)
     assert not ann.should_accept(worse, better, target_fah=1.0, target_recall=0.9)
-    assert ann.temperature >= 1e-9
+    # After reheat_after=2 consecutive rejections, temperature should have been reheated:
+    # temperature *= reheat_factor  =>  1e-9 * 2.0 = 2e-9
+    assert ann.temperature >= 1e-9 * ann.reheat_factor
 
 
 def test_threshold_optimizer_core_paths(monkeypatch) -> None:

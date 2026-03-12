@@ -191,41 +191,11 @@ class MicroFrontend:
             Mel spectrogram of shape (num_frames, mel_bins)
         """
         import pymicro_features
-        # PCAN documentation: PCAN is hardcoded in C++ backend with enable_pcan=1, strength=0.95, offset=80.0, gain_bits=21
-        # ESPHome uses identical parameters. No Python config flag for PCAN is provided.
 
         # PCAN (Per-Channel Amplitude Normalization) is hardcoded ON in the pymicro-features C++ backend:
         # enable_pcan=1, strength=0.95, offset=80.0, gain_bits=21
         # This matches ESPHome's on-device microfrontend exactly — no mismatch, no Python config needed.
         # Do NOT add an enable_pcan Python config flag — it would be meaningless dead code.
-        # PCAN (Per-Channel Amplitude Normalization) is hardcoded ON in the pymicro-features C++ backend:
-        # enable_pcan=1, strength=0.95, offset=80.0, gain_bits=21
-        # This matches ESPHome's on-device microfrontend exactly — no mismatch, no Python config needed.
-        # Do NOT add an enable_pcan Python config flag — it would be meaningless dead code.
-        # PCAN (Per-Channel Amplitude Normalization) is hardcoded ON in the pymicro-features C++ backend:
-        # enable_pcan=1, strength=0.95, offset=80.0, gain_bits=21
-        # This matches ESPHome's on-device microfrontend exactly — no mismatch, no Python config needed.
-        # Do NOT add an enable_pcan Python config flag — it would be meaningless dead code.
-        # PCAN (Per-Channel Amplitude Normalization) is enabled by default
-        # in the pymicro-features C++ backend. This call intentionally does not
-        # expose any Python-side toggling and relies on the backend defaults
-        # to align with the official ESPHome okay_nabu model configuration.
-        # PCAN (Per-Channel Amplitude Normalization) is hardcoded ON
-        # in the pymicro-features C++ backend. There is no Python flag
-        # to enable/disable PCAN. This matches the ESPHome okay_nabu model
-        # configuration.
-        # PCAN (Per-Channel Amplitude Normalization) is hardcoded ON
-        # in the pymicro-features C++ backend. There is no Python flag
-        # to enable/disable PCAN. This matches the ESPHome okay_nabu model
-        # configuration.
-        # PCAN (Per-Channel Amplitude Normalization) is hardcoded ON
-        # in the pymicro-features C++ backend. There is no Python flag
-        # to enable/disable PCAN. This matches the ESPHome okay_nabu model
-        # configuration.
-        # PCAN (Per-Channel Amplitude Normalization) is hardcoded ON
-        # in the pymicro-features C++ backend. There is no Python flag
-        # to enable/disable PCAN. This matches the ESPHome okay_nabu model
-        # configuration.
         # Create a fresh frontend per call to avoid state leakage
         # Note: PCAN (Per-Channel Amplitude Normalization) is hardcoded ON in the
         # pymicro-features C++ backend. There is no Python flag to enable/disable it.

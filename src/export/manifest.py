@@ -83,7 +83,7 @@ def resolve_tensor_arena_size(tflite_path: str | None, export_config: dict[str, 
         return configured_int
 
     if tflite_path and Path(tflite_path).exists():
-        margin = float(export_config.get("arena_size_margin", 1.3) or 1.3)
+        margin = float(export_config.get("arena_size_margin", 1.1) or 1.1)
         return calculate_tensor_arena_size(tflite_path, margin=margin)
 
     return DEFAULT_TENSOR_ARENA_SIZE

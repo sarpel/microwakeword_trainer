@@ -533,6 +533,12 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
 |---|---|---|
 | `type` | Must be `"micro"` | ESPHome ignores the file entirely |
 | `version` | Must be `2` | v1 loader path is taken; state variables are not handled |
+| `wake_word` | Must be the exact spoken phrase | Wrong label shown in Home Assistant UI |
+| `author` | Informational; no hard constraint | — |
+| `website` | Informational; no hard constraint | — |
+| `model` | Must match the `.tflite` filename | ESPHome cannot locate the model binary |
+| `trained_languages` | List of BCP-47 codes (e.g. `["en"]`) | Informational; affects ESPHome language-filter behavior |
+| `probability_cutoff` | `0.0`–`1.0` float; detection threshold | Too low → false triggers; too high → missed detections |
 | `feature_step_size` | Must be `10` (ms) | Timing desync; model receives stale/skipped frames |
 | `sliding_window_size` | Typically `5` | Affects false-positive suppression, not model correctness |
 | `tensor_arena_size` | Must be ≥ actual arena | Runtime OOM crash on device |
