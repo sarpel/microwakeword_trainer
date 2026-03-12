@@ -8,7 +8,6 @@ This module provides sophisticated TensorBoard visualizations including:
 - Model graph visualization
 """
 
-from __future__ import annotations
 
 import io
 import logging
@@ -87,15 +86,12 @@ class TensorBoardLogger:
         self.log_weight_histograms_enabled = log_weight_histograms
 
         # Sophisticated metrics (Phase 4)
+        # Boolean flags use _enabled suffix to avoid conflict with method names
         self.log_learning_rate_enabled = log_learning_rate
         self.log_gradient_norms_enabled = log_gradient_norms
         self.log_activation_stats_enabled = log_activation_stats
         self.log_confidence_drift_enabled = log_confidence_drift
         self.log_per_class_accuracy_enabled = log_per_class_accuracy
-        self.log_gradient_norms = log_gradient_norms
-        self.log_activation_stats = log_activation_stats
-        self.log_confidence_drift = log_confidence_drift
-        self.log_per_class_accuracy = log_per_class_accuracy
         self.sophisticated_interval = sophisticated_interval
 
         self.writer: tf.summary.SummaryWriter | None = None
@@ -849,7 +845,7 @@ class TensorBoardLogger:
                 tf.summary.scalar("confidence/uncertainty", uncertainty, step=step)
 
                 # Compute drift if we have history
-                if len(self._confidence_history) >= 10:
+                if len(self._confidence_history) >= 20:
                     recent_mean = np.mean([c for _, c in self._confidence_history[-10:]])
                     older_mean = np.mean([c for _, c in self._confidence_history[:10]])
                     drift = abs(recent_mean - older_mean)

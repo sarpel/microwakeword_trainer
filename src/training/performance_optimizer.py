@@ -3,7 +3,6 @@
 Integrates mixed precision and tf.data.Dataset pipeline for maximum performance.
 """
 
-from __future__ import annotations
 
 import logging
 

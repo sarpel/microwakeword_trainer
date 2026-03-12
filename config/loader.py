@@ -111,7 +111,17 @@ class TrainingConfig:
         if self.batch_size <= 0:
             raise ValueError("training.batch_size must be > 0")
         if not 0.0 <= self.label_smoothing < 1.0:
-            raise ValueError(f"training.label_smoothing must be in range [0.0, 1.0), got {self.label_smoothing}")
+            raise ValueError(f"training.label_smoothing must be in range [0.0, 1.0], got {self.label_smoothing}")
+        if not 0.0 <= self.cosine_decay_alpha <= 1.0:
+            raise ValueError(f"training.cosine_decay_alpha must be in [0.0, 1.0], got {self.cosine_decay_alpha}")
+        if not 0.0 < self.plateau_lr_factor <= 1.0:
+            raise ValueError(f"training.plateau_lr_factor must be in (0.0, 1.0], got {self.plateau_lr_factor}")
+        if not isinstance(self.plateau_patience, int) or self.plateau_patience <= 0:
+            raise ValueError(f"training.plateau_patience must be an integer > 0, got {self.plateau_patience}")
+        if not isinstance(self.plateau_max_reductions, int) or self.plateau_max_reductions < 0:
+            raise ValueError(f"training.plateau_max_reductions must be an integer >= 0, got {self.plateau_max_reductions}")
+        if not isinstance(self.phase_stagger_steps, int) or self.phase_stagger_steps < 0:
+            raise ValueError(f"training.phase_stagger_steps must be an integer >= 0, got {self.phase_stagger_steps}")
         if len(self.training_steps) != len(self.learning_rates):
             raise ValueError("training.training_steps and learning_rates must have same length")
 
@@ -206,7 +216,6 @@ class PerformanceConfig:
     tensorboard_log_advanced_scalars: bool = True
     tensorboard_log_weight_histograms: bool = False
     tensorboard_image_interval: int = 5000
-    tensorboard_histogram_interval: int = 5000
     tensorboard_histogram_interval: int = 5000
     # New sophisticated TensorBoard metrics (Phase 4)
     tensorboard_log_learning_rate: bool = True  # Track LR schedule

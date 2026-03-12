@@ -33,7 +33,7 @@ This framework provides a complete pipeline for training wake word detection mod
 
 ### Documentation
 
-- [Architecture Guide](docs/ARCHITECTURAL.md) - MixedNet architecture details
+- [Architecture Guide](docs/ARCHITECTURE.md) - MixedNet architecture details
 - [Configuration Reference](docs/CONFIGURATION.md) - Complete config reference
 - [Training Guide](docs/TRAINING.md) - Training workflow and optimization
 - [Export Guide](docs/EXPORT.md) - TFLite export and ESPHome deployment

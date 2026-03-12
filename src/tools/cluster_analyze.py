@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Speaker clustering dry-run analysis tool."""
 
 import argparse

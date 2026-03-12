@@ -1,6 +1,5 @@
 """Optional dependency loader with helpful error messages."""
 
-from __future__ import annotations
 
 import importlib
 from typing import Any

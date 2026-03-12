@@ -1,6 +1,5 @@
 """CLI entry point for mww-autotune command."""
 
-from __future__ import annotations
 
 import os
 

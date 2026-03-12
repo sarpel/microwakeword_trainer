@@ -178,6 +178,7 @@ Config → Trainer.__init__() → _build_model() → train()
 - **Don't import from deleted files** - `miner.py`, `async_miner.py` no longer exist; import from `mining.py`
 - **Don't use `hard_negative_mining` config key** - Use `mining` instead (consolidated)
 - **Don't use `performance.async_mining`** - Deprecated; use `mining.async_mining`
+- **Don't export with pre-Flatten checkpoints** - Checkpoints trained before the Flatten architecture fix (2026-03-11) have Dense layer shape `(64, 1)` and are incompatible with the current export pipeline which expects `(temporal_frames × 64, 1)`. Must retrain with current code.
 
 ## Notes
 - Integrates with `src/data/` for dataset loading

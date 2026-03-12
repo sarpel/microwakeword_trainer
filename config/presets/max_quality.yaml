@@ -150,7 +150,6 @@ performance:
   gpu_only: true
   mixed_precision: true
   spec_augment_backend: "tf"
-  async_mining: true  # DEPRECATED: moved to mining section
   num_workers: 8
   num_threads_per_worker: 2
   prefetch_factor: 12

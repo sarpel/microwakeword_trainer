@@ -1,61 +1,52 @@
-# ─────────────────────────────────────────────────────────────────
-# STANDARD PRESET - Balanced quality and speed
-# Use for: Regular training runs, development, iteration
-# Hardware: RTX 3060 Ti 8GB, 64GB RAM, Ryzen 9 7950X
-# ─────────────────────────────────────────────────────────────────
-# Only values that DIFFER from loader.py defaults (= max_quality)
-# are listed here. Everything else inherits from dataclass defaults.
-# ─────────────────────────────────────────────────────────────────
-
 training:
-  # Shorter training schedule (35k total vs 80k max_quality)
-  training_steps: [20000, 10000, 5000]
-  learning_rates: [0.001, 0.0002, 0.00005]
   batch_size: 128
 
   # Less frequent evaluation (faster iterations)
-  eval_basic_step_interval: 1000
   eval_advanced_step_interval: 5000
+  eval_basic_step_interval: 1000
   eval_checkpoints_interval: 5000
 
   # Different class weighting strategy (recall-biased)
-  positive_class_weight: [10.0, 20.0, 30.0]
-  negative_class_weight: [1.0, 1.0, 1.0]
   hard_negative_class_weight: [1.0, 1.0, 1.0]
 
   # Checkpoint selection: optimize for recall
+  label_smoothing: 0.0
+
+  learning_rates: [0.001, 0.0002, 0.00005]
   minimization_metric: "average_viable_recall"
+  negative_class_weight: [1.0, 1.0, 1.0]
+  positive_class_weight: [10.0, 20.0, 30.0]
   target_minimization: 1.0
 
   # No label smoothing
-  label_smoothing: 0.0
+  training_steps: [20000, 10000, 5000]
 
 augmentation:
-  # Slightly more aggressive augmentation probabilities
-  TanhDistortion: 0.15
-  PitchShift: 0.15
   AddBackgroundNoiseFromFile: 0.35
 
   # Wider pitch shift range
-  pitch_shift_min_semitones: -2.0
   pitch_shift_max_semitones: 2.0
+
+  pitch_shift_min_semitones: -2.0
+  PitchShift: 0.15
+  TanhDistortion: 0.15
 
 performance:
   prefetch_factor: 8
 
   # TensorBoard configuration (Phase 4 sophisticated metrics)
   tensorboard_enabled: true
+  tensorboard_histogram_interval: 5000
+  tensorboard_image_interval: 5000
+  tensorboard_log_activation_stats: false
+  tensorboard_log_advanced_scalars: true
+  tensorboard_log_confidence_drift: true
+  tensorboard_log_gradient_norms: false
+  tensorboard_log_graph: true
   tensorboard_log_histograms: false
   tensorboard_log_images: false
-  tensorboard_log_pr_curves: true
-  tensorboard_log_graph: true
-  tensorboard_log_advanced_scalars: true
-  tensorboard_log_weight_histograms: false
-  tensorboard_image_interval: 5000
-  tensorboard_histogram_interval: 5000
   tensorboard_log_learning_rate: true
-  tensorboard_log_gradient_norms: false
-  tensorboard_log_activation_stats: false
-  tensorboard_log_confidence_drift: true
   tensorboard_log_per_class_accuracy: true
+  tensorboard_log_pr_curves: true
+  tensorboard_log_weight_histograms: false
   tensorboard_sophisticated_interval: 2000

@@ -35,7 +35,7 @@ The streaming model uses a ring buffer approach to maintain state across inferen
 
 The model maintains 6 state variables representing ring buffers at different stages:
 
-1. `stream`: [1,2,1,40] - Initial convolution buffer
+1. `stream_0`: [1,2,1,40] - Initial convolution buffer
 2. `stream_1`: [1,4,1,32] - Block 0 buffer
 3. `stream_2`: [1,10,1,64] - Block 1 buffer
 4. `stream_3`: [1,14,1,64] - Block 2 buffer
@@ -54,6 +54,20 @@ streaming_model = build_streaming_export_model(
 # Fold batch normalization layers
 folded_model = fold_batch_norm(streaming_model)
 ```
+
+### Temporal Frames Inference
+
+The export pipeline dynamically infers `temporal_frames` from the checkpoint Dense layer:
+
+```python
+# From tflite.py — automatic inference
+dense_input_features, _ = dense_kernel_shape
+temporal_frames = dense_input_features // 64  # 64 = last pointwise filter count
+# Dense kernel (2048, 1) → temporal_frames = 32 (correct for okay_nabu)
+# Dense kernel (64, 1) → temporal_frames = 1 (OLD checkpoint, INCOMPATIBLE)
+```
+
+**Important**: Checkpoints trained before the Flatten architecture fix (2026-03-11) have Dense kernel shape `(64, 1)` and are incompatible with current export. Must retrain with current code.
 
 ## INT8 Quantization
 
@@ -124,17 +138,16 @@ converter.representative_dataset = create_representative_dataset(
   "micro": {
     "probability_cutoff": 0.97,
     "sliding_window_size": 5,
-    "tensor_arena_size": 26080,
+    "tensor_arena_size": 135873,
     "minimum_esphome_version": "2024.7.0"
   }
 }
-```
 
 ### Key Parameters
 
 - **probability_cutoff**: Threshold for wake word detection (0.0-1.0)
 - **sliding_window_size**: Number of frames to average for stable detection
-- **tensor_arena_size**: Memory allocation for TFLite runtime (bytes)
+- **tensor_arena_size**: Memory allocation for TFLite runtime (bytes). Official okay_nabu recommended: 135,873 bytes (~136KB). Subgraph 0 uses 41,771 bytes, Subgraph 1 uses 3,520 bytes.
 - **minimum_esphome_version**: Required ESPHome version for compatibility
 
 ### Calculation Methods
@@ -143,9 +156,9 @@ converter.representative_dataset = create_representative_dataset(
 def calculate_tensor_arena_size(model_path):
     """Calculate required tensor arena size for ESPHome."""
     # Analyze model operations and tensor sizes
-    # Return size in bytes (typically 20-30KB for MixedNet)
-    return 26080
-
+    # Official okay_nabu: recommended arena = 135,873 bytes (~136KB)
+    # Subgraph 0 = 41,771 bytes, Subgraph 1 = 3,520 bytes
+    return 135873
 def generate_manifest(model_path, config):
     """Generate ESPHome-compatible manifest file."""
     manifest = {
@@ -165,11 +178,11 @@ def generate_manifest(model_path, config):
 
 ### Verification Checklist
 
-- ✅ **Input shape**: [1, 3, 40] int8
-- ✅ **Output shape**: [1, 1] uint8
-- ✅ **Subgraphs**: Exactly 2 (main graph + initialization)
-- ✅ **State variables**: Exactly 6 int8-quantized variables
-- ✅ **Operations**: Only whitelisted ops for ESPHome
+- ✅ **Input shape**: [1, 3, 40] int8 (scale=0.101961, zero_point=-128)
+- ✅ **Output shape**: [1, 1] uint8 (scale=0.00390625, zero_point=0)
+- ✅ **Subgraphs**: Exactly 2 — Subgraph 0 (main, 95 tensors) + Subgraph 1 (initialization, 12 tensors)
+- ✅ **State variables**: Exactly 6 int8-quantized variables (stream_0 through stream_5)
+- ✅ **Operations**: 13 unique op types from 20 registered ESPHome op resolvers
 - ✅ **Manifest**: Valid JSON with required fields
 - ✅ **Compatibility**: Passes ESPHome verification script
 
@@ -207,6 +220,10 @@ def verify_exported_model(tflite_path, manifest_path):
 ```
 
 ## Common Export Issues and Solutions
+
+### Issue: Shape mismatch during export (e.g., `(2624, 1) vs (2048, 1)`)
+**Cause**: Old checkpoint from pre-Flatten architecture (before 2026-03-11) incompatible with current export pipeline
+**Solution**: Retrain with current code. The Dense layer input size changed from 64 to `temporal_frames × 64` after the Flatten fix.
 
 ### Issue: Model fails on device with silent failure
 **Cause**: Incorrect output quantization (int8 instead of uint8)
@@ -263,7 +280,7 @@ esphome run your_config.yaml
 
 Check ESPHome logs for:
 - Model loading confirmation
-- Memory usage (should be < 30KB arena)
+- **Memory**: Recommended arena ~136KB. Monitor actual usage on target device.
 - Detection performance metrics
 
 ### 5. Tuning Thresholds
@@ -275,7 +292,7 @@ Adjust `probability_cutoff` based on your environment:
 
 ## Performance Optimization Tips
 
-- **Memory**: Monitor tensor arena usage - target < 30KB
+- **Memory**: Monitor tensor arena usage — official okay_nabu recommended arena = 135,873 bytes (~136KB)
 - **Latency**: Streaming model processes 3 frames (30ms) per inference
 - **Accuracy**: Use sufficient representative data for quantization
 - **Compatibility**: Test with target ESPHome version before deployment
