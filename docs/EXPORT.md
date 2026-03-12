@@ -33,14 +33,14 @@ The streaming model uses a ring buffer approach to maintain state across inferen
 
 ### State Variables
 
-The model maintains 6 state variables representing ring buffers at different stages:
+The official `okay_nabu` reference model maintains 6 state tensors across streaming stages:
 
-1. `stream_0`: [1,2,1,40] - Initial convolution buffer
+1. `stream`: [1,2,1,40] - Initial convolution buffer
 2. `stream_1`: [1,4,1,32] - Block 0 buffer
 3. `stream_2`: [1,10,1,64] - Block 1 buffer
 4. `stream_3`: [1,14,1,64] - Block 2 buffer
 5. `stream_4`: [1,22,1,64] - Block 3 buffer
-6. `stream_5`: [1,5,1,64] - Temporal pooling buffer
+6. `stream_5`: [1,5,1,64] - Pre-flatten temporal buffer
 
 ### Conversion Process
 
@@ -76,15 +76,15 @@ temporal_frames = dense_input_features // 64  # 64 = last pointwise filter count
 ```python
 converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_path)
 converter.optimizations = {tf.lite.Optimize.DEFAULT}
-converter._experimental_variable_quantization = True  # REQUIRED for state variables
+converter._experimental_variable_quantization = True  # REQUIRED for READ_VARIABLE / ASSIGN_VARIABLE payload tensors
 converter.inference_input_type = tf.int8
 converter.inference_output_type = tf.uint8  # MUST be uint8 for ESPHome compatibility
 ```
 
 **Important Notes:**
 - `inference_output_type` must be `tf.uint8`, not `tf.int8`
-- `_experimental_variable_quantization = True` is required to quantize state variables
-- State variables are quantized to int8 to minimize memory usage
+- `_experimental_variable_quantization = True` is required so state payload tensors on `READ_VARIABLE` / `ASSIGN_VARIABLE` paths are emitted as int8-compatible tensors
+- `VAR_HANDLE` tensors themselves are resource handles; the quantized part is the data payload flowing through variable read/write ops
 
 ### Quantization Range
 
@@ -185,7 +185,7 @@ def generate_manifest(model_path, config):
 - ✅ **Input shape**: [1, 3, 40] int8 (scale=0.101961, zero_point=-128)
 - ✅ **Output shape**: [1, 1] uint8 (scale=0.00390625, zero_point=0)
 - ✅ **Subgraphs**: Exactly 2 — Subgraph 0 (main, 95 tensors) + Subgraph 1 (initialization, 12 tensors)
-- ✅ **State variables**: Exactly 6 int8-quantized variables (stream_0 through stream_5)
+- ✅ **State variables**: Exactly 6 int8-quantized variables in the official reference (`stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`)
 - ✅ **Operations**: 13 unique op types from 20 registered ESPHome op resolvers
 - ✅ **Manifest**: Valid JSON with required fields
 - ✅ **Compatibility**: Passes ESPHome verification script

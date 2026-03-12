@@ -97,7 +97,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 
 ### Export System
 - **Dual subgraphs**: Main inference + initialization
-- **State variables**: 6 ring buffers named stream_0 through stream_5 (int8-quantized)
+- **Official reference state variables**: 6 int8-quantized state tensors named `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`
 - **BatchNorm folding**: Critical for streaming export
 - **Representative dataset**: Required for INT8 quantization calibration
 
@@ -137,7 +137,7 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 - **Configuration validation enhancements** (commit f62bb69a3): Improved validation in config/loader.py, better error messages
 - **Critical Bug Fix** (2026-03-10): Auto-tuner weight serialization now uses `model.get_weights()`/`model.set_weights()` instead of `model.trainable_weights` to include BatchNorm moving statistics. The tuning model runs in NON_STREAM mode (no streaming states), but BatchNorm moving_mean/moving_variance are non-trainable and were lost. Prevents confirmation failures (FAH 0→129).
 - **Two-Stage Checkpoint Strategy** (2026-03-12): Replaced `quality_score`-based checkpoint selection with a principled two-stage approach. Stage 1 (warm-up): saves by PR-AUC (`auc_pr`) until FAH budget is first met. Stage 2 (operational): saves by `recall_at_target_fah` when FAH ≤ `target_fah × 1.1`. `quality_score` is retained for logging/display only. Eliminates arbitrary 0.7/0.3 weights, Lorentzian config-sensitivity, and AGENTS.md/code contradictions. See `src/training/trainer.py::_is_best_model()`.
-- **Ground Truth Audit** (2026-03-12): Verified all documentation against `official_okay_nabu_analysis.txt`. Key corrections: 95 tensors in Subgraph 0 (not 94), 13 unique op types used by okay_nabu, 20 registered op resolvers in ESPHome (not 14), MUL/ADD ops registered but unused. Fixed in ARCHITECTURAL_CONSTITUTION.md and docs/ARCHITECTURE.md.
+- **Ground Truth Audit** (2026-03-13): Verified documentation against `official_okay_nabu_analysis.txt` / `official_architecture.md`. Key corrections: 95 tensors in Subgraph 0 (not 94), 13 unique op types used by okay_nabu, 20 registered op resolvers in ESPHome (not 14), the first official state tensor is `stream` (not `stream_0`), `QUANTIZE` re-quantizes int8 sigmoid output to uint8, and `stream_5` is a pre-flatten temporal buffer rather than a simple `kernel - stride` ring buffer. Fixed in constitution, guides, specs, and AGENTS files.
 - **Pipeline Alignment** (2026-03-12): `build_core_layers()` factory extracted to architecture.py — both `MixedNet` and `StreamingExportModel` use it. `convert_to_tflite()` dead code removed from tflite.py. INT8 shadow evaluation removed from AutoTuner (float32 eval only). PCAN hardcoded ON in pymicro-features C++ backend (no Python flag). All residual_connections defaults aligned to `[0,1,1,1]`.
 
 ### Gotchas
@@ -148,7 +148,7 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 - **Immutable constants**: Never override ARCHITECTURAL_CONSTITUTION.md values
 - **Old checkpoint incompatibility**: Checkpoints trained before the Flatten architecture fix (2026-03-11) have Dense layer shape `(64, 1)` and are incompatible with the current export pipeline which expects `(temporal_frames × 64, 1)`. Must retrain with current code.
 - **temporal_frames inference**: Export pipeline infers `temporal_frames = dense_input_features // 64` from checkpoint Dense kernel shape. Dense layer input size = `temporal_frames × 64` (64 = last pointwise filter count).
-- **State variable naming**: Variables are named `stream_0` through `stream_5` (not `stream`, `stream_1`...). The `_0` suffix ensures correct alphabetical ordering in TFLite flatbuffer.
+- **Official state variable naming**: The verified `okay_nabu` flatbuffer names the first state `stream`, followed by `stream_1` through `stream_5`. Do not treat `stream_0` as architectural ground truth unless a specific implementation is explicitly documented as deviating from the official reference.
 - **convert_to_tflite() removed**: Legacy function deleted in pipeline-alignment. Use `export_streaming_tflite()` or `convert_model_saved()` instead.
 
 ### Module AGENTS.md Files

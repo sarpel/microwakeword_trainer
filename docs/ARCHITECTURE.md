@@ -253,7 +253,7 @@ resolver.AddSplitV();
 | `SPLIT_V` | 2 | Split tensor for StridedKeep |
 | `FULLY_CONNECTED` | 1 | Classification head |
 | `LOGISTIC` | 1 | Sigmoid activation on output |
-| `QUANTIZE` | 1 | Cast float32 output to uint8 |
+| `QUANTIZE` | 1 | Re-quantize the sigmoid output from int8 encoding to uint8 |
 | `MUL` | 0 (registered, unused in okay_nabu) | Available for BatchNorm fold or residuals |
 | `ADD` | 0 (registered, unused in okay_nabu) | Available for residual connections / biases |
 | `MEAN` | 0 (registered, unused in okay_nabu) | Available for pooling operations |
@@ -276,11 +276,11 @@ resolver.AddSplitV();
 
 > **IMMUTABLE. BOTH SUBGRAPHS MUST BE PRESENT. SHAPES ARE EXACT.**
 >
-> The model contains exactly **2 subgraphs**. Subgraph 1 is the initialization
-> NoOp graph that zeroes all state variables. It is invoked exactly once at
-> device boot via the `CALL_ONCE` op in Subgraph 0. Both subgraphs must be
-> present and intact in the exported `.tflite` file or the device will crash
-> on startup.
+> The model contains exactly **2 subgraphs**. Subgraph 1 is an initialization
+> subgraph that assigns embedded pseudo-constant tensors into the streaming
+> state variables. It is invoked exactly once at device boot via the
+> `CALL_ONCE` op in Subgraph 0. Both subgraphs must be present and intact in
+> the exported `.tflite` file or the device will crash on startup.
 
 ```
 Subgraph [0]: Main Inference Graph
@@ -303,7 +303,7 @@ Subgraph [0]: Main Inference Graph
 Subgraph [1]: Initialization Graph (invoked once, then dormant)
 ├── 12 ops total
 ├── 12 tensors
-└── Zeros all 6 state variables (pseudoconst zero tensors)
+└── Initializes all 6 state variables from embedded pseudo_qconst tensors
 ```
 
 ### Subgraph Op/Tensor Counts (verified)
@@ -322,13 +322,13 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 > **IMMUTABLE. EXACT SHAPES. EXACT COUNT. EXACT ORDER.**
 >
 > There are exactly **6** streaming state variables. Not 5. Not 7. Each one
-> is a ring buffer that stores the "past context" needed for the current
-> inference step. Their shapes encode the temporal kernel sizes of the
-> convolutional layers. Changing a kernel size changes the ring buffer shape.
-> An inconsistency between the training-time kernel size and the export-time
-> state variable shape produces a model that is silently wrong — it will run,
-> produce predictions, and those predictions will be computed on the wrong
-> temporal context.
+> stores past temporal context needed for the current inference step.
+> The first five states (`stream` through `stream_4`) are convolution-context
+> ring buffers. The sixth state (`stream_5`) is a temporal pre-flatten buffer.
+> An inconsistency between the training-time temporal structure and the
+> export-time state variable shapes produces a model that is silently wrong —
+> it will run, produce predictions, and those predictions will be computed on
+> the wrong temporal context.
 
 ### State Variable Shapes
 
@@ -347,16 +347,25 @@ Subgraph [1]: Initialization Graph (invoked once, then dormant)
 |---|---|
 | okay_nabu | **3 472 bytes** |
 
-### Ring Buffer Law
+### Convolution-State Ring Buffer Law
 
 ```
 buffer_frames = kernel_size - stride
 ```
 
-This identity is inviolable. It governs every state variable shape. If you
-change a kernel size or the global stride, every downstream state variable
-shape changes. The exported model will have the wrong buffer sizes if the
-streaming conversion does not re-derive them from this formula.
+This identity is inviolable for the convolution-derived state variables
+`stream`, `stream_1`, `stream_2`, `stream_3`, and `stream_4`.
+
+`stream_5` is different: it is the temporal buffer immediately before
+flattening. In `okay_nabu`, the concatenated tensor is `[1, 6, 1, 64]` and the
+stored state is `[1, 5, 1, 64]`, so this buffer follows:
+
+```
+stream_5_frames = pre_flatten_temporal_frames - 1
+```
+
+The exported model will have the wrong buffer sizes if streaming conversion
+does not re-derive these state tensors from the actual graph structure.
 
 ---
 
@@ -383,14 +392,16 @@ stride = 3
 
 **This value appears in:**
 1. Model input shape: `[1, stride, 40]` = `[1, 3, 40]`
-2. All ring buffer size calculations: `buffer = kernel - stride`
+2. Convolution-state ring buffer calculations: `buffer = kernel - stride`
 3. TFLite representative dataset generation (slides by `stride` per sample)
 4. ESPHome's hardware call cadence
 
 Changing `stride` requires simultaneously changing: the input tensor shape,
-all 6 state variable shapes, the representative dataset generator, and the
-ESPHome YAML configuration. Changing it in one place and not the others
-silently produces a misaligned model.
+the convolution-derived state variable shapes, the representative dataset
+generator, and the ESPHome YAML configuration. It also changes downstream
+temporal dimensions, so `stream_5` must be re-derived from the resulting graph.
+Changing it in one place and not the others silently produces a misaligned
+model.
 
 ---
 
@@ -465,17 +476,20 @@ converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_path)
 
 # These four lines are non-negotiable:
 converter.optimizations                        = {tf.lite.Optimize.DEFAULT}
-converter._experimental_variable_quantization  = True          # state vars MUST be quantized
+converter._experimental_variable_quantization  = True          # state payload tensors MUST be quantized
 converter.target_spec.supported_ops            = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
 converter.inference_input_type                 = tf.int8
 converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
 ```
 
 > ⛔ `converter._experimental_variable_quantization = True` is **required**.
-> Without it, the 6 state variable tensors remain in float32, their
-> `VAR_HANDLE` and `ASSIGN_VARIABLE` ops do not receive int8 quantization
-> parameters, and the TFLite Micro int8-only kernel resolver cannot find
-> matching op implementations. The model will fail to load on device.
+> `VAR_HANDLE` tensors are resource handles and are not themselves quantized
+> payloads. The actual data payload tensors flowing through `READ_VARIABLE`
+> outputs and `ASSIGN_VARIABLE` value inputs **must** be quantized to `int8`
+> with valid quantization parameters. Without variable quantization, these
+> payload tensors are not guaranteed to be emitted as int8-compatible tensors,
+> and the TFLite Micro int8-only kernel resolver may fail to find matching
+> implementations. The model may fail to load on device.
 
 ### Representative Dataset Requirements
 
@@ -543,7 +557,7 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
 | I | `mel_bins`, `window_step_ms`, `sample_rate_hz` | Input tensor shape mismatch; model receives wrong feature dimensions; predictions are garbage |
 | II | Output dtype from `uint8` to `int8` | ESPHome reads signed bytes as unsigned; every prediction ≥ 128 is misinterpreted as negative; wake word never triggers |
 | III | Quantization calibration dataset too small or missing boundaries | Scale/zero_point shift; dynamic range is wrong; model runs but predictions are compressed into a tiny range; effectively non-functional |
-| III | Remove `_experimental_variable_quantization` | State variables stay float32; int8-only kernel resolver fails at model load; device halts |
+| III | Remove `_experimental_variable_quantization` | State payload tensors on `READ_VARIABLE` / `ASSIGN_VARIABLE` paths may remain non-int8; int8-only kernel resolver may fail at model load; device halts |
 | IV | Use any op outside the 20 registered op resolvers | Op resolver returns `kTfLiteError` at load time; device halts; wake word engine never starts |
 | V | Export without `STREAM_INTERNAL_STATE_INFERENCE` mode | No `VAR_HANDLE`/state ops in graph; model has no memory; predictions are independent per-frame; accuracy is random |
 | VI | Wrong ring buffer size (kernel / stride mismatch) | Ring buffer reads from wrong temporal offset; model sees scrambled temporal context; no crash, just wrong predictions forever |

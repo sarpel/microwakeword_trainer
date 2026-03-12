@@ -1169,22 +1169,20 @@ With original naming (`stream`, `stream_1`, `stream_2`, ...):
 - Result: `stream_1` appears first in TFLite file, but should be second
 
 
-**Fix (2026-03-10):**
+**Ground-Truth Correction (2026-03-13):**
 
-Renamed `stream` → `stream_0` in `src/export/tflite.py`. Now:
-- Variable names: `stream_0_ring_buffer`, `stream_1_ring_buffer`, `stream_2_ring_buffer`, ...
-- Alphabetically: `stream_0_ring_buffer` < `stream_1_ring_buffer` < `stream_2_ring_buffer` < ...
-- Result: State variables appear in correct order in TFLite file
+Official `okay_nabu` flatbuffer analysis shows the first state variable is
+named `stream`, not `stream_0`. When validating against the official reference:
+- Expected variable names are `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`
+- Do not infer architectural truth from older documentation claims about `_0` naming
+- Always verify actual emitted names from the flatbuffer or analyzer output
 
 **Verification:**
 ```bash
-# Check if you have the fix
-grep -n "stream" src/export/tflite.py | head -6
-# Should see: ("stream_0", ...), ("stream_1", ...), ...
-
-# Verify ARCHITECTURAL_CONSTITUTION.md is updated
-grep "stream_0" ARCHITECTURAL_CONSTITUTION.md
-# Should appear in state variable tables
+# Verify the official architecture references the correct names
+grep "`stream`" ARCHITECTURAL_CONSTITUTION.md
+grep "stream_1" ARCHITECTURAL_CONSTITUTION.md
+# The first state should be documented as `stream`, not `stream_0`
 ```
 
 **Re-export required:**
@@ -1730,7 +1728,7 @@ When reporting an issue, include:
 
 **Codebase Audit (2026-03-11):**
 - Full audit of all files (training, export, evaluation, auto-tuner, config, docs, scripts)
-- All 6 state variables verified correct (stream_0 through stream_5)
+- All 6 official reference state variables verified correct (`stream` through `stream_5`)
 - All ops verified correct (58 total: 55 base + 3 residual ADDs for residual_connection=[0,1,1,1])
 - BN folding verified numerically perfect (diff < 1e-6)
 - Dense input shapes verified correct (384 inputs)

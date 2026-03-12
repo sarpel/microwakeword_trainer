@@ -11,6 +11,18 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Initialize GPU environment once at module import time
+_gpu_env_initialized = False
+try:
+    from src.utils.performance import setup_gpu_environment
+
+    setup_gpu_environment()
+    _gpu_env_initialized = True
+    logger.debug("GPU environment initialized at module import")
+except Exception as e:
+    logger.warning(f"Failed to initialize GPU environment: {e}")
+    _gpu_env_initialized = False
+
 
 class PerformanceMonitor:
     """Automatic bottleneck detection and performance tracking.
@@ -111,15 +123,17 @@ class PerformanceMonitor:
             return {"rss_mb": 0, "vms_mb": 0, "percent": 0}
 
     def monitor_gpu_memory(self) -> dict:
-        """Track GPU memory usage via TensorFlow."""
+        """Track GPU memory usage via TensorFlow.
+
+        GPU environment is initialized once at module import time.
+        TensorFlow import is deferred until first call to avoid overhead
+        when GPU monitoring is not used.
+        """
         try:
-            from src.utils.performance import check_gpu_available, setup_gpu_environment
-
-            # Call setup_gpu_environment before importing TensorFlow
-            setup_gpu_environment()
-
-            # Now import TensorFlow after setup
+            # Import TensorFlow - environment should already be set up
             import tensorflow as tf
+
+            from src.utils.performance import check_gpu_available
 
             # Use project canonical check_gpu_available
             if not check_gpu_available():

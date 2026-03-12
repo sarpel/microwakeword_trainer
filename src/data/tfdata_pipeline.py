@@ -137,9 +137,11 @@ class OptimizedDataPipeline:
                 labels = batch[1]
                 # Yield 4-tuple: (features, labels, sample_weights, is_hard_neg)
                 batch_size = features.shape[0]
-                sample_weights = np.ones(batch_size, dtype=np.float32)
-                is_hard_neg = np.zeros(batch_size, dtype=np.bool_)
-                # Class weights are applied in TF pipeline below (SpecAugment path)
+                # Use real sample_weights and is_hard_neg from underlying generator
+                # (train generator yields 4-tuples with actual hard-neg flags;
+                #  val/test generators yield 3-tuples — fall back to defaults)
+                sample_weights = batch[2].astype(np.float32) if len(batch) > 2 else np.ones(batch_size, dtype=np.float32)
+                is_hard_neg = batch[3].astype(np.bool_) if len(batch) > 3 else np.zeros(batch_size, dtype=np.bool_)
                 yield features, labels, sample_weights, is_hard_neg
 
         return generator

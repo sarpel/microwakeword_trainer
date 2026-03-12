@@ -164,7 +164,7 @@ JQ|
 
 ---
 
-### Bug Fix 2: TFLite State Variable Naming (stream → stream_0)
+### Bug Fix 2: State Variable Naming Assumption Re-audited
 
 **Issue:**
 - TFLite converter sorts state variables alphabetically by name when emitting the flatbuffer
@@ -173,10 +173,10 @@ JQ|
 - Alphabetically: `stream_1_ring_buffer` < `stream_ring_buffer` (because `_1` < `_r`)
 - This caused state variables to appear in wrong order in TFLite file, breaking ESPHome verification
 
-**Fix:**
-- Renamed `stream` → `stream_0` in `src/export/tflite.py`
-- Now `stream_0_ring_buffer` sorts BEFORE `stream_1_ring_buffer` (correct order)
-- Updated `ARCHITECTURAL_CONSTITUTION.md` to document `stream_0` instead of `stream`
+**Correction after official flatbuffer audit (2026-03-13):**
+- Official `okay_nabu` reference model keeps the first state name as `stream`
+- Prior documentation that elevated `stream_0` to architectural truth was incorrect
+- Architecture/guide/spec documents were updated to use the verified official names and to distinguish architectural facts from implementation details
 
 **Files Modified:**
 - `src/export/tflite.py`: State variable rename in `state_configs`
@@ -434,7 +434,7 @@ JQ|
 - ESPHome manifest generation
 - Model analysis and verification
 - Streaming subgraph verification
-- State variable naming fix (stream → stream_0 for correct alphabetical ordering)
+- Official state naming correction (`stream`, `stream_1`, …, `stream_5` are the verified reference names)
 **Key Files:**
 
 - `manifest.py` (330 lines) - Manifest generation
@@ -445,7 +445,7 @@ JQ|
 - Input dtype: int8, shape: [1, 3, 40]
 - Output dtype: uint8, shape: [1, 1]
 - 2 subgraphs (main + initialization)
-- 6 state variables (int8-quantized): stream_0, stream_1, stream_2, stream_3, stream_4, stream_5
+- 6 official reference state variables (int8-quantized): stream, stream_1, stream_2, stream_3, stream_4, stream_5
 - Only ESPHome-registered ops
 **Documentation:**
 - `docs/EXPORT.md` (304 lines) - Complete export guide

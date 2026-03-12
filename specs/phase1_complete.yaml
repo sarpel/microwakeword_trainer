@@ -87,7 +87,7 @@ Phase 1 established the foundational infrastructure for the microwakeword_traine
 
 **Lessons Learned:**
 - BatchNorm folding is critical for streaming export
-- State variable shapes must match ring buffer law
+- Convolution-derived state variable shapes must match the `kernel - stride` ring-buffer law; the final `stream_5` pre-flatten buffer must be derived from the actual graph
 - Use ExportArchive, not model.export()
 
 ---
@@ -422,7 +422,7 @@ Phase 1 established the foundational infrastructure for the microwakeword_traine
 
 ### Architecture
 1. **Immutable Constants**: ARCHITECTURAL_CONSTITUTION.md is source of truth
-2. **State Variable Math**: Ring buffer law is inviolable
+2. **State Variable Math**: The `kernel - stride` law is inviolable for convolution-derived states; the final pre-flatten state must be derived from graph structure
 3. **BatchNorm Folding**: Critical for streaming export
 4. **Op Registration**: Only ESPHome-registered ops allowed
 
@@ -442,7 +442,7 @@ Phase 1 established the foundational infrastructure for the microwakeword_traine
 ### Export
 1. **ExportArchive Required**: For streaming state variables
 2. **uint8 Output**: Critical for ESPHome compatibility
-3. **Variable Quantization**: Required for state variables
+3. **Variable Quantization**: Required for `READ_VARIABLE` / `ASSIGN_VARIABLE` state payload tensors
 4. **Representative Dataset**: Must include boundary values
 
 ---
