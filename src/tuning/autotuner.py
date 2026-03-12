@@ -3,20 +3,16 @@
 Replaces the legacy AutoTuner with a sophisticated branch-and-confirm system
 using surgical gradient bursts, 7 strategy arms with Thompson sampling,
 3-pass threshold optimization, temperature scaling, simulated annealing
-acceptance, Pareto archive, INT8 shadow evaluation, and confirmation phase.
+acceptance, Pareto archive, and confirmation phase.
 
 Quality over speed. Time budget does not matter — only final model quality.
 """
 
-import contextlib
-import io
 import json
 import logging
 import math
-import os
 import pickle
 import re
-import tempfile
 import time
 import warnings
 from dataclasses import dataclass, field
@@ -104,7 +100,6 @@ class CandidateState:
     threshold_float32: float = 0.5
     threshold_uint8: int = 128
     eval_results: Optional[TuneMetrics] = None
-    eval_results_int8: Optional[TuneMetrics] = None
     sharpness_score: float = 0.0
     curriculum_stage: int = 0
     strategy_arm: int = -1
@@ -1261,7 +1256,7 @@ class AutoTuner:
 
     Uses surgical gradient bursts, 7 strategy arms with Thompson sampling,
     3-pass threshold optimization, temperature scaling, simulated annealing,
-    Pareto archive, INT8 shadow evaluation, and confirmation phase.
+    Pareto archive and confirmation phase.
     """
 
     def __init__(
@@ -1285,9 +1280,6 @@ class AutoTuner:
         self.cv_folds = at.get("cv_folds", 3)
         self.confirmation_fraction = at.get("confirmation_fraction", 0.40)
         self.bootstrap_samples = at.get("bootstrap_samples", 2000)
-        self.int8_shadow_enabled = at.get("int8_shadow", True)
-        self.int8_shadow_interval = at.get("int8_shadow_interval", 10)
-        self.require_int8_pass = at.get("require_int8_pass", True)
         self.require_confirmation = at.get("require_confirmation", True)
         self.group_key = at.get("group_key", "speaker_id")
         self.patience = at.get("patience", 15)
@@ -1898,6 +1890,25 @@ class AutoTuner:
 
         return metrics
 
+    def _evaluate(
+        self,
+        model,
+        features: np.ndarray,
+        labels: np.ndarray,
+        ambient_hours: float,
+        temperature: float = 1.0,
+        fold_indices: Optional[list] = None,
+    ) -> TuneMetrics:
+        """Backward-compatible float32 evaluation wrapper."""
+        return self._evaluate_model(
+            model,
+            features,
+            labels,
+            ambient_hours,
+            temperature=temperature,
+            fold_indices=fold_indices,
+        )
+
     def _predict_scores(self, model, features: np.ndarray, temperature: float = 1.0) -> np.ndarray:
         """Get model prediction scores with temperature scaling."""
         import tensorflow as tf
@@ -1911,132 +1922,6 @@ class AutoTuner:
 
         scores = np.concatenate(all_scores, axis=0).flatten()
         return apply_temperature(scores, temperature)
-
-    # ------------------------------------------------------------------
-    # INT8 shadow evaluation
-    # ------------------------------------------------------------------
-
-    def _evaluate_int8(
-        self,
-        model,
-        search_features: np.ndarray,
-        search_labels: np.ndarray,
-        repr_features: np.ndarray,
-        ambient_hours: float,
-    ) -> Optional[TuneMetrics]:
-        """Export model to INT8 TFLite and evaluate."""
-        import tensorflow as tf
-
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # Export current candidate model to SavedModel for quantization
-                saved_model_dir = os.path.join(tmpdir, "saved_model")
-                if search_features.ndim != 3:
-                    self.file_logger.warning(f"Unexpected search feature rank for INT8 eval: {search_features.shape}; skipping")
-                    return None
-
-                num_input_frames = int(search_features.shape[1])
-                mel_bins = int(search_features.shape[2])
-
-                export_archive = tf.keras.export.ExportArchive()
-                export_archive.track(model)
-
-                export_input_sig = [
-                    tf.TensorSpec(
-                        shape=(1, num_input_frames, mel_bins),
-                        dtype=tf.float32,
-                        name="inputs",
-                    )
-                ]
-
-                def serve_fn(inputs: tf.Tensor) -> tf.Tensor:
-                    return model(inputs, training=False)
-
-                export_archive.add_endpoint(
-                    name="serve",
-                    fn=serve_fn,
-                    input_signature=export_input_sig,
-                )
-                with io.StringIO() as _stdout_buf, io.StringIO() as _stderr_buf:
-                    with contextlib.redirect_stdout(_stdout_buf), contextlib.redirect_stderr(_stderr_buf):
-                        export_archive.write_out(saved_model_dir)
-
-                # Build representative dataset from in-memory features for INT8 calibration
-
-                def _representative_dataset():
-                    for i in range(min(len(repr_features), 500)):
-                        sample = repr_features[i].astype(np.float32)
-                        if sample.ndim == 1:
-                            sample = sample.reshape(num_input_frames, mel_bins)
-                        elif sample.ndim == 2:
-                            if sample.shape[1] != mel_bins:
-                                sample = sample[:, :mel_bins]
-                            if sample.shape[0] != num_input_frames:
-                                if sample.shape[0] > num_input_frames:
-                                    sample = sample[:num_input_frames, :]
-                                else:
-                                    pad = np.zeros((num_input_frames - sample.shape[0], sample.shape[1]), dtype=np.float32)
-                                    sample = np.concatenate([sample, pad], axis=0)
-                        sample = sample.reshape(1, num_input_frames, mel_bins)
-                        yield [sample]
-
-                # Convert SavedModel to INT8 TFLite
-                converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
-                converter.optimizations = [tf.lite.Optimize.DEFAULT]
-                converter.representative_dataset = _representative_dataset
-                converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-                converter.inference_input_type = tf.int8
-                converter.inference_output_type = tf.uint8
-                converter._experimental_variable_quantization = True
-                tflite_bytes = converter.convert()
-
-                # Save TFLite for inference
-                tflite_path = os.path.join(tmpdir, "model.tflite")
-                with open(tflite_path, "wb") as f:
-                    f.write(tflite_bytes)
-
-                # Run TFLite inference
-                interpreter = tf.lite.Interpreter(model_path=tflite_path)
-                interpreter.allocate_tensors()
-
-                input_details = interpreter.get_input_details()
-                output_details = interpreter.get_output_details()
-
-                all_scores = []
-                for i in range(len(search_features)):
-                    input_data = search_features[i : i + 1].astype(np.float32)
-                    # Handle potential int8 input quantization
-                    if input_details[0]["dtype"] == np.int8:
-                        scale = input_details[0]["quantization_parameters"]["scales"][0]
-                        zp = input_details[0]["quantization_parameters"]["zero_points"][0]
-                        input_data = (input_data / scale + zp).astype(np.int8)
-
-                    interpreter.set_tensor(input_details[0]["index"], input_data)
-                    interpreter.invoke()
-                    output = interpreter.get_tensor(output_details[0]["index"])
-
-                    # Handle uint8 output
-                    if output_details[0]["dtype"] == np.uint8:
-                        scale = output_details[0]["quantization_parameters"]["scales"][0]
-                        zp = output_details[0]["quantization_parameters"]["zero_points"][0]
-                        score = (output.astype(np.float32) - zp) * scale
-                    else:
-                        score = output.astype(np.float32)
-
-                    all_scores.append(float(score.flatten()[0]))
-
-                y_scores = np.array(all_scores)
-                y_true = search_labels.flatten()
-
-                # Compute metrics
-                threshold, threshold_uint8, metrics = self.threshold_optimizer.optimize(y_true, y_scores, ambient_hours, self.target_fah, self.target_recall)
-
-                self.file_logger.info(f"INT8 eval: FAH={metrics.fah:.4f}, Recall={metrics.recall:.4f}, Threshold={metrics.threshold:.4f}")
-                return metrics
-
-        except (OSError, RuntimeError, ValueError, TypeError, KeyError, IndexError) as e:
-            self.file_logger.error(f"INT8 evaluation failed: {e}")
-            return None
 
     # ------------------------------------------------------------------
     # Confirmation phase
@@ -2067,7 +1952,6 @@ class AutoTuner:
         )[:5]
 
         confirm_features, confirm_labels, confirm_weights, _ = confirm_data
-        repr_features = repr_data[0]
         best_confirmed = None
         best_attempt = None
         best_attempt_metrics = None
@@ -2077,8 +1961,6 @@ class AutoTuner:
         table.add_column("Candidate", style="cyan")
         table.add_column("Float32 FAH", justify="right")
         table.add_column("Float32 Recall", justify="right")
-        table.add_column("INT8 FAH", justify="right")
-        table.add_column("INT8 Recall", justify="right")
         table.add_column("Status", justify="center")
 
         for candidate in shortlist:
@@ -2105,16 +1987,7 @@ class AutoTuner:
                     f"re-optimized Recall={diag_metrics.recall:.4f} FAH={diag_metrics.fah:.4f} thr={diag_metrics.threshold:.4f}"
                 )
 
-            # INT8 shadow evaluation (diagnostic only — current INT8 export uses
-            # non-streaming batch model which doesn't match production StreamingExportModel.
-            # INT8 results are logged but do NOT gate confirmation pass/fail.)
-            int8_metrics = None
-            if self.int8_shadow_enabled:
-                int8_metrics = self._evaluate_int8(model, confirm_features, confirm_labels, repr_features, ambient_hours)
-                if int8_metrics:
-                    self.file_logger.info(f"  INT8 diagnostic (non-gating): FAH={int8_metrics.fah:.4f}, Recall={int8_metrics.recall:.4f}")
-
-            # Check pass/fail — Float32 only (INT8 is diagnostic until streaming export is implemented)
+            # Check pass/fail — Float32 only
             float_pass = metrics.meets_target(self.target_fah, self.target_recall)
             passed = float_pass
 
@@ -2123,8 +1996,6 @@ class AutoTuner:
                 candidate.id,
                 f"{metrics.fah:.4f}",
                 f"{metrics.recall:.4f}",
-                f"{int8_metrics.fah:.4f}" if int8_metrics else "N/A",
-                f"{int8_metrics.recall:.4f}" if int8_metrics else "N/A",
                 status,
             )
 
@@ -2133,7 +2004,6 @@ class AutoTuner:
                 if score < best_score:
                     best_score = score
                     candidate.eval_results = metrics
-                    candidate.eval_results_int8 = int8_metrics
                     best_confirmed = candidate
             else:
                 # Track best failed attempt for reporting
@@ -2382,15 +2252,6 @@ class AutoTuner:
                 f"Total gradient steps: {self.total_gradient_steps:,}\n"
                 f"Wall clock: {minutes:.1f} min\n"
                 f"Best checkpoint: {result.get('best_checkpoint', 'N/A')}"
-            )
-
-        if result.get("int8_diagnostic_fah") is not None and result.get("int8_diagnostic_recall") is not None:
-            summary += (
-                "\n"
-                f"INT8 diagnostic (non-gating): FAH={result['int8_diagnostic_fah']:.4f}, "
-                f"Recall={result['int8_diagnostic_recall']:.4f}, "
-                f"AUC-PR={result.get('int8_diagnostic_auc_pr', 0.0):.4f}, "
-                f"Thr={result.get('int8_diagnostic_threshold', float('nan')):.4f}"
             )
 
         self.console.print(Panel(summary, title="📊 Auto-Tuning Results", border_style="green" if result["target_met"] else "red"))
@@ -2649,20 +2510,7 @@ class AutoTuner:
                 # Diagnostic: per-set metrics after search evaluation
                 self.file_logger.info(f"Iter {iteration}: Search FAH={eval_metrics.fah:.4f}, Recall={eval_metrics.recall:.4f}, AUC-PR={eval_metrics.auc_pr:.4f}")
 
-                # n. INT8 shadow evaluation
-                int8_metrics = None
-                if self.int8_shadow_enabled and iteration % self.int8_shadow_interval == 0:
-                    int8_metrics = self._evaluate_int8(
-                        model,
-                        search_features,
-                        search_labels,
-                        repr_data[0],
-                        ambient_hours_search,
-                    )
-                    if int8_metrics is not None:
-                        self.file_logger.info(f"Iter {iteration}: INT8 shadow FAH={int8_metrics.fah:.4f}, Recall={int8_metrics.recall:.4f}")
-
-                # o. Build new candidate
+                # n. Build new candidate
                 new_candidate = CandidateState(
                     id=f"c_{iteration:03d}",
                     weights_bytes=self._serialize_weights(model),
@@ -2672,7 +2520,6 @@ class AutoTuner:
                     threshold_float32=eval_metrics.threshold,
                     threshold_uint8=eval_metrics.threshold_uint8,
                     eval_results=eval_metrics,
-                    eval_results_int8=int8_metrics,
                     strategy_arm=arm_idx,
                     parent_id=parent.id,
                     iteration=iteration,
@@ -2688,7 +2535,7 @@ class AutoTuner:
                     ],
                 )
 
-                # p. Accept/reject
+                # o. Accept/reject
                 accepted = self.annealing.should_accept(
                     eval_metrics,
                     parent.eval_results,
@@ -2696,11 +2543,11 @@ class AutoTuner:
                     self.target_recall,
                 )
 
-                # q. Update Thompson sampling
+                # p. Update Thompson sampling
                 improvement = eval_metrics.dominates(parent.eval_results)
                 self.thompson.update(arm_idx, improvement)
 
-                # r. Update error memory
+                # q. Update error memory
                 search_all_indices = np.arange(len(search_labels))
                 self.error_memory.update(
                     search_all_indices,
@@ -2709,7 +2556,7 @@ class AutoTuner:
                     eval_metrics.threshold,
                 )
 
-                # s. Manage active pool and archive
+                # r. Manage active pool and archive
                 if accepted:
                     new_candidate.stagnation_count = 0
                     # Replace parent in active pool
@@ -2733,7 +2580,7 @@ class AutoTuner:
                 # Try to add to Pareto archive
                 self.archive.try_add(new_candidate)
 
-                # t. Save checkpoint if target met
+                # s. Save checkpoint if target met
                 if eval_metrics.meets_target(self.target_fah, self.target_recall):
                     ckpt_path = self._save_checkpoint(model, eval_metrics, iteration)
                     if self.best_checkpoint_path is None:
@@ -2792,11 +2639,6 @@ class AutoTuner:
             "final_recall": best.eval_results.recall if best and best.eval_results else 0.0,
             "recommended_probability_cutoff": best.eval_results.threshold if best and best.eval_results else None,
             "recommended_probability_cutoff_uint8": best.eval_results.threshold_uint8 if best and best.eval_results else None,
-            "int8_diagnostic_fah": best.eval_results_int8.fah if best and best.eval_results_int8 else None,
-            "int8_diagnostic_recall": best.eval_results_int8.recall if best and best.eval_results_int8 else None,
-            "int8_diagnostic_auc_pr": best.eval_results_int8.auc_pr if best and best.eval_results_int8 else None,
-            "int8_diagnostic_threshold": best.eval_results_int8.threshold if best and best.eval_results_int8 else None,
-            "int8_diagnostic_threshold_uint8": best.eval_results_int8.threshold_uint8 if best and best.eval_results_int8 else None,
             "iterations": last_iteration,
             "best_checkpoint": self.best_checkpoint_path or "",
             "target_met": target_met,
@@ -2810,6 +2652,10 @@ class AutoTuner:
 
         self._log_final_summary(result)
         return result
+
+
+# Backward-compatible class alias
+MaxQualityAutoTuner = AutoTuner
 
 
 # ============================================================================

@@ -130,12 +130,6 @@ Quality is prioritized over speed. Time cost does not matter.
     )
 
     parser.add_argument(
-        "--no-int8-shadow",
-        action="store_true",
-        help="Disable INT8 shadow evaluation (overrides config auto_tuning.int8_shadow)",
-    )
-
-    parser.add_argument(
         "--no-confirmation",
         action="store_true",
         help="Skip confirmation phase (overrides config auto_tuning.require_confirmation)",
@@ -186,7 +180,6 @@ def print_config_summary(args: argparse.Namespace, config: dict) -> None:
     table.add_row("Max Iterations", str(at.get("max_iterations", 50)))
     table.add_row("Max Gradient Steps", str(at.get("max_gradient_steps", 250_000)))
     table.add_row("CV Folds", str(at.get("cv_folds", 3)))
-    table.add_row("INT8 Shadow", str(at.get("int8_shadow", True)))
     table.add_row("Confirmation", str(at.get("require_confirmation", True)))
     table.add_row("Output Dir", str(at.get("output_dir", "./tuning_output")))
 
@@ -242,8 +235,6 @@ def main() -> int:
         at["max_gradient_steps"] = args.max_gradient_steps
     if args.cv_folds is not None:
         at["cv_folds"] = args.cv_folds
-    if args.no_int8_shadow:
-        at["int8_shadow"] = False
     if args.no_confirmation:
         at["require_confirmation"] = False
 

@@ -325,9 +325,6 @@ auto_tuning:
   cv_folds: 3
   confirmation_fraction: 0.50   # Larger held-out set catches overfit better; was 0.40
   bootstrap_samples: 2000
-  int8_shadow: true
-  int8_shadow_interval: 10
-  require_int8_pass: true
   require_confirmation: true
   group_key: speaker_id
   pareto_improvement_threshold: 0.003
