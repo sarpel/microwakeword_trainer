@@ -214,7 +214,6 @@ speaker_clustering:
 # ─────────────────────────────────────────────────────────────────
 mining:
   enabled: true
-  async_mining: true
   fp_threshold: 0.5
   max_samples: 8000
   mining_interval_epochs: 1              # Mine EVERY epoch for max quality
@@ -310,15 +309,8 @@ auto_tuning:
   target_fah: 5.0               # Relaxed from 0.2 — match evaluation target_fah
   target_recall: 0.90
   max_iterations: 50            # Quality over speed
-  max_gradient_steps: 250000    # Generous budget for max quality
+  max_gradient_steps: 2500    # Generous budget for max quality
   patience: 15
-  steps_per_iteration: 8000     # Legacy, ignored by MaxQualityAutoTuner
-  initial_lr: 0.00005           # Legacy, ignored by MaxQualityAutoTuner
-  lr_decay_factor: 0.7          # Legacy, ignored by MaxQualityAutoTuner
-  min_lr: 0.00001               # Legacy, ignored by MaxQualityAutoTuner
-  positive_weight_range: [0.5, 3.0]   # Legacy
-  negative_weight_range: [10.0, 50.0] # Legacy
-  hard_negative_weight_range: [20.0, 100.0] # Legacy
   cv_folds: 3
   confirmation_fraction: 0.40
   bootstrap_samples: 2000       # More samples for max quality

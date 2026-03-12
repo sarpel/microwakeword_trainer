@@ -10,7 +10,7 @@ Export module handles streaming model conversion, INT8 quantization, model analy
 
 | File | Lines | Purpose | Key Functions/Classes |
 |------|-------|---------|----------------------|
-| `tflite.py` | 780 | Streaming conversion, quantization, export | `convert_model_saved()`, `convert_saved_model_to_tflite()`, `export_to_tflite()`, `main()` |
+| `tflite.py` | 780 | Streaming conversion, quantization, export | `convert_model_saved()`, `convert_saved_model_to_tflite()`, `export_streaming_tflite()`, `main()` |
 | `model_analyzer.py` | 600 | Architecture analysis and validation | `analyze_model_architecture()`, `validate_model_quality()`, `compare_models()`, `generate_model_report()` |
 | `manifest.py` | 330 | ESPHome V2 manifest generation | `generate_manifest()`, `save_manifest()`, `calculate_tensor_arena_size()` |
 | `verification.py` | 218 | Export verification tools | Export verification functions |
@@ -40,10 +40,10 @@ Checkpoint → Streaming SavedModel → TFLite (INT8) → manifest.json
 | `convert_saved_model_to_tflite()` | SavedModel → quantized TFLite conversion |
 | `create_default_representative_dataset()` | Default calibration dataset (random) |
 | `create_representative_dataset_from_data()` | Calibration from real training data |
-| `export_to_tflite()` | Full export pipeline (convert + quantize + manifest) |
+| `export_streaming_tflite()` | Full export pipeline (convert + quantize + manifest) |
 | `verify_esphome_compatibility()` | Quick compatibility check |
 | `calculate_tensor_arena_size()` | Estimate arena memory |
-| `convert_to_tflite()` | Legacy conversion wrapper |
+| `convert_to_tflite()` | Direct conversion helper |
 | `optimize_for_edge()` | Edge optimization passes |
 | `main()` | CLI entry point for mww-export |
 

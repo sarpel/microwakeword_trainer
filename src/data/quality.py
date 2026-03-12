@@ -4,7 +4,6 @@ import csv
 import os
 import shutil
 import threading
-import urllib.request
 from urllib.request import urlopen
 import wave
 from concurrent.futures import ThreadPoolExecutor, as_completed

@@ -4,7 +4,6 @@ Provides high-performance data loading with caching, prefetching, and parallel p
 Compatible with ESPHome - only affects training speed, not model export.
 """
 
-
 import logging
 import os
 import time
@@ -231,11 +230,6 @@ class OptimizedDataPipeline:
                 fmask_max = tf.constant(freq_mask_max_size, dtype=tf.int32)
                 fmask_cnt = tf.constant(freq_mask_count, dtype=tf.int32)
 
-                training_cfg = self.config.get("training", {})
-                pos_w = tf.constant(training_cfg.get("positive_class_weight", [5.0, 7.0, 9.0]), dtype=tf.float32)
-                neg_w = tf.constant(training_cfg.get("negative_class_weight", [1.5, 1.5, 1.5]), dtype=tf.float32)
-                hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [3.0, 5.0, 7.0]), dtype=tf.float32)
-
                 counter = tf.data.Dataset.counter()
                 ds = tf.data.Dataset.zip((counter, ds))
 
@@ -285,6 +279,59 @@ class OptimizedDataPipeline:
                 logger.info(f"Prefetching dataset to device: {self.prefetch_device}")
             except Exception as e:
                 logger.warning(f"GPU prefetch disabled: {e}")
+
+        return ds
+
+    def create_training_pipeline_with_spec_augment(
+        self,
+        spec_augment_config: dict,
+        class_weights: dict | None = None,
+    ) -> tf.data.Dataset:
+        """Create optimized training pipeline with SpecAugment in tf.data graph.
+
+        Integrates SpecAugment directly into the tf.data pipeline to eliminate
+        CPU↔GPU data transfers that occur with the CuPy-based approach.
+
+        Args:
+            spec_augment_config: Dict with keys:
+                - time_mask_max_size: int
+                - time_mask_count: int
+                - freq_mask_max_size: int
+                - freq_mask_count: int
+                - seed: Optional int
+            class_weights: Dict with keys 'positive', 'negative', 'hard_negative'.
+                Defaults to {'positive': 1.0, 'negative': 20.0, 'hard_negative': 40.0}.
+
+        Returns:
+            tf.data.Dataset yielding (features, labels, sample_weights, is_hard_neg)
+            tuples, with SpecAugment applied to features in-graph.
+        """
+        from src.data.spec_augment_tf import batch_spec_augment_tf
+
+        if class_weights is None:
+            class_weights = {"positive": 1.0, "negative": 20.0, "hard_negative": 40.0}
+
+        # Base training dataset preserving existing cache/shuffle/prefetch behavior.
+        ds = self.create_training_pipeline()
+
+        def apply_spec_augment(features, labels, sample_weights, *rest):
+            augmented = batch_spec_augment_tf(
+                features,
+                time_mask_max_size=spec_augment_config.get("time_mask_max_size", 10),
+                time_mask_count=spec_augment_config.get("time_mask_count", 2),
+                freq_mask_max_size=spec_augment_config.get("freq_mask_max_size", 5),
+                freq_mask_count=spec_augment_config.get("freq_mask_count", 2),
+                seed=spec_augment_config.get("seed"),
+            )
+
+            # Class weights are applied in Trainer._apply_class_weights() (phase-aware).
+            # Keep sample_weights passthrough here to avoid double weighting.
+            _ = class_weights
+
+            return (augmented, labels, sample_weights) + rest if rest else (augmented, labels, sample_weights)
+
+        ds = ds.map(apply_spec_augment, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.prefetch(tf.data.AUTOTUNE)
 
         return ds
 

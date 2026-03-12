@@ -5,15 +5,25 @@ GPU-mandatory: This module requires GPU availability and will raise RuntimeError
 if GPU is not available. No CPU fallback is provided.
 """
 
+import logging
 from typing import Any, cast
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Try to import CuPy and set up GPU availability flag
 try:
     import cupy as cp
 
     HAS_GPU = cp.cuda.is_available()
+    try:
+        from cupy.cuda import MemoryAsyncPool
+
+        cp.cuda.set_allocator(MemoryAsyncPool().malloc)
+        logger.info("CuPy MemoryAsyncPool enabled for async memory allocation")
+    except (ImportError, Exception) as e:
+        logger.warning(f"CuPy MemoryAsyncPool not available (requires CUDA 11.2+): {e}")
 except ImportError:
     cp = None
     HAS_GPU = False
@@ -42,11 +52,19 @@ def spec_augment_gpu(
     Raises:
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
-    if cp is None:
-        raise RuntimeError("CuPy is not available. Install cupy package: pip install cupy")
+    if cp is None or not HAS_GPU:
+        logger.warning("GPU unavailable, falling back to TF SpecAugment")
+        import tensorflow as tf
+        from src.data.spec_augment_tf import spec_augment_tf
 
-    if not HAS_GPU:
-        raise RuntimeError("GPU is not available. This module requires GPU acceleration.")
+        tf_result = spec_augment_tf(
+            tf.convert_to_tensor(spectrogram, dtype=tf.float32),
+            time_mask_max_size,
+            time_mask_count,
+            freq_mask_max_size,
+            freq_mask_count,
+        )
+        return tf_result.numpy()
 
     # Transfer to GPU
     spec_gpu = cp.asarray(spectrogram)
@@ -99,11 +117,19 @@ def batch_spec_augment_gpu(
     Raises:
         RuntimeError: If CuPy is not available or GPU is not accessible
     """
-    if cp is None:
-        raise RuntimeError("CuPy is not available. Install cupy package: pip install cupy")
+    if cp is None or not HAS_GPU:
+        logger.warning("GPU unavailable, falling back to TF batch SpecAugment")
+        import tensorflow as tf
+        from src.data.spec_augment_tf import batch_spec_augment_tf
 
-    if not HAS_GPU:
-        raise RuntimeError("GPU is not available. This module requires GPU acceleration.")
+        tf_result = batch_spec_augment_tf(
+            tf.convert_to_tensor(batch, dtype=tf.float32),
+            time_mask_max_size,
+            time_mask_count,
+            freq_mask_max_size,
+            freq_mask_count,
+        )
+        return tf_result.numpy()
 
     # Transfer entire batch to GPU
     batch_gpu = cp.asarray(batch)
@@ -138,8 +164,7 @@ def batch_spec_augment_gpu(
         # Build 2D per-sample time mask and broadcast across all frequency bins
         time_indices = cp.arange(num_time_frames)
         # mask shape: (batch_size, num_time_frames)
-        mask_2d = (time_indices[None, :] >= time_mask_starts[:, None]) & \
-                  (time_indices[None, :] < (time_mask_starts + time_mask_sizes)[:, None])
+        mask_2d = (time_indices[None, :] >= time_mask_starts[:, None]) & (time_indices[None, :] < (time_mask_starts + time_mask_sizes)[:, None])
         # Expand to 3D: (batch_size, num_time_frames, num_freq_bins) and apply
         mask_3d = mask_2d[:, :, None]  # Broadcast across frequency dimension
         batch_gpu[mask_3d] = 0

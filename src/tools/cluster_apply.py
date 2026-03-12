@@ -41,6 +41,16 @@ def load_namelist(namelist_path: Path) -> dict[str, Any]:
     return data
 
 
+def _is_supported_namelist_format(namelist_path: Path) -> bool:
+    """Return True if file has the expected namelist schema."""
+    try:
+        with open(namelist_path, "r") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return False
+    return isinstance(data, dict) and "_meta" in data and "mappings" in data
+
+
 def discover_namelists(namelist_dir: Path) -> list[Path]:
     """Find all *_namelist.json files in a directory."""
     if not namelist_dir.exists():
@@ -48,8 +58,12 @@ def discover_namelists(namelist_dir: Path) -> list[Path]:
         sys.exit(1)
 
     namelists = sorted(namelist_dir.glob("*_namelist.json"))
+    legacy = namelist_dir / "namelist.json"
     if legacy.exists() and legacy not in namelists:
-        namelists.append(legacy)
+        if _is_supported_namelist_format(legacy):
+            namelists.append(legacy)
+        else:
+            console.print(f"[yellow]Skipping legacy namelist with unsupported format: {legacy}[/yellow]")
 
     if not namelists:
         console.print(f"[red]No namelist files found in {namelist_dir}[/red]")

@@ -3,6 +3,9 @@ Performance utilities for microwakeword_trainer v2.0
 """
 
 import os
+import time
+from collections import defaultdict
+from contextlib import contextmanager
 from typing import Any, Dict, Optional
 
 import GPUtil
@@ -269,3 +272,70 @@ def format_bytes(bytes_val: int) -> str:
             return f"{value:.2f} {unit}"
         value = value / 1024.0
     return f"{value:.2f} PB"
+
+
+class IOProfiler:
+    """Profile disk I/O operations to identify bottlenecks."""
+
+    def __init__(self):
+        self.io_operations = defaultdict(list)
+
+    @contextmanager
+    def track_read(self, filepath: str):
+        """Context manager to track file read operations."""
+        start_time = time.perf_counter()
+        try:
+            yield
+        finally:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            size_bytes = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+            self.io_operations["read"].append(
+                {
+                    "filepath": filepath,
+                    "size_bytes": size_bytes,
+                    "duration_ms": duration_ms,
+                    "throughput_mb_s": (size_bytes / (1024**2)) / (duration_ms / 1000) if duration_ms > 0 else 0,
+                }
+            )
+
+    @contextmanager
+    def track_write(self, filepath: str):
+        """Context manager to track file write operations."""
+        start_time = time.perf_counter()
+        try:
+            yield
+        finally:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            size_bytes = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+            self.io_operations["write"].append(
+                {
+                    "filepath": filepath,
+                    "size_bytes": size_bytes,
+                    "duration_ms": duration_ms,
+                    "throughput_mb_s": (size_bytes / (1024**2)) / (duration_ms / 1000) if duration_ms > 0 else 0,
+                }
+            )
+
+    def get_report(self) -> str:
+        """Generate I/O profiling report."""
+        report = ["=" * 60, "I/O PROFILING REPORT", "=" * 60, ""]
+
+        for op_type in ["read", "write"]:
+            if op_type not in self.io_operations:
+                continue
+            ops = self.io_operations[op_type]
+            total_size = sum(r["size_bytes"] for r in ops)
+            total_time = sum(r["duration_ms"] for r in ops)
+            avg_throughput = (total_size / (1024**2)) / (total_time / 1000) if total_time > 0 else 0
+
+            report.append(f"{op_type.capitalize()} Operations:")
+            report.append(f"  Total: {len(ops)} operations, {total_size / (1024**2):.2f}MB, {total_time / 1000:.2f}s")
+            report.append(f"  Average throughput: {avg_throughput:.2f}MB/s")
+
+            slow_ops = sorted(ops, key=lambda x: x["duration_ms"], reverse=True)[:5]
+            report.append(f"  Slowest {op_type}s:")
+            for op in slow_ops:
+                report.append(f"    {op['filepath']}: {op['duration_ms']:.1f}ms ({op['throughput_mb_s']:.2f}MB/s)")
+            report.append("")
+
+        return "\n".join(report)
