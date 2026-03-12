@@ -727,6 +727,6 @@ def create_okay_nabu_model(input_shape=(100, 40), mode=Modes.NON_STREAM_INFERENC
         pointwise_filters=[64, 64, 64, 64],
         mixconv_kernel_sizes=[[5], [7, 11], [9, 15], [23]],
         repeat_in_block=[1, 1, 1, 1],
-        residual_connections=[0, 0, 0, 0],
+        residual_connections=[0, 1, 1, 1],
         mode=mode,
     )
