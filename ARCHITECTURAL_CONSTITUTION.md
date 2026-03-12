@@ -227,7 +227,7 @@ converter.inference_output_type = tf.uint8  # ← UINT8. ALWAYS. NON-NEGOTIABLE.
 > There are no custom ops. All ops are BUILTIN.
 
 
-### ESPHome-Registered Op Resolvers (from `micro_wake_word.cpp`)
+### ESPHome-Registered Op Resolvers (from `streaming_model.cpp` --> `register_streaming_ops_()` function)
 
 ```cpp
 resolver.AddCallOnce();

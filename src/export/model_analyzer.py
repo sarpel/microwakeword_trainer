@@ -149,6 +149,19 @@ def _parse_analysis_output(analysis_text: str, model_content: bytes) -> dict[str
 # =============================================================================
 
 
+def _is_streaming_state_tensor_name(name: str) -> bool:
+    """Return True for tensors that represent streaming state or state payloads.
+
+    Official okay_nabu exports expose streaming state primarily through
+    READ_VARIABLE payload tensors (names containing ``ReadVariableOp``), while
+    some interpreters may also expose resource-handle tensors or ``/states``
+    names. This helper accepts both forms so validation remains robust across
+    TensorFlow/TFLite versions.
+    """
+    lowered = name.lower()
+    return "readvariableop" in lowered or lowered == "stream" or re.fullmatch(r"stream_[1-5]", lowered) is not None or lowered.endswith("/states") or lowered.endswith("/states1")
+
+
 def validate_model_quality(
     model_path: str,
     expected_input_shape: tuple[int, ...] | None = None,
@@ -247,10 +260,10 @@ def validate_model_quality(
         tensor_details = interpreter.get_tensor_details()
         results["info"]["total_tensors"] = len(tensor_details)
 
-        state_vars = [t for t in tensor_details if "state" in t.get("name", "").lower()]
-        results["info"]["state_variables"] = len(state_vars)
-        if len(state_vars) != 6:
-            results["warnings"].append(f"Expected 6 state variables for streaming model, found {len(state_vars)}")
+        state_tensors = [t for t in tensor_details if _is_streaming_state_tensor_name(t.get("name", ""))]
+        results["info"]["state_variables"] = len(state_tensors)
+        if len(state_tensors) != 6:
+            results["warnings"].append(f"Expected 6 streaming state tensors / payloads for streaming model, found {len(state_tensors)}")
             results["valid"] = False
 
         model_size_bytes = os.path.getsize(model_path)

@@ -167,7 +167,7 @@ def step_verify_esphome(tflite_path: Path) -> dict:
             sys.exit(3)
         data = {"compatible": False, "errors": ["Could not parse output"]}
 
-    compatible = data.get("compatible", False)
+    compatible = data.get("compatible", data.get("valid", False))
     errors = data.get("errors", [])
     warnings = data.get("warnings", [])
 

@@ -6,8 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import tensorflow as tf
 
 from src.export import model_analyzer, verification
+from src.export.tflite import StreamingExportModel
 
 
 def test_parse_analysis_output_extracts_core_fields() -> None:
@@ -86,12 +88,12 @@ def test_validate_model_quality_invalid_and_valid_paths(tmp_path: Path, monkeypa
 
         def get_tensor_details(self):
             return [
-                {"name": "state_0"},
-                {"name": "state_1"},
-                {"name": "state_2"},
-                {"name": "state_3"},
-                {"name": "state_4"},
-                {"name": "state_5"},
+                {"name": "model/stream/concat/ReadVariableOp"},
+                {"name": "model/stream_1/concat/ReadVariableOp"},
+                {"name": "model/stream_2/concat/ReadVariableOp"},
+                {"name": "model/stream_3/concat/ReadVariableOp"},
+                {"name": "model/stream_4/concat/ReadVariableOp"},
+                {"name": "model/stream_5/concat/ReadVariableOp"},
                 {"name": "x"},
             ]
 
@@ -103,6 +105,7 @@ def test_validate_model_quality_invalid_and_valid_paths(tmp_path: Path, monkeypa
     assert out["valid"] is True
     assert out["info"]["input_dtype_correct"] is True
     assert out["info"]["output_dtype_correct"] is True
+    assert out["info"]["state_variables"] == 6
 
 
 def test_compare_estimate_gpu_and_report(tmp_path: Path, monkeypatch) -> None:
@@ -254,3 +257,25 @@ def test_verification_estimate_and_verify(monkeypatch) -> None:
     assert res["checks"]["read_payload_quant_params"] is True
     assert res["checks"]["assign_payload_dtypes_int8"] is True
     assert res["checks"]["assign_payload_quant_params"] is True
+
+
+def test_streaming_export_model_uses_official_state_names() -> None:
+    model = StreamingExportModel(
+        first_conv_filters=32,
+        first_conv_kernel=5,
+        stride=3,
+        pointwise_filters=[64, 64, 64, 64],
+        mixconv_kernel_sizes=[[5], [7, 11], [9, 15], [23]],
+        residual_connections=[0, 1, 1, 1],
+        mel_bins=40,
+        temporal_frames=6,
+    )
+    _ = model(tf.zeros((1, 3, 40), dtype=tf.float32))
+    assert [v.name.split(":")[0] for v in model.state_vars] == [
+        "stream",
+        "stream_1",
+        "stream_2",
+        "stream_3",
+        "stream_4",
+        "stream_5",
+    ]
