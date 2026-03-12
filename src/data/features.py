@@ -51,7 +51,7 @@ class FeatureConfig:
         """Validate configuration after initialization."""
         # Reject non-16kHz sample rates - the pipeline only supports 16kHz
         if self.sample_rate != 16000:
-            raise ValueError(f"Unsupported sample rate: {self.sample_rate} Hz. " "Only 16000 Hz is supported. Resample your audio before processing.")
+            raise ValueError(f"Unsupported sample rate: {self.sample_rate} Hz. Only 16000 Hz is supported. Resample your audio before processing.")
 
         # Delegate all validation to validate() - single source of truth
         issues = self.validate()
@@ -144,7 +144,7 @@ class MicroFrontend:
 
             logger.info("Using pymicro-features for feature extraction")
         except ImportError:
-            raise RuntimeError("pymicro-features is required for GPU training pipeline. " "Install: pip install pymicro-features") from None  # noqa: B904
+            raise RuntimeError("pymicro-features is required for GPU training pipeline. Install: pip install pymicro-features") from None  # noqa: B904
 
     def compute_mel_spectrogram(self, audio: np.ndarray) -> np.ndarray:
         """Compute mel spectrogram from audio.
@@ -188,6 +188,9 @@ class MicroFrontend:
         import pymicro_features
 
         # Create a fresh frontend per call to avoid state leakage
+        # Note: PCAN (Per-Channel Amplitude Normalization) is hardcoded ON in the
+        # pymicro-features C++ backend. There is no Python flag to enable/disable it.
+        # This matches the official ESPHome okay_nabu model configuration.
         frontend = pymicro_features.MicroFrontend()
 
         # Ensure correct dtype
