@@ -336,54 +336,40 @@ pytest tests/integration/test_training.py -v
 - ✅ Improvement over baseline (FAH reduction)
 - ✅ User-defined hard negatives used (if provided)
 
-### 3.5: Architecture Alignment Verification (2026-03-11)
+### 3.5: Architecture Alignment Verification
 
 **Purpose**: Verify that model architecture matches official okay_nabu TFLite model to eliminate AUC gap between training and export.
 
-**Problem Identified:**
-- Training model (architecture.py) used `GlobalAveragePooling2D` for temporal pooling
-- Export model (tflite.py) used `tf.reduce_mean` for temporal pooling
-- Official okay_nabu TFLite model uses `Flatten` (not average pooling)
-- This caused ~15% AUC gap: training AUC 0.9941 vs TFLite AUC 0.8482
+**Background**:
+- Identified issue: architectural mismatch between training and export caused ~15% AUC gap
+- Training and export now use consistent temporal pooling approach
 
-**Test Cases:**
-- ✅ Verify training model uses `Flatten` layer (not `GlobalAveragePooling2D`)
-- ✅ Verify export model uses `tf.reshape` (not `tf.reduce_mean`) for temporal pooling
-- ✅ Verify Dense layer receives correct input shape (384 for Flatten, not 64 for average)
-- ✅ Verify no stale `GlobalAveragePooling` references remain in codebase
-- ✅ Run numerical comparison script with 30 random spectrograms
-- ✅ Verify BN folding is numerically perfect (diff < 1e-6)
+**Procedural Test Cases**:
+- Verify training model uses `Flatten` layer for temporal pooling (not `GlobalAveragePooling2D`)
+- Verify export model uses `tf.reshape` (not `tf.reduce_mean`) for temporal pooling
+- Verify Dense layer receives correct input shape (temporal_rb_size_plus_1 * last_pointwise_filters)
+- Run numerical comparison script `scripts/debug_streaming_gap.py` after any architecture change
+- Verify BatchNorm folding is numerically perfect (mean abs diff < 1e-6)
 
-**Test Script:**
-- `scripts/debug_streaming_gap.py` — Numerical comparison between training and export models
-- Tests 30 random spectrograms in float32 through both models
-- Reports mean/max abs diff, identifies temporal pooling mismatch
+**Test Execution**:
+```bash
+# Build training model and verify architecture
+python3 -c "from src.model.architecture import build_model; print(build_model((100, 40, 1)).summary())"
 
-**Validation Criteria:**
-- ✅ No `GlobalAveragePooling` references in training or export code
-- ✅ Dense input shape matches (training: [1,384], export: [1,384])
-- ✅ BN folding diff < 1e-6 (numerical precision)
-- ✅ All 6 state variables present in export
-- ✅ uint8 output, int8 input correct
-- ✅ 6 residual ADD ops present (for residual_connection=[0,1,1,1])
+# Build export model and verify architecture
+python3 scripts/debug_streaming_gap.py
 
-**Files Verified:**
-- `src/model/architecture.py` — Flatten layer at line 537
-- `src/export/tflite.py` — tf.reshape at lines 486-493
-- `ARCHITECTURAL_CONSTITUTION.md` — "Temporal flatten buffer" references
-- `docs/ARCHITECTURE.md` — Updated architecture descriptions
-- All scripts, tests, config — No architecture misalignments
+# Check for stale GlobalAveragePooling references
+grep -r "GlobalAveragePooling" src/model/architecture.py src/export/tflite.py
+```
 
-**Expected Outcome:**
-- Architecture fully aligned with okay_nabu (except intentional differences: 64 filters vs 60, residual 0,1,1,1 vs 0,0,0,0)
-- AUC gap eliminated after retraining with new Dense weight shape
-- **Retraining Required:**
-- Because Dense layer input changed from 64→384 (Flatten instead of AveragePooling), model must be retrained
-- Use: `mww-train --config config/presets/max_quality.yaml`
-- Follow with: `mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/`
-- Then: `mww-evaluate --checkpoint models/exported/wake_word.weights.h5`
-
-**Status:** ✅ Complete, codebase audit confirms all pipelines aligned
+**Expected Outcomes**:
+- Training model uses `Flatten` layer (confirm in architecture summary)
+- Export model uses `tf.reshape` for temporal pooling (confirm in script output)
+- Dense input shape matches between training and export
+- No `GlobalAveragePooling` references in codebase
+- BN folding diff < 1e-6 (numerical precision maintained)
+- All state variables present in export model
 
 ---
 

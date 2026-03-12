@@ -8,7 +8,6 @@ acceptance, Pareto archive, INT8 shadow evaluation, and confirmation phase.
 Quality over speed. Time budget does not matter — only final model quality.
 """
 
-from __future__ import annotations
 
 import contextlib
 import io

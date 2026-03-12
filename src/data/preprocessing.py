@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Audio preprocessing library extracted from standalone scripts.
 
 Contains logic from scripts/vad_trim_audio.py and scripts/split_long_audio.py.

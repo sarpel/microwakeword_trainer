@@ -15,7 +15,6 @@ Exit codes:
     3 - Verification failed (ESPHome/streaming incompatible)
 """
 
-from __future__ import annotations
 
 import argparse
 import json

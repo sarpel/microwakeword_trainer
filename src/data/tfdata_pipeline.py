@@ -4,7 +4,6 @@ Provides high-performance data loading with caching, prefetching, and parallel p
 Compatible with ESPHome - only affects training speed, not model export.
 """
 
-from __future__ import annotations
 
 import logging
 import os

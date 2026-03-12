@@ -415,9 +415,6 @@ class Trainer:
         self.tensorboard_log_confidence_drift = bool(performance.get("tensorboard_log_confidence_drift", True))
         self.tensorboard_log_per_class_accuracy = bool(performance.get("tensorboard_log_per_class_accuracy", True))
         self.tensorboard_sophisticated_interval = int(performance.get("tensorboard_sophisticated_interval", 2000) or 2000)
-        self.tensorboard_image_interval = int(performance.get("tensorboard_image_interval", 5000) or 5000)
-        self.tensorboard_histogram_interval = int(performance.get("tensorboard_histogram_interval", 5000) or 5000)
-
         # Hard negative mining
         hn_config = config.get("mining", {})
         self.hard_negative_mining_enabled = hn_config.get("enabled", False)
@@ -537,8 +534,6 @@ class Trainer:
             y_true=y_true if self.tensorboard_log_confidence_drift else None,
             y_score=y_score if self.tensorboard_log_confidence_drift else None,
         )
-
-        self.tensorboard_logger.flush()
 
         self.tensorboard_logger.flush()
 
@@ -733,7 +728,7 @@ class Trainer:
             return False
 
         if self._consecutive_plateau_evals < self.plateau_patience:
-            self.logger.log_info(f"Plateau detected ({self._consecutive_plateau_evals}/{self.plateau_patience} consecutive evals). " f"Waiting for patience threshold.")
+            self.logger.log_info(f"Plateau detected ({self._consecutive_plateau_evals}/{self.plateau_patience} consecutive evals). Waiting for patience threshold.")
             return False
 
         # Plateau patience exceeded — take action
@@ -760,7 +755,7 @@ class Trainer:
             return False
         else:
             # Max reductions exhausted — early stop
-            self.logger.log_info(f"\U0001f6d1 Early stopping: {self.plateau_max_reductions} LR reductions exhausted with no improvement. " f"Stopping training at step {step}.")
+            self.logger.log_info(f"\U0001f6d1 Early stopping: {self.plateau_max_reductions} LR reductions exhausted with no improvement. Stopping training at step {step}.")
             self._early_stopped = True
             return True
 
@@ -971,19 +966,19 @@ class Trainer:
             if not fah_budget_met:
                 return (
                     False,
-                    f"[Operational] FAH budget not met: FAH={fah:.2f} > {target_fah * 1.1:.2f} " f"(target={target_fah:.2f} × 1.1). Best constrained recall={self.best_constrained_recall:.4f}",
+                    f"[Operational] FAH budget not met: FAH={fah:.2f} > {target_fah * 1.1:.2f} (target={target_fah:.2f} × 1.1). Best constrained recall={self.best_constrained_recall:.4f}",
                 )
             if operating_recall > self.best_constrained_recall:
-                reason = f"[Operational] Constrained recall improved: {operating_recall:.4f} > " f"{self.best_constrained_recall:.4f} (FAH={fah:.2f} ≤ budget {target_fah * 1.1:.2f})"
+                reason = f"[Operational] Constrained recall improved: {operating_recall:.4f} > {self.best_constrained_recall:.4f} (FAH={fah:.2f} ≤ budget {target_fah * 1.1:.2f})"
                 return True, reason
             return (
                 False,
-                f"[Operational] No recall improvement: {operating_recall:.4f} ≤ {self.best_constrained_recall:.4f} " f"(FAH={fah:.2f})",
+                f"[Operational] No recall improvement: {operating_recall:.4f} ≤ {self.best_constrained_recall:.4f} (FAH={fah:.2f})",
             )
         else:
             # --- Stage 1: Warm-up --- #
             if auc_pr > self.best_auc_pr:
-                reason = f"[Warm-up] PR-AUC improved: {auc_pr:.4f} > {self.best_auc_pr:.4f} " f"(FAH={fah:.2f}, FAH budget not yet met — target={target_fah:.2f})"
+                reason = f"[Warm-up] PR-AUC improved: {auc_pr:.4f} > {self.best_auc_pr:.4f} (FAH={fah:.2f}, FAH budget not yet met — target={target_fah:.2f})"
                 return True, reason
             return (
                 False,
@@ -1101,7 +1096,7 @@ class Trainer:
         optimizer = self.model.optimizer
         if optimizer is None:
             raise RuntimeError("Model optimizer is not set")
-        if abs(current_lr - self._last_assigned_lr) > 1e-8:
+        if self._last_assigned_lr is None or abs(current_lr - self._last_assigned_lr) > 1e-8:
             optimizer.learning_rate.assign(current_lr)
             self._last_assigned_lr = current_lr
 
@@ -1538,7 +1533,7 @@ class Trainer:
                             phase_settings_display["negative_weight"],
                         )
                         if self.phase_stagger_steps > 0:
-                            self.logger.log_info(f"  Phase stagger: class weights and augmentation will transition " f"in {self.phase_stagger_steps} steps")
+                            self.logger.log_info(f"  Phase stagger: class weights and augmentation will transition in {self.phase_stagger_steps} steps")
                         progress.start()
                     prev_phase = current_phase
 
@@ -1661,7 +1656,7 @@ class Trainer:
         progress.stop()
 
         if self._early_stopped:
-            self.logger.log_info(f"Training early-stopped at step {self.current_step}/{self.total_steps} " f"after {self._plateau_reduction_count} LR reductions with no further improvement.")
+            self.logger.log_info(f"Training early-stopped at step {self.current_step}/{total_steps} after {self._plateau_reduction_count} LR reductions with no further improvement.")
 
         # Always save final weights as fallback for auto-tuner and post-training tools
         # Swap to EMA weights for final save (so final_weights has smoothed params)

@@ -964,58 +964,59 @@ grep -i "hard.neg" checkpoints/tuned/autotune.log
 
 ---
 
-TN|### Issue: Auto-Tune Confirmation Failure (FAH Jump from 0→129+)
+### Issue: Auto-Tune Confirmation Failure (FAH Jump from 0→129+)
 
-TJ|**Symptoms:**
+**Symptoms:**
 - During tuning: FAH=0.00, Recall=1.00 (excellent metrics)
 - During confirmation: Float32 FAH=129+, Recall~0.94 (catastrophic failure)
 - All candidates fail confirmation despite looking perfect during search
 - Error message: `No candidate passed confirmation phase`
 
-MB|**Root Cause:**
-The `_serialize_weights()` method originally used `model.trainable_weights` which does NOT include the 6 streaming ring buffer state variables. These non-trainable state variables are critical for correct model behavior. When candidates were saved, the state buffers were lost; when reloaded for confirmation, the model produced garbage predictions.
+**Root Cause:**
+The `_serialize_weights()` method originally used `model.trainable_weights` which does NOT include non-trainable variables like BatchNorm moving statistics (moving_mean, moving_variance). The tuning model runs in NON_STREAM mode (no streaming state variables exist), so the real issue was missing BatchNorm state, not streaming ring buffers. When candidates were saved, BatchNorm running statistics were lost; when reloaded for confirmation, the model produced garbage predictions.
 
-ZB|**Diagnostic:**
-BV|```bash
+**Diagnostic:**
+```bash
 # Check if this is the bug (look for the symptoms above)
 # Check your auto-tune log for this pattern:
 grep -E "(FAH.*0\.0000|FAH.*129|No candidate passed)" tuning_results/autotune.log
 ```
 
-BH|**Solution:**
+**Solution:**
 
-VX|1. **Update to latest code** (fix applied 2026-03-10):
-BV|   ```bash
+1. **Update to latest code** (fix applied 2026-03-10):
+   ```bash
    # Pull the latest code that includes the fix
    git pull origin main
    
    # Verify the fix is in place
    grep -A2 "def _serialize_weights" src/tuning/autotuner.py
-   # Should show: weights = [w.numpy() for w in model.variables]
+   # Should show: weights = model.get_weights()
    # NOT: weights = [w.numpy() for w in model.trainable_weights]
    ```
 
-KK|2. **If you can't update immediately, patch locally:**
-BV|   Edit `src/tuning/autotuner.py`, find `_serialize_weights()`:
+2. **If you can't update immediately, patch locally:**
+   Edit `src/tuning/autotuner.py`, find `_serialize_weights()`:
    ```python
    # Change FROM:
    weights = [w.numpy() for w in model.trainable_weights]
    
    # Change TO:
-   weights = [w.numpy() for w in model.variables]
+   weights = model.get_weights()
    ```
    
    And update `_deserialize_weights()`:
    ```python
    # Change FROM:
    for w, val in zip(model.trainable_weights, weights):
+       w.assign(val)
    
    # Change TO:
-   for w, val in zip(model.variables, weights):
+   model.set_weights(weights)
    ```
 
-JH|3. **Verify the fix:**
-BV|   ```bash
+3. **Verify the fix:**
+   ```bash
    # Re-run auto-tune
    mww-autotune \
        --checkpoint checkpoints/best_weights.weights.h5 \
@@ -1025,14 +1026,13 @@ BV|   ```bash
    # Check that confirmation metrics now match tuning metrics
    ```
 
-YM|**Prevention:**
-- Always use `model.variables` for full state serialization
-- Streaming models have non-trainable state buffers that MUST be preserved
+**Prevention:**
+- Always use `model.get_weights()`/`model.set_weights()` for full state serialization (includes BatchNorm moving statistics in layer creation order)
+- Do NOT use `model.trainable_weights` (misses BatchNorm moving_mean/moving_variance)
+- Do NOT use `model.variables` (alphabetical ordering can cause silent misassignment)
 - See `src/tuning/AGENTS.md` for details on the Critical Bug Fix
 
 ---
-
-TN|## Export & ESPHome Compatibility Issues
 
 ## Export & ESPHome Compatibility Issues
 

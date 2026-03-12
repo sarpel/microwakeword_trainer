@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Audio quality scoring library (fast + full modes)."""
 
 import csv

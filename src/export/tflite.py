@@ -682,8 +682,14 @@ def export_streaming_tflite(
 
         dense_input_features, dense_output_features = dense_kernel_shape
         # Assume 64 pointwise filters in last block (standard architecture)
-        pointwise_filters = 64
+        if config is not None:
+            pw_filters_list = config.get("pointwise_filters", [64, 64, 64, 64])
+            pointwise_filters = pw_filters_list[-1] if pw_filters_list else 64
+        else:
+            pointwise_filters = 64  # Standard architecture default
         temporal_frames = dense_input_features // pointwise_filters
+        if dense_input_features % pointwise_filters != 0:
+            raise ValueError(f"Dense input features ({dense_input_features}) is not divisible by " f"pointwise_filters ({pointwise_filters}). Architecture mismatch?")
 
         print(f"  Checkpoint Dense layer: ({dense_input_features}, {dense_output_features})")
         print(f"  Inferred temporal frames: {temporal_frames} (from {dense_input_features} / {pointwise_filters})")
@@ -832,7 +838,6 @@ def verify_exported_model(tflite_path: str) -> dict:
 
 
 # =============================================================================
-# LEGACY API (for backward compatibility)
 # =============================================================================
 
 

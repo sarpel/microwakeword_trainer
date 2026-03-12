@@ -56,14 +56,20 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 - Do not mix streaming modes in same model - pick internal or external, not both
 - Do not skip causal padding for small time dimensions - crashes on short inputs
 - Do not use `padding="same"` on time axis - produces different activations in streaming vs non-streaming
+- Do not name state variables `stream`, `stream_1`... — use `stream_0` through `stream_5` for correct alphabetical ordering in TFLite flatbuffer
+- Do not assume 14 ESPHome ops — there are 20 registered op resolvers (13 unique ops used by okay_nabu, 7 registered but unused: MUL, ADD, MEAN, AVERAGE_POOL_2D, MAX_POOL_2D, PAD, PACK)
 
 ## Notes
 
-**Streaming State Variables**: TFLite export creates 6 state vars (stream, stream_1-5). Total memory ~2.8-3.5KB. State shapes depend on kernel sizes and stride.
+**Streaming State Variables**: TFLite export creates 6 state vars named `stream_0` through `stream_5` (NOT `stream`, `stream_1`...). The `_0` suffix ensures correct alphabetical ordering in TFLite flatbuffer. State shapes: [1,2,1,40], [1,4,1,32], [1,10,1,64], [1,14,1,64], [1,22,1,64], [1,5,1,64]. Total memory ~3.5KB.
 
-**ESPHome Requirements**: Input dtype int8 [1, 3, 40], output uint8 [1, 1]. Must have 2 subgraphs (main + init). Quantization required. Tensor arena size 20-30KB typical.
+**ESPHome Requirements**: Input dtype int8 [1, 3, 40] (scale=0.101961, zero_point=-128), output uint8 [1, 1] (scale=0.00390625, zero_point=0). Must have 2 subgraphs: Subgraph 0 (main, 95 tensors) + Subgraph 1 (initialization, 12 tensors). 13 unique op types used by okay_nabu. 20 op resolvers registered in ESPHome runtime.
+
+**Tensor Arena**: Recommended arena = 135,873 bytes (~136KB). Subgraph 0 = 41,771 bytes, Subgraph 1 = 3,520 bytes.
 
 **Tensor Shapes**: Training shape is `(clip_duration_ms / window_step_ms, 40)` — e.g., `(100, 40)` for 1000ms clip, `(150, 40)` for 1500ms. Streaming: `[batch, 3, 40]` per step. Channel dim added internally: `[batch, time, 1, features]`.
+
+**Temporal Frames**: Training shape is `(clip_duration_ms / window_step_ms, 40)`. Streaming: `[batch, 3, 40]` per step. The export pipeline infers `temporal_frames = dense_input_features // 64` from checkpoint Dense kernel shape. Dense layer input = `temporal_frames × 64`. Old checkpoints (pre-2026-03-11 Flatten fix) are incompatible with current export.
 
 **Ring Buffer Law**: `buffer_frames = kernel_size - stride` — inviolable identity from ARCHITECTURAL_CONSTITUTION.md.
 

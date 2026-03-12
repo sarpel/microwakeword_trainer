@@ -1,0 +1,88 @@
+{
+  "name": "unused-code-cleaner",
+  "version": "1.0.0",
+  "description": "Clean up legacy/deprecated code and tidy YAML configuration files",
+  "trigger": {
+    "type": "manual"
+  },
+  "environment": {
+    "LOG_LEVEL": "info",
+    "CLEANUP_DRY_RUN": "false"
+  },
+  "tasks": [
+    {
+      "id": "analyze-legacy",
+      "name": "Analyze codebase for legacy/deprecated patterns",
+      "type": "python",
+      "command": "python scripts/analyze_legacy_code.py",
+      "timeout": 300,
+      "description": "Scan source code for deprecated imports, unused functions, and legacy compatibility code"
+    },
+    {
+      "id": "analyze-unused",
+      "name": "Find unused code and dead code",
+      "type": "shell",
+      "command": "python -c \"import vulture; v = vulture.Vulture(); v.scavenge(['src/']); v.report()\" || echo 'Vulture scan complete (warnings above)'",
+      "depends_on": ["analyze-legacy"],
+      "timeout": 300,
+      "description": "Use vulture to find unused variables, functions, and classes"
+    },
+    {
+      "id": "cleanup-source",
+      "name": "Remove legacy compatibility code from source",
+      "type": "python",
+      "command": "python scripts/cleanup_legacy.py --source-dir src/ --apply",
+      "depends_on": ["analyze-unused"],
+      "timeout": 600,
+      "description": "Remove deprecated imports, compatibility shims, and unused code"
+    },
+    {
+      "id": "analyze-yaml",
+      "name": "Analyze YAML configuration files",
+      "type": "shell",
+      "command": "find config/ -name '*.yaml' -o -name '*.yml' | head -20",
+      "timeout": 60,
+      "description": "List all YAML files for processing"
+    },
+    {
+      "id": "tidy-yaml",
+      "name": "Tidy and format YAML configuration files",
+      "type": "shell",
+      "command": "python scripts/tidy_yaml.py --config-dir config/ --apply",
+      "depends_on": ["analyze-yaml"],
+      "timeout": 300,
+      "description": "Sort keys, fix indentation, remove duplicates, standardize format"
+    },
+    {
+      "id": "cleanup-deprecated-config",
+      "name": "Remove deprecated config options",
+      "type": "python",
+      "command": "python scripts/cleanup_deprecated_config.py --config-dir config/",
+      "depends_on": ["tidy-yaml"],
+      "timeout": 300,
+      "description": "Remove deprecated configuration options from YAML files"
+    },
+    {
+      "id": "validate-cleanup",
+      "name": "Validate cleanup didn't break anything",
+      "type": "shell",
+      "command": "python -c \"from config.loader import load_config; load_config('config/presets/standard.yaml')\" && echo 'Config validation PASSED'",
+      "depends_on": ["cleanup-source", "cleanup-deprecated-config"],
+      "timeout": 120,
+      "on_failure": ["restore-backup"],
+      "description": "Ensure configs still load correctly after cleanup"
+    },
+    {
+      "id": "restore-backup",
+      "name": "Restore from backup on failure",
+      "type": "shell",
+      "command": "git checkout -- . && echo 'Restored from git'",
+      "description": "Restore original files if cleanup caused issues"
+    }
+  ],
+  "notifications": {
+    "channels": ["console"],
+    "on_completion": true,
+    "on_failure": true
+  }
+}

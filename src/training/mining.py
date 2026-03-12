@@ -24,7 +24,6 @@ Usage:
     mww-mine-hard-negatives consolidate-logs --config standard
 """
 
-from __future__ import annotations
 
 __all__ = [
     "HardExampleMiner",

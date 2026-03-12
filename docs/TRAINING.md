@@ -391,7 +391,7 @@ The FAH budget comes from `evaluation.target_fah` in your config preset. A 10% t
 ```yaml
 # In your config preset or override:
 evaluation:
-  target_fah: 2.0        # Maximum acceptable false activations per hour
+  target_fah: 0.5        # Maximum acceptable false activations per hour
   target_recall: 0.90    # Minimum acceptable recall (used by recall_at_target_fah metric)
 ```
 

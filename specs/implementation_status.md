@@ -108,29 +108,27 @@ microwakeword_trainer is a **production-ready** GPU-accelerated wake word traini
 - Improved performance configuration for faster training
 - Cleaner, more maintainable codebase
 - Reduced code complexity in logging and export modules
-BR|
-SS|**Status**: ✅ Complete, tested, documented
-JQ|
-XX|---
+
+**Status**: ✅ Complete, tested, documented
+
+---
 YX|
-ZW|#### Critical Bug Fix: Auto-Tuner Weight Serialization (2026-03-10)
+#### Critical Bug Fix: Auto-Tuner Weight Serialization (2026-03-10)
 
-MN|**Problem:**
-- `_serialize_weights()` used `model.trainable_weights` which excludes non-trainable streaming state variables
+**Problem:**
+- `_serialize_weights()` used `model.trainable_weights` which excludes BatchNorm moving statistics (moving_mean, moving_variance)
 - This caused models to show excellent metrics during tuning (FAH=0.00) but fail catastrophically during confirmation (FAH=129+)
-- All candidates appeared to fail confirmation because streaming ring buffer state was lost
+- The tuning model runs in NON_STREAM mode (has 0 streaming state variables), so the real issue was missing BN state, not streaming states
 
-HT|**Fix:**
 **Fix:**
 - Changed `_serialize_weights()` to use `model.get_weights()` instead of `model.trainable_weights`
 - Changed `_deserialize_weights()` to use `model.set_weights()` instead of `model.variables`
 - This preserves BatchNorm moving statistics (moving_mean/moving_variance) which are non-trainable
 - The tuning model runs in NON_STREAM mode (has 0 streaming state variables), so the real issue was missing BN state, not streaming states
-HT|**Files Modified:**
 **Files Modified:**
 - `src/tuning/autotuner.py`: Removed duplicate `_deserialize_weights()` definition, kept only `model.get_weights()`/`set_weights()` version
 
-SB|**Impact:**
+**Impact:**
 - Auto-tuning confirmation now works correctly
 - Tuning metrics match confirmation metrics
 - No more silent failures where models appear perfect but fail validation
@@ -173,7 +171,7 @@ JQ|
 **Issue:**
 - TFLite converter sorts state variables alphabetically by name when emitting the flatbuffer
 - Original naming: `stream`, `stream_1`, `stream_2`, ... `stream_5`
-- With `_ring_buffer` suffix: `stream_ring_buffer`, `stream_1_ring_buffer`, `stream_2_ring_buffer`... 
+- With `_ring_buffer` suffix: `stream_ring_buffer`, `stream_1_ring_buffer`, `stream_2_ring_buffer`...
 - Alphabetically: `stream_1_ring_buffer` < `stream_ring_buffer` (because `_1` < `_r`)
 - This caused state variables to appear in wrong order in TFLite file, breaking ESPHome verification
 
@@ -191,7 +189,6 @@ JQ|
 - ESPHome verification passes state shape checks
 - State variable positional access (`self.state_vars[0..5]`) remains unchanged (only naming changed)
 
-**Status:** ✅ Complete, verified TFLite export, documented in AGENTS.md
 **Status:** ✅ Complete, verified TFLite export, documented in AGENTS.md
 
 ---
@@ -274,11 +271,6 @@ JQ|
 ---
 
 ## Module-by-Module Implementation Details
-ZW|## Module-by-Module Implementation Details
-**Status**: ✅ Complete, tested, documented
-
----
-
 ## Module-by-Module Implementation Details
 
 ### 1. Configuration System (`config/`)
@@ -286,7 +278,7 @@ ZW|## Module-by-Module Implementation Details
 **Status**: ✅ Production Ready
 
 **Implemented Features:**
-- 12 dataclass configuration sections (HardwareConfig, PathsConfig, TrainingConfig, ModelConfig, AugmentationConfig, PerformanceConfig, SpeakerClusteringConfig, HardNegativeMiningConfig, ExportConfig, PreprocessingConfig, QualityConfig, EvaluationConfig)
+- 14 dataclass configuration sections (HardwareConfig, PathsConfig, TrainingConfig, ModelConfig, AugmentationConfig, PerformanceConfig, SpeakerClusteringConfig, HardNegativeMiningConfig, ExportConfig, PreprocessingConfig, QualityConfig, EvaluationConfig, AutotuneConfig, SpeakerVerificationConfig)
 - YAML preset system (fast_test, standard, max_quality)
 - Environment variable substitution (`${VAR:-default}`)
 - Custom configuration override merging
@@ -446,12 +438,11 @@ ZW|## Module-by-Module Implementation Details
 - Streaming subgraph verification
 - State variable naming fix (stream → stream_0 for correct alphabetical ordering)
 **Key Files:**
-- `tflite.py` (780 lines) - Main export pipeline
+
 - `manifest.py` (330 lines) - Manifest generation
 - `model_analyzer.py` (600 lines) - Model introspection
 - `verification.py` (218 lines) - Verification tools
 
-**Export Requirements:**
 **Export Requirements:**
 - Input dtype: int8, shape: [1, 3, 40]
 - Output dtype: uint8, shape: [1, 1]
@@ -478,7 +469,7 @@ ZW|## Module-by-Module Implementation Details
 - MCC, Cohen's Kappa, EER computation
 - Bug fixes: `evaluate_model.py` generator exhaustion removed, model building fixed
 **Key Files:**
-- `metrics.py` (373 lines) - Vectorized metrics
+
 - `fah_estimator.py` (72 lines) - FAH calculation
 - `calibration.py` (89 lines) - Probability calibration
 - `test_evaluator.py` (650 lines) - Test set evaluation
@@ -501,7 +492,7 @@ ZW|## Module-by-Module Implementation Details
 - Manual verification on test sets
 - Fixed generator exhaustion and duplicate code bugs in `evaluate_model.py`
 **Documentation:**
-- `docs/INDEX.md` - Metrics overview
+
 - `src/evaluation/AGENTS.md` - Module patterns
 
 ---
@@ -697,37 +688,22 @@ microwakeword_trainer is a **complete, production-ready** framework for ESPHome 
 
 **Strengths:**
 - Comprehensive pipeline from data to deployment
-- GPU-accelerated training with 5-10x SpecAugment speedup
-- ESPHome-compatible export with verification
-- Flexible configuration system with presets
-- Robust testing coverage
-- Complete documentation
-- **Aligned with official okay_nabu architecture (Flatten temporal pooling, correct state variables, verified 6 streaming state vars)**
 - Comprehensive pipeline from data to deployment
 - GPU-accelerated training with 5-10x SpecAugment speedup
 - ESPHome-compatible export with verification
 - Flexible configuration system with presets
 - Robust testing coverage
 - Complete documentation
-
+- **Aligned with official okay_nabu architecture (Flatten temporal pooling, correct state variables, verified 6 streaming state vars)**
+- **Ground truth audit (2026-03-12)**: 95 tensors, 13 unique ops, 20 registered resolvers, all documentation corrected
 **Recommendations:**
 1. **Retrain model after Flatten change** — Use `mww-train --config config/presets/max_quality.yaml` (Dense layer input changed from 64→384)
 2. Leverage auto-tuning for FAH/recall optimization
-3. Monitor tensor arena usage on target devices
+3. Monitor tensor arena usage on target devices (≤136KB recommended)
 4. Keep ARCHITECTURAL_CONSTITUTION.md immutable - it's the source of truth
 5. Report bugs and feature requests via GitHub issues
-1. Continue using framework for production wake word models
-2. Leverage auto-tuning for FAH/recall optimization
-3. Monitor tensor arena usage on target devices
-4. Keep ARCHITECTURAL_CONSTITUTION.md immutable - it's the source of truth
-5. Report bugs and feature requests via GitHub issues
-
 **Next Steps:**
 1. Retrain model with max_quality preset to finalize Flatten alignment
 2. Re-export TFLite model after retraining
 3. Re-evaluate to verify AUC gap elimination
 4. Verify ESPHome compatibility on real device
-1. Monitor production deployments for real-world performance
-2. Collect feedback on auto-tuning effectiveness
-3. Evaluate need for additional model architectures
-4. Consider CPU-only SpecAugment for broader accessibility

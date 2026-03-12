@@ -533,7 +533,9 @@ class MixedNet(tf.keras.Model):
         # Instead of GlobalAveragePooling2D which averages all frames,
         # Flatten preserves per-frame information for the Dense layer.
         # Dense input = temporal_rb_size_plus_1 * last_pointwise_filters
-        # In streaming: 6 * 64 = 384 (5 buffer frames + 1 new frame)
+        # temporal_rb_size is computed dynamically from input_shape and stride:
+        #   temporal_rb_size = max(0, ceil(input_shape[0] / stride) - 1)
+        # This is time-dependent; actual input dimension varies with input duration
         self.pooling = tf.keras.layers.Flatten(name="global_pool")
 
         # Dropout

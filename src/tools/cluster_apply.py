@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Execute file organization by speaker clusters."""
 
 import argparse
@@ -50,7 +48,6 @@ def discover_namelists(namelist_dir: Path) -> list[Path]:
         sys.exit(1)
 
     namelists = sorted(namelist_dir.glob("*_namelist.json"))
-    legacy = namelist_dir / "namelist.json"
     if legacy.exists() and legacy not in namelists:
         namelists.append(legacy)
 
