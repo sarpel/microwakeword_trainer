@@ -2092,7 +2092,13 @@ class AutoTuner:
             metrics = self.threshold_optimizer._compute_metrics_at_threshold(confirm_labels.flatten(), scores, threshold, ambient_hours)
 
             # Diagnostic: show what metrics would be with re-optimized threshold (for analysis only)
-            diag_metrics = self.threshold_optimizer.optimize(confirm_labels.flatten(), scores, ambient_hours)
+            _, _, diag_metrics = self.threshold_optimizer.optimize(
+                confirm_labels.flatten(),
+                scores,
+                ambient_hours,
+                self.target_fah,
+                self.target_recall,
+            )
             if diag_metrics and diag_metrics.recall != metrics.recall:
                 self.file_logger.info(
                     f"  {candidate.id} diagnostic: fixed-threshold Recall={metrics.recall:.4f} FAH={metrics.fah:.4f} | "
@@ -2165,6 +2171,27 @@ class AutoTuner:
         name = f"tuned_fah{metrics.fah:.3f}_rec{metrics.recall:.3f}_iter{iteration}.weights.h5"
         path = self.output_dir / "checkpoints" / name
         model.save_weights(str(path))
+        metadata_path = path.with_suffix(".metadata.json")
+        try:
+            metadata: dict[str, object] = {}
+            if metadata_path.exists():
+                with open(metadata_path, "r") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        metadata = loaded
+            metadata.update(
+                {
+                    "tuned_probability_cutoff": float(metrics.threshold),
+                    "tuned_probability_cutoff_uint8": int(metrics.threshold_uint8),
+                    "tuned_fah": float(metrics.fah),
+                    "tuned_recall": float(metrics.recall),
+                    "tuning_metadata_source": "mww-autotune",
+                }
+            )
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self.file_logger.warning(f"Could not write checkpoint metadata sidecar {metadata_path}: {exc}")
         self.file_logger.info(f"Checkpoint saved: {path}")
         return str(path)
 
@@ -2336,6 +2363,8 @@ class AutoTuner:
                 f"Best FAH: {conf_fah:.4f}\n"
                 f"Best Recall: {conf_recall:.4f}\n"
                 f"Search-set metrics (overfit): FAH={result['best_fah']:.4f}, Recall={result['best_recall']:.4f}\n"
+                f"Recommended cutoff: {result.get('recommended_probability_cutoff', float('nan')):.4f}"
+                f" ({result.get('recommended_probability_cutoff_uint8', 'N/A')})\n"
                 f"Total iterations: {result['iterations']}\n"
                 f"Total gradient steps: {self.total_gradient_steps:,}\n"
                 f"Wall clock: {minutes:.1f} min\n"
@@ -2347,10 +2376,21 @@ class AutoTuner:
                 f"Target met: {met}\n"
                 f"Best FAH: {result['best_fah']:.4f}\n"
                 f"Best Recall: {result['best_recall']:.4f}\n"
+                f"Recommended cutoff: {result.get('recommended_probability_cutoff', float('nan')):.4f}"
+                f" ({result.get('recommended_probability_cutoff_uint8', 'N/A')})\n"
                 f"Total iterations: {result['iterations']}\n"
                 f"Total gradient steps: {self.total_gradient_steps:,}\n"
                 f"Wall clock: {minutes:.1f} min\n"
                 f"Best checkpoint: {result.get('best_checkpoint', 'N/A')}"
+            )
+
+        if result.get("int8_diagnostic_fah") is not None and result.get("int8_diagnostic_recall") is not None:
+            summary += (
+                "\n"
+                f"INT8 diagnostic (non-gating): FAH={result['int8_diagnostic_fah']:.4f}, "
+                f"Recall={result['int8_diagnostic_recall']:.4f}, "
+                f"AUC-PR={result.get('int8_diagnostic_auc_pr', 0.0):.4f}, "
+                f"Thr={result.get('int8_diagnostic_threshold', float('nan')):.4f}"
             )
 
         self.console.print(Panel(summary, title="📊 Auto-Tuning Results", border_style="green" if result["target_met"] else "red"))
@@ -2750,6 +2790,13 @@ class AutoTuner:
             "best_recall": best.eval_results.recall if best and best.eval_results else 0.0,
             "final_fah": best.eval_results.fah if best and best.eval_results else float("inf"),
             "final_recall": best.eval_results.recall if best and best.eval_results else 0.0,
+            "recommended_probability_cutoff": best.eval_results.threshold if best and best.eval_results else None,
+            "recommended_probability_cutoff_uint8": best.eval_results.threshold_uint8 if best and best.eval_results else None,
+            "int8_diagnostic_fah": best.eval_results_int8.fah if best and best.eval_results_int8 else None,
+            "int8_diagnostic_recall": best.eval_results_int8.recall if best and best.eval_results_int8 else None,
+            "int8_diagnostic_auc_pr": best.eval_results_int8.auc_pr if best and best.eval_results_int8 else None,
+            "int8_diagnostic_threshold": best.eval_results_int8.threshold if best and best.eval_results_int8 else None,
+            "int8_diagnostic_threshold_uint8": best.eval_results_int8.threshold_uint8 if best and best.eval_results_int8 else None,
             "iterations": last_iteration,
             "best_checkpoint": self.best_checkpoint_path or "",
             "target_met": target_met,

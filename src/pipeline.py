@@ -15,7 +15,6 @@ Exit codes:
     3 - Verification failed (ESPHome/streaming incompatible)
 """
 
-
 import argparse
 import json
 import shutil
@@ -95,9 +94,10 @@ def step_autotune(checkpoint: Path, config: str, override: str | None, target_fa
         cmd += ["--override", override]
     _run(cmd, "Auto-tuning model")
 
-    # Find tuned checkpoint - support both .weights.h5 and .ckpt formats
+    # Find tuned checkpoint - AutoTuner writes under output_dir/checkpoints/
+    # so search recursively and support both .weights.h5 and .ckpt formats.
     candidates = sorted(
-        [*output_dir.glob("*.weights.h5"), *output_dir.glob("*.ckpt"), *output_dir.glob("*.h5")],
+        [*output_dir.rglob("*.weights.h5"), *output_dir.rglob("*.ckpt"), *output_dir.rglob("*.h5")],
         key=lambda p: p.stat().st_mtime,
     )
     if not candidates:
@@ -292,20 +292,6 @@ def step_promote(tflite_path: Path, promote_dir: Path, model_name: str) -> None:
         print(f"  Copied: {dest_manifest}")
 
     print(f"✓ Model promoted to: {promote_dir}")
-    """Copy model and manifest to the promote directory."""
-    promote_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy .tflite
-    dest_tflite = promote_dir / tflite_path.name
-    shutil.copy2(tflite_path, dest_tflite)
-    print(f"  Copied: {dest_tflite}")
-
-    # Copy manifest.json if present
-    manifest = tflite_path.parent / "manifest.json"
-    if manifest.exists():
-        dest_manifest = promote_dir / "manifest.json"
-        shutil.copy2(manifest, dest_manifest)
-        print(f"✓ Model promoted to: {promote_dir}")
 
 
 # ---------------------------------------------------------------------------

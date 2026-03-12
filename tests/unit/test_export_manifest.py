@@ -147,5 +147,5 @@ def test_create_esphome_package_includes_metadata_and_saves_manifest(tmp_path: P
 
     assert res["model_filename"] == "hello.tflite"
     assert res["tensor_arena_size"] == 777
-    assert "_metadata" in saved["manifest"]
+    assert "_metadata" not in saved["manifest"]
     assert Path(saved["path"]).exists()

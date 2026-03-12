@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -206,6 +207,7 @@ def test_autotuner_init_and_utils(tmp_path: Path, monkeypatch) -> None:
         def __init__(self):
             self._w = [np.array([1.0, 2.0]), np.array([3.0])]
             self.trainable_weights = []
+            self.saved_path = None
 
         def get_weights(self):
             return [x.copy() for x in self._w]
@@ -213,8 +215,82 @@ def test_autotuner_init_and_utils(tmp_path: Path, monkeypatch) -> None:
         def set_weights(self, w):
             self._w = [np.array(x) for x in w]
 
+        def save_weights(self, path):
+            self.saved_path = path
+
     model = DummyModel()
     blob = tuner._serialize_weights(model)
     model.set_weights([np.array([9.0, 9.0]), np.array([9.0])])
     tuner._deserialize_weights(model, blob)
     np.testing.assert_array_equal(model.get_weights()[0], np.array([1.0, 2.0]))
+
+    ckpt_metrics = at.TuneMetrics(fah=0.2, recall=0.95, auc_pr=0.96, threshold=0.77, threshold_uint8=196)
+    ckpt_path = Path(tuner._save_checkpoint(model, ckpt_metrics, iteration=1))
+    sidecar = ckpt_path.with_suffix(".metadata.json")
+    assert sidecar.exists()
+    payload = json.loads(sidecar.read_text())
+    assert payload["tuned_probability_cutoff"] == 0.77
+    assert payload["tuned_probability_cutoff_uint8"] == 196
+
+
+def test_confirmation_phase_uses_optimize_with_targets(tmp_path: Path, monkeypatch) -> None:
+    cfg = {
+        "auto_tuning": {
+            "target_fah": 0.5,
+            "target_recall": 0.88,
+            "output_dir": str(tmp_path / "out"),
+            "int8_shadow": False,
+        },
+        "auto_tuning_expert": {},
+        "training": {},
+        "hardware": {},
+    }
+    tuner = at.AutoTuner(checkpoint_path=str(tmp_path / "ckpt.weights.h5"), config=cfg)
+
+    class DummyModel:
+        pass
+
+    candidate = at.CandidateState(
+        id="c0",
+        weights_bytes=b"w",
+        optimizer_state_bytes=b"o",
+        batchnorm_state={},
+        temperature=1.0,
+        threshold_float32=0.5,
+        threshold_uint8=128,
+        eval_results=at.TuneMetrics(fah=0.4, recall=0.9, auc_pr=0.9),
+    )
+    tuner.archive.archive = [candidate]
+
+    called: dict[str, float] = {}
+
+    def fake_optimize(y_true, y_scores, ambient_duration_hours, target_fah, target_recall):
+        called["target_fah"] = float(target_fah)
+        called["target_recall"] = float(target_recall)
+        m = at.TuneMetrics(fah=0.4, recall=0.9, auc_pr=0.9, threshold=0.5, threshold_uint8=128)
+        return 0.5, 128, m
+
+    monkeypatch.setattr(tuner, "_deserialize_weights", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tuner, "_restore_bn_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tuner, "_predict_scores", lambda *args, **kwargs: np.array([0.2, 0.9], dtype=float))
+    monkeypatch.setattr(
+        tuner.threshold_optimizer,
+        "_compute_metrics_at_threshold",
+        lambda *args, **kwargs: at.TuneMetrics(fah=0.4, recall=0.9, auc_pr=0.9, threshold=0.5, threshold_uint8=128),
+    )
+    monkeypatch.setattr(tuner.threshold_optimizer, "optimize", fake_optimize)
+
+    confirm_data = (
+        np.zeros((2, 3), dtype=np.float32),
+        np.array([0.0, 1.0], dtype=np.float32),
+        np.ones(2, dtype=np.float32),
+        np.arange(2),
+    )
+    repr_data = (np.zeros((1, 3), dtype=np.float32),)
+
+    best_confirmed, best_attempt_metrics = tuner._confirmation_phase(DummyModel(), confirm_data, repr_data, ambient_hours=1.0)
+
+    assert best_confirmed is not None
+    assert best_attempt_metrics is None
+    assert called["target_fah"] == tuner.target_fah
+    assert called["target_recall"] == tuner.target_recall

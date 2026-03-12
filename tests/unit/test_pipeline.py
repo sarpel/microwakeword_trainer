@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PosixPath
 from types import SimpleNamespace
 
 import pytest
@@ -84,10 +84,13 @@ def test_step_autotune_returns_latest_or_original(tmp_path: Path, monkeypatch) -
 
     a = out_dir / "a.weights.h5"
     b = out_dir / "b.h5"
+    nested = out_dir / "checkpoints" / "c.weights.h5"
     a.write_bytes(b"a")
     b.write_bytes(b"b")
+    nested.parent.mkdir(parents=True, exist_ok=True)
+    nested.write_bytes(b"c")
     out2 = pipeline.step_autotune(chk, "standard", None, 0.5, 0.9, out_dir)
-    assert out2 in {a, b}
+    assert out2 in {a, b, nested}
 
 
 def test_step_export_finds_named_and_fallback(tmp_path: Path, monkeypatch) -> None:
@@ -156,8 +159,8 @@ def test_step_verify_streaming_failure_and_success(monkeypatch, tmp_path: Path) 
     script = tmp_path / "verify_streaming.py"
     script.write_text("#x")
 
-    class P(Path):
-        _flavour = type(Path())._flavour
+    class P(PosixPath):
+        pass
 
     def fake_path(p: str):
         if p == "scripts/verify_streaming.py":
@@ -190,8 +193,8 @@ def test_step_evaluate_parse_and_failure(monkeypatch, tmp_path: Path) -> None:
     script = tmp_path / "evaluate_model.py"
     script.write_text("#x")
 
-    class P(Path):
-        _flavour = type(Path())._flavour
+    class P(PosixPath):
+        pass
 
     def fake_path(p: str):
         if p == "scripts/evaluate_model.py":
