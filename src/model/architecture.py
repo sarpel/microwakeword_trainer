@@ -609,13 +609,6 @@ class MixedNet(tf.keras.Model):
         ]:
             if len(param) != num_blocks:
                 raise ValueError(f"{name} length ({len(param)}) must match pointwise_filters length ({num_blocks})")
-
-        # Input specification - accept 3D input [batch, time, features]
-        self.input_spec = tf.keras.layers.InputSpec(shape=(None, *input_shape), dtype=tf.float32)  # Allow any batch size
-
-    def build(self, input_shape):
-        """Build the model layers."""
-        # Input reshape: [batch, time, features] -> [batch, time, 1, features]
         # This adds channel dimension for Conv2D operations
 
         core_layers = build_core_layers(

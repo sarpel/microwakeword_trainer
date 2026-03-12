@@ -335,8 +335,6 @@ class OptimizedDataPipeline:
             return (augmented, labels, sample_weights) + rest if rest else (augmented, labels, sample_weights)
 
         ds = ds.map(apply_spec_augment, num_parallel_calls=tf.data.AUTOTUNE)
-        ds = ds.prefetch(tf.data.AUTOTUNE)
-
         return ds
 
     def create_test_pipeline(

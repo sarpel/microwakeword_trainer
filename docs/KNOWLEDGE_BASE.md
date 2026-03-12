@@ -1,6 +1,6 @@
 # microwakeword_trainer — Knowledge Base
 
-> **Comprehensive reference for the GPU-accelerated wake word training framework**  
+> **Comprehensive reference for the GPU-accelerated wake word training framework**
 > Version 2.0.0 | Last Updated: 2026-03-12
 
 ---
@@ -354,7 +354,7 @@ converter.inference_output_type = tf.uint8  # NOT int8!
     "probability_cutoff": 0.97,
     "feature_step_size": 10,
     "sliding_window_size": 5,
-    "tensor_arena_size": 22860,
+    "tensor_arena_size": 0,
     "minimum_esphome_version": "2024.7.0"
   }
 }
@@ -704,5 +704,5 @@ mww-autotune \
 
 ---
 
-*microwakeword_trainer v2.0.0 — Knowledge Base*  
+*microwakeword_trainer v2.0.0 — Knowledge Base*
 *Generated: 2026-03-12*

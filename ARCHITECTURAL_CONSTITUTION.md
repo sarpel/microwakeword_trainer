@@ -523,7 +523,7 @@ converter.inference_output_type                = tf.uint8       # UINT8. ALWAYS.
     "probability_cutoff": 0.97,
     "feature_step_size": 10,
     "sliding_window_size": 5,
-    "tensor_arena_size": 22860,
+    "tensor_arena_size": 0,
     "minimum_esphome_version": "2024.7.0"
   }
 }

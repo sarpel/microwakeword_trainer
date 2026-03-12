@@ -110,7 +110,7 @@ def tf_stream_state_internal_model_accuracy(flags, folder, weights_name="best_we
     sess = tf.Session(config=config)
     tf.keras.backend.set_session(sess)
 
-    logging.info("tf stream model state internal without state resettingbetween testing sequences")
+    logging.info("tf stream model state internal without state resetting between testing sequences")
 
     audio_processor = input_data.AudioProcessor(flags)
     set_size = audio_processor.set_size("testing")
