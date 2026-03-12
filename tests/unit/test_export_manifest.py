@@ -38,6 +38,31 @@ def test_generate_manifest_uses_calculated_arena_when_tflite_exists(tmp_path: Pa
     assert out["micro"]["tensor_arena_size"] == 54321
 
 
+def test_resolve_tensor_arena_size_prefers_explicit_override(tmp_path: Path) -> None:
+    tflite = tmp_path / "x.tflite"
+    tflite.write_bytes(b"1")
+
+    size = manifest_mod.resolve_tensor_arena_size(
+        tflite_path=str(tflite),
+        export_config={"tensor_arena_size": 42424, "arena_size_margin": 9.9},
+    )
+
+    assert size == 42424
+
+
+def test_resolve_tensor_arena_size_zero_means_auto(tmp_path: Path, monkeypatch) -> None:
+    tflite = tmp_path / "x.tflite"
+    tflite.write_bytes(b"1")
+    monkeypatch.setattr(manifest_mod, "calculate_tensor_arena_size", lambda *_args, **_kwargs: 33333)
+
+    size = manifest_mod.resolve_tensor_arena_size(
+        tflite_path=str(tflite),
+        export_config={"tensor_arena_size": 0, "arena_size_margin": 1.3},
+    )
+
+    assert size == 33333
+
+
 def test_save_manifest_creates_parent_and_writes_json(tmp_path: Path) -> None:
     manifest = {"a": 1, "micro": {"b": 2}}
     out_path = tmp_path / "nested" / "manifest.json"

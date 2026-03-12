@@ -134,11 +134,17 @@ converter.representative_dataset = create_representative_dataset(
 ```json
 {
   "type": "micro",
+  "wake_word": "Hey Katya",
+  "author": "Sarpel GURAY",
+  "website": "https://github.com/sarpel/microwakeword-training-platform",
+  "model": "hey_katya.tflite",
+  "trained_languages": ["en"],
   "version": 2,
   "micro": {
     "probability_cutoff": 0.97,
     "sliding_window_size": 5,
-    "tensor_arena_size": 135873,
+    "feature_step_size": 10,
+    "tensor_arena_size": 22860,
     "minimum_esphome_version": "2024.7.0"
   }
 }
@@ -147,7 +153,7 @@ converter.representative_dataset = create_representative_dataset(
 
 - **probability_cutoff**: Threshold for wake word detection (0.0-1.0)
 - **sliding_window_size**: Number of frames to average for stable detection
-- **tensor_arena_size**: Memory allocation for TFLite runtime (bytes). Official okay_nabu recommended: 135,873 bytes (~136KB). Subgraph 0 uses 41,771 bytes, Subgraph 1 uses 3,520 bytes.
+- **tensor_arena_size**: Memory allocation for TFLite runtime (bytes). It is resolved automatically from exported TFLite tensor details with `arena_size_margin` when `export.tensor_arena_size=0`.
 - **minimum_esphome_version**: Required ESPHome version for compatibility
 
 ### Calculation Methods
@@ -155,10 +161,8 @@ converter.representative_dataset = create_representative_dataset(
 ```python
 def calculate_tensor_arena_size(model_path):
     """Calculate required tensor arena size for ESPHome."""
-    # Analyze model operations and tensor sizes
-    # Official okay_nabu: recommended arena = 135,873 bytes (~136KB)
-    # Subgraph 0 = 41,771 bytes, Subgraph 1 = 3,520 bytes
-    return 135873
+    # Analyze TFLite tensor allocations and add safety margin
+    return measured_bytes_with_margin
 def generate_manifest(model_path, config):
     """Generate ESPHome-compatible manifest file."""
     manifest = {
@@ -239,7 +243,7 @@ def verify_exported_model(tflite_path, manifest_path):
 
 ### Issue: Tensor arena too small
 **Cause**: Incorrect calculation of memory requirements
-**Solution**: Use the model's `calculate_tensor_arena_size()` function
+**Solution**: Set `export.tensor_arena_size: 0` and let the export pipeline auto-resolve from the generated TFLite model
 
 ### Issue: Incompatible operations
 **Cause**: Non-whitelisted ops in the model
@@ -280,7 +284,7 @@ esphome run your_config.yaml
 
 Check ESPHome logs for:
 - Model loading confirmation
-- **Memory**: Recommended arena ~136KB. Monitor actual usage on target device.
+- **Memory**: Set `export.tensor_arena_size: 0` to auto-resolve arena from exported model tensor allocations (+ `arena_size_margin`).
 - Detection performance metrics
 
 ### 5. Tuning Thresholds
@@ -292,7 +296,7 @@ Adjust `probability_cutoff` based on your environment:
 
 ## Performance Optimization Tips
 
-- **Memory**: Monitor tensor arena usage — official okay_nabu recommended arena = 135,873 bytes (~136KB)
+- **Memory**: Prefer auto-resolved arena sizing (`tensor_arena_size: 0`) and validate on target hardware.
 - **Latency**: Streaming model processes 3 frames (30ms) per inference
 - **Accuracy**: Use sufficient representative data for quantization
 - **Compatibility**: Test with target ESPHome version before deployment

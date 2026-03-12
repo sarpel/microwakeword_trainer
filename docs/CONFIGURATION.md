@@ -257,7 +257,7 @@ Available environment variables:
 | `inference_output_type` | str | "uint8" | Output dtype (immutable) |
 | `probability_cutoff` | float | 0.97 | Detection threshold |
 | `sliding_window_size` | int | 5 | Smoothing window |
-| `tensor_arena_size` | int | 30000 | Arena size in bytes |
+| `tensor_arena_size` | int | 0 | Arena size in bytes (`0` = auto-calculate from exported TFLite + margin) |
 | `minimum_esphome_version` | str | "2024.7.0" | Min ESPHome version |
 | `representative_dataset_size` | int | 500 | Calibration samples |
 | `representative_dataset_real_size` | int | 2000 | Actual samples to use |

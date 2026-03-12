@@ -342,7 +342,8 @@ class Trainer:
 
         # Metrics trackers
         self.evaluation_config = evaluation
-        default_threshold = float(self.evaluation_config.get("default_threshold", 0.97) or 0.97)
+        # Canonical threshold name: use detection_threshold with backward-compat fallback
+        default_threshold = float(self.evaluation_config.get("detection_threshold", self.evaluation_config.get("default_threshold", 0.97)) or 0.97)
         self.eval_target_fah = float(self.evaluation_config.get("target_fah", self.target_minimization) or self.target_minimization)
         self.eval_target_recall = float(self.evaluation_config.get("target_recall", 0.90) or 0.90)
 
@@ -494,7 +495,8 @@ class Trainer:
             bool(self.config.get("performance", {}).get("tensorboard_log_roc_curves", True)),
         )
         if lazy and not (log_pr_curves or log_roc_curves):
-            default_threshold = float(self.evaluation_config.get("threshold", 0.5) or 0.5)
+            # Prefer canonical detection_threshold, with backward compat
+            default_threshold = float(self.evaluation_config.get("detection_threshold", self.evaluation_config.get("threshold", 0.5)) or 0.5)
             self.logger.log_info(f"Lazy threshold mode: using default {default_threshold}")
             return [default_threshold]
 

@@ -35,15 +35,8 @@ def generate_manifest(
     # Extract hardware configuration for feature_step_size
     hardware_config = config.get("hardware", {})
 
-    # Calculate tensor arena size if TFLite model exists
-    if tflite_path and Path(tflite_path).exists():
-        arena_size = calculate_tensor_arena_size(
-            tflite_path,
-            margin=float(export_config.get("arena_size_margin", 1.3) or 1.3),
-        )
-    else:
-        # Use configured value or default
-        arena_size = export_config.get("tensor_arena_size", DEFAULT_TENSOR_ARENA_SIZE)
+    # Resolve tensor arena size from config/measurement policy
+    arena_size = resolve_tensor_arena_size(tflite_path=tflite_path, export_config=export_config)
 
     # Build model filename from path
     model_filename = Path(model_path).name if model_path else "wake_word.tflite"
@@ -70,6 +63,30 @@ def generate_manifest(
     }
 
     return manifest
+
+
+def resolve_tensor_arena_size(tflite_path: str | None, export_config: dict[str, Any]) -> int:
+    """Resolve manifest tensor_arena_size using a single canonical policy.
+
+    Policy:
+    1) If export.tensor_arena_size > 0, use it as explicit override.
+    2) Else if TFLite exists, auto-calculate from tensor details with margin.
+    3) Else fallback to DEFAULT_TENSOR_ARENA_SIZE.
+    """
+    configured = export_config.get("tensor_arena_size", 0)
+    try:
+        configured_int = int(configured)
+    except (TypeError, ValueError):
+        configured_int = 0
+
+    if configured_int > 0:
+        return configured_int
+
+    if tflite_path and Path(tflite_path).exists():
+        margin = float(export_config.get("arena_size_margin", 1.3) or 1.3)
+        return calculate_tensor_arena_size(tflite_path, margin=margin)
+
+    return DEFAULT_TENSOR_ARENA_SIZE
 
 
 def save_manifest(manifest: dict[str, Any], output_path: str) -> str:

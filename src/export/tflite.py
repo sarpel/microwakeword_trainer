@@ -986,30 +986,10 @@ def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
 
 
 def calculate_tensor_arena_size(tflite_path: str) -> int:
-    """Calculate required tensor arena size for TFLite model."""
-    interpreter = tf.lite.Interpreter(model_path=tflite_path)
-    interpreter.allocate_tensors()
-    allocation = interpreter.get_tensor_details()
+    """Calculate required tensor arena size using canonical manifest logic."""
+    from src.export.manifest import calculate_tensor_arena_size as _calculate_tensor_arena_size
 
-    total_memory = 0
-    for tensor in allocation:
-        shape = tensor.get("shape", [])
-        dtype = tensor.get("dtype")
-
-        if dtype == np.float32:
-            elem_size = 4
-        elif dtype == np.float16:
-            elem_size = 2
-        elif dtype in (np.int8, np.uint8):
-            elem_size = 1
-        else:
-            elem_size = 4
-
-        num_elements = np.prod(shape) if shape else 1
-        total_memory += num_elements * elem_size
-
-    arena_size = int(total_memory * 1.3)
-    return arena_size
+    return _calculate_tensor_arena_size(tflite_path)
 
 
 # =============================================================================

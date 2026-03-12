@@ -249,7 +249,7 @@ export:
 
   probability_cutoff: 0.97
   sliding_window_size: 5
-  tensor_arena_size: 30000
+  tensor_arena_size: 0  # auto-calculate from exported model
   minimum_esphome_version: "2024.7.0"
 
   # Larger calibration dataset for max quality quantization
