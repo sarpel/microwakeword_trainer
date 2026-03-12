@@ -63,6 +63,10 @@ Audio validation constants: VALIDATION_SAMPLE_RATE=16000, VALIDATION_SAMPLE_WIDT
 - `SpectrogramGeneration`: batch processing with `generate()`, `generate_from_file()`, `process_batch()`
 - Output shape: `[time_frames, 40]` — 40 mel bins, 10ms stride, 30ms window (ESPHome requirement)
 
+### PCAN (Per-Channel Amplitude Normalization)
+
+PCAN is **always ON** in the pymicro-features C++ backend. There is no Python flag to enable or disable it. This matches the official ESPHome okay_nabu model configuration. Do NOT add an `enable_pcan` config field — it would have no effect.
+
 ## Dataset Module (`dataset.py`)
 
 - `RaggedMmap`: Variable-length arrays stored as memory-mapped files (data.bin + offsets.bin + lengths.bin)
