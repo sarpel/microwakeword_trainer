@@ -201,7 +201,21 @@ filterwarnings = [
 # COVERAGE CONFIGURATION
 # =============================================================================
 [tool.coverage.run]
-source = ["src", "config"]
+source = [
+    "config.loader",
+    "src.pipeline",
+    "src.tuning.autotuner",
+    "src.tuning.cli",
+    "src.export.manifest",
+    "src.export.model_analyzer",
+    "src.export.verification",
+    "src.model.architecture",
+    "src.model.streaming",
+    "src.utils.performance",
+    "src.utils.performance_monitor",
+    "src.utils.seed",
+    "src.utils.optional_deps",
+]
 branch = true
 parallel = true
 omit = [

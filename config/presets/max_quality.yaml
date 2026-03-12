@@ -317,16 +317,16 @@ evaluation:
 # ─────────────────────────────────────────────────────────────────
 auto_tuning:
   enabled: true
-  target_fah: 5.0               # Relaxed from 0.2 — match evaluation target_fah
-  target_recall: 0.90
-  max_iterations: 50            # Quality over speed
-  max_gradient_steps: 2500    # Generous budget for max quality
-  patience: 15
+  target_fah: 0.5               # Realistic per AGENTS.md; was 5.0 (too loose → optimizer overfits to FAH=0)
+  target_recall: 0.88           # Balanced tradeoff; was 0.90 (can tighten after confirming stability)
+  max_iterations: 30            # Matches new gradient budget; was 50
+  max_gradient_steps: 15000     # Prevents overfitting; was 2500 (too low) / 250000 (full retrain)
+  patience: 8                   # Faster stagnation detection; was 15
   cv_folds: 3
-  confirmation_fraction: 0.40
-  bootstrap_samples: 2000       # More samples for max quality
+  confirmation_fraction: 0.50   # Larger held-out set catches overfit better; was 0.40
+  bootstrap_samples: 2000
   int8_shadow: true
-  int8_shadow_interval: 10       # More frequent INT8 checks
+  int8_shadow_interval: 10
   require_int8_pass: true
   require_confirmation: true
   group_key: speaker_id
@@ -337,19 +337,19 @@ auto_tuning:
 # Expert-level auto-tuning parameters (max quality settings)
 auto_tuning_expert:
   min_burst_steps: 200
-  max_burst_steps: 25000         # Allow longer bursts for max quality
-  default_burst_steps: 750
+  max_burst_steps: 2500          # Surgical updates only; was 25000 (destroys generalization)
+  default_burst_steps: 500       # Conservative start; was 750
   min_lr: 0.0000001
   max_lr: 0.0001
   default_lr: 0.00001
   sam_rho: 0.05
   swa_collection_interval: 100
   initial_temperature: 0.5
-  cooling_rate: 0.97            # Slower cooling for more exploration
+  cooling_rate: 0.97
   reheat_after: 5
   reheat_factor: 1.3
-  active_pool_size: 16          # Larger pool for max quality
-  pareto_archive_size: 32       # Larger archive for max quality
+  active_pool_size: 16
+  pareto_archive_size: 32
   stir_level_1: 3
   stir_level_2: 5
   stir_level_3: 7

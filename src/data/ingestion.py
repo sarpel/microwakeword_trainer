@@ -271,8 +271,6 @@ class ClipsLoaderConfig:
     negative_dir: Optional[Path] = None
     hard_negative_dir: Optional[Path] = None
     background_dir: Optional[Path] = None
-    # Legacy: single data_dir for backward compatibility
-    data_dir: Optional[Path] = None
     train_split: float = 0.8
     val_split: float = 0.1
     test_split: float = 0.1
@@ -291,8 +289,6 @@ class ClipsLoaderConfig:
             self.hard_negative_dir = Path(self.hard_negative_dir)
         if self.background_dir:
             self.background_dir = Path(self.background_dir)
-        if self.data_dir:
-            self.data_dir = Path(self.data_dir)
 
 
 class Clips:
@@ -304,8 +300,6 @@ class Clips:
         hard_negative_dir/ - False positives
         background_dir/    - Noise/ambient
 
-    Or from legacy data_dir structure for backward compatibility.
-
     Attributes:
         samples: List of SampleRecord objects
         config: Loader configuration
@@ -313,20 +307,14 @@ class Clips:
 
     def __init__(
         self,
-        data_dir: Optional[Union[str, Path]] = None,
         config: Optional[ClipsLoaderConfig] = None,
     ):
         """Initialize Clips loader.
 
         Args:
-            data_dir: Root directory containing audio subdirectories (legacy)
             config: Optional configuration with individual paths from PathsConfig
         """
         self.config = config or ClipsLoaderConfig()
-
-        # Handle legacy data_dir for backward compatibility
-        if data_dir is not None:
-            self.config.data_dir = Path(data_dir)
 
         self.samples: List[SampleRecord] = []
         self._speaker_cache: dict = {}
@@ -361,15 +349,8 @@ class Clips:
             Label.BACKGROUND: self.config.background_dir,
         }
 
-        # Fallback to legacy data_dir structure if individual paths not set
-        if self.config.data_dir and not any(label_to_dir.values()):
-            logger.info(f"Using legacy data_dir structure: {self.config.data_dir}")
-            label_to_dir = {
-                Label.POSITIVE: self.config.data_dir / "positive",
-                Label.NEGATIVE: self.config.data_dir / "negative",
-                Label.HARD_NEGATIVE: self.config.data_dir / "hard_negative",
-                Label.BACKGROUND: self.config.data_dir / "background",
-            }
+        if not any(label_to_dir.values()):
+            raise ValueError("No dataset directories configured. Set paths.positive_dir, paths.negative_dir, paths.hard_negative_dir, and optional paths.background_dir in config.")
 
         all_samples: List[SampleRecord] = []
 
@@ -767,7 +748,10 @@ def get_data_statistics(clips: Clips) -> dict:
 
 
 def load_clips(
-    data_dir: Union[str, Path],
+    positive_dir: Union[str, Path],
+    negative_dir: Union[str, Path],
+    hard_negative_dir: Union[str, Path],
+    background_dir: Optional[Union[str, Path]] = None,
     train_split: float = 0.8,
     val_split: float = 0.1,
     seed: int = 42,
@@ -775,7 +759,10 @@ def load_clips(
     """Convenience function to load audio clips.
 
     Args:
-        data_dir: Root directory containing audio subdirectories
+        positive_dir: Directory containing positive wake word samples
+        negative_dir: Directory containing negative/background speech samples
+        hard_negative_dir: Directory containing hard negative samples
+        background_dir: Optional directory containing ambient/noise samples
         train_split: Fraction for training set
         val_split: Fraction for validation set
         seed: Random seed for reproducibility
@@ -784,7 +771,10 @@ def load_clips(
         Clips loader with samples loaded and split
     """
     config = ClipsLoaderConfig(
-        data_dir=Path(data_dir),
+        positive_dir=Path(positive_dir),
+        negative_dir=Path(negative_dir),
+        hard_negative_dir=Path(hard_negative_dir),
+        background_dir=Path(background_dir) if background_dir is not None else None,
         train_split=train_split,
         val_split=val_split,
         test_split=1.0 - train_split - val_split,

@@ -793,8 +793,8 @@ convert_model_saved(
 ```bash
 # Evaluate checkpoint on test split
 python scripts/evaluate_model.py \
-    --checkpoint checkpoints/best.ckpt \
-    --config standard \
+    --checkpoint tuning_results/checkpoints/tuned_fah0.000_rec1.000_iter3.weights.h5 \
+    --config max_quality \
     --split test \
     --analyze
 
@@ -807,7 +807,7 @@ python scripts/evaluate_model.py \
 # JSON output for CI/CD
 python scripts/evaluate_model.py \
     --checkpoint checkpoints/best.ckpt \
-    --config standard \
+    --config max_quality \
     --json
 ```
 

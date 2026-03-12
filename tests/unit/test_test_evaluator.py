@@ -22,7 +22,7 @@ class TestTestEvaluator:
         from src.evaluation.test_evaluator import TestEvaluator
 
         # Create mock model
-        model = tf.keras.Sequential([tf.keras.layers.Dense(1, activation="sigmoid", input_shape=(100, 40))])
+        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
 
         # Create mock config
         config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
@@ -56,14 +56,25 @@ class TestTestEvaluator:
         from src.evaluation.test_evaluator import TestEvaluator
 
         # Create mock model
-        model = tf.keras.Sequential([tf.keras.layers.Dense(1, activation="sigmoid", input_shape=(100, 40))])
+        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
 
         config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
 
         evaluator = TestEvaluator(model, config, str(tmp_path))
 
         # Override predict to return known values
-        model.predict = lambda x, **kw: np.array([[0.9], [0.8], [0.1], [0.2]])
+        model.predict = lambda x, **kw: np.concatenate(
+            [
+                np.full((x.shape[0] // 2, 1), 0.99, dtype=np.float32),
+                np.full((x.shape[0] - x.shape[0] // 2, 1), 0.1, dtype=np.float32),
+            ],
+            axis=0,
+        )
+
+        def test_factory():
+            X = np.random.randn(20, 100, 40).astype(np.float32)
+            y = np.array([1] * 10 + [0] * 10, dtype=np.int32)
+            yield (X, y, np.ones(20, dtype=np.float32))
 
         result = evaluator.evaluate(test_factory)
 
@@ -80,7 +91,7 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.layers.Dense(1, activation="sigmoid", input_shape=(100, 40))])
+        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
 
         config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
 
@@ -102,7 +113,7 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.layers.Dense(1, activation="sigmoid", input_shape=(100, 40))])
+        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
 
         config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
 
@@ -124,7 +135,7 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.layers.Dense(1, activation="sigmoid", input_shape=(100, 40))])
+        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
 
         config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
 
@@ -155,7 +166,7 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.layers.Dense(1, activation="sigmoid", input_shape=(100, 40))])
+        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
 
         config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
 
@@ -183,7 +194,7 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.layers.Dense(1, activation="sigmoid", input_shape=(100, 40))])
+        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
 
         config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
 
@@ -226,7 +237,7 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.layers.Dense(1, activation="sigmoid", input_shape=(100, 40))])
+        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
 
         config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
 
