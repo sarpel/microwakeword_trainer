@@ -122,7 +122,7 @@ This means:
 - Representative dataset includes boundary anchors 0.0 and 26.0 for correct INT8 quantization range.
 - Representative dataset requires minimum **500 training samples** with forced min/max boundary anchors (0.0 and 26.0)
 - `model_analyzer.py` can compare models, estimate performance, and generate full reports
-- DEFAULT_TENSOR_ARENA_SIZE = 22860 bytes in manifest.py. Canonical policy: set `export.tensor_arena_size: 0` to auto-resolve from exported model tensor allocations with `arena_size_margin`; keep explicit override for target-specific measurements.
+- DEFAULT_TENSOR_ARENA_SIZE = 0 bytes in manifest.py. Canonical policy: set `export.tensor_arena_size: 0` to auto-resolve from exported model tensor allocations with `arena_size_margin`; keep explicit override for target-specific measurements.
 - Verification also available via `scripts/verify_esphome.py` (standalone, 168 lines)
 
 

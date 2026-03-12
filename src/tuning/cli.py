@@ -317,7 +317,7 @@ def main() -> int:
             result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))
 
         console.print(result_table)
-        return 0 if result["target_met"] else 0  # Success even if target not met
+        return 0  # Success even if target not met
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Auto-tuning interrupted by user[/]")

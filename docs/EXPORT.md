@@ -144,7 +144,7 @@ converter.representative_dataset = create_representative_dataset(
     "probability_cutoff": 0.97,
     "sliding_window_size": 5,
     "feature_step_size": 10,
-    "tensor_arena_size": 22860,
+    "tensor_arena_size": 0,
     "minimum_esphome_version": "2024.7.0"
   }
 }

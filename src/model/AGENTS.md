@@ -68,7 +68,7 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 
 **ESPHome Requirements**: Input dtype int8 [1, 3, 40] (scale=0.101961, zero_point=-128), output uint8 [1, 1] (scale=0.00390625, zero_point=0). Must have 2 subgraphs: Subgraph 0 (main, 95 tensors) + Subgraph 1 (initialization, 12 tensors). 13 unique op types used by okay_nabu. 20 op resolvers registered in ESPHome runtime.
 
-**Tensor Arena**: Recommended arena = 135,873 bytes (~136KB). Subgraph 0 = 41,771 bytes, Subgraph 1 = 3,520 bytes.
+**Tensor Arena**: Recommended arena = 135,873 bytes (~136KB) includes intermediate activations and overhead. Peak memory per subgraph: Subgraph 0 = 41,771 bytes, Subgraph 1 = 3,520 bytes.
 
 **Tensor Shapes**: Training shape is `(clip_duration_ms / window_step_ms, 40)` — e.g., `(100, 40)` for 1000ms clip, `(150, 40)` for 1500ms. Streaming: `[batch, 3, 40]` per step. Channel dim added internally: `[batch, time, 1, features]`.
 

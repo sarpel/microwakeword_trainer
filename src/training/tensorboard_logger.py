@@ -745,7 +745,10 @@ class TensorBoardLogger:
         try:
             with self.writer.as_default():
                 # Global gradient norm
-                global_norm = tf.linalg.global_norm(gradients)
+                non_none_grads = [g for g in gradients if g is not None]
+                if not non_none_grads:
+                    return
+                global_norm = tf.linalg.global_norm(non_none_grads)
                 tf.summary.scalar("gradients/global_norm", global_norm, step=step)
 
                 # Per-layer gradient norms (if model provided)
@@ -929,6 +932,8 @@ class TensorBoardLogger:
             return
 
         # Only log at interval
+        if self.sophisticated_interval <= 0:
+            return
         if step % self.sophisticated_interval != 0:
             return
 
