@@ -1019,31 +1019,6 @@ def convert_model_saved(
     return streaming_model
 
 
-def convert_to_tflite(
-    model: tf.keras.Model,
-    output_path: str,
-    quantize: bool = True,
-) -> bytes:
-    """Convert model to TFLite format (legacy API)."""
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
-
-    if quantize:
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        converter.inference_input_type = tf.int8
-        converter.inference_output_type = tf.uint8
-
-    with _suppress_tf_flatbuffer_warnings():
-        tflite_model = converter.convert()
-
-    dirpath = os.path.dirname(output_path) or "."
-    os.makedirs(dirpath, exist_ok=True)
-    with open(output_path, "wb") as f:
-        f.write(tflite_model)
-
-    return tflite_model
-
-
 def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
     """Verify TFLite model is compatible with ESPHome micro_wake_word."""
     return verify_exported_model(tflite_path)
