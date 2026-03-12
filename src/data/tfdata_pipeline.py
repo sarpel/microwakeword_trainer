@@ -260,17 +260,9 @@ class OptimizedDataPipeline:
                         seed=seed,
                     )
 
-                    # Class weights in pipeline
-                    phase_w = tf.minimum(phase, tf.shape(pos_w)[0] - 1)
-                    pw = tf.gather(pos_w, phase_w)
-                    nw = tf.gather(neg_w, phase_w)
-                    hw = tf.gather(hn_w, phase_w)
-                    labels_int = tf.cast(labels, tf.int32)
-                    is_hn = tf.cast(is_hard_neg, tf.bool)
-                    class_weights = tf.where(labels_int == 1, pw, tf.where(is_hn, hw, nw))
-                    final_weights = tf.cast(class_weights, tf.float32) * tf.cast(sample_weights, tf.float32)
-
-                    return augmented_features, labels, final_weights, is_hard_neg
+                    # Class weights are applied in Trainer._apply_class_weights() (phase-aware)
+                    # Do NOT apply here to avoid double weighting
+                    return augmented_features, labels, sample_weights, is_hard_neg
 
                 ds = ds.map(apply_spec_augment, num_parallel_calls=self.autotune, deterministic=False)
                 logger.info(f"SpecAugment (TF backend) enabled with staged schedule: time_masks={time_mask_count}@{time_mask_max_size}, freq_masks={freq_mask_count}@{freq_mask_max_size}")
@@ -278,30 +270,8 @@ class OptimizedDataPipeline:
                 options.experimental_deterministic = False
                 ds = ds.with_options(options)
         else:
-            # No SpecAugment: still apply class weights as first-class input
-            training_cfg = self.config.get("training", {})
-            pos_w = tf.constant(training_cfg.get("positive_class_weight", [5.0, 7.0, 9.0]), dtype=tf.float32)
-            neg_w = tf.constant(training_cfg.get("negative_class_weight", [1.5, 1.5, 1.5]), dtype=tf.float32)
-            hn_w = tf.constant(training_cfg.get("hard_negative_class_weight", [3.0, 5.0, 7.0]), dtype=tf.float32)
-            phase_boundaries = tf.constant(self.phase_boundaries, dtype=tf.int64)
-
-            counter = tf.data.Dataset.counter()
-            ds = tf.data.Dataset.zip((counter, ds))
-
-            def apply_weights(step, batch):
-                features, labels, sample_weights, is_hard_neg = batch
-                phase = tf.reduce_sum(tf.cast(step >= phase_boundaries, tf.int32))
-                phase = tf.minimum(phase, tf.shape(pos_w)[0] - 1)
-                pw = tf.gather(pos_w, phase)
-                nw = tf.gather(neg_w, phase)
-                hw = tf.gather(hn_w, phase)
-                labels_int = tf.cast(labels, tf.int32)
-                is_hn = tf.cast(is_hard_neg, tf.bool)
-                class_weights = tf.where(labels_int == 1, pw, tf.where(is_hn, hw, nw))
-                final_weights = tf.cast(class_weights, tf.float32) * tf.cast(sample_weights, tf.float32)
-                return features, labels, final_weights, is_hard_neg
-
-            ds = ds.map(apply_weights, num_parallel_calls=self.autotune, deterministic=False)
+            # No SpecAugment: class weights are applied in Trainer._apply_class_weights() (phase-aware)
+            # No transformation needed — pass dataset through unchanged
             options = tf.data.Options()
             options.experimental_deterministic = False
             ds = ds.with_options(options)

@@ -87,7 +87,11 @@ class TensorBoardLogger:
         self.log_weight_histograms_enabled = log_weight_histograms
 
         # Sophisticated metrics (Phase 4)
-        self.log_learning_rate = log_learning_rate
+        self.log_learning_rate_enabled = log_learning_rate
+        self.log_gradient_norms_enabled = log_gradient_norms
+        self.log_activation_stats_enabled = log_activation_stats
+        self.log_confidence_drift_enabled = log_confidence_drift
+        self.log_per_class_accuracy_enabled = log_per_class_accuracy
         self.log_gradient_norms = log_gradient_norms
         self.log_activation_stats = log_activation_stats
         self.log_confidence_drift = log_confidence_drift
@@ -101,51 +105,6 @@ class TensorBoardLogger:
         # Confidence drift tracking
         self._confidence_history: list[tuple[int, float]] = []
         self._max_confidence_history = 100
-
-        if enabled:
-            self._setup_writer()
-
-    def _setup_writer(self) -> None:
-            self._setup_writer()
-        self,
-        log_dir: str,
-        enabled: bool = True,
-        log_histograms: bool = True,
-        log_images: bool = True,
-        log_pr_curves: bool = True,
-        log_graph: bool = True,
-        log_advanced_scalars: bool = True,
-        image_interval: int = 5000,
-        histogram_interval: int = 5000,
-        log_weight_histograms: bool = False,
-    ):
-        """Initialize TensorBoard logger.
-
-        Args:
-            log_dir: Directory for TensorBoard logs
-            enabled: Whether logging is enabled
-            log_histograms: Enable histogram logging
-            log_images: Enable image logging
-            log_pr_curves: Enable PR curve logging
-            log_graph: Enable model graph logging
-            log_advanced_scalars: Enable advanced scalar metrics
-            image_interval: Steps between image logging
-            histogram_interval: Steps between histogram logging
-            log_weight_histograms: Enable model weight histograms
-        """
-        self.enabled = enabled
-        self.log_histograms = log_histograms
-        self.log_images = log_images
-        self.log_pr_curves = log_pr_curves
-        self.log_graph = log_graph
-        self.log_advanced_scalars_enabled = log_advanced_scalars
-        self.image_interval = image_interval
-        self.histogram_interval = histogram_interval
-        self.log_weight_histograms_enabled = log_weight_histograms
-
-        self.writer: tf.summary.SummaryWriter | None = None
-        self._log_dir = log_dir
-        self._graph_logged = False
 
         if enabled:
             self._setup_writer()
@@ -753,6 +712,7 @@ class TensorBoardLogger:
 
         except Exception as e:
             logger.warning(f"Failed to log weight histograms: {e}")
+
     # ==========================================================================
     # SOPHISTICATED METRICS (Phase 4)
     # ==========================================================================
@@ -764,7 +724,7 @@ class TensorBoardLogger:
             lr: Current learning rate value
             step: Global step
         """
-        if not self.enabled or not self.log_learning_rate or self.writer is None:
+        if not self.enabled or not self.log_learning_rate_enabled or self.writer is None:
             return
         try:
             with self.writer.as_default():
@@ -785,7 +745,7 @@ class TensorBoardLogger:
             step: Global step
             model: Optional model for layer name mapping
         """
-        if not self.enabled or not self.log_gradient_norms or self.writer is None:
+        if not self.enabled or not self.log_gradient_norms_enabled or self.writer is None:
             return
         try:
             with self.writer.as_default():
@@ -824,7 +784,7 @@ class TensorBoardLogger:
             activations: Dictionary mapping layer names to activation tensors
             step: Global step
         """
-        if not self.enabled or not self.log_activation_stats or self.writer is None:
+        if not self.enabled or not self.log_activation_stats_enabled or self.writer is None:
             return
         try:
             with self.writer.as_default():
@@ -868,7 +828,7 @@ class TensorBoardLogger:
             y_score: Predicted scores
             step: Global step
         """
-        if not self.enabled or not self.log_confidence_drift or self.writer is None:
+        if not self.enabled or not self.log_confidence_drift_enabled or self.writer is None:
             return
         try:
             # Compute confidence metrics
@@ -913,7 +873,7 @@ class TensorBoardLogger:
             threshold: Classification threshold
             step: Global step
         """
-        if not self.enabled or not self.log_per_class_accuracy or self.writer is None:
+        if not self.enabled or not self.log_per_class_accuracy_enabled or self.writer is None:
             return
         try:
             y_pred = (y_score >= threshold).astype(int)

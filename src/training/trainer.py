@@ -280,6 +280,14 @@ class Trainer:
         self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 0) or 0)
         self.gpu_memory_log_interval = int(performance.get("gpu_memory_log_interval", 1000) or 0)
         self.tensorboard_writer: tf.summary.SummaryWriter | None = None
+
+        # Cosine decay, plateau-based LR reduction, phase staggering, BN freeze
+        self.cosine_decay_alpha = float(training.get("cosine_decay_alpha", 0.0))
+        self.plateau_lr_factor = float(training.get("plateau_lr_factor", 0.3))
+        self.plateau_patience = int(training.get("plateau_patience", 3))
+        self.plateau_max_reductions = int(training.get("plateau_max_reductions", 0))  # 0 = disabled
+        self.phase_stagger_steps = int(training.get("phase_stagger_steps", 0))  # 0 = no stagger
+        self.freeze_bn_on_plateau = bool(training.get("freeze_bn_on_plateau", False))
         self.tensorboard_logger: TensorBoardLogger | None = None
 
         # Log seed after logger is initialized
@@ -320,7 +328,10 @@ class Trainer:
         self.current_step = 0
         self.best_fah = float("inf")
         self.best_recall = 0.0
-        self.best_quality_score = float("-inf")
+        self.best_quality_score = float("-inf")  # kept for logging/display only
+        self.best_auc_pr = float("-inf")  # warm-up phase: best by PR-AUC
+        self.best_constrained_recall = float("-inf")  # operational phase: best recall under FAH budget
+        self.fah_budget_ever_met = False  # True once any epoch has fah <= target_fah * 1.1
         self.best_weights_path: str | None = None
         self._last_assigned_lr: float | None = None  # Guard redundant LR assigns
 
@@ -332,6 +343,13 @@ class Trainer:
         default_threshold = float(self.evaluation_config.get("default_threshold", 0.97) or 0.97)
         self.eval_target_fah = float(self.evaluation_config.get("target_fah", self.target_minimization) or self.target_minimization)
         self.eval_target_recall = float(self.evaluation_config.get("target_recall", 0.90) or 0.90)
+
+        # Plateau-based LR reduction state
+        self._plateau_reduction_count = 0  # How many times LR has been reduced
+        self._consecutive_plateau_evals = 0  # Consecutive plateau evaluations
+        self._lr_reduction_factor = 1.0  # Cumulative LR reduction factor
+        self._bn_frozen = False  # Whether BatchNorm layers have been frozen
+        self._early_stopped = False  # Whether training was stopped early due to plateau
         self.eval_gain_window_steps = int(self.evaluation_config.get("gain_window_steps", 1000) or 1000)
         self.eval_plateau_window_evals = int(self.evaluation_config.get("plateau_window_evals", 5) or 5)
         self.eval_plateau_min_delta = float(self.evaluation_config.get("plateau_min_delta", 0.001) or 0.001)
@@ -477,7 +495,6 @@ class Trainer:
             log_per_class_accuracy=self.tensorboard_log_per_class_accuracy,
             sophisticated_interval=self.tensorboard_sophisticated_interval,
         )
-        )
 
     def _log_advanced_tensorboard_metrics(self, metrics: dict[str, float], step: int) -> None:
         if self.tensorboard_logger is None:
@@ -522,33 +539,68 @@ class Trainer:
         )
 
         self.tensorboard_logger.flush()
-            self.tensorboard_logger.log_weight_histograms(self.model, step)
 
         self.tensorboard_logger.flush()
 
     def _get_current_phase_settings(self, step: int) -> dict[str, Any]:
-        """Get training settings for current step (cached per phase)."""
-        # Fast phase lookup via pre-computed boundaries
-        current_phase = 0
+        """Get training settings for current step.
+
+        Supports:
+        - Intra-phase cosine LR decay (cosine_decay_alpha)
+        - Plateau-based LR reduction (_lr_reduction_factor)
+        - Phase staggering: LR changes at boundary, weights/augmentation
+          delayed by phase_stagger_steps
+        """
+        import math
+
+        # --- Determine LR phase (uses step directly) ---
+        lr_phase = 0
         for i, boundary in enumerate(self._phase_boundaries):
             if step < boundary:
-                current_phase = i
+                lr_phase = i
                 break
         else:
-            current_phase = len(self.training_steps_list) - 1
+            lr_phase = len(self.training_steps_list) - 1
 
-        if current_phase == self._cached_phase:
-            return self._cached_phase_settings
+        # --- Determine weights/augmentation phase (staggered) ---
+        stagger = self.phase_stagger_steps
+        if stagger > 0 and lr_phase > 0:
+            # Weights/augmentation use previous phase until stagger_steps into new phase
+            phase_start = self._phase_boundaries[lr_phase - 1] if lr_phase > 0 else 0
+            steps_into_phase = step - phase_start
+            if steps_into_phase < stagger:
+                weight_aug_phase = lr_phase - 1
+            else:
+                weight_aug_phase = lr_phase
+        else:
+            weight_aug_phase = lr_phase
 
-        self._cached_phase = current_phase
-        self._cached_phase_settings = {
-            "phase": current_phase,
-            "learning_rate": self.learning_rates[current_phase],
-            "positive_weight": self.positive_weights[current_phase],
-            "negative_weight": self.negative_weights[current_phase],
-            "hard_negative_weight": self.hard_negative_weights[current_phase],
+        # --- Compute LR with intra-phase cosine decay ---
+        base_lr = self.learning_rates[lr_phase]
+        if self.cosine_decay_alpha < 1.0:
+            # Cosine decay within the current phase
+            phase_start = self._phase_boundaries[lr_phase - 1] if lr_phase > 0 else 0
+            phase_length = self.training_steps_list[lr_phase]
+            steps_into_phase = step - phase_start
+            progress = min(steps_into_phase / max(phase_length, 1), 1.0)
+            alpha = self.cosine_decay_alpha
+            # Cosine annealing: lr decays from base_lr to base_lr * alpha
+            effective_lr = base_lr * (alpha + (1.0 - alpha) * 0.5 * (1.0 + math.cos(math.pi * progress)))
+        else:
+            effective_lr = base_lr
+
+        # Apply plateau LR reduction factor
+        effective_lr *= self._lr_reduction_factor
+
+        # --- Return settings (no caching — step-dependent LR now) ---
+        return {
+            "phase": lr_phase,
+            "weight_aug_phase": weight_aug_phase,
+            "learning_rate": effective_lr,
+            "positive_weight": self.positive_weights[weight_aug_phase],
+            "negative_weight": self.negative_weights[weight_aug_phase],
+            "hard_negative_weight": self.hard_negative_weights[weight_aug_phase],
         }
-        return self._cached_phase_settings
 
     def _log_tensorboard_metrics(
         self,
@@ -638,6 +690,79 @@ class Trainer:
         plateau_metrics["quality_plateau_slope"] = float(slope)
         plateau_metrics["quality_plateau_gap"] = float(plateau_gap)
         return plateau_metrics
+
+    def _freeze_batch_norm(self):
+        """Freeze all BatchNorm layers (set trainable=False)."""
+        if self._bn_frozen or self.model is None:
+            return
+        frozen_count = 0
+        for layer in self.model.layers:
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = False
+                frozen_count += 1
+            # Also check sublayers (for residual blocks etc.)
+            if hasattr(layer, "layers"):
+                for sublayer in layer.layers:
+                    if isinstance(sublayer, tf.keras.layers.BatchNormalization):
+                        sublayer.trainable = False
+                        frozen_count += 1
+        if frozen_count > 0:
+            self._bn_frozen = True
+            self.logger.log_info(f"Froze {frozen_count} BatchNorm layers for training stability")
+
+    def _check_and_act_on_plateau(self, val_metrics: dict[str, float], step: int) -> bool:
+        """Check plateau metrics and take action if plateau detected.
+
+        Actions (in order):
+        1. Reduce LR by plateau_lr_factor (up to plateau_max_reductions times)
+        2. Optionally freeze BatchNorm layers
+        3. After max reductions exhausted, trigger early stopping
+
+        Returns:
+            True if training should stop (early stopping triggered)
+        """
+        if self.plateau_max_reductions <= 0:
+            return False  # Plateau actions disabled
+
+        plateau_score = val_metrics.get("quality_plateau_score", 0.0)
+
+        if plateau_score >= 1.0:
+            self._consecutive_plateau_evals += 1
+        else:
+            self._consecutive_plateau_evals = 0
+            return False
+
+        if self._consecutive_plateau_evals < self.plateau_patience:
+            self.logger.log_info(f"Plateau detected ({self._consecutive_plateau_evals}/{self.plateau_patience} consecutive evals). " f"Waiting for patience threshold.")
+            return False
+
+        # Plateau patience exceeded — take action
+        if self._plateau_reduction_count < self.plateau_max_reductions:
+            # Reduce LR
+            self._lr_reduction_factor *= self.plateau_lr_factor
+            self._plateau_reduction_count += 1
+            self._consecutive_plateau_evals = 0  # Reset counter
+            self.logger.log_info(
+                f"\u26a0\ufe0f Plateau LR reduction #{self._plateau_reduction_count}/{self.plateau_max_reductions}: "
+                f"LR multiplied by {self.plateau_lr_factor:.2f} (cumulative factor: {self._lr_reduction_factor:.4f})"
+            )
+
+            # Optionally freeze BatchNorm
+            if self.freeze_bn_on_plateau and not self._bn_frozen:
+                self._freeze_batch_norm()
+
+            # Log to TensorBoard
+            if self.tensorboard_writer is not None:
+                with self.tensorboard_writer.as_default():
+                    tf.summary.scalar("train/plateau_lr_reductions", self._plateau_reduction_count, step=step)
+                    tf.summary.scalar("train/lr_reduction_factor", self._lr_reduction_factor, step=step)
+
+            return False
+        else:
+            # Max reductions exhausted — early stop
+            self.logger.log_info(f"\U0001f6d1 Early stopping: {self.plateau_max_reductions} LR reductions exhausted with no improvement. " f"Stopping training at step {step}.")
+            self._early_stopped = True
+            return True
 
     def _compute_checkpoint_quality_score(self, metrics: dict[str, float], target_fah: float) -> tuple[float, float, float, float]:
         """Compute composite quality score used by both logging and checkpointing.
@@ -803,44 +928,67 @@ class Trainer:
         return sw_t * class_weights
 
     def _is_best_model(self, metrics: dict[str, float], target_fah: float, target_recall: float) -> tuple[bool, str]:
-        """Determine if current model is best using composite quality score.
+        """Determine if current model is best using a two-stage checkpoint strategy.
 
-        Composite score = recall_quality × fah_penalty
-        - recall_quality: 0.7×operating_recall + 0.3×average_viable_recall (with fallbacks)
-        - fah_penalty: 1 / (1 + (fah/target_fah)²) — smooth Lorentzian decay, always positive
+        Stage 1 — Warm-up (no epoch has yet met the FAH budget):
+            Save by PR-AUC improvement. PR-AUC is threshold-free and robust to class
+            imbalance, giving a reliable training signal before the model has learned
+            to meet the FAH constraint.
 
-        When FAH = 0 → penalty = 1.0 (perfect)
-        When FAH = target → penalty = 0.5
-        When FAH = 10×target → penalty ≈ 0.01
+        Stage 2 — Operational (≥1 epoch has met FAH ≤ target_fah × 1.1):
+            Save by recall_at_target_fah improvement, ONLY when the current epoch
+            also meets the FAH budget. This directly maps to production semantics:
+            "best recall of all models that will deploy within FAH budget."
+
+        The composite quality_score is still computed and logged (via
+        _augment_quality_metrics) but no longer drives checkpoint selection.
 
         Args:
             metrics: Computed validation metrics
             target_fah: Target false accepts per hour
-            target_recall: Current best recall (unused, kept for signature compat)
+            target_recall: Unused; kept for call-site signature compatibility
 
         Returns:
             Tuple of (is_best, reason)
         """
-        quality_score, current_recall, fah, fah_penalty = self._compute_checkpoint_quality_score(metrics, target_fah)
-        avr_raw = metrics.get("average_viable_recall")
-        avr = float(avr_raw) if isinstance(avr_raw, (int, float, np.floating, np.integer)) else current_recall
-        recall_quality = (0.7 * current_recall) + (0.3 * avr)
+        fah_raw = metrics.get("ambient_false_positives_per_hour")
+        fah = float(fah_raw) if isinstance(fah_raw, (int, float, np.floating, np.integer)) else float("inf")
 
-        if quality_score > self.best_quality_score:
-            reason = (
-                f"Quality score improved: {quality_score:.4f} > {self.best_quality_score:.4f} "
-                f"(operating_recall={current_recall:.4f}, avr={avr:.4f}, recall_quality={recall_quality:.4f}, "
-                f"FAH={fah:.2f}, fah_penalty={fah_penalty:.4f})"
+        auc_pr_raw = metrics.get("auc_pr")
+        auc_pr = float(auc_pr_raw) if isinstance(auc_pr_raw, (int, float, np.floating, np.integer)) else 0.0
+
+        recall_at_fah_raw = metrics.get("recall_at_target_fah")
+        operating_recall = float(recall_at_fah_raw) if isinstance(recall_at_fah_raw, (int, float, np.floating, np.integer)) else 0.0
+
+        fah_budget_met = fah <= target_fah * 1.1
+
+        if fah_budget_met and not self.fah_budget_ever_met:
+            self.fah_budget_ever_met = True
+
+        if self.fah_budget_ever_met:
+            # --- Stage 2: Operational --- #
+            # Only save when current epoch also meets the FAH budget.
+            if not fah_budget_met:
+                return (
+                    False,
+                    f"[Operational] FAH budget not met: FAH={fah:.2f} > {target_fah * 1.1:.2f} " f"(target={target_fah:.2f} × 1.1). Best constrained recall={self.best_constrained_recall:.4f}",
+                )
+            if operating_recall > self.best_constrained_recall:
+                reason = f"[Operational] Constrained recall improved: {operating_recall:.4f} > " f"{self.best_constrained_recall:.4f} (FAH={fah:.2f} ≤ budget {target_fah * 1.1:.2f})"
+                return True, reason
+            return (
+                False,
+                f"[Operational] No recall improvement: {operating_recall:.4f} ≤ {self.best_constrained_recall:.4f} " f"(FAH={fah:.2f})",
             )
-            return True, reason
-
-        return (
-            False,
-            (
-                f"No improvement: quality={quality_score:.4f} (best={self.best_quality_score:.4f}), "
-                f"operating_recall={current_recall:.4f}, avr={avr:.4f}, recall_quality={recall_quality:.4f}, FAH={fah:.2f}"
-            ),
-        )
+        else:
+            # --- Stage 1: Warm-up --- #
+            if auc_pr > self.best_auc_pr:
+                reason = f"[Warm-up] PR-AUC improved: {auc_pr:.4f} > {self.best_auc_pr:.4f} " f"(FAH={fah:.2f}, FAH budget not yet met — target={target_fah:.2f})"
+                return True, reason
+            return (
+                False,
+                f"[Warm-up] No PR-AUC improvement: {auc_pr:.4f} ≤ {self.best_auc_pr:.4f} (FAH={fah:.2f})",
+            )
 
     def _save_checkpoint(self, metrics: dict[str, float], is_best: bool, reason: str) -> None:
         """Save model checkpoint.
@@ -863,7 +1011,14 @@ class Trainer:
             quality_score, current_recall, fah, _ = self._compute_checkpoint_quality_score(metrics, self.eval_target_fah)
             self.best_fah = float(fah)
             self.best_recall = float(current_recall)
-            self.best_quality_score = float(quality_score)
+            self.best_quality_score = float(quality_score)  # display only
+            # Update stage-specific best trackers
+            auc_pr_raw = metrics.get("auc_pr")
+            if isinstance(auc_pr_raw, (int, float, np.floating, np.integer)):
+                self.best_auc_pr = max(self.best_auc_pr, float(auc_pr_raw))
+            recall_at_fah_raw = metrics.get("recall_at_target_fah")
+            if isinstance(recall_at_fah_raw, (int, float, np.floating, np.integer)):
+                self.best_constrained_recall = max(self.best_constrained_recall, float(recall_at_fah_raw))
 
         # Save periodic checkpoint
         checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_step_{self.current_step}.weights.h5")
@@ -946,7 +1101,7 @@ class Trainer:
         optimizer = self.model.optimizer
         if optimizer is None:
             raise RuntimeError("Model optimizer is not set")
-        if current_lr != self._last_assigned_lr:
+        if abs(current_lr - self._last_assigned_lr) > 1e-8:
             optimizer.learning_rate.assign(current_lr)
             self._last_assigned_lr = current_lr
 
@@ -1287,18 +1442,18 @@ class Trainer:
                 # Skip if using TF-native SpecAugment in pipeline
                 if self.spec_augment_enabled and self.spec_augment_backend != "tf":
                     phase_settings = self._get_current_phase_settings(step)
-                    current_phase = phase_settings["phase"]
-                    if self.time_mask_count[current_phase] > 0 or self.freq_mask_count[current_phase] > 0:
+                    aug_phase = phase_settings.get("weight_aug_phase", phase_settings["phase"])
+                    if self.time_mask_count[aug_phase] > 0 or self.freq_mask_count[aug_phase] > 0:
                         try:
                             # Convert to numpy for CuPy SpecAugment if needed
                             if hasattr(train_fingerprints, "numpy"):
                                 train_fingerprints = train_fingerprints.numpy()
                             train_fingerprints = batch_spec_augment_gpu(
                                 train_fingerprints,
-                                time_mask_max_size=self.time_mask_max_size[current_phase],
-                                time_mask_count=self.time_mask_count[current_phase],
-                                freq_mask_max_size=self.freq_mask_max_size[current_phase],
-                                freq_mask_count=self.freq_mask_count[current_phase],
+                                time_mask_max_size=self.time_mask_max_size[aug_phase],
+                                time_mask_count=self.time_mask_count[aug_phase],
+                                freq_mask_max_size=self.freq_mask_max_size[aug_phase],
+                                freq_mask_count=self.freq_mask_count[aug_phase],
                             )
                         except RuntimeError as e:
                             # GPU not available or CuPy not installed, skip SpecAugment
@@ -1382,6 +1537,8 @@ class Trainer:
                             phase_settings_display["positive_weight"],
                             phase_settings_display["negative_weight"],
                         )
+                        if self.phase_stagger_steps > 0:
+                            self.logger.log_info(f"  Phase stagger: class weights and augmentation will transition " f"in {self.phase_stagger_steps} steps")
                         progress.start()
                     prev_phase = current_phase
 
@@ -1393,6 +1550,13 @@ class Trainer:
                     self._swap_to_ema_weights()
                     val_metrics = self.validate(val_data_factory)
                     val_metrics = self._augment_quality_metrics(val_metrics, step)
+
+                    # Check for plateau and take action (LR reduction, BN freeze, early stop)
+                    if advanced_due and self._check_and_act_on_plateau(val_metrics, step):
+                        # Early stopping triggered — save final checkpoint and exit
+                        self._save_checkpoint(val_metrics, is_best=False, reason="early_stop_plateau")
+                        self._restore_training_weights()
+                        break
 
                     if basic_due:
                         self.logger.log_validation_results(val_metrics, step, total_steps)
@@ -1418,7 +1582,7 @@ class Trainer:
                                     f"Checkpoint at step {step}",
                                     f"Best FAH: {self.best_fah:.4f}",
                                     f"Best Recall: {self.best_recall:.4f}",
-                                    f"Best Quality Score: {self.best_quality_score:.4f}",
+                                    f"Best Quality Score (display): {self.best_quality_score:.4f} | Best PR-AUC: {self.best_auc_pr:.4f} | Best Constrained Recall: {self.best_constrained_recall:.4f}",
                                     f"Best weights path: {self.best_weights_path or 'N/A'}",
                                     f"Reason: {reason}",
                                 ]
@@ -1495,6 +1659,9 @@ class Trainer:
         # Training complete
         total_time = time.time() - start_time
         progress.stop()
+
+        if self._early_stopped:
+            self.logger.log_info(f"Training early-stopped at step {self.current_step}/{self.total_steps} " f"after {self._plateau_reduction_count} LR reductions with no further improvement.")
 
         # Always save final weights as fallback for auto-tuner and post-training tools
         # Swap to EMA weights for final save (so final_weights has smoothed params)

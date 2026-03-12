@@ -210,9 +210,9 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
         valid = False
 
     try:
-        if hasattr(interpreter, 'num_subgraphs'):
+        if hasattr(interpreter, "num_subgraphs"):
             subgraph_count = interpreter.num_subgraphs()
-        elif hasattr(interpreter, '_interpreter') and hasattr(interpreter._interpreter, 'GetSubgraphCount'):
+        elif hasattr(interpreter, "_interpreter") and hasattr(interpreter._interpreter, "GetSubgraphCount"):
             subgraph_count = interpreter._interpreter.GetSubgraphCount()
         else:
             # CALL_ONCE presence implies 2 subgraphs (main + init)

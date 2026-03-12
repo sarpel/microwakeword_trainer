@@ -43,28 +43,6 @@ augmentation:
 performance:
   prefetch_factor: 8
 
-mining:
-  # Less strict FP threshold
-  fp_threshold: 0.8
-  top_k_per_epoch: 100
-
-evaluation:
-  # Stricter targets than max_quality
-  target_fah: 0.2
-  target_recall: 0.92
-
-auto_tuning:
-  # Stricter targets than max_quality
-  target_fah: 0.2
-  target_recall: 0.92
-  cv_folds: 5
-  confirmation_fraction: 0.20
-  int8_shadow_interval: 3
-
-auto_tuning_expert:
-  max_burst_steps: 8000
-
-
   # TensorBoard configuration (Phase 4 sophisticated metrics)
   tensorboard_enabled: true
   tensorboard_log_histograms: false

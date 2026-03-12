@@ -364,4 +364,35 @@ After training:
 3. Test on device
 4. Consider auto-tuning for better FAH/recall balance
 
+## Checkpoint Selection Strategy
+
+The training loop uses a **two-stage checkpoint strategy** in `_is_best_model()` to save the best epoch:
+
+### Stage 1 — Warm-up
+Active until any epoch first meets `FAH ≤ target_fah × 1.1`.
+
+Saves by **PR-AUC** (`auc_pr`) improvement. PR-AUC is:
+- Threshold-free — captures model quality across all operating points
+- Robust to class imbalance — wake word audio is massively imbalanced (ambient >> wake word)
+- Aligned with the autotuner's Pareto objective (which also uses `auc_pr`)
+
+### Stage 2 — Operational
+Active once any epoch has met the FAH budget.
+
+Saves by **constrained recall** (`recall_at_target_fah`) improvement, **only** when the current epoch also satisfies `FAH ≤ target_fah × 1.1`. This directly encodes the production constraint:
+> *"Best recall of all models that will deploy within the FAH budget."*
+
+### Logged but not used for selection
+The composite `quality_score = (0.7 × operating_recall + 0.3 × AVR) × Lorentzian_FAH_penalty` is still computed and logged (visible in TensorBoard and plateau metrics) but does **not** drive checkpoint decisions.
+
+### Configuration
+The FAH budget comes from `evaluation.target_fah` in your config preset. A 10% tolerance (`× 1.1`) is applied to avoid rejecting epochs that are marginally over budget.
+
+```yaml
+# In your config preset or override:
+evaluation:
+  target_fah: 2.0        # Maximum acceptable false activations per hour
+  target_recall: 0.90    # Minimum acceptable recall (used by recall_at_target_fah metric)
+```
+
 For detailed configuration options, see `docs/GUIDE.md`.
