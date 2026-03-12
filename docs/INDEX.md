@@ -291,11 +291,10 @@ step_train -> step_autotune -> step_export -> step_verify_esphome
 | Symbol | Kind | Description |
 |--------|------|-------------|
 | `StreamingExportModel` | class | Wraps streaming model for TFLite conversion |
-| `export_streaming_tflite(model, config)` | function | Converts streaming model to 2-subgraph TFLite |
+| `export_streaming_tflite(checkpoint_path: str, output_dir: str = "./models/exported", model_name: str = "wake_word", config: Optional[dict] = None, data_dir: Optional[str] = None, quantize: bool = True) -> dict` | function | Exports checkpoint to streaming TFLite with INT8 quantization (checkpoint_path is path to .weights.h5 file) |
 | `create_representative_dataset(...)` | function | Calibration data generator for INT8 quantization |
 | `verify_exported_model(path, config)` | function | Validates subgraphs, dtypes, shapes |
 | `verify_esphome_compatibility(path)` | function | Strict ESPHome format check |
-| `export_streaming_tflite(model, config)` | function | Full export: stream conversion -> quantize -> verify |
 | `calculate_tensor_arena_size(path)` | function | Estimates tensor arena for manifest |
 | `main()` | function | CLI entry point (`mww-export`) |
 

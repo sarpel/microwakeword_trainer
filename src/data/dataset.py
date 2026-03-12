@@ -1142,28 +1142,33 @@ class WakeWordDataset:
                         is_hard_neg=(label == 2),
                     )
                     if not added:
-                        batch = self._flush_batch()
-                        if batch is not None:
-                            fingerprints, ground_truth, sample_weights, is_hard_neg = batch
-                            if include_hard_negative_flag:
-                                yield (
-                                    fingerprints,
-                                    ground_truth.astype(np.int32, copy=False),
-                                    sample_weights,
-                                    is_hard_neg,
-                                )
-                            else:
-                                yield (
-                                    fingerprints,
-                                    ground_truth.astype(np.int32, copy=False),
-                                    sample_weights,
-                                )
-                        self._add_to_batch(
-                            fixed_feature,
-                            label & 1,
-                            weight=1.0,
-                            is_hard_neg=(label == 2),
-                        )
+                        # Flush and yield the full batch until sample can be added
+                        while True:
+                            batch = self._flush_batch()
+                            if batch is not None:
+                                fingerprints, ground_truth, sample_weights, is_hard_neg = batch
+                                if include_hard_negative_flag:
+                                    yield (
+                                        fingerprints,
+                                        ground_truth.astype(np.int32, copy=False),
+                                        sample_weights,
+                                        is_hard_neg,
+                                    )
+                                else:
+                                    yield (
+                                        fingerprints,
+                                        ground_truth.astype(np.int32, copy=False),
+                                        sample_weights,
+                                    )
+                            # Retry adding the sample after flushing
+                            added = self._add_to_batch(
+                                fixed_feature,
+                                label & 1,
+                                weight=1.0,
+                                is_hard_neg=(label == 2),
+                            )
+                            if added:
+                                break
 
                 batch = self._flush_batch()
                 if batch is not None:

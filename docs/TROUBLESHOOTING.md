@@ -13,11 +13,7 @@
 9. [Performance & Optimization](#performance--optimization)
 10. [Speaker Clustering Issues](#speaker-clustering-issues)
 11. [Diagnostic Tools & Commands](#diagnostic-tools--commands)
-11. [Diagnostic Tools & Commands](#diagnostic-tools--commands)
-16. |
-9. [Training-Export AUC Gap](#training-export-auc-gap)
-17. |
-18. ---
+---
 ---
 
 ## Quick Diagnostic Checklist
@@ -960,65 +956,6 @@ grep -i "hard.neg" checkpoints/tuned/autotune.log
        --checkpoint checkpoints/best_weights.weights.h5 \
        --config standard \
        --users-hard-negs "$PWD/hard_negatives/"
-   ```
-
----
-
-### Issue: Auto-Tune Confirmation Failure (FAH Jump from 0→129+)
-
-**Symptoms:**
-- During tuning: FAH=0.00, Recall=1.00 (excellent metrics)
-- During confirmation: Float32 FAH=129+, Recall~0.94 (catastrophic failure)
-- All candidates fail confirmation despite looking perfect during search
-- Error message: `No candidate passed confirmation phase`
-
-**Root Cause:**
-The `_serialize_weights()` method originally used `model.trainable_weights` which does NOT include non-trainable variables like BatchNorm moving statistics (moving_mean, moving_variance). The tuning model runs in NON_STREAM mode (no streaming state variables exist), so the real issue was missing BatchNorm state, not streaming ring buffers. When candidates were saved, BatchNorm running statistics were lost; when reloaded for confirmation, the model produced garbage predictions.
-
-**Diagnostic:**
-```bash
-# Check if this is the bug (look for the symptoms above)
-# Check your auto-tune log for this pattern:
-grep -E "(FAH.*0\.0000|FAH.*129|No candidate passed)" tuning_results/autotune.log
-```
-
-**Solution:**
-
-1. **Update to latest code** (fix applied 2026-03-10):
-   ```bash
-   # Pull the latest code that includes the fix
-   git pull origin main
-
-   # Verify the fix is in place
-   grep -A2 "def _serialize_weights" src/tuning/autotuner.py
-   # Should show: weights = model.get_weights()
-   # NOT: weights = [w.numpy() for w in model.trainable_weights]
-   ```
-
-2. **If you can't update immediately, patch locally:**
-   Edit `src/tuning/autotuner.py`, find `_serialize_weights()`:
-   ```python
-   # Change FROM:
-   weights = [w.numpy() for w in model.trainable_weights]
-
-   # Change TO:
-   weights = model.get_weights()
-   ```
-
-   And update `_deserialize_weights()`:
-   ```python
-   # Change FROM:
-   for w, val in zip(model.trainable_weights, weights):
-       w.assign(val)
-
-   # Change TO:
-   model.set_weights(weights)
-   ```
-
-3. **Verify the fix:**
-   ```bash
-   # Re-run auto-tune
-   mww-autotune \
        --checkpoint checkpoints/best_weights.weights.h5 \
        --config standard \
        --max-iterations 10
@@ -1818,6 +1755,6 @@ When reporting an issue, include:
 **Status:** ✅ Resolved, documented in `specs/implementation_status.md`, `specs/testing_plan.md`
 ---
 
-**Last Updated:** 2026-03-06
+**Last Updated:** 2026-03-11
 **Version:** v2.0.0
 **Maintainer:** Project Team

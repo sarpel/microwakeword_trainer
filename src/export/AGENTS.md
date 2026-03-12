@@ -43,7 +43,6 @@ Checkpoint → Streaming SavedModel → TFLite (INT8) → manifest.json
 | `export_streaming_tflite()` | Full export pipeline (convert + quantize + manifest) |
 | `verify_esphome_compatibility()` | Quick compatibility check |
 | `calculate_tensor_arena_size()` | Estimate arena memory |
-| `convert_to_tflite()` | Direct conversion helper |
 | `optimize_for_edge()` | Edge optimization passes |
 | `main()` | CLI entry point for mww-export |
 

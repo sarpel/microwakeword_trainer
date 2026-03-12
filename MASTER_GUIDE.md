@@ -768,7 +768,7 @@ models/exported/
     "probability_cutoff": 0.97,
     "sliding_window_size": 5,
     "feature_step_size": 10,
-    "tensor_arena_size": 0,
+    "tensor_arena_size": 0,  // auto-calculated during export
     "minimum_esphome_version": "2024.7.0"
   }
 }
@@ -824,7 +824,7 @@ python scripts/evaluate_model.py \
 
 # JSON output for CI/CD
 python scripts/evaluate_model.py \
-    --checkpoint checkpoints/best.ckpt \
+    --checkpoint checkpoints/best_weights.weights.h5 \
     --config max_quality \
     --json
 ```

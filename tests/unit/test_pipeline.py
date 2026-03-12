@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path, PosixPath
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import src.pipeline as pipeline
+
+# Platform-agnostic path type for tests
+FakePath = type(Path())
 
 
 def test_run_success(monkeypatch, capsys) -> None:
@@ -159,7 +162,7 @@ def test_step_verify_streaming_failure_and_success(monkeypatch, tmp_path: Path) 
     script = tmp_path / "verify_streaming.py"
     script.write_text("#x")
 
-    class P(PosixPath):
+    class P(Path):
         pass
 
     def fake_path(p: str):
@@ -193,7 +196,7 @@ def test_step_evaluate_parse_and_failure(monkeypatch, tmp_path: Path) -> None:
     script = tmp_path / "evaluate_model.py"
     script.write_text("#x")
 
-    class P(PosixPath):
+    class P(Path):
         pass
 
     def fake_path(p: str):
