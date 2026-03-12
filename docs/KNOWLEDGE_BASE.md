@@ -123,8 +123,12 @@ These values are **burned into ESPHome firmware** and cannot be changed:
 The exported TFLite model uses **streaming inference** with ring buffers:
 
 **Dual-Subgraph Structure:**
-- **Subgraph 0**: Main inference (55 ops, 95 tensors)
+- **Subgraph 0**: Main inference (55 ops, 94 tensors in this repository's canonical `tf.lite` counting path)
 - **Subgraph 1**: Initialization (12 ops, 12 tensors)
+
+`ai_edge_litert` may report 95 tensors for the same Subgraph 0 because it can
+expose an extra runtime scratch tensor. In this repository, the canonical
+documentation and verification convention is `94 / 12`.
 
 **6 State Variables (Ring Buffers):**
 | Variable | Shape | Purpose |
@@ -136,15 +140,42 @@ The exported TFLite model uses **streaming inference** with ring buffers:
 | `stream_4` | [1, 22, 1, 64] | MixConv block 3 |
 | `stream_5` | [1, 5, 1, 64] | Temporal flatten buffer |
 
-**Convolution-State Ring Buffer Law:**
-```
-buffer_frames = kernel_size - stride
-```
+**State Buffer Rules:**
 
-This applies to the convolution-derived states `stream` through `stream_4`.
-`stream_5` is a pre-flatten temporal buffer; in the official model it comes
-from `[1, 6, 1, 64] → [1, 5, 1, 64]`, so it must be derived from the graph,
-not assumed from `kernel - stride`.
+1. `stream` uses the input-side rule:
+
+    ```
+    buffer_frames = kernel_size - global_stride
+    ```
+
+    So for okay_nabu:
+
+    ```
+    stream: 5 - 3 = 2 → [1, 2, 1, 40]
+    ```
+
+2. `stream_1` through `stream_4` use the downstream block rule:
+
+    ```
+    buffer_frames = effective_temporal_kernel - 1
+    ```
+
+    So for okay_nabu:
+
+    ```
+    stream_1: 5       - 1 = 4  → [1, 4, 1, 32]
+    stream_2: max(7,11)- 1 = 10 → [1, 10, 1, 64]
+    stream_3: max(9,15)- 1 = 14 → [1, 14, 1, 64]
+    stream_4: 23      - 1 = 22 → [1, 22, 1, 64]
+    ```
+
+3. `stream_5` is a pre-flatten temporal buffer derived from the graph:
+
+    ```
+    [1, 6, 1, 64] → [1, 5, 1, 64]
+    ```
+
+    so it must not be inferred from `kernel - stride`.
 
 ### 2.4 Quantization
 

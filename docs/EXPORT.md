@@ -42,6 +42,12 @@ The official `okay_nabu` reference model maintains 6 state tensors across stream
 5. `stream_4`: [1,22,1,64] - Block 3 buffer
 6. `stream_5`: [1,5,1,64] - Pre-flatten temporal buffer
 
+These buffers do **not** all follow the same formula:
+
+- `stream` is the input-side buffer before the first strided convolution, so it uses `kernel - global_stride`
+- `stream_1` through `stream_4` are downstream block buffers before depthwise convolutions, so they use `effective_kernel - 1`
+- `stream_5` is a pre-flatten temporal buffer derived from the graph (`[1, 6, 1, 64] → [1, 5, 1, 64]` in okay_nabu)
+
 ### Conversion Process
 
 ```python
@@ -184,11 +190,16 @@ def generate_manifest(model_path, config):
 
 - ✅ **Input shape**: [1, 3, 40] int8 (scale=0.101961, zero_point=-128)
 - ✅ **Output shape**: [1, 1] uint8 (scale=0.00390625, zero_point=0)
-- ✅ **Subgraphs**: Exactly 2 — Subgraph 0 (main, 95 tensors) + Subgraph 1 (initialization, 12 tensors)
+- ✅ **Subgraphs**: Exactly 2 — canonical project count is Subgraph 0 (main, 94 tensors) + Subgraph 1 (initialization, 12 tensors)
 - ✅ **State variables**: Exactly 6 int8-quantized variables in the official reference (`stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`)
 - ✅ **Operations**: 13 unique op types from 20 registered ESPHome op resolvers
 - ✅ **Manifest**: Valid JSON with required fields
 - ✅ **Compatibility**: Passes ESPHome verification script
+
+Note: `ai_edge_litert` may expose one extra runtime scratch tensor and report
+`95` tensors for Subgraph 0. This repository does not use `ai_edge_litert` as
+its canonical export/verification path, so the documentation standard here is
+`94 / 12`.
 
 ### Verification Script
 

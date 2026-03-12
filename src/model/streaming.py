@@ -16,8 +16,9 @@ Tensor Shapes:
 - Output: [batch, 1] probability
 
 State Variables (for TFLite):
-- stream: Ring buffer for initial conv
-- stream_1-5: Ring buffers for MixConv blocks
+- stream: Input-side ring buffer before the initial strided conv
+- stream_1-4: Downstream MixConv/depthwise context buffers
+- stream_5: Pre-flatten temporal buffer
 - Total memory: ~2.8KB-3.5KB
 
 References:
@@ -245,7 +246,9 @@ class Stream(tf.keras.layers.Layer):
                 dilation = dilation_rate[0] if isinstance(dilation_rate, (tuple, list)) else dilation_rate
                 kern = kernel_size[0] if isinstance(kernel_size, (tuple, list)) else kernel_size
                 stride_val = strides[0] if isinstance(strides, tuple) else strides
-                # Per IMPLEMENTATION_PLAN.md: kernel_size - stride = buffer_size
+                # Generic streaming buffer formula for this wrapped cell.
+                # For the initial strided conv this becomes kernel_size - stride.
+                # For stride-1 downstream blocks this becomes kernel_size - 1.
                 # With dilation: dilation * (kernel_size - 1) - (stride - 1)
                 self.ring_buffer_size_in_time_dim = max(0, dilation * (kern - 1) - stride_val + 1)
 

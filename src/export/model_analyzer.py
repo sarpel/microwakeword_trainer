@@ -259,6 +259,7 @@ def validate_model_quality(
 
         tensor_details = interpreter.get_tensor_details()
         results["info"]["total_tensors"] = len(tensor_details)
+        results["info"]["tensor_count_convention"] = "tf.lite.Interpreter canonical path for this repository"
 
         state_tensors = [t for t in tensor_details if _is_streaming_state_tensor_name(t.get("name", ""))]
         results["info"]["state_variables"] = len(state_tensors)
