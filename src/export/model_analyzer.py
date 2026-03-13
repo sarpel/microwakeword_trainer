@@ -264,7 +264,7 @@ def validate_model_quality(
         state_tensors = [t for t in tensor_details if _is_streaming_state_tensor_name(t.get("name", ""))]
         results["info"]["state_variables"] = len(state_tensors)
         if len(state_tensors) != 6:
-            results["warnings"].append(f"Expected 6 streaming state tensors / payloads for streaming model, found {len(state_tensors)}")
+            results["errors"].append(f"Expected 6 streaming state tensors / payloads for streaming model, found {len(state_tensors)}")
             results["valid"] = False
 
         model_size_bytes = os.path.getsize(model_path)

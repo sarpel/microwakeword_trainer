@@ -834,7 +834,8 @@ class TensorBoardLogger:
             mean_confidence = float(np.mean(y_score))
             high_confidence_ratio = float(np.mean(y_score > 0.9))
             low_confidence_ratio = float(np.mean(y_score < 0.1))
-            uncertainty = float(np.mean(np.abs(y_score - 0.5)))
+            # uncertainty: 1 - mean(|score - 0.5|); higher = more uncertain (closer to 0.5)
+            uncertainty = 1.0 - float(np.mean(np.abs(y_score - 0.5)))
 
             # Store in history
             self._confidence_history.append((step, mean_confidence))

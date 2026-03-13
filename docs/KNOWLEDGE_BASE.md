@@ -123,7 +123,10 @@ These values are **burned into ESPHome firmware** and cannot be changed:
 The exported TFLite model uses **streaming inference** with ring buffers:
 
 **Dual-Subgraph Structure:**
-- **Subgraph 0**: Main inference (55 ops, 94 tensors in this repository's canonical `tf.lite` counting path)
+- **Subgraph 0**: Main inference
+    - official audited `okay_nabu` flatbuffer: **55 ops**
+    - repository default residual-enabled variant: **58 ops** (`55 base + 3 residual ADDs`)
+    - canonical tensor count in this repository's `tf.lite` path: **94 tensors**
 - **Subgraph 1**: Initialization (12 ops, 12 tensors)
 
 `ai_edge_litert` may report 95 tensors for the same Subgraph 0 because it can

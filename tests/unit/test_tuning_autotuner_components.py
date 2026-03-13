@@ -114,15 +114,18 @@ def test_temperature_and_calibration_helpers() -> None:
 
 
 def test_fit_temperature_without_scipy_returns_one(monkeypatch) -> None:
-    real_import = __import__
+    import sys
 
-    def fake_import(name, *args, **kwargs):
-        if name == "scipy.optimize":
-            raise ImportError("no scipy")
-        return real_import(name, *args, **kwargs)
+    monkeypatch.delitem(sys.modules, "scipy", raising=False)
+    monkeypatch.delitem(sys.modules, "scipy.optimize", raising=False)
 
-    monkeypatch.setattr("builtins.__import__", fake_import)
-    t = at.fit_temperature(np.array([0.2, 0.8]), np.array([0, 1]))
+    # Force autotuner module to re-evaluate scipy availability
+    import importlib
+
+    import src.tuning.autotuner as _at_module
+
+    importlib.reload(_at_module)
+    t = _at_module.fit_temperature(np.array([0.2, 0.8]), np.array([0, 1]))
     assert t == 1.0
 
 

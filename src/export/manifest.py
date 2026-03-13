@@ -11,7 +11,7 @@ import tensorflow as tf
 logger = logging.getLogger(__name__)
 
 # Default tensor arena size in bytes (official okay_nabu baseline)
-DEFAULT_TENSOR_ARENA_SIZE = 0
+DEFAULT_TENSOR_ARENA_SIZE = 22860
 
 
 def generate_manifest(

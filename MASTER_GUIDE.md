@@ -783,7 +783,8 @@ models/exported/
 | `feature_step_size` | `micro.feature_step_size` | Moved inside `micro` object |
 | `tensor_arena_size` | `micro.tensor_arena_size` | Moved inside `micro` object; set `0` for auto-resolve |
 | `minimum_esphome_version` | `micro.minimum_esphome_version` | Moved inside `micro` object |
-| `wake_word`, `author`, `website`, `model`, `trained_languages` | Top-level (unchanged) | Already at top level in V1 |
+| `wake_word`, `author`, `website`, `model` | Top-level (unchanged) | Already at top level in V1 |
+| `trained_languages` | Top-level (new in V2) | **NEW field in V2** — add if missing; recommended default: `["en"]` |
 | `version` | Top-level `"version": 2` | **Must be updated from `1` to `2`** |
 
 ### Programmatic Export

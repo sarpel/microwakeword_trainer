@@ -14,7 +14,6 @@
 10. [Speaker Clustering Issues](#speaker-clustering-issues)
 11. [Diagnostic Tools & Commands](#diagnostic-tools--commands)
 ---
----
 
 ## Quick Diagnostic Checklist
 
@@ -1725,7 +1724,7 @@ When reporting an issue, include:
 **Codebase Audit (2026-03-11):**
 - Full audit of all files (training, export, evaluation, auto-tuner, config, docs, scripts)
 - All 6 official reference state variables verified correct (`stream` through `stream_5`)
-- All ops verified correct (58 total: 55 base + 3 residual ADDs for residual_connection=[0,1,1,1])
+- All ops verified correct for the repository-default residual-enabled variant (58 total: 55 base + 3 residual ADDs for residual_connection=[0,1,1,1])
 - BN folding verified numerically perfect (diff < 1e-6)
 - Dense input shapes verified correct (384 inputs)
 - uint8 output, int8 input, representative dataset with boundaries all confirmed

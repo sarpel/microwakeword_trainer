@@ -233,6 +233,12 @@ The resolver template parameter is `MicroMutableOpResolver<20>`, confirming exac
 
 **Total: 13 unique op types used, 55 operations in Subgraph 0, 12 operations in Subgraph 1.**
 
+This 55-op count is the **official reference flatbuffer fact** for the audited
+`okay_nabu.tflite` file. The repository's default residual-enabled architecture
+(`residual_connection = [0, 1, 1, 1]`) may legitimately introduce **3 `ADD` ops**
+and therefore produce a **58-op** main subgraph while still remaining
+ESPHome-compatible, because `ADD` is part of the registered resolver set.
+
 All ops show `CustomCode: N/A` in flatbuffer analysis — there are zero custom ops.
 
 ---
@@ -397,7 +403,9 @@ residual_connection   = [0, 1, 1, 1]
 
 This repository's **default** MixedNet / export / training configuration enables
 residual connections on blocks 2-4 (`[0, 1, 1, 1]`). This remains ESPHome-
-compatible because `ADD` is registered in the ESPHome op resolver.
+compatible because `ADD` is registered in the ESPHome op resolver. In practice,
+this means the repository-default exported variant may have **58** main-subgraph
+ops instead of the official reference model's **55**.
 
 Important distinction:
 

@@ -192,7 +192,7 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
             if tensor is not None:
                 observed_state_payload_shapes.append(tuple(int(v) for v in tensor.get("shape", [])))
                 dtype = tensor.get("dtype")
-                observed_read_payload_dtypes.append(str(dtype))
+                observed_read_payload_dtypes.append(dtype)
                 quant = tensor.get("quantization_parameters", {}) or {}
                 scales = np.asarray(quant.get("scales", []))
                 zero_points = np.asarray(quant.get("zero_points", []))
@@ -204,7 +204,7 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
                 tensor = all_tensors.get(payload_idx)
                 if tensor is not None:
                     dtype = tensor.get("dtype")
-                    observed_assign_payload_dtypes.append(str(dtype))
+                    observed_assign_payload_dtypes.append(dtype)
                     quant = tensor.get("quantization_parameters", {}) or {}
                     scales = np.asarray(quant.get("scales", []))
                     zero_points = np.asarray(quant.get("zero_points", []))
@@ -216,7 +216,7 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
     details["observed_assign_payload_dtypes"] = observed_assign_payload_dtypes
     details["observed_assign_payload_quantized"] = observed_assign_payload_quantized
 
-    checks["state_payload_dtypes_int8"] = all(dt == "<class 'numpy.int8'>" for dt in observed_read_payload_dtypes)
+    checks["state_payload_dtypes_int8"] = all(np.dtype(dt) == np.dtype("int8") for dt in observed_read_payload_dtypes)
     checks["state_dtypes_int8"] = checks["state_payload_dtypes_int8"]
     if not checks["state_payload_dtypes_int8"]:
         errors.append(f"READ_VARIABLE payload tensors must be int8, got dtypes: {observed_read_payload_dtypes}")
@@ -228,7 +228,7 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
         valid = False
 
     if observed_assign_payload_dtypes:
-        checks["assign_payload_dtypes_int8"] = all(dt == "<class 'numpy.int8'>" for dt in observed_assign_payload_dtypes)
+        checks["assign_payload_dtypes_int8"] = all(np.dtype(dt) == np.dtype("int8") for dt in observed_assign_payload_dtypes)
         if not checks["assign_payload_dtypes_int8"]:
             errors.append(f"ASSIGN_VARIABLE payload tensors must be int8, got dtypes: {observed_assign_payload_dtypes}")
             valid = False
@@ -238,8 +238,8 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
             errors.append("ASSIGN_VARIABLE payload tensors must carry quantization parameters")
             valid = False
     else:
-        checks["assign_payload_dtypes_int8"] = True
-        checks["assign_payload_quant_params"] = True
+        checks["assign_payload_dtypes_int8"] = False
+        checks["assign_payload_quant_params"] = False
         warnings.append("ASSIGN_VARIABLE payload tensors unavailable from interpreter op details; skipped direct payload validation")
 
     # Check shapes as a set (TFLite graph traversal order for READ_VARIABLE ops
