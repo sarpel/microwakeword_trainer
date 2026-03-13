@@ -1124,7 +1124,13 @@ class WakeWordDataset:
         shuffle: bool,
         include_hard_negative_flag: bool,
     ):
-        self._ensure_batch_buffer(max_time_frames)
+        batch_buffer = {
+            "features": np.empty((self.batch_size, max_time_frames, self.feature_dim), dtype=np.float32),
+            "labels": np.empty(self.batch_size, dtype=np.int64),
+            "weights": np.empty(self.batch_size, dtype=np.float32),
+            "is_hard_neg": np.empty(self.batch_size, dtype=np.bool_),
+        }
+        batch_idx = 0
         split_name = self._normalize_split_name(split)
         store_path = self.data_path / split_name
         if not store_path.exists():
@@ -1148,7 +1154,7 @@ class WakeWordDataset:
 
             while True:
                 epoch_indices = rng.permutation(indices).tolist() if shuffle else indices
-                self._batch_idx = 0
+                batch_idx = 0
 
                 for idx in epoch_indices:
                     try:
@@ -1157,19 +1163,28 @@ class WakeWordDataset:
                         continue
 
                     fixed_feature = self._pad_or_truncate(feature, max_time_frames)
-                    added = self._add_to_batch(
-                        fixed_feature,
-                        label & 1,
-                        weight=1.0,
-                        is_hard_neg=(label == 2),
-                    )
+                    if batch_idx < len(batch_buffer["features"]):
+                        batch_buffer["features"][batch_idx] = fixed_feature
+                        batch_buffer["labels"][batch_idx] = label & 1
+                        batch_buffer["weights"][batch_idx] = 1.0
+                        batch_buffer["is_hard_neg"][batch_idx] = label == 2
+                        batch_idx += 1
+                        added = True
+                    else:
+                        added = False
                     if not added:
                         # Flush and yield the full batch until sample can be added
                         max_retries = 2  # Prevent infinite loop if buffer is misconfigured
                         retry_count = 0
                         while True:
-                            batch = self._flush_batch()
-                            if batch is not None:
+                            if batch_idx != 0:
+                                batch = (
+                                    batch_buffer["features"][:batch_idx].copy(),
+                                    batch_buffer["labels"][:batch_idx].copy(),
+                                    batch_buffer["weights"][:batch_idx].copy(),
+                                    batch_buffer["is_hard_neg"][:batch_idx].copy(),
+                                )
+                                batch_idx = 0
                                 fingerprints, ground_truth, sample_weights, is_hard_neg = batch
                                 if include_hard_negative_flag:
                                     yield (
@@ -1190,17 +1205,26 @@ class WakeWordDataset:
                                 if retry_count > max_retries:
                                     raise RuntimeError(f"Failed to add sample after {max_retries} retries. Check batch_size ({self.batch_size}) is positive.")
                             # Retry adding the sample after flushing
-                            added = self._add_to_batch(
-                                fixed_feature,
-                                label & 1,
-                                weight=1.0,
-                                is_hard_neg=(label == 2),
-                            )
+                            if batch_idx < len(batch_buffer["features"]):
+                                batch_buffer["features"][batch_idx] = fixed_feature
+                                batch_buffer["labels"][batch_idx] = label & 1
+                                batch_buffer["weights"][batch_idx] = 1.0
+                                batch_buffer["is_hard_neg"][batch_idx] = label == 2
+                                batch_idx += 1
+                                added = True
+                            else:
+                                added = False
                             if added:
                                 break
 
-                batch = self._flush_batch()
-                if batch is not None:
+                if batch_idx != 0:
+                    batch = (
+                        batch_buffer["features"][:batch_idx].copy(),
+                        batch_buffer["labels"][:batch_idx].copy(),
+                        batch_buffer["weights"][:batch_idx].copy(),
+                        batch_buffer["is_hard_neg"][:batch_idx].copy(),
+                    )
+                    batch_idx = 0
                     fingerprints, ground_truth, sample_weights, is_hard_neg = batch
                     if include_hard_negative_flag:
                         yield (

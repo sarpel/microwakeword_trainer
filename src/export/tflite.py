@@ -928,6 +928,12 @@ def convert_model_saved(
     print(f"  Mode: {mode}")
 
     # Build streaming export model with state variables
+    # Infer temporal_frames from training model to support non-default configs
+    pointwise_filters = config.get("pointwise_filters", [64, 64, 64, 64])
+    last_pw = pointwise_filters[-1] if isinstance(pointwise_filters, list) else 64
+    # Dense kernel shape: (input_features, output_units). Infer temporal frames from input features step
+    dense_kernel = model.output_dense.kernel
+    temporal_frames = dense_kernel.shape[0] // last_pw
 
     streaming_model = StreamingExportModel(
         first_conv_filters=config.get("first_conv_filters", 32),
@@ -937,6 +943,7 @@ def convert_model_saved(
         mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
         residual_connections=config.get("residual_connections", [0, 1, 1, 1]),
         mel_bins=config.get("mel_bins", 40),
+        temporal_frames=temporal_frames,
     )
 
     # Build and transfer weights

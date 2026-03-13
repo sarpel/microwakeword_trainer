@@ -473,7 +473,6 @@ class Trainer:
         self._pending_validation = None
         self._validation_lock = threading.Lock()
         self._async_early_stop_requested = False
-        self._use_compiled_train_on_batch = True
 
     def __del__(self) -> None:
         """Ensure ThreadPoolExecutor is shut down if Trainer is garbage-collected."""
@@ -512,16 +511,6 @@ class Trainer:
             return [default_threshold]
 
         return np.linspace(0.0, 1.0, n_thresholds).tolist()
-
-    @tf.function(jit_compile=True)
-    def _compiled_train_on_batch(self, features, labels, sample_weights):
-        """XLA-compiled training step wrapper around train_on_batch."""
-        return self.model.train_on_batch(
-            features,
-            labels,
-            sample_weight=sample_weights,
-            return_dict=True,
-        )
 
     def _init_tensorboard_logger(self, log_dir: Path) -> None:
         if not self.tensorboard_enabled:
@@ -1165,25 +1154,12 @@ class Trainer:
         )
 
         labels = tf.reshape(train_ground_truth, [-1, 1])
-        if self._use_compiled_train_on_batch:
-            try:
-                result = self._compiled_train_on_batch(train_fingerprints, labels, combined_weights)
-            except Exception as exc:
-                self._use_compiled_train_on_batch = False
-                self.logger.log_warning(f"XLA train_on_batch disabled due to incompatibility: {exc}")
-                result = self.model.train_on_batch(
-                    train_fingerprints,
-                    labels,
-                    sample_weight=combined_weights,
-                    return_dict=True,
-                )
-        else:
-            result = self.model.train_on_batch(
-                train_fingerprints,
-                labels,
-                sample_weight=combined_weights,
-                return_dict=True,
-            )
+        result = self.model.train_on_batch(
+            train_fingerprints,
+            labels,
+            sample_weight=combined_weights,
+            return_dict=True,
+        )
 
         # Build metrics dict
         metrics_dict: dict[str, float] = {}
@@ -1230,11 +1206,22 @@ class Trainer:
         model: tf.keras.Model,
         data_generator,
         chunk_size: int = 2000,
+        ambient_duration_hours: float | None = None,
     ) -> tuple[dict[str, float], TrainingMetrics, list[int], list[str]]:
-        """Validate using a provided model and return detached validation artifacts."""
+        """Validate using a provided model and return detached validation artifacts.
+
+        Args:
+            model: Model to evaluate.
+            data_generator: Callable or generator yielding (fingerprints, labels, metadata).
+            chunk_size: Samples per metrics update chunk.
+            ambient_duration_hours: Override ambient duration for FAH calculation.
+                Defaults to ``self.val_ambient_duration_hours`` (scaled by val_split).
+                Pass a test-split-scaled value when evaluating test data.
+        """
+        effective_ambient = ambient_duration_hours if ambient_duration_hours is not None else self.val_ambient_duration_hours
         metrics_tracker = TrainingMetrics(
             cutoffs=list(self.val_metrics.cutoffs),
-            ambient_duration_hours=self.val_ambient_duration_hours,
+            ambient_duration_hours=effective_ambient,
             default_threshold=self.val_metrics.default_threshold,
         )
 
@@ -1360,7 +1347,7 @@ class Trainer:
 
         return metrics, metrics_tracker, last_val_raw_labels, last_val_paths
 
-    def validate(self, data_generator, chunk_size: int = 2000) -> dict[str, float]:
+    def validate(self, data_generator, chunk_size: int = 2000, ambient_duration_hours: float | None = None) -> dict[str, float]:
         """Validate model on validation set with chunked processing to limit memory.
 
         Args:
@@ -1372,6 +1359,9 @@ class Trainer:
                 is the label array, and metadata can be any auxiliary batch info.
             chunk_size: Number of samples to process before updating metrics incrementally.
                 Smaller values reduce peak memory usage. Default: 2000
+            ambient_duration_hours: Override ambient duration for FAH calculation.
+                Defaults to ``self.val_ambient_duration_hours``. Pass test-split-scaled
+                value when evaluating held-out test data.
 
         Returns:
             Dictionary of validation metrics
@@ -1381,6 +1371,7 @@ class Trainer:
             model=self.model,
             data_generator=data_generator,
             chunk_size=chunk_size,
+            ambient_duration_hours=ambient_duration_hours,
         )
         self.val_metrics = metrics_tracker
         self._last_val_raw_labels = last_val_raw_labels
@@ -1388,9 +1379,13 @@ class Trainer:
         return metrics
 
     def _compute_metrics_background(self, step: int, weights_snapshot: list[np.ndarray], val_data_factory) -> dict[str, Any]:
-        """Run validation in background on a cloned model with copied weights."""
+        """Run validation in background on a re-instantiated model with copied weights."""
         assert self.model is not None, "_compute_metrics_background called before model was built"
-        eval_model = keras.models.clone_model(self.model)
+        # Use from_config() instead of clone_model() so that input_shape and
+        # temporal_rb_size are correctly reproduced from the training model's config.
+        # clone_model() on a subclassed model does NOT preserve __init__ kwargs and
+        # produces a model with wrong temporal ring-buffer / Dense layer shapes.
+        eval_model = self.model.__class__.from_config(self.model.get_config())
         _ = eval_model(tf.zeros((1, *self.input_shape), dtype=tf.float32), training=False)
         eval_model.set_weights(weights_snapshot)
         metrics, metrics_tracker, last_val_raw_labels, last_val_paths = self._validate_with_model(
@@ -1723,6 +1718,14 @@ class Trainer:
                                 freq_mask_max_size=self.freq_mask_max_size[aug_phase],
                                 freq_mask_count=self.freq_mask_count[aug_phase],
                             )
+                            # batch_spec_augment_gpu returns a CuPy GPU array.
+                            # Convert back to numpy so that train_on_batch always
+                            # receives a numpy array.  Passing CuPy arrays causes
+                            # Keras to retrace the training graph (CuPy != numpy type
+                            # signature) and the new trace triggers a broadcast error
+                            # in binary_crossentropy's internal logistic_loss path.
+                            if not isinstance(train_fingerprints, np.ndarray):
+                                train_fingerprints = np.asarray(train_fingerprints)
                         except RuntimeError as e:
                             # GPU not available or CuPy not installed, skip SpecAugment
                             if not self._spec_augment_warning_shown:
@@ -1901,7 +1904,11 @@ class Trainer:
             evaluator = TestEvaluator(self.model, self.config, str(log_dir))
             evaluator.evaluate(test_data_factory, test_feature_store_path=test_feature_store_path)
             self.logger.log_info("Running held-out test evaluation...")
-            test_metrics = self.validate(test_data_factory)
+            # Use test_split-scaled ambient duration so FAH is correct for the test set.
+            training_cfg = self.config.get("training", {})
+            test_split = float(training_cfg.get("test_split", 0.1))
+            test_ambient_hours = self.ambient_duration_hours * test_split
+            test_metrics = self.validate(test_data_factory, ambient_duration_hours=test_ambient_hours)
             self.logger.log_validation_results(test_metrics, total_steps, total_steps)
             tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
             self.logger.log_confusion_matrix(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
