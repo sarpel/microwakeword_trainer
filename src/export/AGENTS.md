@@ -127,7 +127,7 @@ This means:
 
 ## Ground Truth (from official okay_nabu analysis)
 
-- **95 tensors** in Subgraph 0 (indices 0-94), **12 tensors** in Subgraph 1 (initialization)
+- **94 tensors** in Subgraph 0 (indices 0-94), **12 tensors** in Subgraph 1 (initialization)
 - **13 unique op types**: STRIDED_SLICE(10), CONCATENATION(8), VAR_HANDLE(6), READ_VARIABLE(6), ASSIGN_VARIABLE(6), DEPTHWISE_CONV_2D(6), CONV_2D(5), RESHAPE(2), SPLIT_V(2), CALL_ONCE(1), FULLY_CONNECTED(1), LOGISTIC(1), QUANTIZE(1)
 - **20 op resolvers** registered in ESPHome (MUL/ADD registered but unused in the audited official okay_nabu flatbuffer; repository residual-enabled variants may legitimately use ADD)
 - **6 official reference state variables**: stream [1,2,1,40], stream_1 [1,4,1,32], stream_2 [1,10,1,64], stream_3 [1,14,1,64], stream_4 [1,22,1,64], stream_5 [1,5,1,64]

@@ -66,7 +66,7 @@ MixedNet architecture for wake word detection with MixConv blocks and streaming 
 
 **Streaming State Variables**: The verified official `okay_nabu` flatbuffer contains 6 int8 state tensors named `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`. Their shapes are [1,2,1,40], [1,4,1,32], [1,10,1,64], [1,14,1,64], [1,22,1,64], [1,5,1,64]. Total state memory is ~3.5KB.
 
-**ESPHome Requirements**: Input dtype int8 [1, 3, 40] (scale=0.101961, zero_point=-128), output uint8 [1, 1] (scale=0.00390625, zero_point=0). Must have 2 subgraphs: Subgraph 0 (main, 95 tensors) + Subgraph 1 (initialization, 12 tensors). 13 unique op types used by okay_nabu. 20 op resolvers registered in ESPHome runtime.
+**ESPHome Requirements**: Input dtype int8 [1, 3, 40] (scale=0.101961, zero_point=-128), output uint8 [1, 1] (scale=0.00390625, zero_point=0). Must have 2 subgraphs: Subgraph 0 (main, 94 tensors) + Subgraph 1 (initialization, 12 tensors). 13 unique op types used by okay_nabu. 20 op resolvers registered in ESPHome runtime.
 
 **Tensor Arena**: Recommended arena = 135,873 bytes (~136KB) includes intermediate activations and overhead. Peak memory per subgraph: Subgraph 0 = 41,771 bytes, Subgraph 1 = 3,520 bytes.
 

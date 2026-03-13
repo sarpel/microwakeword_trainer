@@ -53,7 +53,7 @@ def test_mixednet_build_and_factory_functions() -> None:
         input_shape=(12, 40),
         first_conv_filters=8,
         first_conv_kernel_size=3,
-        stride=2,
+        stride=3,
         pointwise_filters=[8, 8],
         mixconv_kernel_sizes=[[3], [5]],
         repeat_in_block=[1, 1],
@@ -63,7 +63,7 @@ def test_mixednet_build_and_factory_functions() -> None:
     out = model(tf.zeros((1, 12, 40), dtype=tf.float32), training=False)
     assert tuple(out.shape) == (1, 1)
     cfg = model.get_config()
-    assert cfg["stride"] == 2
+    assert cfg["stride"] == 3
 
     built = arch.build_model(input_shape=(12, 40), pointwise_filters="8,8", mixconv_kernel_sizes="[3],[5]", repeat_in_block="1,1", residual_connection="0,1", mode="unknown-mode")
     out2 = built(tf.zeros((1, 12, 40), dtype=tf.float32), training=False)
@@ -141,13 +141,9 @@ def test_streaming_mixednet_wrapper_predict_clip(monkeypatch) -> None:
         def __init__(self, config):
             self.config = config
 
-        def compute_mel_spectrogram(self, audio):
-            # return [time, mel]
-            return np.ones((9, 40), dtype=np.float32)
-
     fake_mod.__dict__["FeatureConfig"] = FakeFeatureConfig
     fake_mod.__dict__["MicroFrontend"] = FakeMicroFrontend
-    monkeypatch.setitem(sys.modules, "src.data.features", fake_mod)
+    sys.modules["src.data.features"] = fake_mod
 
     probs = wrapper.predict_clip(np.zeros((16000,), dtype=np.float32), sample_rate=16000, step_ms=30)
     assert probs
