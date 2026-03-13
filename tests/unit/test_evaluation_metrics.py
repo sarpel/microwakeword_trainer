@@ -5,6 +5,7 @@ import pytest
 
 from src.evaluation.metrics import (
     MetricsCalculator,
+    _manual_roc_auc,
     compute_accuracy,
     compute_average_viable_recall,
     compute_fah_at_target_recall,
@@ -13,7 +14,6 @@ from src.evaluation.metrics import (
     compute_recall_at_target_fah,
     compute_roc_auc,
     compute_roc_pr_curves,
-    _manual_roc_auc,
 )
 
 

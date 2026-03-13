@@ -314,6 +314,16 @@ Available environment variables:
 | `warmup_runs` | int | 10 | Warmup runs for latency |
 | `n_latency_runs` | int | 100 | Number of latency runs |
 
+### 13. AutoTuningConfig
+
+**File**: `config/loader.py` - Auto-tuning hyperparameters
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `search_eval_fraction` | float | 0.30 (standard/fast_test), 0.35 (max_quality) | Fraction of search data reserved for evaluation during auto-tuning. Prevents train-on-test contamination by ensuring FocusedSampler trains on `search_train` while evaluation uses the held-out `search_eval` split. Higher values provide more robust evaluation but reduce training data for the sampler. |
+
+> **Added in**: Phase 7 auto-tuner fix
+
 ## Preset Comparison
 
 ### fast_test.yaml (~1 hour)

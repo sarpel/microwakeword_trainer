@@ -328,6 +328,7 @@ auto_tuning:
   patience: 8                   # Faster stagnation detection; was 15
   cv_folds: 3
   confirmation_fraction: 0.50   # Larger held-out set catches overfit better; was 0.40
+  search_eval_fraction: 0.35
   bootstrap_samples: 2000
   require_confirmation: true
   group_key: speaker_id

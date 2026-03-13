@@ -6,10 +6,10 @@ TFLite Export Pipeline - Converts trained models to ESPHome-compatible TFLite fo
 
 | File | Lines | Purpose | Key Functions/Classes |
 |------|-------|---------|----------------------|
-| `tflite.py` | 780 | Streaming conversion, quantization | `export_streaming_tflite()`, `convert_model_saved()` |
+| `tflite.py` | 1137 | Streaming conversion, quantization | `export_streaming_tflite()`, `convert_model_saved()` |
 | `model_analyzer.py` | 600 | Architecture analysis | `analyze_model_architecture()` |
 | `manifest.py` | 330 | ESPHome V2 manifest | `generate_manifest()` |
-| `verification.py` | 218 | Export verification | Verification functions |
+| `verification.py` | 315 | Export verification | `compute_expected_state_shapes(temporal_frames, first_conv_kernel, stride, mel_bins, first_conv_filters, mixconv_kernel_sizes, pointwise_filters)` |
 
 ## Export Flow
 
@@ -40,12 +40,14 @@ temporal_frames = dense_input_features // 64  # 64 = last pointwise filter count
 - **Don't skip `_experimental_variable_quantization`** - Required for streaming state
 - **Don't use `model.export()`** - Use `tf.keras.export.ExportArchive`
 - **Don't forget representative dataset** - 500+ samples with boundary anchors
+- **Don't hardcode state shapes** — use `compute_expected_state_shapes()` for config-aware validation. Models with different `clip_duration_ms` produce different `temporal_frames`, changing stream_5 shape.
 
 ## Ground Truth (from ARCHITECTURAL_CONSTITUTION.md)
 
 - **94 tensors** in Subgraph 0, **12 tensors** in Subgraph 1
 - **20 op resolvers** registered in ESPHome
 - **6 state variables**: stream [1,2,1,40], stream_1 [1,4,1,32], stream_2 [1,10,1,64], stream_3 [1,14,1,64], stream_4 [1,22,1,64], stream_5 [1,5,1,64]
+  - **Note**: stream_5 shape depends on `temporal_frames` (derived from `clip_duration_ms`). The shape is `(1, temporal_frames - 1, 1, pointwise_filters[3])`, NOT always `(1, 5, 1, 64)`.
 
 ## Related Documentation
 
