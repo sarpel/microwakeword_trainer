@@ -763,7 +763,7 @@ def build_model(
     pointwise_filters="64,64,64,64",
     mixconv_kernel_sizes="[5],[7,11],[9,15],[23]",
     repeat_in_block="1,1,1,1",
-    residual_connection="0,0,0,0",
+    residual_connection="0,1,1,1",
     dropout_rate=0.0,
     l2_regularization=0.0,
     mode="non_stream",
@@ -780,7 +780,8 @@ def build_model(
         pointwise_filters: Comma-separated filter counts
         mixconv_kernel_sizes: Kernel size lists per block
         repeat_in_block: Number of repeats per block
-        residual_connection: Which blocks use residuals (0 or 1)
+        residual_connection: Which blocks use residuals (0 or 1).
+            Repository default is "0,1,1,1".
         dropout_rate: Dropout rate
         l2_regularization: L2 regularization factor
         mode: Inference mode ("training", "non_stream", "stream_internal", "stream_external")
