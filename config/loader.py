@@ -852,7 +852,35 @@ class ConfigLoader:
                     unknown = set(section_data) - valid_fields
                     logger.warning(f"Config section '{section_name}' has unknown fields (ignored): {unknown}")
                 result[section_name] = section_class(**filtered)
-        return FullConfig(**result)
+        full_config = FullConfig(**result)
+
+        # Post-process: substitute env vars and resolve paths in ALL string
+        # fields, including dataclass defaults that were never in the YAML.
+        # Without this, defaults like "${CHECKPOINT_DIR:-./models/checkpoints}"
+        # pass through as literal strings.
+        self._process_dataclass_defaults(full_config)
+
+        return full_config
+
+    def _process_dataclass_defaults(self, full_config: "FullConfig") -> None:
+        """Substitute env vars and resolve paths in all string fields of FullConfig sections.
+
+        Mutates the dataclass in-place. This catches default values that contain
+        ``${VAR:-default}`` patterns which were never processed because the
+        corresponding YAML section was absent or incomplete.
+        """
+        env_pattern = re.compile(r"\$\{[^}:]+(?::-[^}]*)?\}")
+
+        for section_name in self.SECTION_CLASSES:
+            section = getattr(full_config, section_name, None)
+            if section is None:
+                continue
+            for f in dataclasses.fields(section):
+                value = getattr(section, f.name)
+                if isinstance(value, str) and env_pattern.search(value):
+                    processed = self._substitute_env_vars(value)
+                    processed = self._resolve_path(processed)
+                    object.__setattr__(section, f.name, processed)
 
     # =========================================================================
     # PRIVATE METHODS

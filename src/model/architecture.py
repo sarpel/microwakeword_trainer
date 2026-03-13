@@ -672,8 +672,6 @@ class MixedNet(tf.keras.Model):
         # Output layer - must be float32 for numerical stability with mixed precision
         self.output_dense = core_layers["dense"]
 
-        super().build(input_shape)
-
     def call(self, inputs, training=None, mask=None):
         """Forward pass.
 

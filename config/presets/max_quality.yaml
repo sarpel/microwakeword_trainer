@@ -3,7 +3,10 @@
 # Use for: Final production training when quality matters most
 # Hardware: RTX 3060 Ti 8GB, 64GB RAM, Ryzen 9 7950X
 # ─────────────────────────────────────────────────────────────────
-
+DATASET_DIR: "./dataset"
+DATA_DIR: "./data"
+CHECKPOINT_DIR: "./models/checkpoints"
+MODEL_EXPORT_DIR: "./models/exported"
 # ─────────────────────────────────────────────────────────────────
 # HARDWARE PARAMETERS (IMMUTABLE)
 # ─────────────────────────────────────────────────────────────────
