@@ -29,12 +29,12 @@ def test_generate_manifest_uses_calculated_arena_when_tflite_exists(tmp_path: Pa
     monkeypatch.setattr(manifest_mod, "calculate_tensor_arena_size", lambda *_args, **_kwargs: 54321)
     cfg = {
         "export": {"arena_size_margin": 1.5, "wake_word": "Hi"},
-        "hardware": {"window_step_ms": 20},
+        "hardware": {"window_step_ms": 10},
     }
     out = manifest_mod.generate_manifest(model_path=str(tflite), config=cfg, tflite_path=str(tflite))
 
     assert out["wake_word"] == "Hi"
-    assert out["micro"]["feature_step_size"] == 20
+    assert out["micro"]["feature_step_size"] == 10
     assert out["micro"]["tensor_arena_size"] == 54321
 
 
