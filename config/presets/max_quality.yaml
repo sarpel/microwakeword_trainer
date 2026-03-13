@@ -35,7 +35,7 @@ paths:
 # ─────────────────────────────────────────────────────────────────
 training:
   # 3-phase schedule: Phase 1 learns discrimination, Phase 2 refines boundary, Phase 3 polishes
-  training_steps: [30000, 30000, 20000]
+  training_steps: [20000, 10000, 5000]
   # LR starts at standard 0.001, decays ~5x per phase for stable convergence
   learning_rates: [0.0017, 0.00035, 0.00009]  # Sqrt-scaled for batch_size 384 (×√3 from 128)
   batch_size: 384               # Increased from 128 — fills 8GB VRAM better (~3.5-4GB)
@@ -51,7 +51,7 @@ training:
 
   positive_class_weight: [4.0, 6.0, 8.0] # [4.0, 5.0, 6.0]
   negative_class_weight: [2.0, 4.0, 6.0] # [3.0, 5.0, 8.0]
-  hard_negative_class_weight: [5.0, 8.0, 12.0] # [5.0, 8.0, 12.0]
+  hard_negative_class_weight: [2.0, 3.0, 5.0] # [5.0, 8.0, 12.0]
 
   # Progressive SpecAugment: light→moderate→strong
   time_mask_max_size: [2, 3, 4]
@@ -60,8 +60,8 @@ training:
   freq_mask_count: [1, 1, 1]
 
   # Checkpoint selection
-  minimization_metric: "ambient_false_positives_per_hour"  # CHANGED: Prioritize recall over FAH
-  target_minimization: 5.0  # RAISED: Allow 5 FAH instead of 0.2 - model needs to learn to detect wake word
+  minimization_metric: "ambient_false_positives_per_hour"
+  target_minimization: 5.0
   maximization_metric: "average_viable_recall"
 
   # 42.02h of ambient audio (negative + background + hard_negative) for FAH calculation
@@ -73,17 +73,17 @@ training:
 
   # Optimizer and loss parameters
   optimizer: "adam"
-  label_smoothing: 0.05
+  label_smoothing: 0.0
   gradient_clipnorm: 1.0        # Was 0.5 = too aggressive, capped max score at 0.87
   ema_decay: 0.999               # Smoother EMA — half-life ~6900 steps (was 0.995, too jittery)
   random_seed: 42               # Reproducible runs
   auto_tune_on_poor_fah: true
   # Intra-phase cosine LR decay (prevents flat LR stagnation)
-  cosine_decay_alpha: 0.1         # Decay to 10% of phase LR by phase end
+  cosine_decay_alpha: 0.3         # Decay to 10% of phase LR by phase end
   # Plateau-based LR reduction and early stopping
   plateau_lr_factor: 0.3           # Reduce LR to 30% on plateau
   plateau_patience: 3              # 3 consecutive plateau evals before reduction
-  plateau_max_reductions: 2        # Stop after 2 reductions (0 = disabled)
+  plateau_max_reductions: 0        # Stop after 2 reductions (0 = disabled)
   # Phase transition staggering
   phase_stagger_steps: 2000        # Delay class weights + augmentation 2k steps after LR change
   # BatchNorm freezing
@@ -229,7 +229,7 @@ mining:
   enabled: true
 
   fp_threshold: 0.5
-  max_samples: 8000
+  max_samples: 1000
   mining_interval_epochs: 1              # Mine EVERY epoch for max quality
   collection_mode: "log_only"
   log_predictions: true
@@ -237,7 +237,7 @@ mining:
   enable_post_training_mining: true
   mined_subdirectory: "mined"
   min_epochs_before_mining: 10
-  top_k_per_epoch: 150
+  top_k_per_epoch: 50
   deduplicate_by_hash: true
   # Top FP extraction with stricter settings for max quality
   extract_top_fps: true

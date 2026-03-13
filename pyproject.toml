@@ -215,19 +215,8 @@ omit = [
 
 [tool.coverage.report]
 include = [
-    "config/loader.py",
-    "src/pipeline.py",
-    "src/tuning/autotuner.py",
-    "src/tuning/cli.py",
-    "src/export/manifest.py",
-    "src/export/model_analyzer.py",
-    "src/export/verification.py",
-    "src/model/architecture.py",
-    "src/model/streaming.py",
-    "src/utils/performance.py",
-    "src/utils/performance_monitor.py",
-    "src/utils/seed.py",
-    "src/utils/optional_deps.py",
+    "config/*.py",
+    "src/**/*.py",
 ]
 exclude_lines = [
     "pragma: no cover",

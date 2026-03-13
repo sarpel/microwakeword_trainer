@@ -40,6 +40,7 @@ numba==0.64.0
 matplotlib==3.10.8
 seaborn==0.13.2
 tensorboard==2.16.2
+setuptools==69.5.1
 
 # Rich training progress display
 rich==14.3.3
