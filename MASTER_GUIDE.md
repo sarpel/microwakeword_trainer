@@ -2,7 +2,7 @@
 
 **Complete reference for training, exporting, and deploying custom wake word models to ESPHome.**
 
-> Version: 2.0.0 | Framework: TensorFlow + CuPy GPU | Target: ESP32 via ESPHome micro_wake_word
+> Version: 2.0.0 | Framework: TensorFlow + CuPy GPU | Target: ESP32 via ESPHome micro_wake_word | Architecture verified: 2026-03-13
 
 ---
 
@@ -24,6 +24,8 @@
 14. [Troubleshooting](#14-troubleshooting)
 15. [API Reference](#15-api-reference)
 16. [Architectural Constants (IMMUTABLE)](#16-architectural-constants-immutable)
+17. [v1 vs v2 Model Differences](#17-v1-vs-v2-model-differences)
+18. [Violation Consequence Matrix](#18-violation-consequence-matrix)
 
 ---
 
@@ -74,7 +76,7 @@ The default model is a MixedNet — a lightweight CNN optimized for edge deploym
 Input: [1, 3, 40]  (int8)  ← 3 mel frames × 40 bins
     │
     ▼
-Conv2D(30 filters, kernel=5, stride=3)
+Conv2D(32 filters, kernel=5, stride=3)
     │
     ▼
 MixConvBlock × 4  (parallel depthwise convs with kernels [5,9,13,21])
@@ -424,17 +426,16 @@ training:
 
 ```yaml
 model:
-  architecture: "mixednet"       # mixednet, dnn, cnn, crnn
-  first_conv_filters: 30         # 20-30 (smaller = faster, less accurate)
+  architecture: "mixednet"
+  first_conv_filters: 32
   first_conv_kernel_size: 5
   stride: 3                      # MUST be 3 for ESPHome streaming
-  spectrogram_length: 49
-  pointwise_filters: "60,60,60,60"
-  mixconv_kernel_sizes: "[5],[9],[13],[21]"
+  pointwise_filters: "64,64,64,64"
+  mixconv_kernel_sizes: "[5],[7,11],[9,15],[23]"
   repeat_in_block: "1,1,1,1"
-  residual_connection: "0,0,0,0"
-  dropout_rate: 0.0              # 0.2 for regularization
-  l2_regularization: 0.0        # 0.001 for regularization
+  residual_connection: "0,1,1,1"
+  dropout_rate: 0.2              # 0.2 for regularization
+  l2_regularization: 0.001        # 0.001 for regularization
 ```
 
 > ⛔ **ESPHome Requirements**: Output layer MUST be `Dense(1, sigmoid)`. `stride` MUST be 3. Input shape MUST be `[1, 3, 40]`.
@@ -787,6 +788,49 @@ models/exported/
 | `trained_languages` | Top-level (new in V2) | **NEW field in V2** — add if missing; recommended default: `["en"]` |
 | `version` | Top-level `"version": 2` | **Must be updated from `1` to `2`** |
 
+### Mandatory Export Pipeline Flags
+
+> ⛔ **CRITICAL — These flags are not optional. Omitting any of them produces a model that fails to load on device or produces silently wrong predictions.**
+
+The export pipeline has two mandatory stages (matching `OHF-Voice/micro-wake-word/microwakeword/utils.py`):
+
+**Stage 1 — Non-Streaming → Streaming SavedModel:**
+```python
+# MANDATORY: materialize ring buffer VAR_HANDLE/READ_VARIABLE/ASSIGN_VARIABLE ops
+converted_model = model_to_saved(
+    model_non_stream=model,
+    config=config,
+    mode=modes.Modes.STREAM_INTERNAL_STATE_INFERENCE
+)
+# MANDATORY: use tf.keras.export.ExportArchive — NOT model.export() (causes quantization errors)
+```
+
+**Stage 2 — Streaming SavedModel → Quantized TFLite:**
+```python
+converter = tf.lite.TFLiteConverter.from_saved_model(path_to_model)
+converter.optimizations = {tf.lite.Optimize.DEFAULT}
+
+# MANDATORY: without this, state variable payloads remain float32
+# and TFLite Micro int8-only kernel resolver fails at load time on device
+converter._experimental_variable_quantization = True
+
+converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
+converter.inference_input_type  = tf.int8
+converter.inference_output_type = tf.uint8    # UINT8. ALWAYS. NOT int8.
+converter.representative_dataset = tf.lite.RepresentativeDataset(representative_dataset_gen)
+```
+
+> ⛔ **Use `tf.lite.TFLiteConverter` from standard `tensorflow`. Do NOT use `ai_edge_litert` for export.** `ai_edge_litert` is only for inference/testing.
+
+### Representative Dataset Requirements
+
+The calibration representative dataset must satisfy:
+1. **Minimum 500 training spectrograms** — fewer samples increase quantization noise
+2. **Boundary anchor points on first sample** — `sample[0][0,0] = 0.0` (minimum) and `sample[0][0,1] = 26.0` (maximum) — pins the quantization scale to the correct range
+3. **Slice each spectrogram by `stride=3`** — each yielded sample must have shape `[3, 40]` matching the runtime input cadence
+
+Without the boundary anchors, the quantizer may choose a different scale that compresses the dynamic range, making predictions effectively non-functional even though the model loads successfully.
+
 ### Programmatic Export
 
 ```python
@@ -1010,12 +1054,12 @@ cp models/exported/manifest.json /config/esphome/models/
 # Basic wake word detection
 micro_wake_word:
   models:
-    - model: models/hey_computer.tflite
+    - model: models/hey_katya.tflite
       probability_cutoff: 0.97
 
 # With voice assistant
 voice_assistant:
-  wake_word: "Hey Computer"
+  wake_word: "Hey Katya"
   on_wake_word_detected:
     - logger.log: "Wake word detected!"
 ```
@@ -1118,12 +1162,12 @@ model.fit(train_ds, validation_data=val_ds)
 ```yaml
 # Reduce batch size
 training:
-  batch_size: 32  # Default: 128
+  batch_size: 256  # Default: 128
 
 # Reduce workers
 performance:
-  num_workers: 4
-  max_memory_gb: 30
+  num_workers: 16
+  max_memory_gb: 32
 ```
 
 ```python
@@ -1225,8 +1269,8 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite --verbose
 ```yaml
 # Reduce model size
 model:
-  first_conv_filters: 20          # Reduced from 30
-  pointwise_filters: "40,40,40,40"  # Reduced from 60
+  first_conv_filters: 20          # Reduced from 32
+  pointwise_filters: "40,40,40,40"  # Reduced from 64
 
 # Auto-calculate arena size from exported model (set > 0 to override with explicit bytes)
 export:
@@ -1378,30 +1422,168 @@ print(config.hardware.sample_rate_hz)
 ## 16. Architectural Constants (IMMUTABLE)
 
 > ⛔ These values are burned into ESPHome firmware. **DO NOT CHANGE THEM.**
+> Source: `ARCHITECTURAL_CONSTITUTION.md` — verified 2026-03-13 from TFLite flatbuffer binary, ESPHome C++ source, and OHF-Voice training pipeline.
+
+### Audio Frontend Constants
 
 | Constant | Value | Why Immutable |
 |----------|-------|---------------|
-| `sample_rate_hz` | 16000 Hz | ESPHome ADC hardware clock |
-| `mel_bins` | 40 | Feature tensor width; changes model input shape |
-| `window_size_ms` | 30 ms | 480 samples per FFT window |
-| `window_step_ms` | 10 ms | 160 samples per hop |
-| `upper_band_limit_hz` | 7500 Hz | Nyquist constraint |
+| `sample_rate_hz` | 16,000 Hz | ESPHome ADC hardware clock; hardcoded in firmware |
+| `mel_bins` | 40 | Defines feature tensor width; changing it changes model input shape |
+| `window_size_ms` | 30 ms | 480 samples per FFT window; baked into audio frontend C code |
+| `window_step_ms` | 10 ms | 160 samples per hop; v2 value (v1 was 20 ms) |
+| `upper_band_limit_hz` | 7,500 Hz | Nyquist constraint for 16 kHz with margin |
 | `lower_band_limit_hz` | 125 Hz | DC rejection floor |
-| `enable_pcan` | True | Per-Channel Amplitude Normalization |
+| `enable_pcan` | True | Per-Channel Amplitude Normalization; disabling changes entire feature distribution |
+
+### PCAN and Noise Reduction Parameters
+
+These are compiled into `pymicro-features` (`rhasspy/pymicro-features`) and cannot be changed at runtime.
+
+| Parameter | Value |
+|-----------|-------|
+| `pcan_strength` | 0.95 |
+| `pcan_offset` | 80.0 |
+| `pcan_gain_bits` | 21 |
+| `noise_even_smoothing` | 0.025 |
+| `noise_odd_smoothing` | 0.06 |
+| `noise_min_signal_remaining` | 0.05 |
+| `log_scale_shift` | 6 |
+
+### Model I/O Contract
+
+| Property | Value | Notes |
+|----------|-------|-------|
 | Input shape | `[1, 3, 40]` | 3 mel frames × 40 bins |
-| Input dtype | `int8` | ESPHome runtime requirement |
+| Input dtype | `int8` | ESPHome runtime check — model fails to load if violated |
+| Input quantization scale | `0.10196078568696976` (≈ 26/255) | Maps int8[-128,127] → float[0.0, ~26.0] |
+| Input quantization zero_point | `-128` | |
 | Output shape | `[1, 1]` | Single probability |
-| Output dtype | `uint8` | ESPHome runtime requirement (NOT int8!) |
-| Subgraphs | 2 | Main inference + initialization |
+| Output dtype | **`uint8`** | ESPHome reads `output->data.uint8[0]` — **NOT int8, NOT float32** |
+| Output quantization scale | `0.00390625` (= 1/256) | Maps uint8[0,255] → float[0.0, ~1.0] |
+| Output quantization zero_point | `0` | |
+| Subgraphs | 2 | Main inference (Subgraph 0) + initialization (Subgraph 1) |
 | Quantization | INT8 | Required for micro_wake_word |
+| Subgraph 0 tensors (canonical) | **94** | Using `tf.lite` interpreter path |
+| Subgraph 1 tensors | **12** | |
 
-**Quantization parameters (verified from official models):**
-- Input: `scale=0.101961, zero_point=-128`
-- Output: `scale=0.003906, zero_point=0`
+> **Note on tensor counts:** `ai_edge_litert` may report 95 tensors for Subgraph 0 due to an exposed runtime scratch tensor. That is not an architectural difference. This project's canonical convention is **94 / 12**.
 
-**Inference timing:**
-- One inference step = 3 mel frames = 30ms of audio
-- Streaming: model called every 30ms by ESPHome
+### Inference Timing
+
+| Constant | Value | Derivation |
+|----------|-------|------------|
+| New frames per inference call | 3 | `stride` (read from input tensor dim[1] at runtime) |
+| Feature frame period | 10 ms | `window_step_ms` |
+| Inference period | 30 ms | `stride × window_step_ms = 3 × 10` |
+| Samples consumed per inference | 480 | `stride × 160 = 3 × 160` |
+
+### Streaming State Variables (6 total — exact shapes required)
+
+| Variable | Shape | Bytes | Notes |
+|----------|-------|-------|-------|
+| `stream` | `[1, 2, 1, 40]` | 80 | Ring buffer before first Conv2D; `kernel(5) - global_stride(3) = 2` |
+| `stream_1` | `[1, 4, 1, 32]` | 128 | MixConv block 0; single kernel=5, `5-1=4` |
+| `stream_2` | `[1, 10, 1, 64]` | 640 | MixConv block 1; dual kernels [7,11], `max(7,11)-1=10` |
+| `stream_3` | `[1, 14, 1, 64]` | 896 | MixConv block 2; dual kernels [9,15], `max(9,15)-1=14` |
+| `stream_4` | `[1, 22, 1, 64]` | 1,408 | MixConv block 3; single kernel=23, `23-1=22` |
+| `stream_5` | `[1, 5, 1, 64]` | 320 | Temporal flatten buffer; pre-flatten dim(6) minus 1 |
+| **Total state memory** | | **3,472 bytes** | |
+
+> **Ring buffer laws:** For `stream` (before strided conv): `buffer_frames = kernel_size - global_stride`. For `stream_1` through `stream_4` (after strided conv, internal stride=1): `buffer_frames = max_kernel_size - 1`. Do NOT mix these two laws.
+
+### Permitted TFLite Operations (20 exactly — ESPHome 2025.12.5)
+
+Any op NOT in this list causes a fatal `kTfLiteError` at model load time. The wake word engine will never start.
+
+```
+AddCallOnce()          AddVarHandle()         AddReshape()
+AddReadVariable()      AddStridedSlice()      AddConcatenation()
+AddAssignVariable()    AddConv2D()            AddMul()
+AddAdd()               AddMean()              AddFullyConnected()
+AddLogistic()          AddQuantize()          AddDepthwiseConv2D()
+AddAveragePool2D()     AddMaxPool2D()         AddPad()
+AddPack()              AddSplitV()
+```
+
+**Used in okay_nabu reference model:** CALL_ONCE, VAR_HANDLE, READ_VARIABLE, ASSIGN_VARIABLE, CONCATENATION, STRIDED_SLICE, CONV_2D, DEPTHWISE_CONV_2D, RESHAPE, SPLIT_V, FULLY_CONNECTED, LOGISTIC, QUANTIZE
+**Available but unused in reference:** MUL, ADD, MEAN, AVERAGE_POOL_2D, MAX_POOL_2D, PAD, PACK
+**Zero custom ops** — all ops show `CustomCode: N/A`.
+
+> **Repository default note:** The default `residual_connection = [0, 1, 1, 1]` configuration adds `ADD` ops and produces **58 ops** in the main subgraph (vs the reference model's 55). This is ESPHome-compatible because `ADD` is registered.
+
+### MixedNet Default Configuration
+
+```python
+first_conv_filters     = 32
+first_conv_kernel_size = 5          # → stream shape [1, 2, 1, 40]
+stride                 = 3          # GLOBAL IMMUTABLE CONSTANT
+pointwise_filters      = [64, 64, 64, 64]
+mixconv_kernel_sizes   = [[5], [7, 11], [9, 15], [23]]
+repeat_in_block        = [1, 1, 1, 1]
+residual_connection    = [0, 1, 1, 1]  # repository default; ADD op used
+```
+
+**Structural rules (all variants):**
+- All temporal convolutions must be wrapped in `stream.Stream`
+- `padding="valid"` on the time axis
+- `use_bias=False` on all Conv2D/DepthwiseConv2D
+- Exactly one `Dense(1, activation="sigmoid")` as the last layer
+- BatchNormalization after every depthwise/pointwise conv block
+- No LSTM, GRU, attention, recurrent layers, custom ops, or `tf.py_function`
+
+### ESPHome Manifest Required Fields
+
+| Field | Required Value |
+|-------|---------------|
+| `type` | `"micro"` |
+| `version` | `2` |
+| `micro.feature_step_size` | `10` (ms) — **NOT 20** |
+| `micro.minimum_esphome_version` | `"2024.7.0"` |
+| `micro.tensor_arena_size` | `0` for auto-resolve (recommended) |
+
+---
+
+## 17. v1 vs v2 Model Differences
+
+This project targets **v2**. v2 models will NOT work on ESPHome firmware older than 2024.7.0.
+
+| Property | v1 | v2 (this project) |
+|----------|----|--------------------|
+| `feature_step_size` | 20 ms | **10 ms** |
+| JSON manifest `version` | 1 | **2** |
+| `minimum_esphome_version` | older | **2024.7.0** |
+| Inference period | 60 ms (stride 3 × 20ms) | **30 ms** (stride 3 × 10ms) |
+| Temporal resolution | Lower (20ms frames) | **Higher (10ms frames)** |
+| Model architecture | Same MixedNet | Same MixedNet |
+| Fields location | Flat top-level JSON | Nested inside `"micro": {}` |
+| `trained_languages` field | Not present | **Required** (new in v2) |
+
+The key v2 improvement is halving the feature step size from 20ms to 10ms, doubling temporal resolution without changing the model architecture.
+
+---
+
+## 18. Violation Consequence Matrix
+
+> This table describes what breaks **on real hardware** when architectural rules are violated. "Works in Python" is NOT a definition of correctness.
+
+| What You Might Change | What Actually Breaks |
+|-----------------------|----------------------|
+| `mel_bins`, `window_step_ms`, `sample_rate_hz` | Input tensor shape mismatch; model receives wrong feature dimensions; garbage predictions |
+| Output dtype `uint8` → `int8` | ESPHome reads signed bytes as unsigned; every prediction ≥ 128 is misinterpreted; wake word never triggers or always triggers |
+| Input dtype `int8` → `float32` | `load_model_()` fails: "Streaming model tensor input is not int8"; model never loads |
+| Calibration dataset < 500 samples or missing boundary anchors | Scale/zero_point shift; dynamic range wrong; predictions compressed into tiny range; effectively non-functional |
+| Remove `_experimental_variable_quantization` | State payload tensors remain float32; TFLite Micro int8-only kernel resolver fails at load time; device halts |
+| Use op outside the 20 registered ops | Op resolver returns `kTfLiteError` at load time; device halts; wake word engine never starts |
+| Export without `STREAM_INTERNAL_STATE_INFERENCE` mode | No VAR_HANDLE/state ops in graph; model has no memory; per-frame prediction only; accuracy is random |
+| Missing or corrupted Subgraph 1 | State variables not initialized at boot; undefined initial behavior from first inference |
+| Wrong ring buffer size (kernel/stride mismatch) | Ring buffer reads from wrong temporal offset; scrambled temporal context; no crash, just permanently wrong predictions |
+| Change `stride` in code but not in export | Input tensor slicing misaligned with ring buffer writes; state corruption accumulates; model degrades after first second |
+| Add LSTM/GRU/attention or custom ops | Op not registered; device halts at model load |
+| `inference_output_type = tf.int8` instead of `tf.uint8` | Output read as signed; probabilities inverted vs ESPHome's uint8 threshold |
+| `feature_step_size ≠ 10` in v2 manifest | ESPHome feeds frames at wrong cadence; temporal context 1.5× or 2× too long/short |
+| `version ≠ 2` in v2 manifest | v1 loader path taken; state variables may not be handled correctly |
+| TensorFlow < 2.16 | `_experimental_variable_quantization` may not be available; `ExportArchive` API may differ; export fails or produces incompatible model |
 
 ---
 
@@ -1470,9 +1652,10 @@ cp models/exported/manifest.json /config/esphome/models/
 
 - [ESPHome micro_wake_word](https://esphome.io/components/micro_wake_word.html)
 - [Original microWakeWord](https://github.com/kahrendt/microWakeWord)
+- [OHF-Voice/micro-wake-word](https://github.com/OHF-Voice/micro-wake-word) — Official training pipeline (reference implementation)
 - [TensorFlow Lite Micro](https://www.tensorflow.org/lite/microcontrollers)
 - [SpeechBrain ECAPA-TDNN](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb)
-- [ARCHITECTURAL_CONSTITUTION.md](./ARCHITECTURAL_CONSTITUTION.md) — Immutable source truth
+- [ARCHITECTURAL_CONSTITUTION.md](./ARCHITECTURAL_CONSTITUTION.md) — **Authoritative source of architectural truth** (verified 2026-03-13 from TFLite flatbuffer binary + ESPHome C++ source)
 
 ---
 

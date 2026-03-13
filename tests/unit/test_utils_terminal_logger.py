@@ -8,10 +8,10 @@ from unittest import mock
 import pytest
 
 from src.utils.terminal_logger import (
-    strip_ansi_codes,
-    get_terminal_logger,
     TeeOutput,
     TerminalLogger,
+    get_terminal_logger,
+    strip_ansi_codes,
 )
 
 
@@ -60,6 +60,10 @@ class TestTeeOutput:
         """Test that writes go to both outputs."""
         output1 = mock.Mock()
         output2 = mock.Mock()
+        output1.write.return_value = len("test data")
+        output2.write.return_value = len("test data")
+        output1.isatty.return_value = True
+        output2.isatty.return_value = True
 
         tee = TeeOutput(output1, output2)
         tee.write("test data")
@@ -89,25 +93,29 @@ class TestTeeOutput:
 
     def test_isatty_not_callable(self):
         """Test isatty when not available on output."""
-        output1 = "not a stream"  # No isatty method
-        output2 = mock.Mock()
+        output1 = mock.Mock(spec=["write", "flush"])
+        output2 = mock.Mock(spec=["write", "flush"])
 
         tee = TeeOutput(output1, output2)
         assert tee.isatty() is False
 
     def test_fileno_raises(self):
-        """Test that fileno raises NotImplementedError."""
+        """Test that fileno raises OSError when unavailable."""
         output1 = mock.Mock()
         output2 = mock.Mock()
+        output1.fileno.side_effect = OSError("no fd")
+        output2.fileno.side_effect = OSError("no fd")
 
         tee = TeeOutput(output1, output2)
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(OSError):
             tee.fileno()
 
     def test_close_closes_outputs(self):
         """Test that close closes both outputs."""
         output1 = mock.Mock()
         output2 = mock.Mock()
+        output1.isatty.return_value = False
+        output2.isatty.return_value = False
 
         tee = TeeOutput(output1, output2)
         tee.close()
@@ -122,50 +130,43 @@ class TestTerminalLogger:
     def test_initialization(self):
         """Test logger initialization."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "test.log"
-            logger = TerminalLogger(log_path=log_path)
+            log_file = Path(tmpdir) / "test.log"
+            logger = TerminalLogger(log_dir=tmpdir, log_filename="test.log")
 
-            assert logger.log_path == log_path
+            assert logger.log_file == log_file
             assert logger._original_stdout is None
             assert logger._original_stderr is None
 
     def test_start_capture(self):
         """Test starting capture."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "test.log"
-            logger = TerminalLogger(log_path=log_path)
-
-            with mock.patch("sys.stdout") as mock_stdout:
-                with mock.patch("sys.stderr") as mock_stderr:
-                    logger.start_capture()
-
-                    assert logger._original_stdout is not None
-                    assert logger._original_stderr is not None
+            logger = TerminalLogger(log_dir=tmpdir, log_filename="test.log")
+            logger.start_capture()
+            try:
+                assert logger._original_stdout is not None
+                assert logger._original_stderr is not None
+                assert logger.log_file.exists()
+            finally:
+                logger.stop_capture()
 
     def test_stop_capture(self):
         """Test stopping capture restores original streams."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "test.log"
-            logger = TerminalLogger(log_path=log_path)
+            logger = TerminalLogger(log_dir=tmpdir, log_filename="test.log")
 
             original_stdout = sys.stdout
             original_stderr = sys.stderr
 
-            logger._original_stdout = original_stdout
-            logger._original_stderr = original_stderr
+            logger.start_capture()
+            logger.stop_capture()
 
-            with mock.patch("sys.stdout", mock.Mock()) as mock_stdout:
-                with mock.patch("sys.stderr", mock.Mock()) as mock_stderr:
-                    logger.stop_capture()
-
-                    assert sys.stdout is original_stdout
-                    assert sys.stderr is original_stderr
+            assert sys.stdout is original_stdout
+            assert sys.stderr is original_stderr
 
     def test_stop_capture_without_start(self):
         """Test stop capture when not started."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "test.log"
-            logger = TerminalLogger(log_path=log_path)
+            logger = TerminalLogger(log_dir=tmpdir, log_filename="test.log")
 
             # Should not raise error
             logger.stop_capture()
@@ -173,35 +174,36 @@ class TestTerminalLogger:
     def test_get_log_path(self):
         """Test getting log path."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "test.log"
-            logger = TerminalLogger(log_path=log_path)
+            log_file = Path(tmpdir) / "test.log"
+            logger = TerminalLogger(log_dir=tmpdir, log_filename="test.log")
 
-            assert logger.get_log_path() == log_path
+            assert logger.get_log_path() == log_file
 
     def test_context_manager(self):
         """Test using logger as context manager."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "test.log"
+            log_file = Path(tmpdir) / "test.log"
 
             original_stdout = sys.stdout
             original_stderr = sys.stderr
 
-            with TerminalLogger(log_path=log_path):
+            with TerminalLogger(log_dir=tmpdir, log_filename="test.log"):
                 pass  # Simulate some work
 
             # Original streams should be restored
             assert sys.stdout is original_stdout
             assert sys.stderr is original_stderr
+            assert log_file.exists()
 
     def test_log_file_created(self):
         """Test that log file is created during capture."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "test.log"
-
-            # Note: Actual file creation would require more complex mocking
-            # This test verifies the path is set correctly
-            logger = TerminalLogger(log_path=log_path)
-            assert logger.log_path == log_path
+            log_file = Path(tmpdir) / "test.log"
+            logger = TerminalLogger(log_dir=tmpdir, log_filename="test.log")
+            logger.start_capture()
+            logger.stop_capture()
+            assert logger.log_file == log_file
+            assert log_file.exists()
 
 
 class TestGetTerminalLogger:
@@ -210,16 +212,16 @@ class TestGetTerminalLogger:
     def test_returns_terminal_logger(self):
         """Test function returns TerminalLogger instance."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "logs" / "terminal.log"
-            logger = get_terminal_logger(log_path)
+            log_dir = Path(tmpdir) / "logs"
+            logger = get_terminal_logger(log_dir=log_dir, log_filename="terminal.log")
 
             assert isinstance(logger, TerminalLogger)
-            assert logger.log_path == log_path
+            assert logger.log_file == log_dir / "terminal.log"
 
     def test_creates_parent_directory(self):
         """Test that parent directory is created."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "nested" / "dirs" / "terminal.log"
-            logger = get_terminal_logger(log_path)
+            log_dir = Path(tmpdir) / "nested" / "dirs"
+            get_terminal_logger(log_dir=log_dir)
 
-            assert log_path.parent.exists()
+            assert log_dir.exists()

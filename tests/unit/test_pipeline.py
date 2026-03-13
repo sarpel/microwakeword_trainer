@@ -162,12 +162,9 @@ def test_step_verify_streaming_failure_and_success(monkeypatch, tmp_path: Path) 
     script = tmp_path / "verify_streaming.py"
     script.write_text("#x")
 
-    class P(Path):
-        pass
-
     def fake_path(p: str):
         if p == "scripts/verify_streaming.py":
-            return P(script)
+            return script
         return Path(p)
 
     monkeypatch.setattr(pipeline, "Path", fake_path)
@@ -196,12 +193,9 @@ def test_step_evaluate_parse_and_failure(monkeypatch, tmp_path: Path) -> None:
     script = tmp_path / "evaluate_model.py"
     script.write_text("#x")
 
-    class P(Path):
-        pass
-
     def fake_path(p: str):
         if p == "scripts/evaluate_model.py":
-            return P(script)
+            return script
         return Path(p)
 
     monkeypatch.setattr(pipeline, "Path", fake_path)
