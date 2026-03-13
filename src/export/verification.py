@@ -25,7 +25,31 @@ def _estimate_tensor_arena_size(interpreter: tf.lite.Interpreter) -> int:
     return int(total_memory * 1.3)
 
 
-def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
+def compute_expected_state_shapes(
+    first_conv_kernel: int = 5,
+    stride: int = 3,
+    mel_bins: int = 40,
+    first_conv_filters: int = 32,
+    mixconv_kernel_sizes: list[list[int]] | None = None,
+    pointwise_filters: list[int] | None = None,
+    temporal_frames: int = 6,
+) -> list[tuple[int, ...]]:
+    if mixconv_kernel_sizes is None:
+        mixconv_kernel_sizes = [[5], [7, 11], [9, 15], [23]]
+    if pointwise_filters is None:
+        pointwise_filters = [64, 64, 64, 64]
+
+    return [
+        (1, first_conv_kernel - stride, 1, mel_bins),
+        (1, max(mixconv_kernel_sizes[0]) - 1, 1, first_conv_filters),
+        (1, max(mixconv_kernel_sizes[1]) - 1, 1, pointwise_filters[0]),
+        (1, max(mixconv_kernel_sizes[2]) - 1, 1, pointwise_filters[1]),
+        (1, max(mixconv_kernel_sizes[3]) - 1, 1, pointwise_filters[2]),
+        (1, temporal_frames - 1, 1, pointwise_filters[3]),
+    ]
+
+
+def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int, ...]] | None = None) -> dict[str, Any]:
     resolver_type = tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
     interpreter = tf.lite.Interpreter(model_path=tflite_path, experimental_op_resolver_type=resolver_type)
     interpreter.allocate_tensors()
@@ -170,14 +194,8 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
         valid = False
     checks["call_once_count"] = call_once_count == 1
 
-    expected_state_shapes = [
-        (1, 2, 1, 40),
-        (1, 4, 1, 32),
-        (1, 10, 1, 64),
-        (1, 14, 1, 64),
-        (1, 22, 1, 64),
-        (1, 5, 1, 64),
-    ]
+    if expected_state_shapes is None:
+        expected_state_shapes = compute_expected_state_shapes()
     all_tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
     observed_state_payload_shapes: list[tuple[int, ...]] = []
     observed_read_payload_dtypes: list[str] = []

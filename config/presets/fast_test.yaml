@@ -62,3 +62,6 @@ performance:
 evaluation:
   default_threshold: 0.97       # Match deployment probability_cutoff (legacy name)
   detection_threshold: 0.97     # Canonical threshold name (alias)
+
+auto_tuning:
+  search_eval_fraction: 0.30

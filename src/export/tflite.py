@@ -19,7 +19,7 @@ import h5py
 import numpy as np
 import tensorflow as tf
 
-from src.export.verification import verify_tflite_model
+from src.export.verification import compute_expected_state_shapes, verify_tflite_model
 from src.model.architecture import build_core_layers
 
 logger = logging.getLogger(__name__)
@@ -536,7 +536,13 @@ def create_representative_dataset(
     config: dict,
     num_samples: int | None = None,
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
-    """Create representative dataset generator for quantization.
+    """Create representative dataset from random noise for quantization (FALLBACK ONLY).
+
+    WARNING: This fallback uses random noise which will NOT trigger wake word
+    detection. The model's output quantization range may be miscalibrated
+    (capped at ~0.5 instead of full [0, 1] range). Always prefer
+    ``create_representative_dataset_from_data()`` which feeds sequential chunks
+    from real spectrograms including positive samples.
 
     Args:
         config: Configuration dict with mel_bins
@@ -576,21 +582,27 @@ def create_representative_dataset_from_data(
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset from real training features for quantization.
 
-    Loads preprocessed spectrograms from FeatureStore and slices them into
-    stride-sized chunks. This produces calibration data that matches the
-    actual feature distribution and model input shape.
+    Loads preprocessed spectrograms from FeatureStore and yields stride-sized
+    chunks **sequentially** from each spectrogram. This is critical for correct
+    INT8 quantization of streaming models — the TFLite converter runs the model
+    forward through yielded samples, so state accumulates across sequential
+    chunks just like during real inference.
 
-    Uses ~4000 samples by default — the sweet spot for INT8 calibration quality
-    per TFLite best practices. With 150k+ files in the dataset, this is trivially
-    achievable from real data alone.
+    Includes both positive (wake word) and negative spectrograms (~30% positive)
+    so the model produces both high and low confidence outputs during calibration,
+    giving the quantizer the full output range to calibrate against.
+
+    Without sequential feeding, every calibration chunk starts from zero state,
+    the model never sees accumulated context, output is clamped to ~0.5, and the
+    Dense layer's quantization range covers only negative logits.
 
     Args:
-        config: Configuration dict with mel_bins
+        config: Configuration dict with mel_bins, stride, export settings
         data_dir: Path to processed data directory (containing train/ subfolder)
-        num_samples: Number of calibration samples to generate (default 4000)
+        num_samples: Approximate number of calibration chunks to generate
 
     Returns:
-        Generator function that yields samples
+        Generator function that yields [np.ndarray] samples for TFLite calibration
     """
     from src.data.dataset import FeatureStore
 
@@ -600,62 +612,147 @@ def create_representative_dataset_from_data(
     raw_num_samples = num_samples if num_samples is not None else export_cfg.get("representative_dataset_real_size", 4000)
     if raw_num_samples is None:
         raw_num_samples = 4000
-    num_samples = int(raw_num_samples)
+    target_chunks = int(raw_num_samples)
     store_path = Path(data_dir) / "train"
 
     if not store_path.exists():
         print(f"  Warning: No training data at {store_path}, falling back to random calibration")
-        return create_representative_dataset(config, num_samples)
+        return create_representative_dataset(config, target_chunks)
 
     store = FeatureStore(store_path)
     try:
         store.open()
     except (FileNotFoundError, OSError) as e:
         print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
-        return create_representative_dataset(config, num_samples)
+        return create_representative_dataset(config, target_chunks)
 
     try:
         n_stored = len(store)
         if n_stored == 0:
             print("  Warning: Feature store is empty, falling back to random calibration")
-            return create_representative_dataset(config, num_samples)
+            return create_representative_dataset(config, target_chunks)
 
-        # Pre-extract stride-sized chunks from real spectrograms
-        chunks: list[np.ndarray] = []
-        rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
-        indices = rng.permutation(n_stored)
+        # Separate positive and negative sample indices
+        positive_indices = []
+        negative_indices = []
+        for idx in range(n_stored):
+            _spec, label = store.get(idx)
+            if label == 1:
+                positive_indices.append(idx)
+            else:
+                negative_indices.append(idx)
 
-        for idx in indices:
-            if len(chunks) >= num_samples:
-                break
-            spec, _label = store.get(int(idx))  # shape: [time_frames, mel_bins] or flat
+        rng = np.random.RandomState(42)
+        rng.shuffle(positive_indices)
+        rng.shuffle(negative_indices)
+
+        # Build ordered list of full spectrograms to feed sequentially.
+        # Target ~30% positive for output range coverage.
+        # Each spectrogram yields multiple stride-sized chunks.
+
+        # Estimate avg chunks per spectrogram from first few samples
+        sample_indices = (positive_indices[:5] if positive_indices else []) + negative_indices[:5]
+        avg_chunks_per_spec = 0
+        for idx in sample_indices:
+            spec, _ = store.get(idx)
             if spec.ndim == 1:
-                # Flat array — reshape to [time_frames, mel_bins]
+                if spec.size % mel_bins != 0:
+                    continue
+                spec = spec.reshape(-1, mel_bins)
+            avg_chunks_per_spec += spec.shape[0] // stride
+        if sample_indices:
+            avg_chunks_per_spec = max(1, avg_chunks_per_spec // len(sample_indices))
+        else:
+            avg_chunks_per_spec = 10  # Reasonable default
+
+        # Calculate how many spectrograms we need
+        target_positive_chunks = int(target_chunks * 0.3)
+        target_negative_chunks = target_chunks - target_positive_chunks
+
+        n_positive_specs = min(
+            len(positive_indices),
+            max(1, target_positive_chunks // avg_chunks_per_spec) if positive_indices else 0,
+        )
+        n_negative_specs = min(
+            len(negative_indices),
+            max(1, target_negative_chunks // avg_chunks_per_spec),
+        )
+
+        # Interleave: groups of negative specs followed by positive specs
+        # This ensures state accumulates through negatives, then positives
+        # trigger high confidence — giving calibration both extremes
+        selected_positive = positive_indices[:n_positive_specs]
+        selected_negative = negative_indices[:n_negative_specs]
+
+        # Build interleaved order: chunks of negatives, then a positive
+        neg_per_group = max(1, n_negative_specs // max(1, n_positive_specs))
+        ordered_indices: list[int] = []
+        neg_idx = 0
+        pos_idx = 0
+
+        while neg_idx < len(selected_negative) or pos_idx < len(selected_positive):
+            # Add a group of negatives
+            for _ in range(neg_per_group):
+                if neg_idx < len(selected_negative):
+                    ordered_indices.append(selected_negative[neg_idx])
+                    neg_idx += 1
+            # Add one positive
+            if pos_idx < len(selected_positive):
+                ordered_indices.append(selected_positive[pos_idx])
+                pos_idx += 1
+
+        # Remaining negatives
+        while neg_idx < len(selected_negative):
+            ordered_indices.append(selected_negative[neg_idx])
+            neg_idx += 1
+
+        # Extract sequential chunks from each spectrogram
+        all_chunks: list[np.ndarray] = []
+        n_positive_used = 0
+        n_negative_used = 0
+
+        for idx in ordered_indices:
+            spec, label = store.get(idx)
+            if spec.ndim == 1:
                 if spec.size % mel_bins != 0:
                     continue
                 spec = spec.reshape(-1, mel_bins)
             n_frames = spec.shape[0]
             if n_frames < stride:
                 continue
-            # Extract non-overlapping stride-sized chunks from this spectrogram
-            n_possible = n_frames // stride
-            remaining = num_samples - len(chunks)
-            n_to_take = min(n_possible, remaining)
-            starts = np.arange(n_to_take) * stride
-            for t in starts:
-                chunk = spec[t : t + stride].reshape(1, stride, mel_bins).astype(np.float32)
-                chunks.append(chunk)
 
-        print(f"  Using {len(chunks)} real-data calibration samples")
+            # Yield ALL stride-sized chunks in temporal order from this spectrogram
+            for t in range(0, n_frames - stride + 1, stride):
+                chunk = spec[t : t + stride].reshape(1, stride, mel_bins).astype(np.float32)
+                all_chunks.append(chunk)
+
+            if label == 1:
+                n_positive_used += 1
+            else:
+                n_negative_used += 1
+
+        if not all_chunks:
+            print("  Warning: Could not extract any chunks, falling back to random calibration")
+            return create_representative_dataset(config, target_chunks)
+
+        positive_pct = (n_positive_used / max(1, n_positive_used + n_negative_used)) * 100
+        print(
+            f"  Using {len(all_chunks)} sequential calibration chunks from "
+            f"{n_positive_used + n_negative_used} spectrograms "
+            f"({n_positive_used} positive [{positive_pct:.0f}%], {n_negative_used} negative)"
+        )
 
         def representative_dataset_gen():
-            # Boundary anchors for correct INT8 quantization range calibration
+            # Boundary anchors for correct INT8 input range calibration
             anchor_min = np.zeros((1, stride, mel_bins), dtype=np.float32)  # 0.0
             anchor_max = np.full((1, stride, mel_bins), 26.0, dtype=np.float32)  # 26.0
             yield [anchor_min]
             yield [anchor_max]
 
-            for chunk in chunks:
+            # Yield chunks in sequential order — state accumulates across
+            # chunks from the same spectrogram, allowing the model to
+            # produce high-confidence outputs on positive samples
+            for chunk in all_chunks:
                 yield [chunk]
 
         return representative_dataset_gen
@@ -818,7 +915,16 @@ def export_streaming_tflite(
     print(f"  Size: {len(tflite_model) / 1024:.2f} KB")
 
     # Verify
-    verification = verify_exported_model(str(tflite_file))
+    expected_shapes = compute_expected_state_shapes(
+        first_conv_kernel=config.get("first_conv_kernel", 5),
+        stride=config.get("stride", 3),
+        mel_bins=config.get("mel_bins", 40),
+        first_conv_filters=config.get("first_conv_filters", 32),
+        mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
+        pointwise_filters=config.get("pointwise_filters", [64, 64, 64, 64]),
+        temporal_frames=temporal_frames,
+    )
+    verification = verify_exported_model(str(tflite_file), expected_state_shapes=expected_shapes)
 
     print("\n[5/5] Generating manifest...")
 
@@ -881,7 +987,7 @@ def _build_manifest_config(config: Optional[dict], model_name: str, metadata: di
     }
 
 
-def verify_exported_model(tflite_path: str) -> dict:
+def verify_exported_model(tflite_path: str, expected_state_shapes: list[tuple[int, ...]] | None = None) -> dict:
     """Verify exported TFLite model meets ESPHome requirements.
 
     Args:
@@ -890,7 +996,7 @@ def verify_exported_model(tflite_path: str) -> dict:
     Returns:
         Dict with verification results
     """
-    return verify_tflite_model(tflite_path)
+    return verify_tflite_model(tflite_path, expected_state_shapes=expected_state_shapes)
 
 
 # =============================================================================

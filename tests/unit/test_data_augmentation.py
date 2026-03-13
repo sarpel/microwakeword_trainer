@@ -4,14 +4,12 @@ Covers AudioAugmentation class and GPU SpecAugment functionality.
 """
 
 import random
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
 from src.data.augmentation import AudioAugmentation, AugmentationConfig, apply_spec_augment_gpu
-
 
 # =============================================================================
 # Fixtures
@@ -35,8 +33,8 @@ def sample_spectrogram():
 @pytest.fixture
 def temp_audio_files(tmp_path):
     """Create temporary audio files for testing."""
-    import wave
     import struct
+    import wave
 
     # Create background noise files
     bg_dir = tmp_path / "background"
@@ -196,20 +194,22 @@ class TestAudioAugmentation:
             mock_gain.return_value = sample_audio
             mock_eq.return_value = sample_audio
             # Also mock other methods that might be called
-            with patch.object(aug, "apply_distortion") as mock_dist, \
-                 patch.object(aug, "apply_pitch_shift") as mock_pitch, \
-                 patch.object(aug, "apply_band_stop") as mock_band, \
-                 patch.object(aug, "apply_color_noise") as mock_color, \
-                 patch.object(aug, "apply_background_noise") as mock_bg, \
-                 patch.object(aug, "apply_rir") as mock_rir:
-                
+            with (
+                patch.object(aug, "apply_distortion") as mock_dist,
+                patch.object(aug, "apply_pitch_shift") as mock_pitch,
+                patch.object(aug, "apply_band_stop") as mock_band,
+                patch.object(aug, "apply_color_noise") as mock_color,
+                patch.object(aug, "apply_background_noise") as mock_bg,
+                patch.object(aug, "apply_rir") as mock_rir,
+            ):
+
                 mock_dist.return_value = sample_audio
                 mock_pitch.return_value = sample_audio
                 mock_band.return_value = sample_audio
                 mock_color.return_value = sample_audio
                 mock_bg.return_value = sample_audio
                 mock_rir.return_value = sample_audio
-                
+
                 result = aug(sample_audio, apply_all=True)
 
                 mock_gain.assert_called_once()
@@ -289,7 +289,6 @@ class TestAudioAugmentation:
         aug = AudioAugmentation()
 
         with patch.dict("sys.modules", {"audiomentations": None}):
-            import importlib
 
             # Force reimport to test ImportError path
             with caplog.at_level("DEBUG"):

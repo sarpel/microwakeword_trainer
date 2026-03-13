@@ -259,6 +259,134 @@ def test_verification_estimate_and_verify(monkeypatch) -> None:
     assert res["checks"]["assign_payload_quant_params"] is True
 
 
+def test_verify_tflite_model_custom_temporal_frames(monkeypatch) -> None:
+    class DummyInterpreter:
+        def __init__(self, model_path=None, experimental_op_resolver_type=None):
+            self.model_path = model_path
+
+        def allocate_tensors(self):
+            return None
+
+        def get_input_details(self):
+            return [
+                {
+                    "shape": np.array([1, 3, 40]),
+                    "dtype": np.int8,
+                    "index": 0,
+                    "quantization_parameters": {"scales": np.array([0.101961], dtype=np.float32), "zero_points": np.array([-128], dtype=np.int32)},
+                }
+            ]
+
+        def get_output_details(self):
+            return [
+                {
+                    "shape": np.array([1, 1]),
+                    "dtype": np.uint8,
+                    "index": 1,
+                    "quantization_parameters": {"scales": np.array([0.00390625], dtype=np.float32), "zero_points": np.array([0], dtype=np.int32)},
+                }
+            ]
+
+        def _get_ops_details(self):
+            return [
+                {"op_name": "CALL_ONCE", "outputs": [10]},
+                {"op_name": "VAR_HANDLE", "outputs": [11]},
+                {"op_name": "VAR_HANDLE", "outputs": [12]},
+                {"op_name": "VAR_HANDLE", "outputs": [13]},
+                {"op_name": "VAR_HANDLE", "outputs": [14]},
+                {"op_name": "VAR_HANDLE", "outputs": [15]},
+                {"op_name": "VAR_HANDLE", "outputs": [16]},
+                {"op_name": "READ_VARIABLE", "outputs": [20]},
+                {"op_name": "READ_VARIABLE", "outputs": [21]},
+                {"op_name": "READ_VARIABLE", "outputs": [22]},
+                {"op_name": "READ_VARIABLE", "outputs": [23]},
+                {"op_name": "READ_VARIABLE", "outputs": [24]},
+                {"op_name": "READ_VARIABLE", "outputs": [25]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [11, 20], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [12, 21], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [13, 22], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [14, 23], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [15, 24], "outputs": [0]},
+                {"op_name": "ASSIGN_VARIABLE", "inputs": [16, 25], "outputs": [0]},
+                {"op_name": "CONV_2D", "outputs": [0]},
+            ]
+
+        def get_tensor_details(self):
+            details = []
+            expected = [
+                (20, (1, 2, 1, 40)),
+                (21, (1, 4, 1, 32)),
+                (22, (1, 10, 1, 64)),
+                (23, (1, 14, 1, 64)),
+                (24, (1, 22, 1, 64)),
+                (25, (1, 31, 1, 64)),
+            ]
+            for idx, shp in expected:
+                details.append(
+                    {
+                        "index": idx,
+                        "shape": np.array(shp),
+                        "dtype": np.int8,
+                        "name": f"state_{idx}",
+                        "quantization_parameters": {
+                            "scales": np.array([0.1], dtype=np.float32),
+                            "zero_points": np.array([-128], dtype=np.int32),
+                        },
+                    }
+                )
+            details += [
+                {"index": 0, "shape": np.array([1, 3, 40]), "dtype": np.int8, "name": "input"},
+                {"index": 1, "shape": np.array([1, 1]), "dtype": np.uint8, "name": "output"},
+            ]
+            return details
+
+        def num_subgraphs(self):
+            return 2
+
+        def set_tensor(self, *_args, **_kwargs):
+            return None
+
+        def invoke(self):
+            return None
+
+        def get_tensor(self, _index):
+            return np.array([[128]], dtype=np.uint8)
+
+    fake_tf = SimpleNamespace(
+        lite=SimpleNamespace(
+            experimental=SimpleNamespace(OpResolverType=SimpleNamespace(BUILTIN_WITHOUT_DEFAULT_DELEGATES="x")),
+            Interpreter=DummyInterpreter,
+        )
+    )
+    monkeypatch.setattr(verification, "tf", fake_tf)
+    expected_state_shapes = verification.compute_expected_state_shapes(temporal_frames=32)
+    res = verification.verify_tflite_model("fake.tflite", expected_state_shapes=expected_state_shapes)
+    assert res["checks"]["state_shapes"] is True
+
+
+def test_compute_expected_state_shapes() -> None:
+    default_shapes = verification.compute_expected_state_shapes()
+    assert default_shapes == [
+        (1, 2, 1, 40),
+        (1, 4, 1, 32),
+        (1, 10, 1, 64),
+        (1, 14, 1, 64),
+        (1, 22, 1, 64),
+        (1, 5, 1, 64),
+    ]
+
+    temporal_32_shapes = verification.compute_expected_state_shapes(temporal_frames=32)
+    assert temporal_32_shapes[5] == (1, 31, 1, 64)
+
+    custom_mixconv_shapes = verification.compute_expected_state_shapes(
+        mixconv_kernel_sizes=[[3], [5, 9], [11, 13], [17]],
+    )
+    assert custom_mixconv_shapes[1] == (1, 2, 1, 32)
+    assert custom_mixconv_shapes[2] == (1, 8, 1, 64)
+    assert custom_mixconv_shapes[3] == (1, 12, 1, 64)
+    assert custom_mixconv_shapes[4] == (1, 16, 1, 64)
+
+
 def test_streaming_export_model_uses_official_state_names() -> None:
     model = StreamingExportModel(
         first_conv_filters=32,

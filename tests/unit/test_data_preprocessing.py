@@ -5,7 +5,6 @@ VAD trimming, and audio splitting.
 """
 
 import array
-import struct
 import wave
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,31 +12,27 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.data.preprocessing import (
-    SpeechPreprocessConfig,
     PreprocessResult,
+    SpeechPreprocessConfig,
     SplitResult,
-    _read_wav,
-    _write_wav,
     _duration_ms_raw,
     _duration_ms_s16,
     _get_wav_duration_ms,
-    _stereo_to_mono_s16,
+    _read_wav,
     _resample_linear_s16,
-    _to_16khz_mono_s16,
-    find_speech_boundaries,
-    _vad_trim,
-    _split_raw_pcm,
     _split_raw_frames,
-    trim_speech_file,
-    split_background_file,
-    split_file,
-    scan_and_split,
-    remove_split_originals,
-    process_speech_directory,
+    _split_raw_pcm,
+    _stereo_to_mono_s16,
+    _to_16khz_mono_s16,
+    _vad_trim,
+    _write_wav,
+    find_speech_boundaries,
     process_background_directory,
+    process_speech_directory,
+    remove_split_originals,
+    scan_and_split,
+    split_file,
 )
-from src.utils import optional_deps
-
 
 # =============================================================================
 # Fixtures

@@ -3,7 +3,6 @@
 Covers feature extraction, MicroFrontend, and spectrogram generation.
 """
 
-import math
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -14,10 +13,9 @@ from src.data.features import (
     MicroFrontend,
     SpectrogramGeneration,
     _get_cached_frontend,
-    extract_features,
     compute_mel_spectrogram,
+    extract_features,
 )
-
 
 # =============================================================================
 # FeatureConfig Tests
@@ -199,21 +197,23 @@ class TestMicroFrontend:
         config.mel_bins = 40
         config.window_size_samples = 480
         frontend = MicroFrontend(config)
-        
+
         # Test the import error handling by patching at the module level
         import sys
+
         # Remove pymicro_features from sys.modules if it exists
         modules_to_restore = {}
         if "pymicro_features" in sys.modules:
             modules_to_restore["pymicro_features"] = sys.modules.pop("pymicro_features")
-        
+
         # Create a mock __import__ that raises ImportError for pymicro_features
         original_import = __builtins__["__import__"]
+
         def mock_import(name, *args, **kwargs):
             if name == "pymicro_features":
                 raise ImportError("No module named 'pymicro_features'")
             return original_import(name, *args, **kwargs)
-        
+
         __builtins__["__import__"] = mock_import
         try:
             with pytest.raises(RuntimeError, match="pymicro-features is required"):
@@ -431,6 +431,7 @@ class TestSpectrogramGeneration:
         with patch.object(MicroFrontend, "_check_pymicro_features"):
             # Return different length spectrograms based on audio length
             call_count = [0]
+
             def mock_compute(audio):
                 call_count[0] += 1
                 if call_count[0] == 1:

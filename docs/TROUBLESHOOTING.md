@@ -777,9 +777,35 @@ pip list | grep -i optuna
    - Check for type mismatches in values
 
 3. **Missing Optuna:**
-   ```bash
-   pip install optuna
-   ```
+    ```bash
+    pip install optuna
+    ```
+
+---
+
+### Issue: Auto-Tune Degrades Model Performance (Train-on-Test Contamination)
+
+**Symptoms**:
+- Model metrics are worse after auto-tuning than before
+- Auto-tuner reports good search metrics but held-out test performance degrades
+- recall@target_FAH drops significantly after auto-tuning
+
+**Root Cause**: Prior to the fix, the FocusedSampler trained on the same search data used for evaluation, creating 5 compounding overfitting modes:
+1. FocusedSampler memorizes search data distribution
+2. ErrorMemory feedback loop accelerates overfitting
+3. BatchNorm statistics calibrated to training data
+4. Threshold overfit via 3-pass optimizer on same data
+5. Confirmation phase uses fixed search-overfit threshold
+
+**Fix**: Search data is now split into `search_train` (70%) and `search_eval` (30%) via the `search_eval_fraction` config parameter. FocusedSampler and `_apply_stir` use `search_train`; evaluation, BN refresh, and ErrorMemory use `search_eval`. Confirmation phase re-optimizes threshold on confirm data.
+
+**Configuration**:
+```yaml
+auto_tuning:
+  search_eval_fraction: 0.30  # default; 0.35 for max_quality
+```
+
+**Diagnosis**: If auto-tuning still degrades performance, increase `search_eval_fraction` to provide a larger held-out evaluation set. Check that search data is sufficiently representative of the target domain.
 
 ---
 
@@ -844,6 +870,8 @@ cat checkpoints/tuned/tuned_metrics.json
 - Checkpoint file size differs significantly from base
 
 **Root Cause:**
+
+**See also**: [Auto-Tune Degrades Model Performance](#issue-auto-tune-degrades-model-performance-train-on-test-contamination) above for related search_train/search_eval split fix that addresses confirmation threshold overfitting.
 
 The auto-tuner's weight serialization was corrupted:
 
@@ -1209,6 +1237,21 @@ self.state_vars = [
 ```
 
 However, TFLite converter discovers and sorts variables by NAME. The `_ring_buffer` suffix added by `add_weight(name=f"{name}_ring_buffer")` affects this sorting.
+
+---
+
+### Issue: State Payload Tensor Shape Mismatch with Custom clip_duration_ms
+
+**Symptoms**:
+- Export fails with error: "State payload tensor shape mismatch"
+- Error mentions expected shape vs actual shape for stream_5
+- Occurs when training with non-default `clip_duration_ms`
+
+**Root Cause**: The export verification previously hardcoded okay_nabu reference shapes (temporal_frames=6, stream_5=[1,5,1,64]). Models trained with different `clip_duration_ms` have different `temporal_frames`, e.g. clip_duration_ms=1000 → temporal_frames=32 → stream_5=(1,31,1,64).
+
+**Fix**: Export verification now uses `compute_expected_state_shapes()` to derive correct shapes from model configuration. The `temporal_frames` value is inferred from the model's pre-flatten layer output shape.
+
+**Note**: `clip_duration_ms` does NOT affect streaming inference — streaming always processes stride=3 frames per call. It only affects the pre-flatten ring buffer (stream_5) shape during training and batch inference.
 
 ---
 

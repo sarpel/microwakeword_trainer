@@ -455,6 +455,8 @@ class AutoTuningConfig:
     # Cross-validation & confirmation
     cv_folds: int = 3
     confirmation_fraction: float = 0.40
+    # Fraction of search partition reserved for evaluation (rest for training)
+    search_eval_fraction: float = 0.30
     bootstrap_samples: int = 2000
 
     require_confirmation: bool = True

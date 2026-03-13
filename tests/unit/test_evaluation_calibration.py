@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 
 from src.evaluation.calibration import (
-    compute_calibration_curve,
-    compute_brier_score,
     calibrate_probabilities,
+    compute_brier_score,
+    compute_calibration_curve,
 )
 
 

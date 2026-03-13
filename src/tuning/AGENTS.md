@@ -11,7 +11,7 @@ MaxQualityAutoTuner - Post-training optimization to achieve target FAH/recall wi
 
 ```
 src/tuning/
-├── autotuner.py        # MaxQualityAutoTuner (2689 lines)
+├── autotuner.py        # MaxQualityAutoTuner (2761 lines)
 ├── cli.py             # mww-autotune CLI entry point
 └── __init__.py        # Module exports
 ```
@@ -23,6 +23,7 @@ src/tuning/
 3. **FocusedSampler** - 7 strategy-specific batch builders
 4. **TemperatureScaler** - Platt scaling for probability calibration
 5. **ThompsonSampler** - Strategy selection via Beta posteriors
+6. **`_partition_data()`** - Splits search data into `search_train` (for FocusedSampler training) and `search_eval` (for evaluation/BN refresh) using group-aware splitting. Controlled by `search_eval_fraction` config (default 0.30).
 
 ## API Contract
 
@@ -55,6 +56,8 @@ mww-autotune --checkpoint checkpoints/best.weights.h5 --config standard \
 - **Don't destroy optimizer state** - Use `optimizer.learning_rate.assign()`
 - **Don't use `trainable_weights` for serialization** - Use `get_weights()`/`set_weights()`
 - **Don't skip confirmation phase** - Final validation on held-out data
+- **Don't evaluate on search_train data** — use search_eval partition to prevent train-on-test contamination. The FocusedSampler trains on search_train; evaluation must use the held-out search_eval split.
+- **Don't use fixed search threshold in confirmation** — re-optimize threshold on confirm data to avoid overfitting the threshold to the search partition.
 
 ## Related Documentation
 

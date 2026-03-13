@@ -3,19 +3,18 @@
 import csv
 import tempfile
 from pathlib import Path
-from unittest import mock
 
 import numpy as np
 import pytest
 
 from src.data.quality import (
-    QualityScoreConfig,
     FileScore,
+    QualityScoreConfig,
+    apply_discard,
     compute_clipping_ratio,
+    print_summary,
     wada_snr,
     write_csv,
-    apply_discard,
-    print_summary,
 )
 
 

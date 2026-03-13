@@ -66,6 +66,29 @@ microwakeword_trainer is a **production-ready** GPU-accelerated wake word traini
 **Known Issues:**
 - 2 pre-existing test failures exist that are unrelated to this phase's changes and are tracked separately; they do not affect functional correctness of the pipeline.
 
+### Phase 7: Auto-Tuner & Export Fixes
+
+#### 7.1 Auto-Tuner Search Train/Eval Split
+
+- **Status**: ✅ Complete
+- **Root cause**: Train-on-test contamination — FocusedSampler trained on same search data used for evaluation, creating 5 compounding overfitting modes (FocusedSampler memorization, ErrorMemory feedback loop, BN statistics calibrated to training data, threshold overfit via 3-pass optimizer, confirmation using fixed search-overfit threshold)
+- **Files modified**:
+  - `src/tuning/autotuner.py` (2689 → 2761 lines): Added `_partition_data()` with group-aware search_train/search_eval split; updated FocusedSampler, `_apply_stir`, evaluation, BN refresh, ErrorMemory, and confirmation phase
+  - `config/loader.py`: Added `search_eval_fraction: float = 0.30` to `AutoTuningConfig`
+  - `config/presets/fast_test.yaml`: Added `search_eval_fraction: 0.30`
+  - `config/presets/standard.yaml`: Added `search_eval_fraction: 0.30`
+  - `config/presets/max_quality.yaml`: Added `search_eval_fraction: 0.35`
+  - `tests/unit/test_tuning_autotuner_components.py`: 8 new tests (TestPartitionSearchSplit ×3, TestErrorMemoryOffset ×2, TestConfirmationReoptimize ×3)
+
+#### 7.2 Export Config-Aware State Shape Verification
+
+- **Status**: ✅ Complete
+- **Root cause**: `verify_tflite_model()` hardcoded okay_nabu reference shapes (temporal_frames=6, stream_5=[1,5,1,64]) but models trained with different clip_duration_ms have different temporal_frames
+- **Files modified**:
+  - `src/export/verification.py` (218 → 315 lines): Added `compute_expected_state_shapes()` helper; updated `verify_tflite_model()` to accept optional `expected_state_shapes`
+  - `src/export/tflite.py` (old → 1137 lines): Updated `verify_exported_model()` and `export_streaming_tflite()` to compute and forward expected shapes from config
+  - `tests/unit/test_export_model_analyzer_and_verification.py`: Added 3 new tests (custom temporal_frames verification, compute_expected_state_shapes validation)
+
 ### Phase 5: Auto-Tuning and Performance Optimization (2026-03-07)
 
 #### Commit 2fa00e22e: User-Defined Hard Negatives in AutoTuner
@@ -429,7 +452,7 @@ mww-train --config config/presets/max_quality.yaml
 
 - `manifest.py` (330 lines) - Manifest generation
 - `model_analyzer.py` (600 lines) - Model introspection
-- `verification.py` (218 lines) - Verification tools
+- `verification.py` (315 lines) - Verification tools
 
 **Export Requirements:**
 - Input dtype: int8, shape: [1, 3, 40]
@@ -499,7 +522,7 @@ mww-train --config config/presets/max_quality.yaml
 - Iterative fine-tuning without full retraining
 
 **Key Files:**
-- `autotuner.py` (2612 lines) - Auto-tuning logic
+- `autotuner.py` (2761 lines) - Auto-tuning logic
 - `cli.py` (257 lines) - CLI entry point
 
 **Recent Enhancements:**
@@ -557,8 +580,9 @@ mww-train --config config/presets/max_quality.yaml
 | `test_test_evaluator.py` | ✅ Passing | TestEvaluator |
 | `test_vectorized_metrics.py` | ✅ Passing | MetricsCalculator |
 | `test_spec_augment_tf.py` | ✅ Passing | TF SpecAugment |
+| `test_tuning_autotuner_components.py` | ✅ Passing | Auto-tuner components (8 tests) |
 
-**Total**: 5 unit test modules
+**Total**: 6 unit test modules, 453 tests passing
 
 ### Integration Tests (`tests/integration/`)
 

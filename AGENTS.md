@@ -40,6 +40,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 - **Environment variable substitution**: `${VAR}` or `${VAR:-default}`
 - **Immutable hardware section**: Enforced by ARCHITECTURAL_CONSTITUTION.md
 - **Two separate venvs**: TF (main) + PyTorch (clustering)
+- **`search_eval_fraction`** in AutoTuningConfig controls search data split (default 0.30)
 
 ### Code Style
 - **Relaxed typing**: mypy `disallow_untyped_defs=false`
@@ -52,6 +53,8 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 - **Don't use int8 output dtype** - ESPHome requires uint8
 - **Don't use `model.export()`** - Use `tf.keras.export.ExportArchive`
 - **Don't use `model.trainable_weights` for serialization** - Excludes BatchNorm moving stats. Use `model.get_weights()`/`model.set_weights()`
+- **Don't evaluate auto-tuner on same data used for FocusedSampler training** — split search into search_train/search_eval via `search_eval_fraction` config. Training and evaluating on same data causes train-on-test contamination that degrades model quality.
+- **Don't hardcode okay_nabu state shapes in export verification** — use `compute_expected_state_shapes()` for config-aware validation. Models with different `clip_duration_ms` produce different `temporal_frames`, changing stream_5 shape.
 
 ### Environment & Dependencies
 - **Don't mix TF and PyTorch in same venv** - Use separate environments
@@ -112,6 +115,8 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 - uint8 output mandatory: ESPHome rejects int8 outputs
 - Old checkpoint incompatibility: Pre-2026-03-11 checkpoints have incompatible Dense shapes
 - BatchNorm state: moving_mean/moving_variance are NON-TRAINABLE
+- Auto-tuner search split: search data is split into search_train (70%) and search_eval (30%) — FocusedSampler trains on search_train only
+- Export state shapes vary: stream_5 shape depends on temporal_frames derived from clip_duration_ms, not always (1,5,1,64)
 
 ### Module AGENTS.md Files
 - `src/data/AGENTS.md` - Data pipeline
