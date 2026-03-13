@@ -383,7 +383,7 @@ The ESPHome runtime dynamically reads stride from the model's input tensor (stre
 
 The okay_nabu model uses a MixedNet architecture with mixed depthwise convolutions, based on modified code from Google Research's "Streaming Keyword Spotting on Mobile Devices" paper.
 
-### okay_nabu Configuration (55 ops, uses SPLIT_V / StridedKeep)
+### Repository Default MixedNet Configuration (okay_nabu-compatible, uses SPLIT_V / StridedKeep)
 
 ```python
 first_conv_filters    = 32
@@ -392,8 +392,21 @@ stride                = 3           # GLOBAL IMMUTABLE CONSTANT
 pointwise_filters     = [64, 64, 64, 64]
 mixconv_kernel_sizes  = [[5], [7, 11], [9, 15], [23]]
 repeat_in_block       = [1, 1, 1, 1]
-residual_connection   = [0, 0, 0, 0]
+residual_connection   = [0, 1, 1, 1]
 ```
+
+This repository's **default** MixedNet / export / training configuration enables
+residual connections on blocks 2-4 (`[0, 1, 1, 1]`). This remains ESPHome-
+compatible because `ADD` is registered in the ESPHome op resolver.
+
+Important distinction:
+
+- The **official reference flatbuffer** is still the source for verified tensor
+  names, quantization parameters, and op availability.
+- The **repository default architecture** is `[0, 1, 1, 1]`, because that is
+  what the executable training/export/config paths in this repository use.
+- Therefore, residual defaults do **not** break ESPHome compatibility by
+  themselves; they only change the concrete model variant being exported.
 
 ### How MixConv Kernel Sizes Map to State Variable Shapes
 

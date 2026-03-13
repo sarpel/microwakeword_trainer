@@ -461,8 +461,11 @@ stride                = 3           # GLOBAL IMMUTABLE CONSTANT
 pointwise_filters     = [64, 64, 64, 64]
 mixconv_kernel_sizes  = [[5], [7, 11], [9, 15], [23]]
 repeat_in_block       = [1, 1, 1, 1]
-residual_connection   = [0, 0, 0, 0]
+residual_connection   = [0, 1, 1, 1]
 ```
+
+Repository default enables residual connections on blocks 2-4. This is still
+ESPHome-compatible because `ADD` is part of the registered op set.
 
 ### Structural Rules (apply to all variants)
 

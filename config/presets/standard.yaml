@@ -21,6 +21,9 @@ training:
   # No label smoothing
   training_steps: [20000, 10000, 5000]
 
+model:
+  residual_connection: "0,1,1,1"  # Repository default: residuals enabled on blocks 2-4
+
 augmentation:
   AddBackgroundNoiseFromFile: 0.35
 

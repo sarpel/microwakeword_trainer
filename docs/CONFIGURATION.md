@@ -115,7 +115,7 @@ Available environment variables:
 | `pointwise_filters` | str | "64,64,64,64" | Filters per MixConv block |
 | `mixconv_kernel_sizes` | str | "[5],[7,11],[9,15],[23]" | Kernels per block |
 | `repeat_in_block` | str | "1,1,1,1" | Repeats per block |
-| `residual_connection` | str | "0,0,1,1" | Residual flags per block |
+| `residual_connection` | str | "0,1,1,1" | Residual flags per block |
 | `dropout_rate` | float | 0.2 | Dropout rate |
 | `l2_regularization` | float | 0.0001 | L2 regularization |
 
