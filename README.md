@@ -734,7 +734,7 @@ models/exported/
   "type": "micro",
   "wake_word": "Hey Computer",
   "author": "Your Name",
-  "website": "https://github.com/sarpel/microwakeword-training-platform",
+  "website": "https://github.com/sarpel/microwakeword-trainer",
   "model": "wake_word.tflite",
   "trained_languages": ["en"],
   "version": 2,
@@ -850,7 +850,7 @@ For smaller models (ESP32-S3 with limited RAM):
 ```yaml
 model:
   first_conv_filters: 20
-  pointwise_filters: "40,40,40,40"  # Smaller than default 60
+  pointwise_filters: "40,40,40,40"  # Smaller than default 64
 
 export:
   tensor_arena_size: 0  # keep auto-calculated unless you measured a custom value

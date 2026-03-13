@@ -141,6 +141,10 @@ def test_streaming_mixednet_wrapper_predict_clip(monkeypatch) -> None:
         def __init__(self, config):
             self.config = config
 
+        def compute_mel_spectrogram(self, audio):
+            # Return a minimal valid spectrogram: [num_frames, mel_bins]
+            return np.zeros((3, 40), dtype=np.float32)
+
     fake_mod.__dict__["FeatureConfig"] = FakeFeatureConfig
     fake_mod.__dict__["MicroFrontend"] = FakeMicroFrontend
     sys.modules["src.data.features"] = fake_mod

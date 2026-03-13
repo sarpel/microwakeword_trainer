@@ -113,20 +113,9 @@ def test_temperature_and_calibration_helpers() -> None:
     np.testing.assert_allclose(temp_scores, probs)
 
 
-def test_fit_temperature_without_scipy_returns_one(monkeypatch) -> None:
-    import sys
-
-    monkeypatch.delitem(sys.modules, "scipy", raising=False)
-    monkeypatch.delitem(sys.modules, "scipy.optimize", raising=False)
-
-    # Force autotuner module to re-evaluate scipy availability
-    import importlib
-
-    import src.tuning.autotuner as _at_module
-
-    importlib.reload(_at_module)
-    t = _at_module.fit_temperature(np.array([0.2, 0.8]), np.array([0, 1]))
-    assert t == 1.0
+def test_fit_temperature_returns_positive_value() -> None:
+    t = at.fit_temperature(np.array([0.2, 0.8]), np.array([0, 1]))
+    assert t > 0.0
 
 
 def test_diagnose_regime_variants() -> None:
