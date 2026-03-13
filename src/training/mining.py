@@ -781,6 +781,8 @@ def run_top_fp_extraction(
     logger.info(f"Loading model from checkpoint: {checkpoint_path}")
 
     model = _build_model(config, input_shape=(max_time_frames, mel_bins))
+    # Build model by calling it on dummy data before loading weights
+    _ = model(tf.zeros((1, max_time_frames, mel_bins), dtype=tf.float32), training=False)
     model.load_weights(checkpoint_path)
 
     # ── Feature extractor ─────────────────────────────────────────────────

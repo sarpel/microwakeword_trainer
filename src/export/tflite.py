@@ -738,8 +738,11 @@ def export_streaming_tflite(
         temporal_frames=temporal_frames,  # Pass inferred temporal dimension from checkpoint
     )
 
-    # Build model with correct temporal dimension (inferred from checkpoint)
-    _ = model(tf.zeros((1, temporal_frames, config.get("mel_bins", 40)), dtype=tf.float32))
+    # Build model with stride-sized input — this is the shape ESPHome feeds per call.
+    # temporal_frames is only used internally for stream_5 ring buffer size; it must
+    # NOT appear in the exported input signature or ESPHome will read stride=temporal_frames
+    # from input->dims->data[1] and run at the wrong cadence.
+    _ = model(tf.zeros((1, config.get("stride", 3), config.get("mel_bins", 40)), dtype=tf.float32))
 
     print("\n[2/5] Loading checkpoint weights...")
     loaded = load_weights_from_keras3_checkpoint(model, checkpoint_path)
@@ -763,7 +766,7 @@ def export_streaming_tflite(
 
         export_input_sig = [
             tf.TensorSpec(
-                shape=(1, temporal_frames, config.get("mel_bins", 40)),  # Use temporal_frames from checkpoint
+                shape=(1, config.get("stride", 3), config.get("mel_bins", 40)),  # stride frames per call, NOT temporal_frames
                 dtype=tf.float32,
                 name="inputs",
             )
