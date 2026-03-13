@@ -115,7 +115,7 @@ class RingBuffer:
         # Validate that exactly 1 time step is provided
         time_dim = new_data.shape[1] if hasattr(new_data, "shape") else None
         if time_dim is not None and time_dim != 1:
-            raise ValueError(f"RingBuffer.update expects new_data with time dim=1, got {time_dim}. " "Pass one step at a time.")
+            raise ValueError(f"RingBuffer.update expects new_data with time dim=1, got {time_dim}. Pass one step at a time.")
 
         if self.buffer is None:
             self.buffer = new_data
@@ -250,7 +250,8 @@ class Stream(tf.keras.layers.Layer):
                 # For the initial strided conv this becomes kernel_size - stride.
                 # For stride-1 downstream blocks this becomes kernel_size - 1.
                 # With dilation: dilation * (kernel_size - 1) - (stride - 1)
-                self.ring_buffer_size_in_time_dim = max(0, dilation * (kern - 1) - stride_val + 1)
+                # Ensure at least 1 to avoid zero-sized buffers that cause crashes
+                self.ring_buffer_size_in_time_dim = max(1, dilation * (kern - 1) - stride_val + 1)
 
         # Build the wrapped cell if needed
         if isinstance(wrapped_cell, tf.keras.layers.Layer) and not wrapped_cell.built:
@@ -396,7 +397,7 @@ class Stream(tf.keras.layers.Layer):
                     pad[1] = [pad_total, 0]
                 elif self.pad_time_dim == "same":
                     if self.mode != Modes.TRAINING:
-                        raise ValueError("pad_time_dim='same' is not supported in streaming/inference modes. " "Use 'causal' for streaming-compatible padding.")
+                        raise ValueError("pad_time_dim='same' is not supported in streaming/inference modes. Use 'causal' for streaming-compatible padding.")
                     half = pad_total // 2
                     pad[1] = [half, pad_total - half]
                 inputs = tf.pad(inputs, pad, "constant")
@@ -524,8 +525,28 @@ class StridedKeep(tf.keras.layers.Layer):
             Modes.STREAM_INTERNAL_STATE_INFERENCE,
             Modes.STREAM_EXTERNAL_STATE_INFERENCE,
         ):
-            # In streaming mode, keep only the last N slices
-            return inputs[:, -self.time_slices_to_keep :, ...]
+            # In streaming mode, keep only the last N slices.
+            # If the current temporal context is shorter than N (startup steps),
+            # left-pad with zeros so downstream valid-padded causal convs still
+            # receive exactly kernel_size frames and emit one output step.
+            keep = tf.constant(self.time_slices_to_keep, dtype=tf.int32)
+            input_time = tf.shape(inputs)[1]
+            pad_amount = tf.maximum(0, keep - input_time)
+
+            # Build dynamic paddings for arbitrary rank >= 2:
+            # [batch, time, ...] where only time axis gets [pad_amount, 0].
+            rank = tf.rank(inputs)
+            tail_paddings = tf.zeros(tf.stack([rank - 2, 2]), dtype=tf.int32)
+            paddings = tf.concat(
+                [
+                    tf.constant([[0, 0]], dtype=tf.int32),
+                    tf.reshape(tf.stack([pad_amount, 0]), (1, 2)),
+                    tail_paddings,
+                ],
+                axis=0,
+            )
+            padded = tf.pad(inputs, paddings, "constant")
+            return padded[:, -self.time_slices_to_keep :, ...]
         return inputs
 
     def get_config(self):
@@ -729,10 +750,17 @@ class StreamingMixedNet:
 
         Returns:
             List of probabilities for each inference step
+
+        Note:
+            Resets streaming state at the start of each call to prevent stale state
+            from accumulating across multiple calls.
         """
         import numpy as np
 
         from ..data.features import FeatureConfig, MicroFrontend
+
+        # Reset streaming state to prevent stale state from previous calls
+        self.reset()
 
         # Normalize audio to [-1, 1] if needed
         if audio_samples.dtype == np.int16:

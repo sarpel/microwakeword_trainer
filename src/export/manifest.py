@@ -129,7 +129,7 @@ def calculate_tensor_arena_size(tflite_path: str, margin: float = 1.3) -> int:
 
         allocation = interpreter.get_tensor_details()
 
-        total_memory = 0
+        largest_tensor_size = 0
         for tensor in allocation:
             shape = tensor.get("shape", [])
             dtype = tensor.get("dtype")
@@ -166,10 +166,15 @@ def calculate_tensor_arena_size(tflite_path: str, margin: float = 1.3) -> int:
                     d = abs(dim)
                 num_elements *= d
 
-            total_memory += num_elements * elem_size
+            tensor_size = num_elements * elem_size
+            if tensor_size > largest_tensor_size:
+                largest_tensor_size = tensor_size
 
-        # Add safety margin
-        arena_size = int(total_memory * margin)
+        # TFLite tensor arena holds peak concurrent memory, not total tensor memory.
+        # Heuristic: largest tensor * 2 (input + output of largest op),
+        # plus fixed interpreter bookkeeping overhead.
+        peak_memory_estimate = largest_tensor_size * 2 + 16384
+        arena_size = int(peak_memory_estimate * margin)
 
         # Ensure minimum size (26KB is the minimum for okay_nabu models)
         arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)

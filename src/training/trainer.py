@@ -338,6 +338,7 @@ class Trainer:
         self.fah_budget_ever_met = False  # True once any epoch has fah <= target_fah * 1.1
         self.best_weights_path: str | None = None
         self._last_assigned_lr: float | None = None  # Guard redundant LR assigns
+        self._val_file_paths: list[str] = []
 
         # SpecAugment warning flag to prevent log flooding
         self._spec_augment_warning_shown = False
@@ -684,7 +685,10 @@ class Trainer:
                         (int, float, np.floating, np.integer),
                     ):
                         gain_name = f"gain_{name}_per_1k_steps"
-                        quality_metrics[gain_name] = (float(current) - float(previous)) * scale
+                        if name == "fah_at_target_recall":
+                            quality_metrics[gain_name] = (float(previous) - float(current)) * scale
+                        else:
+                            quality_metrics[gain_name] = (float(current) - float(previous)) * scale
 
         quality_metrics.update(self._compute_plateau_metrics(step, quality_metrics))
 
@@ -700,7 +704,7 @@ class Trainer:
             return plateau_metrics
 
         self._eval_history.append((step, {"quality_score": float(quality_score)}))
-        max_len = 5
+        max_len = self.eval_plateau_window_evals
         if len(self._eval_history) > max_len:
             self._eval_history = self._eval_history[-max_len:]
 
@@ -921,11 +925,14 @@ class Trainer:
         """
         if not self._ema_enabled:
             return
+        assert self.model is not None, "_swap_to_ema_weights called before model was built"
         optimizer = self.model.optimizer
+        assert optimizer is not None, "_swap_to_ema_weights called before model optimizer was created"
+        optimizer_any: Any = optimizer
         # Save raw training weights before overwriting with EMA
         self._saved_training_weights = [v.numpy().copy() for v in self.model.trainable_variables]
         # Swap EMA weights into model variables for evaluation
-        optimizer.finalize_variable_values(self.model.trainable_variables)
+        optimizer_any.finalize_variable_values(self.model.trainable_variables)
 
     def _restore_training_weights(self):
         """Restore raw training weights after EMA-based evaluation.
@@ -936,6 +943,7 @@ class Trainer:
         """
         if not self._ema_enabled or not hasattr(self, "_saved_training_weights"):
             return
+        assert self.model is not None, "_restore_training_weights called before model was built"
         for var, saved in zip(self.model.trainable_variables, self._saved_training_weights, strict=False):
             var.assign(saved)
         del self._saved_training_weights
@@ -1028,13 +1036,20 @@ class Trainer:
                 f"[Warm-up] No PR-AUC improvement: {auc_pr:.4f} ≤ {self.best_auc_pr:.4f} (FAH={fah:.2f})",
             )
 
-    def _save_checkpoint(self, metrics: dict[str, float], is_best: bool, reason: str) -> None:
+    def _save_checkpoint(
+        self,
+        metrics: dict[str, float],
+        is_best: bool,
+        reason: str,
+        weights_snapshot: list[np.ndarray] | None = None,
+    ) -> None:
         """Save model checkpoint.
 
         Args:
             metrics: Current validation metrics
             is_best: Whether this is the best model
             reason: Reason for saving/not saving
+            weights_snapshot: Optional validated weights snapshot to persist as best
         """
         assert self.model is not None, "_save_checkpoint called before model was built"
         os.makedirs(self.checkpoint_dir, exist_ok=True)
@@ -1042,7 +1057,15 @@ class Trainer:
         if is_best:
             # Save best weights
             self.best_weights_path = os.path.join(self.checkpoint_dir, "best_weights.weights.h5")
-            self.model.save_weights(self.best_weights_path)
+            if weights_snapshot is None:
+                self.model.save_weights(self.best_weights_path)
+            else:
+                current_weights = self.model.get_weights()
+                try:
+                    self.model.set_weights(weights_snapshot)
+                    self.model.save_weights(self.best_weights_path)
+                finally:
+                    self.model.set_weights(current_weights)
             self.logger.log_checkpoint(reason, True, self.best_weights_path)
 
             # Update best metrics
@@ -1300,7 +1323,7 @@ class Trainer:
                 calc = MetricsCalculator(
                     y_true=y_true,
                     y_score=y_score,
-                    ambient_duration_hours=self.val_ambient_duration_hours,
+                    ambient_duration_hours=effective_ambient,
                 )
                 curves = calc.compute_roc_pr_curves(n_thresholds=len(metrics_tracker.cutoffs))
                 fpr = curves["fpr"]
@@ -1320,14 +1343,14 @@ class Trainer:
             metrics["score_max"] = float(np.max(scores_arr))
             metrics["score_sample_count"] = float(scores_arr.shape[0])
 
-        if self.val_ambient_duration_hours > 0 and self.eval_target_fah > 0 and metrics_tracker.all_y_true:
+        if effective_ambient > 0 and self.eval_target_fah > 0 and metrics_tracker.all_y_true:
             calc = MetricsCalculator(
                 y_true=np.array(metrics_tracker.all_y_true),
                 y_score=np.array(metrics_tracker.all_y_scores),
-                ambient_duration_hours=self.val_ambient_duration_hours,
+                ambient_duration_hours=effective_ambient,
             )
             recall_at_fah, threshold_at_fah, _ = calc.compute_recall_at_target_fah(
-                ambient_duration_hours=self.val_ambient_duration_hours,
+                ambient_duration_hours=effective_ambient,
                 target_fah=self.eval_target_fah,
                 n_thresholds=len(metrics_tracker.cutoffs),
             )
@@ -1338,7 +1361,7 @@ class Trainer:
             metrics["operating_target_fah"] = float(self.eval_target_fah)
 
             fah_at_recall, threshold_at_recall, _ = calc.compute_fah_at_target_recall(
-                ambient_duration_hours=self.val_ambient_duration_hours,
+                ambient_duration_hours=effective_ambient,
                 target_recall=self.eval_target_recall,
                 n_thresholds=len(metrics_tracker.cutoffs),
             )
@@ -1398,6 +1421,7 @@ class Trainer:
             "metrics_tracker": metrics_tracker,
             "last_val_raw_labels": last_val_raw_labels,
             "last_val_paths": last_val_paths,
+            "weights_snapshot": weights_snapshot,
         }
 
     def _schedule_validation(
@@ -1418,22 +1442,17 @@ class Trainer:
             try:
                 self._swap_to_ema_weights()
                 weights_snapshot = [np.array(w, copy=True) for w in self.model.get_weights()]
+                try:
+                    future = self._validation_executor.submit(
+                        self._compute_metrics_background,
+                        step,
+                        weights_snapshot,
+                        val_data_factory,
+                    )
+                finally:
+                    self._restore_training_weights()
             except Exception as exc:
                 self.logger.log_warning(f"Async validation scheduling failed during EMA snapshot: {exc}")
-                self._restore_training_weights()
-                return False
-            finally:
-                self._restore_training_weights()
-
-            try:
-                future = self._validation_executor.submit(
-                    self._compute_metrics_background,
-                    step,
-                    weights_snapshot,
-                    val_data_factory,
-                )
-            except Exception as exc:
-                self.logger.log_warning(f"Async validation scheduling failed: {exc}")
                 return False
 
             self._pending_validation = {
@@ -1456,12 +1475,13 @@ class Trainer:
         advanced_due: bool,
         val_data_factory,
         mining_data_factory,
+        weights_snapshot: list[np.ndarray] | None = None,
     ) -> None:
         """Consume completed validation metrics (logging/checkpointing/mining)."""
         val_metrics = self._augment_quality_metrics(val_metrics, step)
 
         if advanced_due and self._check_and_act_on_plateau(val_metrics, step):
-            self._save_checkpoint(val_metrics, is_best=False, reason="early_stop_plateau")
+            self._save_checkpoint(val_metrics, is_best=False, reason="early_stop_plateau", weights_snapshot=weights_snapshot)
             self._async_early_stop_requested = True
             return
 
@@ -1481,7 +1501,7 @@ class Trainer:
 
         if advanced_due and self.eval_checkpoints_interval and step % self.eval_checkpoints_interval == 0:
             is_best, reason = self._is_best_model(val_metrics, self.eval_target_fah, self.best_recall)
-            self._save_checkpoint(val_metrics, is_best, reason)
+            self._save_checkpoint(val_metrics, is_best, reason, weights_snapshot=weights_snapshot)
             if self.tensorboard_logger is not None:
                 summary_text = "\n".join(
                     [
@@ -1496,6 +1516,7 @@ class Trainer:
                 self.tensorboard_logger.log_text_summary("checkpoints/summary", summary_text, step)
 
         if advanced_due and step % self.eval_advanced_step_interval == 0:
+            assert self.model is not None, "_handle_validation_results called before model was built"
             approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
             collection_mode = self.hn_config.get("collection_mode", "log_only")
             mining_interval = self.hn_config.get("mining_interval_epochs", 1)
@@ -1566,6 +1587,7 @@ class Trainer:
             advanced_due=pending["advanced_due"],
             val_data_factory=pending["val_data_factory"],
             mining_data_factory=pending["mining_data_factory"],
+            weights_snapshot=result.get("weights_snapshot"),
         )
 
     def _log_false_predictions_to_json(self, epoch: int) -> None:
@@ -1625,7 +1647,7 @@ class Trainer:
             weights_path: Optional path to model weights to load after building model (for fine-tuning)
             val_file_paths: Optional ordered list of validation file paths for FP tracking
         """
-        self._val_file_paths = val_file_paths
+        self._val_file_paths = list(val_file_paths) if val_file_paths is not None else []
         input_shape = self.input_shape if input_shape is None else input_shape
 
         self.logger.log_info("Building model...")
@@ -1827,6 +1849,7 @@ class Trainer:
                     )
                     if not scheduled and self._pending_validation is None:
                         self._swap_to_ema_weights()
+                        weights_snapshot = [np.array(w, copy=True) for w in self.model.get_weights()]
                         try:
                             val_metrics = self.validate(val_data_factory)
                         finally:
@@ -1839,6 +1862,7 @@ class Trainer:
                             advanced_due=advanced_due,
                             val_data_factory=val_data_factory,
                             mining_data_factory=mining_data_factory,
+                            weights_snapshot=weights_snapshot,
                         )
                         if self._async_early_stop_requested:
                             break

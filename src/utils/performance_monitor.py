@@ -80,10 +80,12 @@ class PerformanceMonitor:
         if len(self.section_history[section]) > 100:
             self.section_history[section].pop(0)
 
+        alpha = 0.1  # EMA smoothing factor
         if section not in self.baseline_metrics:
             self.baseline_metrics[section] = duration_ms
             logger.info(f"Baseline established for {section}: {duration_ms:.1f}ms")
-            return
+        else:
+            self.baseline_metrics[section] = alpha * duration_ms + (1 - alpha) * self.baseline_metrics[section]
 
         # Bottleneck detection (2x slower than baseline)
         ratio = duration_ms / self.baseline_metrics[section]
@@ -100,11 +102,14 @@ class PerformanceMonitor:
                 self._last_alert_msg[section] = alert_msg
 
         # Trend detection (gradual degradation)
-        if len(self.section_history[section]) >= 10:
-            recent_avg = sum(self.section_history[section][-10:]) / 10
-            overall_avg = sum(self.section_history[section]) / len(self.section_history[section])
-            if recent_avg > 1.2 * overall_avg:
-                alert_msg = f"TREND: {section} degrading ({recent_avg:.1f}ms vs {overall_avg:.1f}ms avg)"
+        history = self.section_history[section]
+        if len(history) >= 20:  # Ensure both windows have enough samples
+            recent = history[-10:]
+            older = history[-20:-10]  # Compare two equal-sized windows
+            recent_avg = sum(recent) / len(recent)
+            older_avg = sum(older) / len(older)
+            if recent_avg > 1.2 * older_avg:
+                alert_msg = f"TREND: {section} degrading ({recent_avg:.1f}ms vs {older_avg:.1f}ms avg)"
                 # Check dedup: only alert if new message or cooldown expired
                 current_time = time.time()
                 last_time = self._last_alert_time.get(section, 0)

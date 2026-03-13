@@ -60,8 +60,7 @@ performance:
   tensorboard_sophisticated_interval: 2000
 
 evaluation:
-  default_threshold: 0.97       # Match deployment probability_cutoff (legacy name)
-  detection_threshold: 0.97     # Canonical threshold name (alias)
+  default_threshold: 0.97       # Match deployment probability_cutoff
 
 auto_tuning:
   search_eval_fraction: 0.30
