@@ -363,6 +363,40 @@ python3 scripts/debug_streaming_gap.py
 grep -r "GlobalAveragePooling" src/model/architecture.py src/export/tflite.py
 ```
 
+**Additional Critical Validation Steps**:
+```bash
+# 1. Verify ESPHome compatibility using verify_esphome_compatibility() from src/export/tflite.py
+python3 -c "from src.export.tflite import verify_esphome_compatibility; print(verify_esphome_compatibility('models/exported/hey_katya.tflite'))"
+
+# 2. Run analyze_model() from src/export/model_analyzer.py before deployment
+python3 -c "from src.export.model_analyzer import analyze_model; import json; print(json.dumps(analyze_model('models/exported/hey_katya.tflite'), indent=2))"
+
+# 3. Validate TFLite input dimensions (must be 3D per VALID_TFLITE_INPUT_SHAPES; reject 4D shapes)
+python3 -c "
+import tensorflow as tf
+import numpy as np
+interp = tf.lite.Interpreter('models/exported/hey_katya.tflite')
+interp.allocate_tensors()
+input_details = interp.get_input_details()
+main_input = input_details[0]
+assert len(main_input['shape']) == 3, f'Expected 3D input, got {main_input[\"shape\"]}'
+print('Input dims OK:', main_input['shape'])
+"
+
+# 4. Assert TFLite output dtype is uint8 (kTfLiteUInt8), NOT int8
+python3 -c "
+import tensorflow as tf
+import numpy as np
+interp = tf.lite.Interpreter('models/exported/hey_katya.tflite')
+interp.allocate_tensors()
+output = interp.get_output_details()[0]
+assert output['dtype'] == np.uint8, f'Expected uint8 output, got {output[\"dtype\"]}'
+print('Output dtype OK: uint8')
+"
+```
+
+> **⚠️ Review Requirement**: Before changing any code in `src/model/` or `src/export/`, open and read `docs/ARCHITECTURE.md` to ensure changes remain compliant with the reference architecture. Failing any of the above checks (`verify_esphome_compatibility`, `analyze_model`, input dims == 3D, output dtype == uint8) must produce a clear error message referencing the specific function names (`verify_esphome_compatibility`, `analyze_model`, `VALID_TFLITE_INPUT_SHAPES`).
+
 **Expected Outcomes**:
 - Training model uses `Flatten` layer (confirm in architecture summary)
 - Export model uses `tf.reshape` for temporal pooling (confirm in script output)
@@ -370,6 +404,10 @@ grep -r "GlobalAveragePooling" src/model/architecture.py src/export/tflite.py
 - No `GlobalAveragePooling` references in codebase
 - BN folding diff < 1e-6 (numerical precision maintained)
 - All state variables present in export model
+- `verify_esphome_compatibility()` passes without errors
+- `analyze_model()` shows valid=True, 6 streaming state tensors
+- Input dims size == 3 (3D shape, not 4D)
+- Output dtype == uint8
 
 ---
 

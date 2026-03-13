@@ -111,7 +111,7 @@ class TrainingConfig:
         if self.batch_size <= 0:
             raise ValueError("training.batch_size must be > 0")
         if not 0.0 <= self.label_smoothing < 1.0:
-            raise ValueError(f"training.label_smoothing must be in range [0.0, 1.0], got {self.label_smoothing}")
+            raise ValueError(f"training.label_smoothing must be in range [0.0, 1.0), got {self.label_smoothing}")
         if not 0.0 <= self.cosine_decay_alpha <= 1.0:
             raise ValueError(f"training.cosine_decay_alpha must be in [0.0, 1.0], got {self.cosine_decay_alpha}")
         if not 0.0 < self.plateau_lr_factor <= 1.0:

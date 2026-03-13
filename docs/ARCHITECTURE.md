@@ -452,7 +452,7 @@ model.
 > rules defined here and the streaming conversion produces state variables
 > whose shapes satisfy the ring buffer law in Article VII.
 
-### `okay_nabu` Configuration (55 ops, uses SPLIT_V / StridedKeep)
+### Repository Default Configuration (okay_nabu-compatible, uses SPLIT_V / StridedKeep)
 
 ```python
 first_conv_filters    = 32
@@ -466,6 +466,13 @@ residual_connection   = [0, 1, 1, 1]
 
 Repository default enables residual connections on blocks 2-4. This is still
 ESPHome-compatible because `ADD` is part of the registered op set.
+
+Important distinction:
+
+- The audited **official `okay_nabu` flatbuffer** uses **55** main-subgraph ops
+   and does not consume `ADD`.
+- The **repository default residual-enabled variant** may use **58** main-
+   subgraph ops (`55 base + 3 residual ADDs`) and is still valid for ESPHome.
 
 ### Structural Rules (apply to all variants)
 

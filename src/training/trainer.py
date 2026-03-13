@@ -475,6 +475,15 @@ class Trainer:
         self._async_early_stop_requested = False
         self._use_compiled_train_on_batch = True
 
+    def __del__(self) -> None:
+        """Ensure ThreadPoolExecutor is shut down if Trainer is garbage-collected."""
+        executor = getattr(self, "_validation_executor", None)
+        if executor is not None:
+            try:
+                executor.shutdown(wait=False)
+            except Exception:
+                pass
+
     def _get_cutoffs(self, lazy: bool = True) -> list[float]:
         """Generate cutoff thresholds for evaluation metrics.
 
@@ -1835,8 +1844,10 @@ class Trainer:
                 if self._async_early_stop_requested:
                     break
 
-                # Resume progress bar
-                progress.start()
+                # Resume progress bar if it was stopped (e.g., phase transition)
+                # Rich's progress.start() is internally guarded, but we track state explicitly
+                if not progress.live._started:
+                    progress.start()
         finally:
             self._check_validation(block=True)
             self._validation_executor.shutdown(wait=True)

@@ -864,7 +864,13 @@ def _build_manifest_config(config: Optional[dict], model_name: str, metadata: di
         export_cfg["probability_cutoff"] = float(tuned_cutoff)
 
     export_cfg.setdefault("wake_word", model_name)
-    export_cfg.setdefault("detection_threshold", config.get("detection_threshold", 0.5) if isinstance(config, dict) else 0.5)
+    # Prefer detection_threshold from evaluation section, then top-level config, then default 0.5
+    if isinstance(config, dict):
+        evaluation_cfg = dict(config.get("evaluation", {}))
+        _detection_threshold = export_cfg.get("detection_threshold") or evaluation_cfg.get("detection_threshold") or config.get("detection_threshold", 0.5)
+    else:
+        _detection_threshold = 0.5
+    export_cfg.setdefault("detection_threshold", _detection_threshold)
 
     return {
         "export": export_cfg,

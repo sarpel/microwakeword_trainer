@@ -826,7 +826,13 @@ class ThresholdOptimizer:
                 lowest_fah,
             )
             best_threshold = lowest_fah_threshold
-            best_metric = 0.0 if total_positives == 0 else best_metric
+            if total_positives == 0:
+                best_metric = 0.0
+            else:
+                # Compute actual recall at the fallback threshold
+                fallback_preds = (y_scores >= lowest_fah_threshold).astype(np.int32)
+                fallback_tp = int(np.sum((fallback_preds == 1) & (labels == 1)))
+                best_metric = fallback_tp / total_positives
 
         logger.info(
             "Binary search threshold: %.6f (best_recall=%.6f)",

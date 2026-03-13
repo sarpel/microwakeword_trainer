@@ -125,53 +125,57 @@ def tf_stream_state_internal_model_accuracy(flags, folder, weights_name="best_we
     set_size = np.minimum(max_test_samples, set_size)
     inference_batch_size = 1
     tf.keras.backend.set_learning_phase(0)
+    original_batch_size = flags.batch_size
     flags.batch_size = inference_batch_size  # set batch size
-    model = models.MODELS[flags.model_name](flags)
-    model.load_weights(os.path.join(flags.train_dir, weights_name)).expect_partial()
+    try:
+        model = models.MODELS[flags.model_name](flags)
+        model.load_weights(os.path.join(flags.train_dir, weights_name)).expect_partial()
 
-    model_stream = utils.to_streaming_inference(model, flags, modes.Modes.STREAM_INTERNAL_STATE_INFERENCE)
+        model_stream = utils.to_streaming_inference(model, flags, modes.Modes.STREAM_INTERNAL_STATE_INFERENCE)
 
-    total_accuracy = 0.0
-    count = 0.0
-    for i in range(0, set_size, inference_batch_size):
-        test_fingerprints, test_ground_truth = audio_processor.get_data(inference_batch_size, i, flags, 0.0, 0.0, 0, "testing", 0.0, 0.0, sess)
+        total_accuracy = 0.0
+        count = 0.0
+        for i in range(0, set_size, inference_batch_size):
+            test_fingerprints, test_ground_truth = audio_processor.get_data(inference_batch_size, i, flags, 0.0, 0.0, 0, "testing", 0.0, 0.0, sess)
 
-        if flags.preprocess == "raw":
-            stream_output_prediction = inference.run_stream_inference_classification(flags, model_stream, test_fingerprints)
-            stream_output_arg = np.argmax(stream_output_prediction)
-        else:
-            # iterate over frames
-            for t in range(test_fingerprints.shape[1]):
-                # get new frame from stream of data
-                stream_update = test_fingerprints[:, t, :]
-
-                # [batch, time=1, feature]
-                stream_update = np.expand_dims(stream_update, axis=1)
-
-                # classification result of a current frame
-                stream_output_prediction = model_stream.predict(stream_update)
+            if flags.preprocess == "raw":
+                stream_output_prediction = inference.run_stream_inference_classification(flags, model_stream, test_fingerprints)
                 stream_output_arg = np.argmax(stream_output_prediction)
+            else:
+                # iterate over frames
+                for t in range(test_fingerprints.shape[1]):
+                    # get new frame from stream of data
+                    stream_update = test_fingerprints[:, t, :]
 
-        total_accuracy = total_accuracy + (test_ground_truth[0] == stream_output_arg)
-        count = count + 1
-        if i % 200 == 0 and i:
-            logging.info("tf test accuracy, stream model state internal = %.2f%% %d out of %d", *(total_accuracy * 100 / count, i, set_size))
+                    # [batch, time=1, feature]
+                    stream_update = np.expand_dims(stream_update, axis=1)
 
-    total_accuracy = total_accuracy / count if count > 0 else 0.0
-    logging.info("TF Final test accuracy of stream model state internal = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
+                    # classification result of a current frame
+                    stream_output_prediction = model_stream.predict(stream_update)
+                    stream_output_arg = np.argmax(stream_output_prediction)
 
-    path = os.path.join(flags.train_dir, folder)
-    if not os.path.exists(path):
-        os.makedirs(path)
+            total_accuracy = total_accuracy + (test_ground_truth[0] == stream_output_arg)
+            count = count + 1
+            if i % 200 == 0 and i:
+                logging.info("tf test accuracy, stream model state internal = %.2f%% %d out of %d", *(total_accuracy * 100 / count, i, set_size))
 
-    fname_summary = "model_summary_stream_state_internal"
-    utils.save_model_summary(model_stream, path, file_name=fname_summary + ".txt")
+        total_accuracy = total_accuracy / count if count > 0 else 0.0
+        logging.info("TF Final test accuracy of stream model state internal = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
 
-    tf.keras.utils.plot_model(model_stream, to_file=os.path.join(path, fname_summary + ".png"), show_shapes=True, expand_nested=True)
+        path = os.path.join(flags.train_dir, folder)
+        if not os.path.exists(path):
+            os.makedirs(path)
 
-    with open(os.path.join(path, accuracy_name), "wt") as fd:
-        fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
-    sess.close()
+        fname_summary = "model_summary_stream_state_internal"
+        utils.save_model_summary(model_stream, path, file_name=fname_summary + ".txt")
+
+        tf.keras.utils.plot_model(model_stream, to_file=os.path.join(path, fname_summary + ".png"), show_shapes=True, expand_nested=True)
+
+        with open(os.path.join(path, accuracy_name), "wt") as fd:
+            fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
+    finally:
+        flags.batch_size = original_batch_size
+        sess.close()
     return total_accuracy * 100
 
 
@@ -204,92 +208,96 @@ def tf_stream_state_external_model_accuracy(flags, folder, weights_name="best_we
     set_size = np.minimum(max_test_samples, set_size)
     inference_batch_size = 1
     tf.keras.backend.set_learning_phase(0)
+    original_batch_size = flags.batch_size
     flags.batch_size = inference_batch_size  # set batch size
-    model = models.MODELS[flags.model_name](flags)
-    model.load_weights(os.path.join(flags.train_dir, weights_name)).expect_partial()
-    model_stream = utils.to_streaming_inference(model, flags, modes.Modes.STREAM_EXTERNAL_STATE_INFERENCE)
+    try:
+        model = models.MODELS[flags.model_name](flags)
+        model.load_weights(os.path.join(flags.train_dir, weights_name)).expect_partial()
+        model_stream = utils.to_streaming_inference(model, flags, modes.Modes.STREAM_EXTERNAL_STATE_INFERENCE)
 
-    logging.info("tf stream model state external with reset_state %d", reset_state)
+        logging.info("tf stream model state external with reset_state %d", reset_state)
 
-    inputs = []
-    for s in range(len(model_stream.inputs)):
-        inputs.append(np.zeros(model_stream.inputs[s].shape, dtype=np.float32))
+        inputs = []
+        for s in range(len(model_stream.inputs)):
+            inputs.append(np.zeros(model_stream.inputs[s].shape, dtype=np.float32))
 
-    total_accuracy = 0.0
-    count = 0.0
-    inference_batch_size = 1
-    for i in range(0, set_size, inference_batch_size):
-        test_fingerprints, test_ground_truth = audio_processor.get_data(inference_batch_size, i, flags, 0.0, 0.0, 0, "testing", 0.0, 0.0, sess)
+        total_accuracy = 0.0
+        count = 0.0
+        inference_batch_size = 1
+        for i in range(0, set_size, inference_batch_size):
+            test_fingerprints, test_ground_truth = audio_processor.get_data(inference_batch_size, i, flags, 0.0, 0.0, 0, "testing", 0.0, 0.0, sess)
 
-        if reset_state:
-            for s in range(len(model_stream.inputs)):
-                inputs[s] = np.zeros(model_stream.inputs[s].shape, dtype=np.float32)
+            if reset_state:
+                for s in range(len(model_stream.inputs)):
+                    inputs[s] = np.zeros(model_stream.inputs[s].shape, dtype=np.float32)
 
-        if flags.preprocess == "raw":
-            start = 0
-            end = flags.data_shape[0]
-            # iterate over time samples with stride = window_stride_samples
-            while end <= test_fingerprints.shape[1]:
-                # get new frame from stream of data
-                stream_update = test_fingerprints[:, start:end]
+            if flags.preprocess == "raw":
+                start = 0
+                end = flags.data_shape[0]
+                # iterate over time samples with stride = window_stride_samples
+                while end <= test_fingerprints.shape[1]:
+                    # get new frame from stream of data
+                    stream_update = test_fingerprints[:, start:end]
 
-                # update indexes of streamed updates
-                start = end
-                end = start + flags.data_shape[0]
+                    # update indexes of streamed updates
+                    start = end
+                    end = start + flags.data_shape[0]
 
-                # set input audio data (by default input data at index 0)
-                inputs[0] = stream_update
+                    # set input audio data (by default input data at index 0)
+                    inputs[0] = stream_update
 
-                # run inference
-                outputs = model_stream.predict(inputs)
+                    # run inference
+                    outputs = model_stream.predict(inputs)
 
-                # get output states and set it back to input states
-                # which will be fed in the next inference cycle
-                for s in range(1, len(model_stream.inputs)):
-                    inputs[s] = outputs[s]
+                    # get output states and set it back to input states
+                    # which will be fed in the next inference cycle
+                    for s in range(1, len(model_stream.inputs)):
+                        inputs[s] = outputs[s]
 
-                stream_output_arg = np.argmax(outputs[0])
-        else:
-            # iterate over frames
-            for t in range(test_fingerprints.shape[1]):
-                # get new frame from stream of data
-                stream_update = test_fingerprints[:, t, :]
+                    stream_output_arg = np.argmax(outputs[0])
+            else:
+                # iterate over frames
+                for t in range(test_fingerprints.shape[1]):
+                    # get new frame from stream of data
+                    stream_update = test_fingerprints[:, t, :]
 
-                # [batch, time=1, feature]
-                stream_update = np.expand_dims(stream_update, axis=1)
+                    # [batch, time=1, feature]
+                    stream_update = np.expand_dims(stream_update, axis=1)
 
-                # set input audio data (by default input data at index 0)
-                inputs[0] = stream_update
+                    # set input audio data (by default input data at index 0)
+                    inputs[0] = stream_update
 
-                # run inference
-                outputs = model_stream.predict(inputs)
+                    # run inference
+                    outputs = model_stream.predict(inputs)
 
-                # get output states and set it back to input states
-                # which will be fed in the next inference cycle
-                for s in range(1, len(model_stream.inputs)):
-                    inputs[s] = outputs[s]
+                    # get output states and set it back to input states
+                    # which will be fed in the next inference cycle
+                    for s in range(1, len(model_stream.inputs)):
+                        inputs[s] = outputs[s]
 
-                stream_output_arg = np.argmax(outputs[0])
-        total_accuracy = total_accuracy + (test_ground_truth[0] == stream_output_arg)
-        count = count + 1
-        if i % 200 == 0 and i:
-            logging.info("tf test accuracy, stream model state external = %.2f%% %d out of %d", *(total_accuracy * 100 / count, i, set_size))
+                    stream_output_arg = np.argmax(outputs[0])
+            total_accuracy = total_accuracy + (test_ground_truth[0] == stream_output_arg)
+            count = count + 1
+            if i % 200 == 0 and i:
+                logging.info("tf test accuracy, stream model state external = %.2f%% %d out of %d", *(total_accuracy * 100 / count, i, set_size))
 
-    total_accuracy = total_accuracy / count if count > 0 else 0.0
-    logging.info("TF Final test accuracy of stream model state external = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
+        total_accuracy = total_accuracy / count if count > 0 else 0.0
+        logging.info("TF Final test accuracy of stream model state external = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
 
-    path = os.path.join(flags.train_dir, folder)
-    if not os.path.exists(path):
-        os.makedirs(path)
+        path = os.path.join(flags.train_dir, folder)
+        if not os.path.exists(path):
+            os.makedirs(path)
 
-    fname_summary = "model_summary_stream_state_external"
-    utils.save_model_summary(model_stream, path, file_name=fname_summary + ".txt")
+        fname_summary = "model_summary_stream_state_external"
+        utils.save_model_summary(model_stream, path, file_name=fname_summary + ".txt")
 
-    tf.keras.utils.plot_model(model_stream, to_file=os.path.join(path, fname_summary + ".png"), show_shapes=True, expand_nested=True)
+        tf.keras.utils.plot_model(model_stream, to_file=os.path.join(path, fname_summary + ".png"), show_shapes=True, expand_nested=True)
 
-    with open(os.path.join(path, accuracy_name), "wt") as fd:
-        fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
-    sess.close()
+        with open(os.path.join(path, accuracy_name), "wt") as fd:
+            fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
+    finally:
+        flags.batch_size = original_batch_size
+        sess.close()
     return total_accuracy * 100
 
 
@@ -334,60 +342,62 @@ def tflite_stream_state_external_model_accuracy(flags, folder, tflite_model_name
     total_accuracy = 0.0
     count = 0.0
     inference_batch_size = 1
-    for i in range(0, set_size, inference_batch_size):
-        test_fingerprints, test_ground_truth = audio_processor.get_data(inference_batch_size, i, flags, 0.0, 0.0, 0, "testing", 0.0, 0.0, sess)
+    try:
+        for i in range(0, set_size, inference_batch_size):
+            test_fingerprints, test_ground_truth = audio_processor.get_data(inference_batch_size, i, flags, 0.0, 0.0, 0, "testing", 0.0, 0.0, sess)
 
-        # before processing new test sequence we can reset model state
-        # if we reset model state then it is not real streaming mode
-        if reset_state:
-            for s in range(len(input_details)):
-                inputs[s] = np.zeros(input_details[s]["shape"], dtype=np.float32)
+            # before processing new test sequence we can reset model state
+            # if we reset model state then it is not real streaming mode
+            if reset_state:
+                for s in range(len(input_details)):
+                    inputs[s] = np.zeros(input_details[s]["shape"], dtype=np.float32)
 
-        if flags.preprocess == "raw":
-            out_tflite = inference.run_stream_inference_classification_tflite(flags, interpreter, test_fingerprints, inputs)
-            out_tflite_argmax = np.argmax(out_tflite)
-        else:
-            for t in range(test_fingerprints.shape[1]):
-                # get new frame from stream of data
-                stream_update = test_fingerprints[:, t, :]
-                stream_update = np.expand_dims(stream_update, axis=1)
-
-                # [batch, time=1, feature]
-                stream_update = stream_update.astype(np.float32)
-
-                # set input audio data (by default input data at index 0)
-                interpreter.set_tensor(input_details[0]["index"], stream_update)
-
-                # set input states (index 1...)
-                for s in range(1, len(input_details)):
-                    interpreter.set_tensor(input_details[s]["index"], inputs[s])
-
-                # run inference
-                interpreter.invoke()
-
-                # get output: classification
-                out_tflite = interpreter.get_tensor(output_details[0]["index"])
-
-                # get output states and set it back to input states
-                # which will be fed in the next inference cycle
-                for s in range(1, len(input_details)):
-                    # The function `get_tensor()` returns a copy of the tensor data.
-                    # Use `tensor()` in order to get a pointer to the tensor.
-                    inputs[s] = interpreter.get_tensor(output_details[s]["index"])
-
+            if flags.preprocess == "raw":
+                out_tflite = inference.run_stream_inference_classification_tflite(flags, interpreter, test_fingerprints, inputs)
                 out_tflite_argmax = np.argmax(out_tflite)
+            else:
+                for t in range(test_fingerprints.shape[1]):
+                    # get new frame from stream of data
+                    stream_update = test_fingerprints[:, t, :]
+                    stream_update = np.expand_dims(stream_update, axis=1)
 
-        total_accuracy = total_accuracy + (test_ground_truth[0] == out_tflite_argmax)
-        count = count + 1
-        if i % 200 == 0 and i:
-            logging.info("tflite test accuracy, stream model state external = %f %d out of %d", *(total_accuracy * 100 / count, i, set_size))
+                    # [batch, time=1, feature]
+                    stream_update = stream_update.astype(np.float32)
 
-    total_accuracy = total_accuracy / count if count > 0 else 0.0
-    logging.info("tflite Final test accuracy, stream model state external = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
+                    # set input audio data (by default input data at index 0)
+                    interpreter.set_tensor(input_details[0]["index"], stream_update)
 
-    with open(os.path.join(path, accuracy_name), "wt") as fd:
-        fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
-    sess.close()
+                    # set input states (index 1...)
+                    for s in range(1, len(input_details)):
+                        interpreter.set_tensor(input_details[s]["index"], inputs[s])
+
+                    # run inference
+                    interpreter.invoke()
+
+                    # get output: classification
+                    out_tflite = interpreter.get_tensor(output_details[0]["index"])
+
+                    # get output states and set it back to input states
+                    # which will be fed in the next inference cycle
+                    for s in range(1, len(input_details)):
+                        # The function `get_tensor()` returns a copy of the tensor data.
+                        # Use `tensor()` in order to get a pointer to the tensor.
+                        inputs[s] = interpreter.get_tensor(output_details[s]["index"])
+
+                    out_tflite_argmax = np.argmax(out_tflite)
+
+            total_accuracy = total_accuracy + (test_ground_truth[0] == out_tflite_argmax)
+            count = count + 1
+            if i % 200 == 0 and i:
+                logging.info("tflite test accuracy, stream model state external = %f %d out of %d", *(total_accuracy * 100 / count, i, set_size))
+
+        total_accuracy = total_accuracy / count if count > 0 else 0.0
+        logging.info("tflite Final test accuracy, stream model state external = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
+
+        with open(os.path.join(path, accuracy_name), "wt") as fd:
+            fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
+    finally:
+        sess.close()
     return total_accuracy * 100
 
 
@@ -427,31 +437,33 @@ def tflite_non_stream_model_accuracy(flags, folder, tflite_model_name="non_strea
     total_accuracy = 0.0
     count = 0.0
     inference_batch_size = 1
-    for i in range(0, set_size, inference_batch_size):
-        test_fingerprints, test_ground_truth = audio_processor.get_data(inference_batch_size, i, flags, 0.0, 0.0, 0, "testing", 0.0, 0.0, sess)
+    try:
+        for i in range(0, set_size, inference_batch_size):
+            test_fingerprints, test_ground_truth = audio_processor.get_data(inference_batch_size, i, flags, 0.0, 0.0, 0, "testing", 0.0, 0.0, sess)
 
-        # set input audio data (by default input data at index 0)
-        interpreter.set_tensor(input_details[0]["index"], test_fingerprints.astype(np.float32))
+            # set input audio data (by default input data at index 0)
+            interpreter.set_tensor(input_details[0]["index"], test_fingerprints.astype(np.float32))
 
-        # run inference
-        interpreter.invoke()
+            # run inference
+            interpreter.invoke()
 
-        # get output: classification
-        out_tflite = interpreter.get_tensor(output_details[0]["index"])
+            # get output: classification
+            out_tflite = interpreter.get_tensor(output_details[0]["index"])
 
-        out_tflite_argmax = np.argmax(out_tflite)
+            out_tflite_argmax = np.argmax(out_tflite)
 
-        total_accuracy = total_accuracy + (test_ground_truth[0] == out_tflite_argmax)
-        count = count + 1
-        if i % 200 == 0 and i:
-            logging.info("tflite test accuracy, non stream model = %.2f%% %d out of %d", *(total_accuracy * 100 / count, i, set_size))
+            total_accuracy = total_accuracy + (test_ground_truth[0] == out_tflite_argmax)
+            count = count + 1
+            if i % 200 == 0 and i:
+                logging.info("tflite test accuracy, non stream model = %.2f%% %d out of %d", *(total_accuracy * 100 / count, i, set_size))
 
-    total_accuracy = total_accuracy / count if count > 0 else 0.0
-    logging.info("tflite Final test accuracy, non stream model = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
+        total_accuracy = total_accuracy / count if count > 0 else 0.0
+        logging.info("tflite Final test accuracy, non stream model = %.2f%% (N=%d)", *(total_accuracy * 100, set_size))
 
-    with open(os.path.join(path, accuracy_name), "wt") as fd:
-        fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
-    sess.close()
+        with open(os.path.join(path, accuracy_name), "wt") as fd:
+            fd.write("%f on set_size %d" % (total_accuracy * 100, set_size))
+    finally:
+        sess.close()
     return total_accuracy * 100
 
 
@@ -472,6 +484,7 @@ def convert_model_tflite(flags, folder, mode, fname, weights_name="best_weights"
     sess = tf.Session(config=config)
     tf.keras.backend.set_session(sess)
     tf.keras.backend.set_learning_phase(0)
+    original_batch_size = flags.batch_size
     flags.batch_size = 1  # set batch size for inference
     model = models.MODELS[flags.model_name](flags)
     model.load_weights(os.path.join(flags.train_dir, weights_name)).expect_partial()
@@ -490,6 +503,7 @@ def convert_model_tflite(flags, folder, mode, fname, weights_name="best_weights"
         logging.warning("FAILED to convert to mode %s, tflite: %s", mode, e)
         raise  # Re-raise to allow caller to detect failure
     finally:
+        flags.batch_size = original_batch_size
         sess.close()
 
 
@@ -508,6 +522,7 @@ def convert_model_saved(flags, folder, mode, weights_name="best_weights"):
     sess = tf.Session(config=config)
     tf.keras.backend.set_session(sess)
     tf.keras.backend.set_learning_phase(0)
+    original_batch_size = flags.batch_size
     flags.batch_size = 1  # set batch size for inference
     model = models.MODELS[flags.model_name](flags)
     model.load_weights(os.path.join(flags.train_dir, weights_name)).expect_partial()
@@ -522,4 +537,6 @@ def convert_model_saved(flags, folder, mode, weights_name="best_weights"):
         logging.warning("FAILED to write file: %s", e)
     except (ValueError, AttributeError, RuntimeError, TypeError, AssertionError) as e:
         logging.warning("WARNING: failed to convert to SavedModel: %s", e)
-    sess.close()
+    finally:
+        flags.batch_size = original_batch_size
+        sess.close()

@@ -37,64 +37,39 @@ def test_record_section_triggers_bottleneck_and_trend(tmp_path: Path) -> None:
 
 
 def test_monitor_memory_import_error(tmp_path: Path, monkeypatch) -> None:
+    import src.utils.performance_monitor as pm_module
+
     m = PerformanceMonitor(log_dir=str(tmp_path), enable_profiling=True)
-
-    import builtins
-
-    real_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name == "psutil":
-            raise ImportError("missing")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+    # Simulate psutil not being available at module level
+    monkeypatch.setattr(pm_module, "_psutil_available", False)
     out = m.monitor_memory()
     assert out == {"rss_mb": 0, "vms_mb": 0, "percent": 0}
 
 
-def test_monitor_gpu_memory_paths(tmp_path: Path, monkeypatch) -> None:
+def test_monitor_gpu_memory_no_gpu(tmp_path: Path, monkeypatch) -> None:
+    import src.utils.performance as perf_module
+
     m = PerformanceMonitor(log_dir=str(tmp_path), enable_profiling=True)
-
-    class DummyTFNoGPU:
-        class config:
-            @staticmethod
-            def list_physical_devices(_):
-                return []
-
-    import builtins
-
-    real_import = builtins.__import__
-
-    def fake_import_no_gpu(name, *args, **kwargs):
-        if name == "tensorflow":
-            return DummyTFNoGPU
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import_no_gpu)
+    monkeypatch.setattr(perf_module, "check_gpu_available", lambda: False)
     out = m.monitor_gpu_memory()
     assert out == {"allocated_mb": 0, "peak_mb": 0}
 
-    class DummyTFGPU:
-        class config:
-            @staticmethod
-            def list_physical_devices(_):
-                return ["GPU:0"]
 
-            class experimental:
-                @staticmethod
-                def get_memory_info(_):
-                    return {"current": 1024 * 1024, "peak": 3 * 1024 * 1024}
+def test_monitor_gpu_memory_with_gpu(tmp_path: Path, monkeypatch) -> None:
+    import tensorflow as tf
 
-    def fake_import_gpu(name, *args, **kwargs):
-        if name == "tensorflow":
-            return DummyTFGPU
-        return real_import(name, *args, **kwargs)
+    import src.utils.performance as perf_module
 
-    monkeypatch.setattr(builtins, "__import__", fake_import_gpu)
-    out2 = m.monitor_gpu_memory()
-    assert out2["allocated_mb"] == 1.0
-    assert out2["peak_mb"] == 3.0
+    m = PerformanceMonitor(log_dir=str(tmp_path), enable_profiling=True)
+    monkeypatch.setattr(perf_module, "check_gpu_available", lambda: True)
+    monkeypatch.setattr(
+        tf.config.experimental,
+        "get_memory_info",
+        lambda _device: {"current": 1024 * 1024, "peak": 3 * 1024 * 1024},
+    )
+    out = m.monitor_gpu_memory()
+    assert out["allocated_mb"] == 1.0
+    assert out["peak_mb"] == 3.0
 
 
 def test_disable_profiling_skips_record(tmp_path: Path) -> None:

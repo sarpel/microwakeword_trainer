@@ -61,7 +61,10 @@ microwakeword_trainer is a **production-ready** GPU-accelerated wake word traini
 - Aligns trainer and autotuner objectives (both now use FAH + recall + auc_pr)
 - No change to evaluation pipeline, metric computation, or any other component
 
-**Status**: ✅ Complete — LSP clean, 51 tests pass (2 pre-existing failures unrelated)
+**Status**: ⚠️ Partial / Known Issues — LSP clean, 49 of 51 tests pass
+
+**Known Issues:**
+- 2 pre-existing test failures exist that are unrelated to this phase's changes and are tracked separately; they do not affect functional correctness of the pipeline.
 
 ### Phase 5: Auto-Tuning and Performance Optimization (2026-03-07)
 
@@ -220,7 +223,10 @@ JQ|
 - Because Dense layer input changed from 64→384 (Flatten instead of AveragePooling), model must be retrained
 - Use: `mww-train --config config/presets/max_quality.yaml`
 
-**Status:** ✅ Complete, documented in AGENTS.md
+**Status:** ⏳ Pending User Action: Requires Retraining — Dense layer input changed from 64→384 (Flatten replacing AveragePooling), which invalidates existing trained models. Re-run training with:
+```
+mww-train --config config/presets/max_quality.yaml
+```
 ---
 
 ### Bug Fix 3: evaluate_model.py Generator Exhaustion and Incorrect Model Building
@@ -418,6 +424,7 @@ JQ|
 - Model analysis and verification
 - Streaming subgraph verification
 - Official state naming correction (`stream`, `stream_1`, …, `stream_5` are the verified reference names)
+
 **Key Files:**
 
 - `manifest.py` (330 lines) - Manifest generation
@@ -449,6 +456,7 @@ JQ|
 - Test evaluator for comprehensive testing
 - MCC, Cohen's Kappa, EER computation
 - Bug fixes: `evaluate_model.py` generator exhaustion removed, model building fixed
+
 **Key Files:**
 
 - `fah_estimator.py` (72 lines) - FAH calculation
@@ -665,10 +673,9 @@ pytest --cov=src --cov=config tests/
 
 ## Summary
 
-microwakeword_trainer is a **complete, production-ready** framework for ESPHome wake word detection. All core components are implemented, tested, and documented. The recent architecture alignment with official okay_nabu TFLite model has resolved the 15% AUC gap between training and export, and a full codebase audit confirms all pipelines are correctly aligned.
+microwakeword_trainer's core framework is **production-ready**; current model exports require retraining after architecture alignment (Dense layer input changed 64→384 with Flatten replacing AveragePooling). The framework itself is complete, but a retrained TFLite model is required before production deployment. A full codebase audit confirms all pipelines are correctly aligned to the official okay_nabu architecture.
 
 **Strengths:**
-- Comprehensive pipeline from data to deployment
 - Comprehensive pipeline from data to deployment
 - GPU-accelerated training with 5-10x SpecAugment speedup
 - ESPHome-compatible export with verification
@@ -678,13 +685,14 @@ microwakeword_trainer is a **complete, production-ready** framework for ESPHome 
 - **Aligned with official okay_nabu architecture (Flatten temporal pooling, correct state variables, verified 6 streaming state vars)**
 - **Ground truth audit (2026-03-12)**: 95 tensors, 13 unique ops, 20 registered resolvers, all documentation corrected
 **Recommendations:**
-1. **Retrain model after Flatten change** — Use `mww-train --config config/presets/max_quality.yaml` (Dense layer input changed from 64→384)
-2. Leverage auto-tuning for FAH/recall optimization
-3. Monitor tensor arena usage on target devices (≤136KB recommended)
-4. Keep ARCHITECTURAL_CONSTITUTION.md immutable - it's the source of truth
-5. Report bugs and feature requests via GitHub issues
+1. **Retrain model before deployment** — Use `mww-train --config config/presets/max_quality.yaml` (required: Dense layer input changed from 64→384 due to Flatten replacing AveragePooling)
+2. **Re-export TFLite after retraining** — Run the export pipeline to produce a new TFLite model compatible with the updated architecture
+3. Leverage auto-tuning for FAH/recall optimization
+4. Monitor tensor arena usage on target devices (≤136KB recommended)
+5. Keep ARCHITECTURAL_CONSTITUTION.md immutable - it's the source of truth
+6. Report bugs and feature requests via GitHub issues
 **Next Steps:**
-1. Retrain model with max_quality preset to finalize Flatten alignment
-2. Re-export TFLite model after retraining
+1. **[Required]** Retrain model with max_quality preset to finalize Flatten alignment
+2. **[Required]** Re-export TFLite model after retraining
 3. Re-evaluate to verify AUC gap elimination
 4. Verify ESPHome compatibility on real device

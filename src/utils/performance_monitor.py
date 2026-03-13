@@ -11,6 +11,15 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    import psutil as _psutil
+
+    _psutil_available = True
+except ImportError:
+    _psutil = None
+    _psutil_available = False
+    logger.warning("psutil not available; memory monitoring disabled")
+
 # Initialize GPU environment once at module import time
 _gpu_env_initialized = False
 try:
@@ -108,19 +117,15 @@ class PerformanceMonitor:
 
     def monitor_memory(self) -> dict:
         """Track Python heap memory usage. Returns dict with rss_mb, vms_mb, percent."""
-        try:
-            import psutil
-
-            process = psutil.Process()
-            mem_info = process.memory_info()
-            return {
-                "rss_mb": mem_info.rss / (1024**2),
-                "vms_mb": mem_info.vms / (1024**2),
-                "percent": process.memory_percent(),
-            }
-        except ImportError:
-            logger.warning("psutil not available, memory monitoring disabled")
+        if not _psutil_available or _psutil is None:
             return {"rss_mb": 0, "vms_mb": 0, "percent": 0}
+        process = _psutil.Process()
+        mem_info = process.memory_info()
+        return {
+            "rss_mb": mem_info.rss / (1024**2),
+            "vms_mb": mem_info.vms / (1024**2),
+            "percent": process.memory_percent(),
+        }
 
     def monitor_gpu_memory(self) -> dict:
         """Track GPU memory usage via TensorFlow.

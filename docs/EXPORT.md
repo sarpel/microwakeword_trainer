@@ -159,7 +159,10 @@ converter.representative_dataset = create_representative_dataset(
 
 - **probability_cutoff**: Threshold for wake word detection (0.0-1.0)
 - **sliding_window_size**: Number of frames to average for stable detection
-- **tensor_arena_size**: Memory allocation for TFLite runtime (bytes). It is resolved automatically from exported TFLite tensor details with `arena_size_margin` when `export.tensor_arena_size=0`.
+- **tensor_arena_size**: Memory allocation for TFLite runtime (bytes).
+  - **Auto-resolve (recommended):** Set `"tensor_arena_size": 0` in your config (e.g. under `export:`) to enable automatic calculation. When `export.tensor_arena_size=0`, the exporter measures the TFLite model's tensor allocations and adds a safety margin of `arena_size_margin` (default 10%, controlled by the `export.arena_size_margin` key) to produce the final value written to the manifest.
+  - **Failure behavior:** If auto-resolve fails (e.g. the TFLite interpreter cannot allocate tensors), the exporter logs an error and leaves `tensor_arena_size` as `0` in the manifest so the ESPHome runtime falls back to its own default behavior. Check the export logs for errors and re-run the export after correcting the issue.
+  - **Manual override:** Set `"tensor_arena_size"` to a non-zero byte value (e.g. `22860`) to force a specific arena size regardless of the computed value. Use this when you know the exact memory budget on your target device. Related config keys: `export.tensor_arena_size` and `export.arena_size_margin`.
 - **minimum_esphome_version**: Required ESPHome version for compatibility
 
 ### Calculation Methods

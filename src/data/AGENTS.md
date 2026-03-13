@@ -62,14 +62,10 @@ Audio validation constants: VALIDATION_SAMPLE_RATE=16000, VALIDATION_SAMPLE_WIDT
 - `MicroFrontend`: pymicro-features wrapper for mel spectrogram computation
 - `SpectrogramGeneration`: batch processing with `generate()`, `generate_from_file()`, `process_batch()`
 - Output shape: `[time_frames, 40]` — 40 mel bins, 10ms stride, 30ms window (ESPHome requirement)
-- PCAN: Per-Channel Amplitude Normalization is hardcoded ON in the pymicro-features C++ backend:
-  enable_pcan=1, strength=0.95, offset=80.0, gain_bits=21
-  This matches ESPHome's on-device microfrontend exactly — no Python config flag exists or should be added.
-  ESPHome uses identical PCAN parameters; no code changes required.
 
 ### PCAN (Per-Channel Amplitude Normalization)
 
-PCAN is **always ON** in the pymicro-features C++ backend. There is no Python flag to enable or disable it. This matches the official ESPHome okay_nabu model configuration. Do NOT add an `enable_pcan` config field — it would have no effect.
+PCAN is **always ON** in the pymicro-features C++ backend (`enable_pcan=1`, `strength=0.95`, `offset=80.0`, `gain_bits=21`). This matches ESPHome's on-device microfrontend exactly. There is no Python `enable_pcan` config field — do NOT add one, as it would have no effect.
 
 ## Dataset Module (`dataset.py`)
 
@@ -120,13 +116,3 @@ PCAN is **always ON** in the pymicro-features C++ backend. There is no Python fl
 - [Training Guide](../../docs/TRAINING.md) - Complete training workflow
 - [Configuration Reference](../../docs/CONFIGURATION.md) - All config options
 - [Export Guide](../../docs/EXPORT.md) - TFLite export process
-
-## PCAN Documentation
-
-- Per-Channel Amplitude Normalization (PCAN) is enabled by default in the pymicro-features C++ backend:
-  - enable_pcan = 1
-  - strength = 0.95
-  - offset = 80.0
-  - gain_bits = 21
-- ESPHome uses identical parameters for on-device microfrontend; there is no Python-side enable_pcan flag.
-- This document notes the PCAN behavior to avoid confusion about config mismatches between Python and C++.
