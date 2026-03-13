@@ -583,7 +583,7 @@ def log_false_predictions_to_json(
 
     # Build per-prediction entries
     false_predictions = []
-    for idx, score in zip(top_indices, top_scores):
+    for idx, score in zip(top_indices, top_scores, strict=True):
         entry: dict[str, Any] = {
             "index": int(idx),
             "score": float(score),
@@ -832,7 +832,7 @@ def run_top_fp_extraction(
                 else:
                     scores = tf.reshape(predictions, [-1]).numpy()
 
-                for path, score in zip(batch_paths, scores):
+                for path, score in zip(batch_paths, scores, strict=True):
                     all_scores.append((path, float(score)))
 
                 batch_features.clear()

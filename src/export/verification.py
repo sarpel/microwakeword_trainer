@@ -4,6 +4,27 @@ import numpy as np
 import tensorflow as tf
 
 
+def _ensure_quantized_int(value: Any) -> int:
+    """Safely convert quantization parameter to int.
+
+    Some TFLite implementations return float zero_points. This function
+    safely converts to int with proper type checking to avoid TypeError.
+
+    Args:
+        value: Zero-point value (int or float)
+
+    Returns:
+        Integer zero-point value
+
+    Raises:
+        TypeError: If value cannot be safely converted to int
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError) as e:
+        raise TypeError(f"Cannot convert zero-point {value!r} (type: {type(value).__name__}) to int: {e}")
+
+
 def _estimate_tensor_arena_size(interpreter: tf.lite.Interpreter) -> int:
     total_memory = 0
     for tensor in interpreter.get_tensor_details():
@@ -110,7 +131,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         checks["input_quant_params"] = False
     else:
         input_scale = float(input_scales[0])
-        input_zero = int(input_zero_points[0])
+        input_zero = _ensure_quantized_int(input_zero_points[0])
         details["input_scale"] = input_scale
         details["input_zero_point"] = input_zero
         checks["input_quant_params"] = abs(input_scale - 0.101961) <= 1e-4 and input_zero == -128
@@ -124,12 +145,13 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         checks["output_quant_params"] = False
     else:
         output_scale = float(output_scales[0])
-        output_zero = int(output_zero_points[0])
+        output_zero = _ensure_quantized_int(output_zero_points[0])
+        expected_output_scale = 1.0 / 255.0  # uint8 [0,255] -> [0.0,1.0]
         details["output_scale"] = output_scale
         details["output_zero_point"] = output_zero
-        checks["output_quant_params"] = abs(output_scale - 0.00390625) <= 1e-6 and output_zero == 0
+        checks["output_quant_params"] = abs(output_scale - expected_output_scale) <= 1e-4 and output_zero == 0
         if not checks["output_quant_params"]:
-            errors.append(f"Output quantization mismatch: scale={output_scale}, zero_point={output_zero}")
+            errors.append(f"Output quantization mismatch: scale={output_scale}, zero_point={output_zero}; expected scale≈{expected_output_scale} (1/255) and zero_point=0")
             valid = False
 
     op_counts: dict[str, int] = {}

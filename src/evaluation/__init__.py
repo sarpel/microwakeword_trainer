@@ -9,4 +9,4 @@ __version__ = "2.0.0"
 from .metrics import MetricsCalculator
 from .test_evaluator import TestEvaluator
 
-__all__ = ["TestEvaluator", "MetricsCalculator"]
+__all__ = ["MetricsCalculator", "TestEvaluator"]

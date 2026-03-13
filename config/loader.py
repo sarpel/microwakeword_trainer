@@ -405,7 +405,6 @@ class EvaluationConfig:
     """Evaluation and metrics configuration."""
 
     default_threshold: float = 0.97  # Default probability threshold for metrics (legacy name)
-    detection_threshold: float = 0.97  # Canonical threshold name (alias for default_threshold)
     n_thresholds: int = 101  # Number of thresholds for ROC/PR curves
     max_fah: float = 10.0  # Maximum FAH for average viable recall calculation
     target_fah: float = 2.0  # Target FAH for recall@FAH metrics
@@ -416,15 +415,6 @@ class EvaluationConfig:
     plateau_slope_eps: float = 0.0001  # Slope epsilon for plateau detection
     warmup_runs: int = 10  # Warmup runs for latency measurement
     n_latency_runs: int = 100  # Number of runs for latency measurement
-
-    # Backwards-compatibility alias: expose canonical name via property
-    @property
-    def detection_threshold(self) -> float:
-        return self.default_threshold
-
-    @detection_threshold.setter
-    def detection_threshold(self, value: float) -> None:
-        self.default_threshold = float(value)
 
 
 @dataclass
@@ -784,7 +774,7 @@ class ConfigLoader:
         if "training" in config and "export" in config:
             ls = config["training"].get("label_smoothing", 0.0)
             threshold = config["export"].get("probability_cutoff", 0.97)
-            eval_threshold = config.get("evaluation", {}).get("detection_threshold") or config.get("evaluation", {}).get("default_threshold", threshold)
+            eval_threshold = config.get("evaluation", {}).get("default_threshold", threshold)
             deploy_threshold = max(threshold, eval_threshold)
 
             if ls > 0:
