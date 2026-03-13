@@ -683,7 +683,7 @@ microwakeword_trainer's core framework is **production-ready**; current model ex
 - Robust testing coverage
 - Complete documentation
 - **Aligned with official okay_nabu architecture (Flatten temporal pooling, correct state variables, verified 6 streaming state vars)**
-- **Ground truth audit (2026-03-12)**: 95 tensors, 13 unique ops, 20 registered resolvers, all documentation corrected
+- **Ground truth audit (2026-03-12)**: 94 tensors, 13 unique ops, 20 registered resolvers, all documentation corrected
 **Recommendations:**
 1. **Retrain model before deployment** — Use `mww-train --config config/presets/max_quality.yaml` (required: Dense layer input changed from 64→384 due to Flatten replacing AveragePooling)
 2. **Re-export TFLite after retraining** — Run the export pipeline to produce a new TFLite model compatible with the updated architecture
