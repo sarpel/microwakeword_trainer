@@ -349,7 +349,7 @@ Adjust `probability_cutoff` based on your environment:
 
 **Symptom**: Export/verification reports a state payload shape mismatch.
 
-**Cause**: Shape checks must be config-aware. `stream_5` depends on `temporal_frames` derived from `clip_duration_ms`, so it is not universally `[1, 5, 1, 64]`.
+**Cause**: Shape checks must be config-aware. `stream_5` depends on `temporal_frames` inferred from the Dense kernel shape, so it is not universally `[1, 5, 1, 64]`.
 
 **Current behavior**: Verification computes expected state shapes with `compute_expected_state_shapes()` and validates against model-derived dimensions.
 
@@ -371,6 +371,27 @@ python -c "import tensorflow as tf; interpreter = tf.lite.Interpreter('model.tfl
 # Check manifest validity
 python -c "import json; print(json.load(open('manifest.json')))"
 ```
+
+### Post-Export Evaluation Reports
+
+After export verification, run advanced evaluation to generate deployment-quality diagnostics and executive summaries:
+
+```bash
+python scripts/evaluate_model.py --model models/exported/wake_word.tflite --config standard --output-dir logs/
+```
+
+Generated under `logs/evaluation_artifacts/`:
+- `evaluation_report.json` (full metrics payload)
+- `executive_report.md` and `executive_report.html`
+- PNG plots (ROC, PR, DET, confusion matrix, calibration, threshold/cost curves)
+
+Optional interactive dashboard:
+
+```bash
+python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
+```
+
+Note: the interactive dashboard uses Plotly CDN for charts (network required). For offline sharing, use `executive_report.html`.
 
 ### Common Debug Steps
 

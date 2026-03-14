@@ -39,3 +39,23 @@ metrics = calc.compute_all_metrics(ambient_duration_hours=hours, threshold=0.5)
 
 - [Training Guide](../../docs/TRAINING.md)
 - [Configuration Reference](../../docs/CONFIGURATION.md)
+
+## Evaluation Reporting Workflow
+
+For end-to-end post-training assessment, use:
+
+```bash
+python scripts/evaluate_model.py --model models/exported/wake_word.tflite --config standard --output-dir logs/
+```
+
+Outputs under `evaluation_artifacts/` include:
+- `evaluation_report.json`
+- PNG plots (ROC, PR, DET, confusion matrix, calibration, threshold/cost curves)
+- `executive_report.md`
+- `executive_report.html`
+
+Optional interactive dashboard generation:
+
+```bash
+python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
+```

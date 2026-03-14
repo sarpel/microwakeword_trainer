@@ -15,6 +15,7 @@ def apply_sliding_window_detection(
     y_scores: np.ndarray,
     threshold: float,
     sliding_window_size: int,
+    clip_ids: np.ndarray | None = None,
 ) -> np.ndarray:
     """Apply ESPHome-style sliding-window detection semantics to score sequence.
 
@@ -23,12 +24,22 @@ def apply_sliding_window_detection(
     which is equivalent to sliding-average > probability_cutoff.
 
     This helper returns a binary detection sequence where each element indicates
-    whether the detection condition is satisfied at that timestep using the
+    whether the detection condition is satisfied at that timestep using
     trailing window ending at that timestep.
+
+    Args:
+        y_scores: Score sequence for detection
+        threshold: Detection threshold
+        sliding_window_size: Size of sliding window in timesteps
+        clip_ids: Optional array indicating clip boundaries. If provided, resets
+            sliding window at each clip boundary to prevent cross-contamination.
+
+    Returns:
+        Binary detection sequence.
     """
     scores = np.asarray(y_scores, dtype=float).reshape(-1)
     if sliding_window_size <= 1:
-        return (scores >= threshold).astype(int)
+        return (scores > threshold).astype(int)
 
     if scores.size == 0:
         return np.array([], dtype=int)
@@ -36,12 +47,20 @@ def apply_sliding_window_detection(
     cumsum = np.cumsum(scores)
     detections = np.zeros(scores.shape[0], dtype=int)
 
+    # Track last clip boundary for window reset
+    last_clip_boundary = 0
+
     for i in range(scores.shape[0]):
-        start = max(0, i - sliding_window_size + 1)
+        # Check if we crossed a clip boundary
+        if clip_ids is not None and i > 0 and clip_ids[i] != clip_ids[i - 1]:
+            last_clip_boundary = i  # Reset window at clip boundary
+
+        # Window start is max of: boundary point, window size constraint
+        start = max(last_clip_boundary, i - sliding_window_size + 1)
         window_sum = cumsum[i] - (cumsum[start - 1] if start > 0 else 0.0)
         window_len = i - start + 1
         cutoff_sum = float(threshold) * window_len
-        detections[i] = 1 if window_sum > cutoff_sum else 0
+        detections[i] = 1 if window_sum >= cutoff_sum else 0
 
     return detections
 

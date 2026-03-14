@@ -100,7 +100,6 @@ Available environment variables:
 | `gradient_clipnorm` | float | 5.0 | Gradient clipping norm |
  | `ema_decay` | float | null | EMA decay (null = disabled). Default in `max_quality.yaml`: 0.999. See ARCHITECTURAL_CONSTITUTION.md Article IX for EMA behavior and checkpoint usage. |
 | `random_seed` | int | null | Global RNG seed |
-| `random_seed` | int | null | Global RNG seed |
 | `auto_tune_on_poor_fah` | bool | false | Auto-run mww-autotune if FAH high |
 
 ### 4. ModelConfig
@@ -314,6 +313,14 @@ Available environment variables:
 | `plateau_slope_eps` | float | 0.0001 | Slope epsilon for plateau |
 | `warmup_runs` | int | 10 | Warmup runs for latency |
 | `n_latency_runs` | int | 100 | Number of latency runs |
+
+`scripts/evaluate_model.py` consumes these settings and writes `evaluation_artifacts/` output:
+- `evaluation_report.json`
+- `executive_report.md`
+- `executive_report.html`
+- PNG plots (ROC/PR/DET/confusion/calibration/threshold/cost)
+
+Use `--output-dir` to choose artifact location, and `--n-thresholds` to override sweep density per run.
 
 ### 13. AutoTuningConfig
 

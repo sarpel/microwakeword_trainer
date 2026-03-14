@@ -144,6 +144,8 @@ class ModelConfig:
     def __post_init__(self) -> None:
         if self.architecture != "mixednet":
             raise ValueError("model.architecture must be 'mixednet'")
+        if not 0.0 <= self.dropout_rate <= 1.0:
+            raise ValueError(f"model.dropout_rate must be in range [0.0, 1.0], got {self.dropout_rate}")
 
 
 @dataclass

@@ -3,3 +3,4 @@ eval.txt
 *.pyc
 __pycache__/
 manifest.json
+TOOLS_REFERENCE.md

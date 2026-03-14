@@ -63,6 +63,18 @@ def compute_expected_state_shapes(
           configuration (for example via ``clip_duration_ms``), so it is not universally
           ``(1, 5, 1, 64)``.
     """
+    # Input validation
+    if first_conv_kernel < 1:
+        raise ValueError(f"first_conv_kernel must be >= 1, got {first_conv_kernel}")
+    if stride < 1:
+        raise ValueError(f"stride must be >= 1, got {stride}")
+    if mel_bins < 1:
+        raise ValueError(f"mel_bins must be >= 1, got {mel_bins}")
+    if first_conv_filters < 1:
+        raise ValueError(f"first_conv_filters must be >= 1, got {first_conv_filters}")
+    if temporal_frames < 2:
+        raise ValueError(f"temporal_frames must be >= 2, got {temporal_frames}")
+
     if mixconv_kernel_sizes is None:
         mixconv_kernel_sizes = [[5], [7, 11], [9, 15], [23]]
     if pointwise_filters is None:
@@ -264,7 +276,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
             if tensor is not None:
                 observed_state_payload_shapes.append(tuple(int(v) for v in tensor.get("shape", [])))
                 dtype = tensor.get("dtype")
-                observed_read_payload_dtypes.append(dtype)
+                observed_read_payload_dtypes.append(str(dtype))
                 quant = tensor.get("quantization_parameters", {}) or {}
                 scales = np.asarray(quant.get("scales", []))
                 zero_points = np.asarray(quant.get("zero_points", []))
@@ -276,7 +288,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
                 tensor = all_tensors.get(payload_idx)
                 if tensor is not None:
                     dtype = tensor.get("dtype")
-                    observed_assign_payload_dtypes.append(dtype)
+                    observed_assign_payload_dtypes.append(str(dtype))
                     quant = tensor.get("quantization_parameters", {}) or {}
                     scales = np.asarray(quant.get("scales", []))
                     zero_points = np.asarray(quant.get("zero_points", []))
