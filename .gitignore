@@ -2,3 +2,4 @@ epic.txt
 eval.txt
 *.pyc
 __pycache__/
+manifest.json

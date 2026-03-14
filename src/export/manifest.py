@@ -49,7 +49,7 @@ def generate_manifest(
         "type": "micro",
         "wake_word": export_config.get("wake_word", "Hey Katya"),
         "author": export_config.get("author", "Sarpel GURAY"),
-        "website": export_config.get("website", "https://github.com/sarpel/microwakeword-training-platform"),
+        "website": export_config.get("website", "https://github.com/sarpel/microwakeword_trainer"),
         "model": model_filename,
         "trained_languages": export_config.get("trained_languages", ["en"]),
         "version": 2,

@@ -15,9 +15,40 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
+
+@contextmanager
+def _suppress_stderr_fd():
+    """Temporarily silence process stderr at OS fd level.
+
+    TensorFlow/XLA may emit startup noise directly from native code before
+    Python log filters are active. This keeps CLI output focused.
+    """
+    stderr_fd = sys.stderr.fileno()
+    saved_fd = os.dup(stderr_fd)
+    try:
+        with open(os.devnull, "w") as devnull:
+            os.dup2(devnull.fileno(), stderr_fd)
+        yield
+    finally:
+        os.dup2(saved_fd, stderr_fd)
+        os.close(saved_fd)
+
+
 import h5py
 import numpy as np
-import tensorflow as tf
+
+with _suppress_stderr_fd():
+    import tensorflow as tf
+
+try:
+    from absl import logging as _absl_logging
+
+    _absl_logging.set_verbosity(_absl_logging.ERROR)
+    _absl_logging.set_stderrthreshold("error")
+except Exception as exc:
+    logging.getLogger(__name__).debug("absl logging suppression unavailable: %s", exc)
+
+tf.get_logger().setLevel("ERROR")
 
 from src.export.verification import compute_expected_state_shapes, verify_tflite_model
 from src.model.architecture import build_core_layers
@@ -769,6 +800,219 @@ def create_representative_dataset_from_data(
         store.close()
 
 
+def _write_checkpoint_metadata(checkpoint_path: str, metadata: dict) -> None:
+    """Persist checkpoint sidecar metadata best-effort."""
+    cache_path = Path(checkpoint_path).with_suffix(".metadata.json")
+    with open(cache_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+
+def _select_export_probability_cutoff(
+    y_true: np.ndarray,
+    y_scores: np.ndarray,
+    config: Optional[dict],
+    ambient_duration_hours_override: Optional[float] = None,
+) -> dict:
+    """Select deployment cutoff from test-set predictions.
+
+    Uses the same FAH/recall sweep utilities as the evaluation layer.
+    Primary objective: minimize FAH while meeting target recall.
+    """
+    from src.evaluation.metrics import compute_fah_at_target_recall, compute_recall_at_target_fah
+
+    y_true = np.asarray(y_true, dtype=np.int32).reshape(-1)
+    y_scores = np.asarray(y_scores, dtype=np.float32).reshape(-1)
+    if y_true.size != y_scores.size:
+        raise ValueError(f"y_true and y_scores size mismatch: {y_true.size} vs {y_scores.size}")
+    if y_true.size < 2:
+        raise ValueError("Need at least 2 scored samples to auto-calculate probability_cutoff")
+    if len(np.unique(y_true)) < 2:
+        raise ValueError("Need both positive and negative classes to auto-calculate probability_cutoff")
+
+    cfg = config if isinstance(config, dict) else {}
+    evaluation_cfg = dict(cfg.get("evaluation", {}))
+    training_cfg = dict(cfg.get("training", {}))
+    export_cfg = dict(cfg.get("export", {}))
+
+    n_thresholds = int(evaluation_cfg.get("n_thresholds", 101) or 101)
+    target_recall = float(evaluation_cfg.get("target_recall", 0.90) or 0.90)
+    target_fah = float(evaluation_cfg.get("target_fah", 2.0) or 2.0)
+    sliding_window_size = int(export_cfg.get("sliding_window_size", 5) or 5)
+
+    if ambient_duration_hours_override is not None:
+        ambient_duration_hours = float(ambient_duration_hours_override)
+    else:
+        ambient_duration_hours = float(training_cfg.get("ambient_duration_hours", 42.02) or 42.02)
+    ambient_duration_hours = max(ambient_duration_hours, 1e-8)
+
+    best_fah, best_threshold, best_recall = compute_fah_at_target_recall(
+        y_true=y_true,
+        y_scores=y_scores,
+        ambient_duration_hours=ambient_duration_hours,
+        target_recall=target_recall,
+        n_thresholds=n_thresholds,
+        sliding_window_size=sliding_window_size,
+    )
+
+    method = "fah_at_target_recall"
+    if not np.isfinite(best_fah):
+        # Fallback when strict recall target cannot be met.
+        best_recall, best_threshold, best_fah = compute_recall_at_target_fah(
+            y_true=y_true,
+            y_scores=y_scores,
+            ambient_duration_hours=ambient_duration_hours,
+            target_fah=target_fah,
+            n_thresholds=n_thresholds,
+            sliding_window_size=sliding_window_size,
+        )
+        method = "recall_at_target_fah"
+
+    raw_cutoff = float(np.clip(best_threshold, 0.0, 1.0))
+    fallback_cutoff = float(
+        np.clip(
+            export_cfg.get(
+                "probability_cutoff",
+                evaluation_cfg.get("default_threshold", 0.97),
+            ),
+            0.0,
+            1.0,
+        )
+    )
+
+    cutoff = raw_cutoff
+    fallback_applied = False
+    # Guardrail: extremely low thresholds are unstable and produce false activations.
+    if (not np.isfinite(cutoff)) or cutoff < 0.05:
+        cutoff = fallback_cutoff
+        method = f"{method}_safety_fallback"
+        fallback_applied = True
+
+    return {
+        "probability_cutoff": cutoff,
+        "probability_cutoff_uint8": int(np.clip(round(cutoff * 255.0), 1, 255)),
+        "raw_probability_cutoff": raw_cutoff,
+        "fallback_probability_cutoff": fallback_cutoff,
+        "fallback_applied": fallback_applied,
+        "estimated_fah": float(best_fah),
+        "estimated_recall": float(best_recall),
+        "scaled_ambient_hours": float(ambient_duration_hours),
+        "selection_method": method,
+    }
+
+
+def _auto_calculate_probability_cutoff(
+    tflite_path: str,
+    data_dir: str,
+    config: Optional[dict],
+) -> dict:
+    """Run TFLite test-split inference and compute deployment probability cutoff."""
+    from src.data.dataset import FeatureStore
+
+    test_store_path = Path(data_dir) / "test"
+    if not test_store_path.exists():
+        raise FileNotFoundError(f"Auto cutoff requires test feature store at: {test_store_path}")
+
+    interpreter = tf.lite.Interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
+
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+
+    input_idx = int(input_details[0]["index"])
+    output_idx = int(output_details[0]["index"])
+
+    input_shape = tuple(int(v) for v in input_details[0].get("shape", [1, 3, 40]))
+    if len(input_shape) != 3:
+        raise ValueError(f"Unexpected TFLite input shape for export auto cutoff: {input_shape}")
+    stride = int(input_shape[1])
+    mel_bins = int(input_shape[2])
+
+    input_dtype = input_details[0]["dtype"]
+    input_quant = input_details[0].get("quantization_parameters", {})
+    input_scale = float(input_quant.get("scales", np.array([1.0]))[0])
+    input_zero_point = int(input_quant.get("zero_points", np.array([0]))[0])
+
+    output_dtype = output_details[0]["dtype"]
+    output_quant = output_details[0].get("quantization_parameters", {})
+    output_scale = float(output_quant.get("scales", np.array([1.0]))[0])
+    output_zero_point = int(output_quant.get("zero_points", np.array([0]))[0])
+
+    input_indices = {d["index"] for d in input_details}
+    output_indices = {d["index"] for d in output_details}
+    state_tensors: list[tuple[int, tuple[int, ...], np.dtype]] = []
+    for tensor in interpreter.get_tensor_details():
+        idx = tensor["index"]
+        if idx in input_indices or idx in output_indices:
+            continue
+        if "ReadVariableOp" in tensor.get("name", ""):
+            shape = tuple(int(x) for x in tensor.get("shape", ()))
+            state_tensors.append((idx, shape, tensor["dtype"]))
+
+    y_true: list[int] = []
+    y_scores: list[float] = []
+    negative_chunk_count = 0
+    positive_chunk_count = 0
+
+    store = FeatureStore(test_store_path)
+    try:
+        store.open(readonly=True)
+        for i in range(len(store)):
+            features, raw_label = store.get(i)
+            label = int(raw_label) & 1
+
+            spec = np.asarray(features, dtype=np.float32)
+            if spec.ndim == 1:
+                if spec.size % mel_bins != 0:
+                    continue
+                spec = spec.reshape(-1, mel_bins)
+            if spec.ndim != 2 or spec.shape[1] != mel_bins or spec.shape[0] < stride:
+                continue
+
+            for idx, shape, dtype in state_tensors:
+                interpreter.set_tensor(idx, np.zeros(shape, dtype=dtype))
+
+            for t in range(0, spec.shape[0] - stride + 1, stride):
+                chunk = spec[t : t + stride].reshape(1, stride, mel_bins)
+                if input_dtype == np.int8:
+                    if input_scale <= 0.0:
+                        raise ValueError("Invalid int8 input quantization scale for auto cutoff")
+                    q = np.round(chunk / input_scale + input_zero_point)
+                    chunk_input = np.clip(q, -128, 127).astype(np.int8)
+                else:
+                    chunk_input = chunk.astype(input_dtype)
+
+                interpreter.set_tensor(input_idx, chunk_input)
+                interpreter.invoke()
+                out_val = float(np.asarray(interpreter.get_tensor(output_idx)).reshape(-1)[0])
+                if output_dtype == np.uint8 and output_scale > 0.0:
+                    out_val = (out_val - output_zero_point) * output_scale
+                chunk_score = float(np.clip(out_val, 0.0, 1.0))
+                y_true.append(label)
+                y_scores.append(chunk_score)
+                if label == 1:
+                    positive_chunk_count += 1
+                else:
+                    negative_chunk_count += 1
+    finally:
+        store.close()
+
+    cfg = config if isinstance(config, dict) else {}
+    hardware_cfg = dict(cfg.get("hardware", {}))
+    window_step_ms = float(hardware_cfg.get("window_step_ms", 10) or 10)
+    chunk_duration_hours = (window_step_ms * float(stride)) / 3_600_000.0
+    observed_ambient_hours = max(negative_chunk_count * chunk_duration_hours, 1e-8)
+
+    out = _select_export_probability_cutoff(
+        np.asarray(y_true),
+        np.asarray(y_scores),
+        config,
+        ambient_duration_hours_override=observed_ambient_hours,
+    )
+    out["observed_negative_chunks"] = int(negative_chunk_count)
+    out["observed_positive_chunks"] = int(positive_chunk_count)
+    return out
+
+
 def export_streaming_tflite(
     checkpoint_path: str,
     output_dir: str = "./models/exported",
@@ -937,6 +1181,36 @@ def export_streaming_tflite(
         temporal_frames=temporal_frames,
     )
     verification = verify_exported_model(str(tflite_file), expected_state_shapes=expected_shapes)
+
+    # Auto-calculate deployment cutoff from test split and persist into checkpoint metadata.
+    # This runs on exported TFLite to match deployment behavior.
+    try:
+        if data_dir:
+            print("\n[4.5/5] Auto-calculating probability_cutoff from test split...")
+            auto_cutoff = _auto_calculate_probability_cutoff(
+                tflite_path=str(tflite_file),
+                data_dir=data_dir,
+                config=config,
+            )
+            metadata["tuned_probability_cutoff"] = float(auto_cutoff["probability_cutoff"])
+            metadata["tuned_probability_cutoff_uint8"] = int(auto_cutoff["probability_cutoff_uint8"])
+            metadata["export_estimated_fah"] = float(auto_cutoff["estimated_fah"])
+            metadata["export_estimated_recall"] = float(auto_cutoff["estimated_recall"])
+            metadata["export_cutoff_selection_method"] = str(auto_cutoff["selection_method"])
+            metadata["export_scaled_ambient_hours"] = float(auto_cutoff["scaled_ambient_hours"])
+            metadata["export_observed_negative_chunks"] = int(auto_cutoff.get("observed_negative_chunks", 0))
+            metadata["export_observed_positive_chunks"] = int(auto_cutoff.get("observed_positive_chunks", 0))
+            metadata["export_raw_probability_cutoff"] = float(auto_cutoff.get("raw_probability_cutoff", auto_cutoff["probability_cutoff"]))
+            metadata["export_fallback_probability_cutoff"] = float(auto_cutoff.get("fallback_probability_cutoff", auto_cutoff["probability_cutoff"]))
+            metadata["export_cutoff_fallback_applied"] = bool(auto_cutoff.get("fallback_applied", False))
+            metadata["export_cutoff_source"] = "mww-export"
+            _write_checkpoint_metadata(checkpoint_path, metadata)
+
+            print(f"  ✓ Auto probability_cutoff: {auto_cutoff['probability_cutoff']:.4f} ({auto_cutoff['probability_cutoff_uint8']}) method={auto_cutoff['selection_method']}")
+        else:
+            print("  Note: --data-dir not provided; skipping auto probability_cutoff calculation")
+    except Exception as e:
+        print(f"  Warning: Auto probability_cutoff calculation failed, using configured/default cutoff: {e}")
 
     print("\n[5/5] Generating manifest...")
 
@@ -1183,7 +1457,7 @@ def main():
                 config["export"] = {
                     "wake_word": export_cfg.get("wake_word", args.model_name),
                     "author": export_cfg.get("author", "Sarpel GURAY"),
-                    "website": export_cfg.get("website", "https://github.com/sarpel/microwakeword-training-platform"),
+                    "website": export_cfg.get("website", "https://github.com/sarpel/microwakeword_trainer"),
                     "trained_languages": export_cfg.get("trained_languages", ["en"]),
                     "probability_cutoff": export_cfg.get("probability_cutoff", 0.97),
                     "sliding_window_size": export_cfg.get("sliding_window_size", 5),

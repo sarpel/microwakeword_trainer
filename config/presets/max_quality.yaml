@@ -254,7 +254,7 @@ mining:
 export:
   wake_word: "Hey Katya"
   author: "Sarpel GURAY"
-  website: "https://github.com/sarpel/microwakeword-training-platform"
+  website: "https://github.com/sarpel/microwakeword_trainer"
   trained_languages: ["en"]
 
   quantize: true
