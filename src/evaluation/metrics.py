@@ -37,6 +37,8 @@ def apply_sliding_window_detection(
     Returns:
         Binary detection sequence.
     """
+    # NOTE: Uses strict > comparison to match ESPHome's detection condition:
+    # sum(recent_probs) > probability_cutoff * sliding_window_size
     scores = np.asarray(y_scores, dtype=float).reshape(-1)
     if sliding_window_size <= 1:
         return (scores > threshold).astype(int)
@@ -44,23 +46,32 @@ def apply_sliding_window_detection(
     if scores.size == 0:
         return np.array([], dtype=int)
 
-    cumsum = np.cumsum(scores)
-    detections = np.zeros(scores.shape[0], dtype=int)
-
-    # Track last clip boundary for window reset
-    last_clip_boundary = 0
-
-    for i in range(scores.shape[0]):
-        # Check if we crossed a clip boundary
-        if clip_ids is not None and i > 0 and clip_ids[i] != clip_ids[i - 1]:
-            last_clip_boundary = i  # Reset window at clip boundary
-
-        # Window start is max of: boundary point, window size constraint
-        start = max(last_clip_boundary, i - sliding_window_size + 1)
-        window_sum = cumsum[i] - (cumsum[start - 1] if start > 0 else 0.0)
+    if clip_ids is None:
+        cumsum = np.zeros(scores.size + 1, dtype=float)
+        cumsum[1:] = np.cumsum(scores)
+        i = np.arange(scores.size)
+        start = np.maximum(0, i - sliding_window_size + 1)
+        window_sum = cumsum[i + 1] - cumsum[start]
         window_len = i - start + 1
-        cutoff_sum = float(threshold) * window_len
-        detections[i] = 1 if window_sum > cutoff_sum else 0
+        return (window_sum > float(threshold) * window_len).astype(int)
+
+    clip_ids_arr = np.asarray(clip_ids).reshape(-1)
+    detections = np.zeros(scores.size, dtype=int)
+    boundaries = np.where(np.diff(clip_ids_arr) != 0)[0] + 1
+    segment_starts = np.concatenate(([0], boundaries))
+    segment_ends = np.concatenate((boundaries, [scores.size]))
+
+    for seg_start, seg_end in zip(segment_starts, segment_ends, strict=False):
+        seg_scores = scores[seg_start:seg_end]
+        if seg_scores.size == 0:
+            continue
+        cumsum = np.zeros(seg_scores.size + 1, dtype=float)
+        cumsum[1:] = np.cumsum(seg_scores)
+        i = np.arange(seg_scores.size)
+        start = np.maximum(0, i - sliding_window_size + 1)
+        window_sum = cumsum[i + 1] - cumsum[start]
+        window_len = i - start + 1
+        detections[seg_start:seg_end] = (window_sum > float(threshold) * window_len).astype(int)
 
     return detections
 
@@ -214,7 +225,7 @@ def compute_roc_pr_curves(
         if sliding_window_size > 1:
             y_pred = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
         else:
-            y_pred = (y_scores >= thresh).astype(int)
+            y_pred = (y_scores > thresh).astype(int)
 
         tp = np.sum((y_true == 1) & (y_pred == 1))
         fp = np.sum((y_true == 0) & (y_pred == 1))
@@ -257,14 +268,14 @@ def compute_recall_at_no_faph(
             y_pred_curr = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
             fp = np.sum((y_pred_curr == 1) & neg_mask)
         else:
-            fp = np.sum(y_scores[neg_mask] >= thresh)
+            fp = np.sum(y_scores[neg_mask] > thresh)
 
         if fp == 0:
             pos_mask = y_true == 1
             if sliding_window_size > 1:
                 tp = np.sum((y_pred_curr == 1) & pos_mask)
             else:
-                tp = np.sum(y_scores[pos_mask] >= thresh)
+                tp = np.sum(y_scores[pos_mask] > thresh)
             recall = tp / np.sum(pos_mask) if np.sum(pos_mask) > 0 else 0.0
             return float(recall), float(thresh)
 
@@ -274,7 +285,7 @@ def compute_recall_at_no_faph(
         y_pred = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
         tp = np.sum((y_pred == 1) & pos_mask)
     else:
-        tp = np.sum(y_scores[pos_mask] >= thresh)
+        tp = np.sum(y_scores[pos_mask] > thresh)
     recall = tp / np.sum(pos_mask) if np.sum(pos_mask) > 0 else 0.0
     return float(recall), thresh
 
@@ -307,13 +318,13 @@ def compute_recall_at_target_fah(
             y_pred_curr = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
             fp = np.sum((y_pred_curr == 1) & neg_mask)
         else:
-            fp = np.sum(y_scores[neg_mask] >= thresh)
+            fp = np.sum(y_scores[neg_mask] > thresh)
         fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else float("inf")
         if fah <= target_fah:
             if sliding_window_size > 1:
                 tp = np.sum((y_pred_curr == 1) & pos_mask)
             else:
-                tp = np.sum(y_scores[pos_mask] >= thresh)
+                tp = np.sum(y_scores[pos_mask] > thresh)
             recall = tp / pos_total if pos_total > 0 else 0.0
             recall_f = float(recall)
             fah_f = float(fah)
@@ -363,13 +374,13 @@ def compute_fah_at_target_recall(
             y_pred_curr = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
             tp = np.sum((y_pred_curr == 1) & pos_mask)
         else:
-            tp = np.sum(y_scores[pos_mask] >= thresh)
+            tp = np.sum(y_scores[pos_mask] > thresh)
         recall = tp / pos_total if pos_total > 0 else 0.0
         if recall >= target_recall:
             if sliding_window_size > 1:
                 fp = np.sum((y_pred_curr == 1) & neg_mask)
             else:
-                fp = np.sum(y_scores[neg_mask] >= thresh)
+                fp = np.sum(y_scores[neg_mask] > thresh)
             fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else float("inf")
             # Always update — later (higher) thresholds have lower FAH,
             # so the last feasible threshold gives the best operating point
@@ -399,7 +410,7 @@ def compute_average_viable_recall(
         if sliding_window_size > 1:
             y_pred = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
         else:
-            y_pred = (y_scores >= thresh).astype(int)
+            y_pred = (y_scores > thresh).astype(int)
 
         tp = np.sum((y_true == 1) & (y_pred == 1))
         fp = np.sum((y_true == 0) & (y_pred == 1))
@@ -554,7 +565,7 @@ class MetricsCalculator:
                 self.sliding_window_size,
             )
         else:
-            y_pred = (self.y_score >= threshold).astype(int)
+            y_pred = (self.y_score > threshold).astype(int)
 
         accuracy = compute_accuracy(self.y_true, y_pred, sample_weight=self.sample_weight)
         precision, recall, f1 = compute_precision_recall(

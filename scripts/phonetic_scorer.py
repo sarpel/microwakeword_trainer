@@ -130,7 +130,7 @@ def _check_flite_for_english(language: str) -> None:
     try:
         epi = epitran_mod.Epitran(language)
         epi.transliterate("test")
-    except Exception:
+    except Exception as e:
         raise RuntimeError(
             f"Language '{language}' requires the 'lex_lookup' binary (part of CMU Flite).\n"
             f"The Ubuntu 'flite' package does NOT include it — you must compile flite from source:\n"
@@ -139,7 +139,7 @@ def _check_flite_for_english(language: str) -> None:
             f"  sudo cp bin/lex_lookup /usr/local/bin/\n"
             f"Or use a language that works out of the box, e.g. --language tur-Latn (recommended for 'Katya')\n"
             f"Supported aliases: {', '.join(sorted(LANGUAGE_ALIASES.keys()))}"
-        )
+        ) from e
 
 
 def check_dependencies(console: Console | None = None) -> bool:

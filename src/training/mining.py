@@ -80,7 +80,7 @@ def compute_file_hash(file_path: Path, chunk_size: int = 8192) -> str:
     Returns:
         Hex digest of file hash
     """
-    hash_md5 = hashlib.md5()
+    hash_md5 = hashlib.md5()  # noqa: S324
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(chunk_size), b""):
             hash_md5.update(chunk)
@@ -1748,7 +1748,6 @@ Examples:
 
     # ── mine ──────────────────────────────────────────────────────────────
     if args.command == "mine":
-
         return mine_from_prediction_logs(
             prediction_log=args.prediction_log,
             output_dir=args.output_dir,

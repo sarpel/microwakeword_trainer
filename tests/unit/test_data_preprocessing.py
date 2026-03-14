@@ -241,7 +241,7 @@ class TestReadWav:
 
     def test_read_nonexistent(self):
         """Test reading non-existent file."""
-        with pytest.raises(Exception):
+        with pytest.raises((OSError, FileNotFoundError)):
             _read_wav(Path("/nonexistent/file.wav"))
 
 

@@ -26,6 +26,7 @@ def _read_report(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Report not found: {path}")
     with path.open("r", encoding="utf-8") as f:
+        return dict(json.load(f))
         return json.load(f)
 
 
@@ -39,7 +40,7 @@ def _json_for_js(value: Any) -> str:
 def _plotly_script_tag() -> str:
     """Return inline Plotly bundle if available, else CDN script tag."""
     try:
-        from plotly.offline.offline import get_plotlyjs  # type: ignore
+        from plotly.offline.offline import get_plotlyjs
 
         return f"<script>{get_plotlyjs()}</script>"
     except Exception:  # noqa: BLE001 - optional dependency fallback
@@ -230,7 +231,7 @@ def _build_dashboard_html(report: dict[str, Any]) -> str:
 
     <div class=\"section-title\">Generated Artifacts</div>
     <div class=\"gallery\">
-      {''.join(gallery_blocks)}
+      {"".join(gallery_blocks)}
     </div>
 
     <div id=\"lightbox\" class=\"lightbox\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Image preview\">

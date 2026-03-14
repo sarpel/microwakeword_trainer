@@ -119,7 +119,7 @@ def main():
     evidence_dir = _ensure_evidence_dir()
     if not args.tflite_path:
         parser.print_help()
-        return 0
+        return 1
 
     model_path = Path(args.tflite_path)
     if not model_path.exists():
@@ -158,12 +158,12 @@ def main():
                 for key, value in payload_safe.get("details", {}).items():
                     print(f"{key}: {value}")
 
-        return 0 if payload_safe["compatible"] else 4
+        return 0 if payload_safe["compatible"] else 2
     except Exception as exc:
         with open(evidence_dir / "task-9-verification-error.txt", "w") as f:
             f.write("Verification error: " + str(exc) + "\n")
         sys.stderr.write("ERROR during verification: " + str(exc) + "\n")
-        return 5
+        return 1
 
 
 if __name__ == "__main__":

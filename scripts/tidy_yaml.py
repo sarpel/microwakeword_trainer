@@ -17,12 +17,9 @@ Usage:
 import argparse
 import re
 import sys
-from pathlib import Path
 from collections import OrderedDict
-from typing import List, Dict, Any
-
-if __name__ == "__main__":
-    sys.exit(main())
+from pathlib import Path
+from typing import Any, Dict, List
 
 
 def parse_yaml_simple(content: str) -> OrderedDict:
@@ -31,6 +28,9 @@ def parse_yaml_simple(content: str) -> OrderedDict:
     Returns an OrderedDict of sections.
     """
     lines = content.split("\n")
+    sections: OrderedDict[str, list[str]] = OrderedDict()
+    current_section = "__preamble__"
+    current_content: list[str] = []
     sections = OrderedDict()
     current_section = "__preamble__"
     current_content = []
@@ -60,6 +60,9 @@ def sort_section_keys(lines: List[str]) -> List[str]:
         return lines
 
     # Parse key-value pairs
+    entries: list[tuple[str | None, list[str]]] = []
+    current_entry: list[str] = []
+    current_key: str | None = None
     entries = []
     current_entry = []
     current_key = None
@@ -90,11 +93,11 @@ def sort_section_keys(lines: List[str]) -> List[str]:
         return lines
 
     # Sort entries by key
-    entries.sort(key=lambda x: x[0].lower())
+    entries.sort(key=lambda x: x[0].lower() if x[0] is not None else "")
 
     # Reconstruct lines
     result = []
-    for i, (key, entry_lines) in enumerate(entries):
+    for _i, (_key, entry_lines) in enumerate(entries):
         result.extend(entry_lines)
 
     return result
@@ -118,6 +121,8 @@ def fix_indentation(lines: List[str]) -> List[str]:
 
 def process_yaml_file(filepath: Path, dry_run: bool = True) -> Dict[str, Any]:
     """Process a single YAML file."""
+    changes: dict[str, Any] = {"trailing_ws": 0, "tabs": 0, "sorted": [], "modified": False}
+    """Process a single YAML file."""
     changes = {"trailing_ws": 0, "tabs": 0, "sorted": [], "modified": False}
 
     try:
@@ -130,7 +135,7 @@ def process_yaml_file(filepath: Path, dry_run: bool = True) -> Dict[str, Any]:
 
     # Remove trailing whitespace
     lines = remove_trailing_whitespace(original_lines)
-    changes["trailing_ws"] = sum(1 for orig, new in zip(original_lines, lines) if orig.rstrip() != orig)
+    changes["trailing_ws"] = sum(1 for orig, new in zip(original_lines, lines, strict=False) if orig.rstrip() != orig)
 
     # Fix tabs
     tab_count = sum(line.count("\t") for line in original_lines)
@@ -181,11 +186,11 @@ def process_yaml_file(filepath: Path, dry_run: bool = True) -> Dict[str, Any]:
             try:
                 with open(filepath, "w") as f:
                     f.write(new_content)
-                print(f"    ✓ Applied changes")
+                print("    ✓ Applied changes")
             except Exception as e:
                 print(f"    ✗ Error writing {filepath}: {e}")
         else:
-            print(f"    (dry-run, not applied)")
+            print("    (dry-run, not applied)")
 
     return changes
 
@@ -236,8 +241,6 @@ def main():
 
     return 0
 
-
-from typing import List, Dict, Any
 
 if __name__ == "__main__":
     sys.exit(main())

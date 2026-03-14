@@ -349,7 +349,7 @@ class Trainer:
         # Metrics trackers
         self.evaluation_config = evaluation
         # Canonical threshold name: use detection_threshold with backward-compat fallback
-        default_threshold = float(self.evaluation_config.get("detection_threshold", self.evaluation_config.get("default_threshold", 0.97)) or 0.97)
+        default_threshold = float(self.evaluation_config.get("default_threshold", 0.97))
         self.eval_target_fah = float(self.evaluation_config.get("target_fah", self.target_minimization) or self.target_minimization)
         self.eval_target_recall = float(self.evaluation_config.get("target_recall", 0.90) or 0.90)
         self.eval_sliding_window_size = int(config.get("export", {}).get("sliding_window_size", 1) or 1)
@@ -477,6 +477,8 @@ class Trainer:
         self._cached_phase: int = -1
         self._cached_phase_settings: dict[str, Any] = {}
         self._validation_executor = ThreadPoolExecutor(max_workers=1)
+        self._pending_validation: dict[str, Any] | None = None
+        self._validation_lock = threading.Lock()
         self._pending_validation = None
         self._validation_lock = threading.Lock()
         self._async_early_stop_requested = False
@@ -487,7 +489,8 @@ class Trainer:
         if executor is not None:
             try:
                 executor.shutdown(wait=False)
-            except Exception:
+            except Exception:  # noqa: S110
+                pass
                 pass
 
     def _get_cutoffs(self, lazy: bool = True) -> list[float]:

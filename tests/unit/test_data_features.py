@@ -253,7 +253,7 @@ class TestMicroFrontend:
                 config.window_size_samples = 480
                 frontend = MicroFrontend(config)
                 audio = np.random.randn(16000).astype(np.float32)
-                result = frontend.extract(audio)
+                _ = frontend.extract(audio)
 
                 mock_compute.assert_called_once()
 
@@ -356,7 +356,7 @@ class TestSpectrogramGeneration:
                     gen = SpectrogramGeneration()
                     wav_path = tmp_path / "test.wav"
                     wav_path.touch()
-                    result = gen.generate_from_file(str(wav_path))
+                    _ = gen.generate_from_file(str(wav_path))
 
                     mock_load.assert_called_once()
                     mock_compute.assert_called_once()
@@ -371,7 +371,7 @@ class TestSpectrogramGeneration:
                     gen = SpectrogramGeneration()
                     wav_path = tmp_path / "test.wav"
                     wav_path.touch()
-                    result = gen.generate_from_file(str(wav_path), target_length=16000)
+                    result = gen.generate_from_file(str(wav_path), target_length=16000)  # noqa: F841
 
                     mock_load.assert_called_once()
                     mock_compute.assert_called_once()
@@ -386,7 +386,7 @@ class TestSpectrogramGeneration:
                     gen = SpectrogramGeneration()
                     wav_path = tmp_path / "test.wav"
                     wav_path.touch()
-                    result = gen.generate_from_file(str(wav_path), target_length=16000)
+                    result = gen.generate_from_file(str(wav_path), target_length=16000)  # noqa: F841
 
                     mock_compute.assert_called_once()
                     # Should pad to target length
@@ -516,7 +516,7 @@ class TestExtractFeatures:
                 mock_get.return_value = mock_frontend
 
                 audio = np.random.randn(16000).astype(np.float32)
-                result = extract_features(audio, sample_rate=16000, window_size_ms=40)
+                _ = extract_features(audio, sample_rate=16000, window_size_ms=40)
 
                 # Should use cached frontend with different params
                 mock_get.assert_called_once()

@@ -16,10 +16,10 @@ try:
         create_optimized_dataset,
     )
 except ImportError:
-    OptimizedDataPipeline = None  # type: ignore[assignment]
-    PrefetchGenerator = None  # type: ignore[assignment]
-    benchmark_pipeline = None  # type: ignore[assignment]
-    create_optimized_dataset = None  # type: ignore[assignment]
+    OptimizedDataPipeline = None  # type: ignore
+    PrefetchGenerator = None  # type: ignore
+    benchmark_pipeline = None  # type: ignore
+    create_optimized_dataset = None  # type: ignore
 
 __all__ = [
     "OptimizedDataPipeline",

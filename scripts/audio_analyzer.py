@@ -42,7 +42,7 @@ except ImportError:
     print()
 
 
-def format_size(size_bytes: int) -> str:
+def format_size(size_bytes: float) -> str:
     """
     Purpose: Byte cinsinden boyutu human-readable formata çevirir
 
@@ -112,12 +112,12 @@ def get_audio_duration(file_path: str) -> float:
         # Önce soundfile ile hızlı metadata okuma
         info = sf.info(file_path)
         return info.duration
-    except:
+    except Exception:
         try:
             # soundfile başarısız olursa librosa dene
             duration = librosa.get_duration(path=file_path)
             return duration
-        except:
+        except Exception:
             # Her iki yöntem de başarısız olursa
             return 0
 
@@ -149,7 +149,7 @@ def find_audio_files(directory: str, extensions: List[str]) -> List[str]:
         audio_files.extend(glob.glob(pattern, recursive=True))
 
     # Duplikatları kaldır ve sırala
-    return sorted(list(set(audio_files)))
+    return sorted(set(audio_files))
 
 
 def analyze_directory(directory: str, show_details: bool = False) -> Dict:
@@ -183,8 +183,8 @@ def analyze_directory(directory: str, show_details: bool = False) -> Dict:
     if not audio_files:
         return {"directory": directory, "total_files": 0, "total_size": 0, "total_duration": 0, "files": []}
 
-    total_size = 0
-    total_duration = 0
+    total_size = 0.0
+    total_duration = 0.0
     analyzed_files = []
     errors = []
 
@@ -279,7 +279,7 @@ def print_statistics(analysis_result: Dict, show_file_list: bool = False):
         print("📋 FORMAT BAZINDA DETAYLAR:")
         print("-" * 50)
         for ext, stats in sorted(format_stats.items()):
-            print(f"{ext.upper():<6} | " f"Dosya: {stats['count']:>6,} | " f"Boyut: {format_size(stats['size']):>10} | " f"Süre: {format_duration(stats['duration']):>12}")
+            print(f"{ext.upper():<6} | Dosya: {stats['count']:>6,} | Boyut: {format_size(stats['size']):>10} | Süre: {format_duration(stats['duration']):>12}")
         print()
 
     # Detaylı dosya listesi (isteğe bağlı)
@@ -289,7 +289,7 @@ def print_statistics(analysis_result: Dict, show_file_list: bool = False):
         for file_info in result["files"][:20]:  # İlk 20 dosyayı göster
             rel_path = os.path.relpath(file_info["path"], result["directory"])
             duration_str = format_duration(file_info["duration"]) if file_info["duration"] > 0 else "N/A"
-            print(f"{rel_path:<50} | " f"{format_size(file_info['size']):>8} | " f"{duration_str:>8}")
+            print(f"{rel_path:<50} | {format_size(file_info['size']):>8} | {duration_str:>8}")
 
         if len(result["files"]) > 20:
             print(f"... ve {len(result['files']) - 20} dosya daha")

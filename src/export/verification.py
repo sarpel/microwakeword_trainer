@@ -3,7 +3,7 @@ from typing import Any
 import numpy as np
 import tensorflow as tf
 
-
+from .tflite_utils import estimate_tensor_arena_size
 def _ensure_quantized_int(value: Any) -> int:
     """Safely convert quantization parameter to int.
 
@@ -24,26 +24,6 @@ def _ensure_quantized_int(value: Any) -> int:
     except (TypeError, ValueError) as e:
         raise TypeError(f"Cannot convert zero-point {value!r} (type: {type(value).__name__}) to int: {e}") from e
 
-
-def _estimate_tensor_arena_size(interpreter: tf.lite.Interpreter) -> int:
-    total_memory = 0
-    for tensor in interpreter.get_tensor_details():
-        shape = tensor.get("shape", [])
-        dtype = tensor.get("dtype")
-
-        if dtype == np.float32:
-            elem_size = 4
-        elif dtype == np.float16:
-            elem_size = 2
-        elif dtype in (np.int8, np.uint8):
-            elem_size = 1
-        else:
-            elem_size = 4
-
-        num_elements = int(np.prod(shape)) if shape is not None else 1
-        total_memory += num_elements * elem_size
-
-    return int(total_memory * 1.3)
 
 
 def compute_expected_state_shapes(
@@ -262,6 +242,9 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
     expected_shapes_assumed_default = expected_state_shapes is None
     if expected_shapes_assumed_default:
         expected_state_shapes = compute_expected_state_shapes()
+    assert expected_state_shapes is not None  # Help mypy understand it's not None after the check above
+    if expected_shapes_assumed_default:
+        expected_state_shapes = compute_expected_state_shapes()
     all_tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
     observed_state_payload_shapes: list[tuple[int, ...]] = []
     observed_read_payload_dtypes: list[str] = []
@@ -328,7 +311,10 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
 
     # Check shapes as a set (TFLite graph traversal order for READ_VARIABLE ops
     # is not guaranteed to match variable creation order)
-    observed_sorted = sorted(observed_state_payload_shapes)
+    if observed_state_payload_shapes is not None:
+        observed_sorted = sorted(observed_state_payload_shapes)
+    else:
+        observed_sorted = []
     expected_sorted = sorted(expected_state_shapes)
     checks["state_shapes"] = observed_sorted == expected_sorted
     details["expected_state_shapes"] = expected_sorted
@@ -387,7 +373,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         checks["inference_works"] = False
         valid = False
 
-    details["estimated_tensor_arena_size"] = _estimate_tensor_arena_size(interpreter)
+    details["estimated_tensor_arena_size"] = estimate_tensor_arena_size(interpreter)
 
     return {
         "valid": valid,

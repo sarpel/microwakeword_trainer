@@ -11,6 +11,7 @@ Provides:
 
 import dataclasses
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -20,6 +21,71 @@ from typing import Any, Dict, List, Optional, Union
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+def scale_learning_rates(learning_rates: List[float], from_batch: int, to_batch: int, scaling_method: str = "sqrt") -> List[float]:
+    """
+    Scale learning rates when changing batch size.
+
+    Args:
+        learning_rates: Base learning rates for `from_batch`
+        from_batch: Original batch size
+        to_batch: New batch size
+        scaling_method: "sqrt" (default) or "linear"
+
+    Returns:
+        Scaled learning rates for `to_batch`
+
+    Raises:
+        ValueError: Unknown scaling method
+    """
+    if scaling_method == "sqrt":
+        scale_factor = math.sqrt(to_batch / from_batch)
+    elif scaling_method == "linear":
+        scale_factor = to_batch / from_batch
+    else:
+        raise ValueError(f"Unknown scaling method: {scaling_method}")
+
+    scaled = [lr * scale_factor for lr in learning_rates]
+    logger.info(f"LR scaling ({scaling_method}): {learning_rates} × {scale_factor:.4f} → {scaled} (batch {from_batch} → {to_batch})")
+    return scaled
+
+
+def validate_lr_scaling(learning_rates: List[float], batch_size: int, base_batch_size: int = 128, base_learning_rates: List[float] | None = None, tolerance: float = 0.05) -> bool:
+    """
+    Check if learning rates match expected sqrt scaling from base.
+
+    Args:
+        learning_rates: Learning rates to validate
+        batch_size: Current batch size
+        base_batch_size: Reference batch size (default 128)
+        base_learning_rates: Reference learning rates (default for batch=128)
+        tolerance: Relative tolerance for deviation (default 5%)
+
+    Returns:
+        True if within tolerance of expected values.
+
+    Logs:
+        Warning if values are manually set but deviate from expected.
+    """
+    if base_learning_rates is None:
+        base_learning_rates = [0.001, 0.0002, 0.00005]
+    expected = scale_learning_rates(base_learning_rates, base_batch_size, batch_size)
+    expected = scale_learning_rates(base_learning_rates, base_batch_size, batch_size)
+
+    if len(learning_rates) != len(expected):
+        logger.warning(f"LR array length mismatch: {len(learning_rates)} vs expected {len(expected)} for batch_size={batch_size}")
+        return False
+
+    for actual, exp in zip(learning_rates, expected, strict=False):
+        deviation = abs(actual - exp) / exp
+        if deviation > tolerance:
+            logger.warning(f"LR value {actual:.6f} deviates from expected sqrt-scaled value {exp:.6f} by {deviation * 100:.1f}% for batch_size={batch_size} (tolerance: {tolerance * 100:.0f}%)")
+            return False
+
+    logger.info(f"LR validation passed: {learning_rates} matches sqrt-scaled expected values within {tolerance * 100:.0f}% tolerance")
+    return True
+
 
 # =============================================================================
 # DATACLASS CONFIGURATION STRUCTURES
@@ -60,8 +126,16 @@ class TrainingConfig:
     """Training parameters and schedule."""
 
     training_steps: List[int] = field(default_factory=lambda: [40000, 25000, 15000])
-    learning_rates: List[float] = field(default_factory=lambda: [0.0017, 0.00035, 0.00009])
+    # Learning rate auto-scaling: if learning_rates is None, auto-scale from base_learning_rates
+    # Reference point for scaling (default 128)
+    base_batch_size: int = 128
+    base_learning_rates: List[float] = field(default_factory=lambda: [0.001, 0.0002, 0.00005])
+    # Explicit values override auto-scaling
+    learning_rates: Optional[List[float]] = None
     batch_size: int = 384
+    # Scaling method: "sqrt" (default) or "linear"
+    # Scaling method: "sqrt" (default) or "linear"
+    auto_lr_scale_method: str = "sqrt"
     eval_step_interval: int = 500
     eval_basic_step_interval: int = 500
     materialize_metrics_interval: int = 1000
@@ -122,7 +196,13 @@ class TrainingConfig:
             raise ValueError(f"training.plateau_max_reductions must be an integer >= 0, got {self.plateau_max_reductions}")
         if not isinstance(self.phase_stagger_steps, int) or self.phase_stagger_steps < 0:
             raise ValueError(f"training.phase_stagger_steps must be an integer >= 0, got {self.phase_stagger_steps}")
+        if not isinstance(self.phase_stagger_steps, int) or self.phase_stagger_steps < 0:
+            raise ValueError(f"training.phase_stagger_steps must be an integer >= 0, got {self.phase_stagger_steps}")
+        # Auto-scale learning rates if not explicitly set
+        if self.learning_rates is None:
+            self.learning_rates = scale_learning_rates(self.base_learning_rates, from_batch=self.base_batch_size, to_batch=self.batch_size, scaling_method=self.auto_lr_scale_method)
         if len(self.training_steps) != len(self.learning_rates):
+            raise ValueError("training.training_steps and learning_rates must have same length")
             raise ValueError("training.training_steps and learning_rates must have same length")
 
 
@@ -345,6 +425,7 @@ class ExportConfig:
     # TFLite calibration (NEW)
     representative_dataset_size: int = 1000  # Number of samples for random calibration
     representative_dataset_real_size: int = 4000  # Number of samples for real-data calibration
+    max_samples_for_cutoff_calc: int = 5000  # Max test samples for export auto-cutoff inference
     arena_size_margin: float = 1.3  # Multiplier for tensor arena size (1.3 = 30% margin)
 
     def __post_init__(self):

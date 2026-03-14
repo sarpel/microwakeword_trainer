@@ -86,7 +86,7 @@ def _determinism_test(tflite_path: str, frames: list[np.ndarray], verbose: bool)
     outputs_a = [_run_frame(interp_a, f) for f in frames]
     outputs_b = [_run_frame(interp_b, f) for f in frames]
 
-    mismatches = [(i, a, b) for i, (a, b) in enumerate(zip(outputs_a, outputs_b)) if a != b]
+    mismatches = [(i, a, b) for i, (a, b) in enumerate(zip(outputs_a, outputs_b, strict=False)) if a != b]
     passed = len(mismatches) == 0
 
     if verbose:

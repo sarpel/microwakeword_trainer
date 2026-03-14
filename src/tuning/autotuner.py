@@ -8,6 +8,7 @@ acceptance, Pareto archive, and confirmation phase.
 Quality over speed. Time budget does not matter — only final model quality.
 """
 
+import contextlib
 import json
 import logging
 import math
@@ -17,7 +18,7 @@ import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 
@@ -283,7 +284,14 @@ class ParetoArchive:
                 distances[i] = float("inf")
             return distances
 
-        objectives = np.array([[-archive[i].eval_results.fah, archive[i].eval_results.recall, archive[i].eval_results.auc_pr] for i in valid_indices])
+        # Build objectives safely to handle None eval_results
+        objectives_list = []
+        for idx in valid_indices:
+            er = archive[idx].eval_results
+            if er is None:
+                continue
+            objectives_list.append([-er.fah, er.recall, er.auc_pr])
+        objectives = np.array(objectives_list)
         distances = np.zeros(n)
 
         for obj_idx in range(objectives.shape[1]):
@@ -308,7 +316,7 @@ class ParetoArchive:
         """Best candidate: meets targets with max recall, else closest."""
         meeting = [c for c in self.archive if c.eval_results is not None and c.eval_results.meets_target(target_fah, target_recall)]
         if meeting:
-            return max(meeting, key=lambda c: c.eval_results.recall)
+            return max(meeting, key=lambda c: cast(TuneMetrics, c.eval_results).recall)
 
         if not self.archive:
             return None
@@ -634,8 +642,8 @@ def fit_temperature(probs: np.ndarray, labels: np.ndarray) -> float:
         scaled = np.clip(scaled, 1e-7, 1.0 - 1e-7)
         return -np.mean(y * np.log(scaled) + (1 - y) * np.log(1 - scaled))
 
-    result = minimize_scalar(nll, bounds=(0.1, 10.0), method="bounded")
-    optimal_t = result.x
+    result = cast(Any, minimize_scalar(nll, bounds=(0.1, 10.0), method="bounded"))
+    optimal_t = float(result.x)
 
     # Verify ECE improves
     ece_before = compute_ece(y, probs)
@@ -1343,6 +1351,11 @@ class AutoTuner:
         self.total_gradient_steps = 0
         self.best_checkpoint_path: Optional[str] = None
         self._last_confirmation_best_attempt: Optional[CandidateState] = None
+        self._threshold_cache: dict[str, float] = {}
+        self._cached_eval_data: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None] | None = None
+        self._threshold_cache: dict[str, float] = {}
+        self.best_checkpoint_path: Optional[str] = None
+        self._last_confirmation_best_attempt: Optional[CandidateState] = None
         self._last_confirmation_best_confirmed: Optional[CandidateState] = None
 
     def _setup_file_logger(self) -> logging.Logger:
@@ -1656,7 +1669,7 @@ class AutoTuner:
         try:
             state = pickle.loads(state_bytes)
             if state:
-                for v, val in zip(optimizer.variables, state):
+                for v, val in zip(optimizer.variables, state, strict=False):
                     v.assign(val)
         except (AttributeError, TypeError, ValueError, RuntimeError, EOFError, pickle.PickleError) as e:
             logger.warning(f"Could not restore optimizer state, continuing without it: {e}")
@@ -1665,7 +1678,7 @@ class AutoTuner:
         import tensorflow as tf
 
         bn_state = {}
-        for layer in model.layers:
+        for layer in model._flatten_layers(include_self=False, recursive=True):
             if isinstance(layer, tf.keras.layers.BatchNormalization):
                 bn_state[layer.name] = {
                     "moving_mean": layer.moving_mean.numpy().copy(),
@@ -1676,25 +1689,70 @@ class AutoTuner:
     def _restore_bn_state(self, model, bn_state: dict):
         import tensorflow as tf
 
-        for layer in model.layers:
+        for layer in model._flatten_layers(include_self=False, recursive=True):
             if isinstance(layer, tf.keras.layers.BatchNormalization):
                 if layer.name in bn_state:
                     layer.moving_mean.assign(bn_state[layer.name]["moving_mean"])
                     layer.moving_variance.assign(bn_state[layer.name]["moving_variance"])
 
+    @contextlib.contextmanager
+    def _preserve_bn_stats(self, model):
+        """Context manager that saves and restores BN moving statistics around set_weights calls."""
+        saved = self._save_bn_state(model)
+        try:
+            yield
+        finally:
+            self._restore_bn_state(model, saved)
+
     def _freeze_bn(self, model):
         import tensorflow as tf
 
-        for layer in model.layers:
+        for layer in model._flatten_layers(include_self=False, recursive=True):
             if isinstance(layer, tf.keras.layers.BatchNormalization):
                 layer.trainable = False
 
     def _unfreeze_bn(self, model):
         import tensorflow as tf
 
-        for layer in model.layers:
+        for layer in model._flatten_layers(include_self=False, recursive=True):
             if isinstance(layer, tf.keras.layers.BatchNormalization):
                 layer.trainable = True
+
+    def _calculate_improvement_percentage(self, new_metrics: TuneMetrics, old_metrics: TuneMetrics) -> float:
+        """Calculate percentage improvement in key metrics.
+
+        Improvement is the maximum of:
+        - FAH reduction (lower is better)
+        - Recall increase (higher is better)
+        - AUC-PR increase (higher is better)
+
+        Args:
+            new_metrics: New evaluation metrics
+            old_metrics: Old (parent) evaluation metrics
+
+        Returns:
+            Maximum percentage improvement across all metrics (0.0 to 1.0)
+        """
+        # FAH improvement: lower is better
+        if old_metrics.fah > 0:
+            fah_improvement = (old_metrics.fah - new_metrics.fah) / old_metrics.fah
+        else:
+            fah_improvement = 0.0
+
+        # Recall improvement: higher is better
+        if old_metrics.recall > 0:
+            recall_improvement = (new_metrics.recall - old_metrics.recall) / old_metrics.recall
+        else:
+            recall_improvement = 0.0
+
+        # AUC-PR improvement: higher is better
+        if old_metrics.auc_pr > 0:
+            auc_pr_improvement = (new_metrics.auc_pr - old_metrics.auc_pr) / old_metrics.auc_pr
+        else:
+            auc_pr_improvement = 0.0
+
+        # Return maximum improvement across all metrics
+        return max(fah_improvement, recall_improvement, auc_pr_improvement)
 
     # ------------------------------------------------------------------
     # Training: gradient burst
@@ -1835,7 +1893,7 @@ class AutoTuner:
         gradients = tape.gradient(weighted_loss, model.trainable_variables)
         if clipnorm is not None:
             gradients = [tf.clip_by_norm(g, clipnorm) if g is not None else g for g in gradients]
-        optimizer.apply_gradients([(g, v) for g, v in zip(gradients, model.trainable_variables) if g is not None])
+        optimizer.apply_gradients([(g, v) for g, v in zip(gradients, model.trainable_variables, strict=False) if g is not None])
         return weighted_loss
 
     def _sam_step(self, model, optimizer, loss_fn, features, labels, weights, clipnorm):
@@ -1856,7 +1914,7 @@ class AutoTuner:
         grad_norm = tf.sqrt(sum(tf.reduce_sum(tf.square(g)) for g in grad1 if g is not None))
         epsilon = []
         old_values = []
-        for g, v in zip(grad1, trainable_vars):
+        for g, v in zip(grad1, trainable_vars, strict=False):
             old_values.append(v.numpy().copy())
             if g is not None:
                 e = self.sam_rho * g / (grad_norm + 1e-12)
@@ -1874,13 +1932,13 @@ class AutoTuner:
         grad2 = tape.gradient(loss_perturbed, trainable_vars)
 
         # Step 4: Restore original weights
-        for v, old_val in zip(trainable_vars, old_values):
+        for v, old_val in zip(trainable_vars, old_values, strict=False):
             v.assign(old_val)
 
         # Step 5: Apply SAM gradient
         if clipnorm is not None:
             grad2 = [tf.clip_by_norm(g, clipnorm) if g is not None else g for g in grad2]
-        optimizer.apply_gradients([(g, v) for g, v in zip(grad2, trainable_vars) if g is not None])
+        optimizer.apply_gradients([(g, v) for g, v in zip(grad2, trainable_vars, strict=False) if g is not None])
         return loss_val
 
     # ------------------------------------------------------------------
@@ -1893,7 +1951,7 @@ class AutoTuner:
             return
         deserialized = [pickle.loads(snapshot) for snapshot in swa_snapshots]
         averaged = []
-        for weight_group in zip(*deserialized):
+        for weight_group in zip(*deserialized, strict=False):
             averaged.append(np.mean(weight_group, axis=0))
         model.set_weights(averaged)
 
@@ -2001,7 +2059,7 @@ class AutoTuner:
         confirm_data: tuple,
         repr_data: tuple,
         ambient_hours: float,
-    ) -> tuple[Optional["CandidateState"], Optional[dict]]:
+    ) -> tuple[Optional["CandidateState"], Optional[TuneMetrics]]:
         """Final confirmation on held-out data."""
         from rich.table import Table
 
@@ -2091,6 +2149,7 @@ class AutoTuner:
         self.console.print(table)
 
         if best_confirmed:
+            assert best_confirmed.eval_results is not None, "best_confirmed.eval_results should not be None"
             self.file_logger.info(f"Best confirmed: {best_confirmed.id} — FAH={best_confirmed.eval_results.fah:.4f}, Recall={best_confirmed.eval_results.recall:.4f}")
         else:
             self.file_logger.warning("No candidate passed confirmation phase")
@@ -2178,19 +2237,21 @@ class AutoTuner:
             original_weights = self._serialize_weights(model)
 
             # Save BatchNorm running statistics before perturbation
+            import tensorflow as tf
+
             bn_stats_before = {}
-            for layer in model.layers:
+            for layer in model._flatten_layers(include_self=False, recursive=True):
                 if isinstance(layer, tf.keras.layers.BatchNormalization):
                     bn_stats_before[layer.name] = {
                         "moving_mean": layer.moving_mean.numpy().copy(),
                         "moving_variance": layer.moving_variance.numpy().copy(),
                     }
 
-            for probe in range(4):
+            for _probe in range(4):
                 self._deserialize_weights(model, original_weights)
 
                 # Restore BN running stats before perturbation
-                for layer in model.layers:
+                for layer in model._flatten_layers(include_self=False, recursive=True):
                     if isinstance(layer, tf.keras.layers.BatchNormalization) and layer.name in bn_stats_before:
                         layer.moving_mean.assign(bn_stats_before[layer.name]["moving_mean"])
                         layer.moving_variance.assign(bn_stats_before[layer.name]["moving_variance"])
@@ -2203,7 +2264,7 @@ class AutoTuner:
                 model.set_weights(perturbed)
 
                 # Restore BN running stats after perturbation (BN stats get overwritten by set_weights)
-                for layer in model.layers:
+                for layer in model._flatten_layers(include_self=False, recursive=True):
                     if isinstance(layer, tf.keras.layers.BatchNormalization) and layer.name in bn_stats_before:
                         layer.moving_mean.assign(bn_stats_before[layer.name]["moving_mean"])
                         layer.moving_variance.assign(bn_stats_before[layer.name]["moving_variance"])
@@ -2232,27 +2293,13 @@ class AutoTuner:
             # L5: Gaussian noise perturbation + reheat annealing
             info["action"] = "diversify"
 
-            # Save BatchNorm running statistics before perturbation
-            bn_stats_before = {}
-            for layer in model.layers:
-                if isinstance(layer, tf.keras.layers.BatchNormalization):
-                    bn_stats_before[layer.name] = {
-                        "moving_mean": layer.moving_mean.numpy().copy(),
-                        "moving_variance": layer.moving_variance.numpy().copy(),
-                    }
-
-            all_weights = model.get_weights()
-            perturbed = []
-            for w in all_weights:
-                noise = np.random.normal(0, 0.001, w.shape)
-                perturbed.append(w + noise)
-            model.set_weights(perturbed)
-
-            # Restore BN running stats after perturbation (BN stats get overwritten by set_weights)
-            for layer in model.layers:
-                if isinstance(layer, tf.keras.layers.BatchNormalization) and layer.name in bn_stats_before:
-                    layer.moving_mean.assign(bn_stats_before[layer.name]["moving_mean"])
-                    layer.moving_variance.assign(bn_stats_before[layer.name]["moving_variance"])
+            with self._preserve_bn_stats(model):
+                all_weights = model.get_weights()
+                perturbed = []
+                for w in all_weights:
+                    noise = np.random.normal(0, 0.001, w.shape)
+                    perturbed.append(w + noise)
+                model.set_weights(perturbed)
 
             self.annealing.temperature *= self.reheat_factor
 
@@ -2281,6 +2328,7 @@ class AutoTuner:
                 best_score = score
                 best = c
 
+        assert best is not None, "best should not be None"
         return best
 
     # ------------------------------------------------------------------
@@ -2514,7 +2562,7 @@ class AutoTuner:
         optimizer = tf.keras.optimizers.Adam(learning_rate=self.default_lr)
         # Build optimizer state by doing a dummy step
         dummy_grads = [tf.zeros_like(v) for v in model.trainable_variables]
-        optimizer.apply_gradients(zip(dummy_grads, model.trainable_variables))
+        optimizer.apply_gradients(zip(dummy_grads, model.trainable_variables, strict=False))
 
         # 4. Evaluate base model
         self.file_logger.info("Evaluating base model...")
@@ -2547,6 +2595,7 @@ class AutoTuner:
             eval_results=base_metrics,
             iteration=0,
             lr=self.default_lr,
+            curriculum_stage=0,
         )
         self.archive.try_add(initial_candidate)
 
@@ -2578,6 +2627,7 @@ class AutoTuner:
                 self._deserialize_optimizer_state(optimizer, parent.optimizer_state_bytes)
 
                 # c. Diagnose regime and select strategy arm
+                assert parent.eval_results is not None, "parent.eval_results should not be None"
                 regime = diagnose_regime(parent.eval_results, self.target_fah, self.target_recall)
                 arm_idx = self.thompson.select_arm(regime)
                 arm = STRATEGY_ARMS[arm_idx]
@@ -2666,7 +2716,17 @@ class AutoTuner:
                 # Diagnostic: per-set metrics after search evaluation
                 self.file_logger.info(f"Iter {iteration}: Search FAH={eval_metrics.fah:.4f}, Recall={eval_metrics.recall:.4f}, AUC-PR={eval_metrics.auc_pr:.4f}")
 
-                # n. Build new candidate
+                # n. Curriculum advancement for macro_refine strategy
+                new_curriculum_stage = parent.curriculum_stage
+                if arm.name == "macro_refine" and parent.eval_results is not None:
+                    improvement_pct = self._calculate_improvement_percentage(eval_metrics, parent.eval_results)
+                    if improvement_pct >= self.curriculum_threshold:
+                        new_curriculum_stage = min(parent.curriculum_stage + 1, 3)  # Max stage is 3
+                        self.file_logger.info(
+                            f"Curriculum advancement: stage {parent.curriculum_stage} -> {new_curriculum_stage} (improvement={improvement_pct:.2%} >= threshold={self.curriculum_threshold:.2%})"
+                        )
+
+                # o. Build new candidate
                 new_candidate = CandidateState(
                     id=f"c_{iteration:03d}",
                     weights_bytes=self._serialize_weights(model),
@@ -2680,6 +2740,7 @@ class AutoTuner:
                     parent_id=parent.id,
                     iteration=iteration,
                     lr=lr,
+                    curriculum_stage=new_curriculum_stage,
                     history=parent.history
                     + [
                         {
@@ -2692,6 +2753,7 @@ class AutoTuner:
                 )
 
                 # o. Accept/reject
+                assert parent.eval_results is not None, "parent.eval_results should not be None"
                 accepted = self.annealing.should_accept(
                     eval_metrics,
                     parent.eval_results,
@@ -2700,6 +2762,7 @@ class AutoTuner:
                 )
 
                 # p. Update Thompson sampling
+                assert parent.eval_results is not None, "parent.eval_results should not be None"
                 improvement = eval_metrics.dominates(parent.eval_results)
                 self.thompson.update(arm_idx, improvement)
 
@@ -2771,6 +2834,7 @@ class AutoTuner:
             confirmed, best_attempt_metrics = self._confirmation_phase(model, confirm_data, repr_data, ambient_hours_confirm)
             if confirmed is not None:
                 # Save confirmed checkpoint
+                assert confirmed.eval_results is not None, "confirmed.eval_results should not be None"
                 self._deserialize_weights(model, confirmed.weights_bytes)
                 self._restore_bn_state(model, confirmed.batchnorm_state)
                 self.best_checkpoint_path = self._save_checkpoint(model, confirmed.eval_results, confirmed.iteration)
@@ -2784,6 +2848,7 @@ class AutoTuner:
 
         # Ensure we have a checkpoint for the best
         if best is not None and self.best_checkpoint_path is None:
+            assert best.eval_results is not None, "best.eval_results should not be None"
             self._deserialize_weights(model, best.weights_bytes)
             self._restore_bn_state(model, best.batchnorm_state)
             self.best_checkpoint_path = self._save_checkpoint(model, best.eval_results, best.iteration)

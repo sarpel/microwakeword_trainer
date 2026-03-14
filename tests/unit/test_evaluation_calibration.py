@@ -262,9 +262,9 @@ class TestCalibrateProbabilities:
         y_prob = np.array([0.5])
 
         # With scale > 1, should push towards extremes
-        high_scale = calibrate_probabilities(y_prob, scale=2.0, bias=0.0)
+        _ = calibrate_probabilities(y_prob, scale=2.0, bias=0.0)
         # With scale < 1, should pull towards center
-        low_scale = calibrate_probabilities(y_prob, scale=0.5, bias=0.0)
+        _ = calibrate_probabilities(y_prob, scale=0.5, bias=0.0)
 
         # At 0.5, bias should shift the output
         positive_bias = calibrate_probabilities(y_prob, scale=1.0, bias=1.0)

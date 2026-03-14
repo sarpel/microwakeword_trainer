@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import tensorflow as tf
 
+from .tflite_utils import estimate_tensor_arena_size
 logger = logging.getLogger(__name__)
 
 # Default tensor arena size in bytes (0 = auto-calculate from model)
@@ -127,54 +128,16 @@ def calculate_tensor_arena_size(tflite_path: str, margin: float = 1.3) -> int:
         interpreter = tf.lite.Interpreter(model_path=tflite_path)
         interpreter.allocate_tensors()
 
-        allocation = interpreter.get_tensor_details()
-
-        largest_tensor_size = 0
-        for tensor in allocation:
+        # Check for dynamic dimensions and warn
+        for tensor in interpreter.get_tensor_details():
             shape = tensor.get("shape", [])
-            dtype = tensor.get("dtype")
+            if -1 in shape:
+                logger.warning(
+                    "Tensor '%s' has a dynamic dimension (-1). Arena size estimate may be too small; using 1 for this dim.",
+                    tensor.get("name", "<unnamed>"),
+                )
 
-            # Get element size based on dtype (using numpy dtypes)
-            if dtype == np.float32:
-                elem_size = 4
-            elif dtype == np.float16:
-                elem_size = 2
-            elif dtype == np.bytes_ or dtype == np.object_:
-                # String size is variable; use a conservative 32-byte estimate
-                elem_size = 32
-            elif dtype in (np.int8, np.uint8):
-                elem_size = 1
-            elif dtype == np.int32:
-                elem_size = 4
-            elif dtype == np.int64:
-                elem_size = 8
-            else:
-                elem_size = 4  # Default assumption
-
-            num_elements = 1
-            for dim in shape:
-                if dim == -1:
-                    # Dynamic dimension: use a conservative estimate of 1 and warn
-                    logger.warning(
-                        "Tensor '%s' has a dynamic dimension (-1). Arena size estimate may be too small; using 1 for this dim.",
-                        tensor.get("name", "<unnamed>"),
-                    )
-                    d = 1
-                elif dim == 0:
-                    d = 1
-                else:
-                    d = abs(dim)
-                num_elements *= d
-
-            tensor_size = num_elements * elem_size
-            if tensor_size > largest_tensor_size:
-                largest_tensor_size = tensor_size
-
-        # TFLite tensor arena holds peak concurrent memory, not total tensor memory.
-        # Heuristic: largest tensor * 2 (input + output of largest op),
-        # plus fixed interpreter bookkeeping overhead.
-        peak_memory_estimate = largest_tensor_size * 2 + 16384
-        arena_size = int(peak_memory_estimate * margin)
+        arena_size = estimate_tensor_arena_size(interpreter, margin=margin)
 
         # Apply minimum floor only if DEFAULT_TENSOR_ARENA_SIZE is non-zero
         if DEFAULT_TENSOR_ARENA_SIZE > 0:

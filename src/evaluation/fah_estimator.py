@@ -37,10 +37,10 @@ class FAHEstimator:
         elif self.ambient_duration_hours is not None:
             duration_hours = self.ambient_duration_hours
         else:
-            raise ValueError("ambient_duration_hours must be provided either at construction " "or as an argument to compute_fah_metrics.")
+            raise ValueError("ambient_duration_hours must be provided either at construction or as an argument to compute_fah_metrics.")
 
         if duration_hours == 0.0:
-            logger.warning("ambient_duration_hours is 0.0 \u2014 FAH will be reported as 0. " "Provide a non-zero duration for meaningful false-activation-per-hour estimates.")
+            logger.warning("ambient_duration_hours is 0.0 \u2014 FAH will be reported as 0. Provide a non-zero duration for meaningful false-activation-per-hour estimates.")
 
         y_true = np.asarray(y_true).ravel()
         y_scores = np.asarray(y_scores).ravel()

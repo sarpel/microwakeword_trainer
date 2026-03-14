@@ -126,7 +126,7 @@ class TestTestEvaluator:
             yield (X, y, np.ones(20, dtype=np.float32))
 
         # Should handle gracefully
-        result = evaluator.evaluate(single_class_factory)
+        result = evaluator.evaluate(single_class_factory)  # noqa: F841
         # With single class, some metrics may be None but should not crash
 
     def test_json_report_valid(self, tmp_path):
@@ -179,7 +179,7 @@ class TestTestEvaluator:
 
         model.predict = lambda x, **kw: np.random.rand(x.shape[0], 1).astype(np.float32)
 
-        result = evaluator.evaluate(test_factory)
+        result = evaluator.evaluate(test_factory)  # noqa: F841
 
         expected_plots = ["test_roc.png", "test_pr.png", "test_det.png", "test_scores.png", "test_calibration.png", "test_fah_recall.png"]
 
