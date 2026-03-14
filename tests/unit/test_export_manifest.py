@@ -18,6 +18,7 @@ def test_generate_manifest_uses_defaults_when_no_tflite(tmp_path: Path) -> None:
     assert out["type"] == "micro"
     assert out["version"] == 2
     assert out["model"] == "wake_word.tflite"
+    assert out["website"] == "https://github.com/sarpel/microwakeword_trainer"
     assert out["micro"]["feature_step_size"] == 10
     assert out["micro"]["tensor_arena_size"] == manifest_mod.DEFAULT_TENSOR_ARENA_SIZE
 

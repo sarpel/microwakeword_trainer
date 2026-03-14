@@ -9,15 +9,15 @@ python scripts/evaluate_model.py \
 	--split test \
 	--analyze
 ```
-
+mww-mine-hard-negatives extract-top-fps
 ## AUTO-TUNE
 
 ```bash
 mww-autotune \
 	--checkpoint ./models/checkpoints/final_weights.weights.h5 \
 	--config max_quality \
-	--target-fah 0.5 \
-	--target-recall 0.92 \
+	--target-fah 0.2 \
+	--target-recall 0.95 \
 	--max-iterations 20 \
 	--output-dir ./tuning_results
 ```

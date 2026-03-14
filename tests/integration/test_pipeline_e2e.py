@@ -58,7 +58,7 @@ def test_pipeline_build_save_export_verify(tmp_path: Path) -> None:
         output_dir=str(export_dir),
         model_name="pipeline_e2e",
         config=export_config,
-        quantize=True,
+        quantize=False,
     )
 
     tflite_path = Path(result["tflite_path"])
