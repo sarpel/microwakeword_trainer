@@ -20,7 +20,7 @@ def test_compute_recall_at_target_fah_picks_max_recall_feasible_threshold():
 
     assert np.isclose(recall, 1.0)
     assert np.isclose(threshold, 0.6)
-    assert np.isclose(fah, 1.0)
+    assert np.isclose(fah, 0.0)
 
 
 def test_compute_recall_at_target_fah_breaks_ties_with_lower_fah():
@@ -59,10 +59,10 @@ def test_compute_fah_at_target_recall_picks_highest_threshold():
         n_thresholds=6,  # [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
     )
 
-    # At threshold=0.8: recall=2/3≈0.667 (≥0.66), FP: scores [0.6,0.4,0.2] < 0.8 → 0 FP → FAH=0
-    # At threshold=0.6: recall=3/3=1.0 (≥0.66), FP: 0.6≥0.6 → 1 FP → FAH=1.0
-    # Should pick threshold=0.8 (highest meeting recall) → FAH=0.0 (lowest)
-    assert threshold >= 0.7, f"Should pick high threshold, got {threshold}"
+    # Under strict > semantics, threshold=0.6 still yields FP=0 because
+    # 0.6 > 0.6 is False. That keeps recall=1.0 and makes 0.6 the highest
+    # threshold meeting the recall target.
+    assert np.isclose(threshold, 0.6), f"Expected threshold 0.6, got {threshold}"
     assert fah <= 1.0, f"FAH should be minimal, got {fah}"
     assert recall >= 0.66, f"Recall should meet target, got {recall}"
 

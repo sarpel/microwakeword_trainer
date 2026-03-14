@@ -1269,6 +1269,8 @@ class Trainer:
         total_samples = 0
         last_val_paths: list[str] = self._val_file_paths or []
         last_val_raw_labels: list[int] = []
+        clip_ids_accumulator: list[int] = []
+        clip_id_counter = 0
 
         for batch in iterator:
             if not isinstance(batch, tuple) or len(batch) != 3:
@@ -1283,7 +1285,10 @@ class Trainer:
 
             chunk_scores.append(scores)
             chunk_labels.append(tf.cast(ground_truth, tf.int32))
-            total_samples += len(scores)
+            n_samples_in_batch = len(scores)
+            clip_ids_accumulator.extend(range(clip_id_counter, clip_id_counter + n_samples_in_batch))
+            clip_id_counter += n_samples_in_batch
+            total_samples += n_samples_in_batch
             if isinstance(metadata, dict) and "raw_labels" in metadata:
                 raw_labels = metadata["raw_labels"]
                 if isinstance(raw_labels, list):
@@ -1313,6 +1318,7 @@ class Trainer:
                 score_samples = all_scores_np.tolist()
 
         metrics = metrics_tracker.compute_metrics()
+        clip_ids = np.array(clip_ids_accumulator)
         if metrics_tracker.all_y_true:
             y_true = np.array(metrics_tracker.all_y_true)
             y_score = np.array(metrics_tracker.all_y_scores)
@@ -1333,6 +1339,7 @@ class Trainer:
                 calc = MetricsCalculator(
                     y_true=y_true,
                     y_score=y_score,
+                    clip_ids=clip_ids,
                     ambient_duration_hours=effective_ambient,
                     sliding_window_size=self.eval_sliding_window_size,
                 )
@@ -1358,6 +1365,7 @@ class Trainer:
             calc = MetricsCalculator(
                 y_true=np.array(metrics_tracker.all_y_true),
                 y_score=np.array(metrics_tracker.all_y_scores),
+                clip_ids=clip_ids,
                 ambient_duration_hours=effective_ambient,
                 sliding_window_size=self.eval_sliding_window_size,
             )

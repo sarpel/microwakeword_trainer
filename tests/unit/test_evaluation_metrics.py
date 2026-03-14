@@ -205,9 +205,10 @@ class TestComputeRecallAtNoFaph:
         y_scores = np.array([0.1, 0.2, 0.8, 0.9])
 
         recall, threshold = compute_recall_at_no_faph(y_true, y_scores)
-        # At threshold 0.21 (first where FP=0): TP=2, Recall=1.0
+        # Under strict > semantics, threshold 0.20 is the first where FP=0
+        # because 0.2 > 0.2 is False.
         assert recall == 1.0
-        assert threshold > 0.2  # Should be above the max negative score
+        assert np.isclose(threshold, 0.2)
 
     def test_no_zero_fp_possible(self):
         """Test when no threshold yields zero FP."""

@@ -2,7 +2,10 @@
 """
 Generate synthetic test dataset for microwakeword training pipeline.
 Creates minimal synthetic WAV files for testing purposes.
-"""
+
+OUTPUT: Writes to test_data/ (NOT dataset/) to avoid contaminating real training data.
+WARNING: Never change DATASET_DIR to point at dataset/. Synthetic sine waves and
+         white noise will poison the real dataset.
 
 import wave
 from pathlib import Path
@@ -19,7 +22,7 @@ NUM_CHANNELS = 1  # Mono
 SAMPLE_WIDTH = 2  # 16-bit (2 bytes)
 
 # Output directories
-DATASET_DIR = Path(__file__).resolve().parent.parent / "dataset"
+DATASET_DIR = Path(__file__).resolve().parent.parent / "test_data"
 POSITIVE_DIR = DATASET_DIR / "positive" / "speaker_001"
 NEGATIVE_DIR = DATASET_DIR / "negative" / "speech"
 
