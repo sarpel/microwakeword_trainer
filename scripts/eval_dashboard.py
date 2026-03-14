@@ -31,7 +31,9 @@ def _read_report(path: Path) -> dict[str, Any]:
 
 def _json_for_js(value: Any) -> str:
     s = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
-    return s.replace("</", "<\\/").replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    s = s.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    s = s.replace("\\u003c/", "\\u003c\\/")
+    return s
 
 
 def _plotly_script_tag() -> str:
@@ -88,8 +90,8 @@ def _build_dashboard_html(report: dict[str, Any]) -> str:
             f'<div class="img-actions">'
             f'<button type="button" data-open-src="{safe_src}" data-open-title="{safe_name}">Enlarge</button>'
             f'<a href="{safe_src}" target="_blank" rel="noopener noreferrer">Open full size</a>'
-            f'</div>'
-            f'</div>'
+            f"</div>"
+            f"</div>"
         )
 
     return f"""<!doctype html>
@@ -234,7 +236,11 @@ def _build_dashboard_html(report: dict[str, Any]) -> str:
     <div id=\"lightbox\" class=\"lightbox\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Image preview\">
       <div class=\"lightbox-inner\">
         <div class=\"lightbox-bar\">
-          <strong id=\"lightboxTitle\">Preview</strong>
+          <div style=\"display:flex; align-items:center; gap:8px;\">
+            <button id=\"lightboxPrev\" class=\"lightbox-nav\" type=\"button\" aria-label=\"Previous image\">← Prev</button>
+            <strong id=\"lightboxTitle\">Preview</strong>
+            <button id=\"lightboxNext\" class=\"lightbox-nav\" type=\"button\" aria-label=\"Next image\">Next →</button>
+          </div>
           <button id=\"lightboxClose\" class=\"lightbox-close\" type=\"button\">Close</button>
         </div>
         <img id=\"lightboxImg\" src=\"\" alt=\"Expanded artifact\" />
@@ -301,6 +307,10 @@ def _build_dashboard_html(report: dict[str, Any]) -> str:
     const lightboxImg = document.getElementById('lightboxImg');
     const lightboxTitle = document.getElementById('lightboxTitle');
     const lightboxClose = document.getElementById('lightboxClose');
+    const lightboxPrev = document.getElementById('lightboxPrev');
+    const lightboxNext = document.getElementById('lightboxNext');
+    const galleryImgs = Array.from(document.querySelectorAll('.gallery-item img'));
+    let currentLightboxIndex = -1;
 
     function renderCell(label, value) {{
       return `<div class=\"cell\"><div class=\"tiny\">${{label}}</div><div style=\"font-size:24px;font-weight:700\">${{value}}</div></div>`;
@@ -309,6 +319,11 @@ def _build_dashboard_html(report: dict[str, Any]) -> str:
     function renderAt(idx) {{
       if (!points.length) return;
       const p = points[idx];
+      if (!p || !isFinite(p.recall) || !isFinite(p.precision) || !isFinite(p.threshold) || !isFinite(p.fpr)) {{
+        thrValue.textContent = "No data";
+        cmBox.innerHTML = "";
+        return;
+      }}
       thrValue.textContent = `${{p.threshold.toFixed(4)}} · Recall ${{p.recall.toFixed(4)}} · Precision ${{p.precision.toFixed(4)}} · FAH ${{p.ambient_false_positives_per_hour.toFixed(4)}}`;
 
       const totalPos = (cm.tp || 0) + (cm.fn || 0);
@@ -331,10 +346,11 @@ def _build_dashboard_html(report: dict[str, Any]) -> str:
     slider.addEventListener('input', () => renderAt(Number(slider.value)));
     renderAt(Number(slider.value));
 
-    function openLightbox(src, title) {{
+    function openLightbox(src, title, index = -1) {{
       lightboxImg.src = src;
       lightboxImg.alt = title || 'Expanded artifact';
       lightboxTitle.textContent = title || 'Preview';
+      currentLightboxIndex = index;
       lightbox.classList.add('open');
       document.body.style.overflow = 'hidden';
     }}
@@ -342,22 +358,38 @@ def _build_dashboard_html(report: dict[str, Any]) -> str:
     function closeLightbox() {{
       lightbox.classList.remove('open');
       lightboxImg.src = '';
+      currentLightboxIndex = -1;
       document.body.style.overflow = '';
     }}
 
+    function stepLightbox(delta) {{
+      if (!galleryImgs.length) return;
+      const base = currentLightboxIndex >= 0 ? currentLightboxIndex : 0;
+      const next = (base + delta + galleryImgs.length) % galleryImgs.length;
+      const img = galleryImgs[next];
+      openLightbox(img.dataset.src || img.getAttribute('src'), img.dataset.title || img.getAttribute('alt'), next);
+    }}
+
     lightboxClose.addEventListener('click', closeLightbox);
+    lightboxPrev.addEventListener('click', () => stepLightbox(-1));
+    lightboxNext.addEventListener('click', () => stepLightbox(1));
     lightbox.addEventListener('click', (ev) => {{
       if (ev.target === lightbox) closeLightbox();
     }});
     document.addEventListener('keydown', (ev) => {{
       if (ev.key === 'Escape' && lightbox.classList.contains('open')) closeLightbox();
+      if (ev.key === 'ArrowLeft' && lightbox.classList.contains('open')) stepLightbox(-1);
+      if (ev.key === 'ArrowRight' && lightbox.classList.contains('open')) stepLightbox(1);
     }});
 
-    document.querySelectorAll('.gallery-item img').forEach((img) => {{
-      img.addEventListener('click', () => openLightbox(img.dataset.src || img.getAttribute('src'), img.dataset.title || img.getAttribute('alt')));
+    galleryImgs.forEach((img, idx) => {{
+      img.addEventListener('click', () => openLightbox(img.dataset.src || img.getAttribute('src'), img.dataset.title || img.getAttribute('alt'), idx));
     }});
     document.querySelectorAll('[data-open-src]').forEach((btn) => {{
-      btn.addEventListener('click', () => openLightbox(btn.dataset.openSrc, btn.dataset.openTitle));
+      btn.addEventListener('click', () => {{
+        const idx = galleryImgs.findIndex((img) => (img.dataset.src || img.getAttribute('src')) === btn.dataset.openSrc);
+        openLightbox(btn.dataset.openSrc, btn.dataset.openTitle, idx);
+      }});
     }});
   </script>
 </body>

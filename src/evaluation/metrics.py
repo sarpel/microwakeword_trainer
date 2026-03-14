@@ -60,7 +60,7 @@ def apply_sliding_window_detection(
         window_sum = cumsum[i] - (cumsum[start - 1] if start > 0 else 0.0)
         window_len = i - start + 1
         cutoff_sum = float(threshold) * window_len
-        detections[i] = 1 if window_sum >= cutoff_sum else 0
+        detections[i] = 1 if window_sum > cutoff_sum else 0
 
     return detections
 

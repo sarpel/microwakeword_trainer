@@ -28,12 +28,12 @@ def _print_summary(
     s_split = [r for r in speech_results if r.action == "split"]
     s_discarded = [r for r in speech_results if r.action == "discard"]
     s_skipped = [r for r in speech_results if r.action == "skip"]
-    s_out_clips = len(s_kept) + len(s_trimmed) + sum(int(r.reason) for r in s_split if r.reason.isdigit())
+    s_out_clips = len(s_kept) + len(s_trimmed) + sum(int(r.reason) for r in s_split if r.reason is not None and str(r.reason).isdigit())
 
     b_kept = [r for r in bg_results if r.action == "keep"]
     b_split = [r for r in bg_results if r.action == "split"]
     b_skipped = [r for r in bg_results if r.action == "skip"]
-    b_out_clips = len(b_kept) + sum(int(r.reason) for r in b_split if r.reason.isdigit())
+    b_out_clips = len(b_kept) + sum(int(r.reason) for r in b_split if r.reason is not None and str(r.reason).isdigit())
 
     total_in = len(speech_results) + len(bg_results)
     total_out = s_out_clips + b_out_clips

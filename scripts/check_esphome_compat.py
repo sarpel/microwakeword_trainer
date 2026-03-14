@@ -470,19 +470,23 @@ def check_model(tflite_path: str, manifest_path: str | None = None) -> dict[str,
     # CHECK 10: Inference smoke test
     # Source: streaming_model.cpp — Invoke() called with int8 features
     # ------------------------------------------------------------------
-    try:
-        _inp_shape = list(input_details[0]["shape"]) if input_details else [1, 3, 40]
-        _stride = _inp_shape[1] if len(_inp_shape) == 3 else 3
-        test_input = np.zeros((1, _stride, 40), dtype=np.int8)
-        interpreter.set_tensor(input_details[0]["index"], test_input)
-        interpreter.invoke()
-        test_out = interpreter.get_tensor(output_details[0]["index"])
-        checks["inference_smoke_test"] = True
-        details["smoke_test_output"] = int(test_out.flat[0])
-        details["smoke_test_output_dtype"] = str(test_out.dtype)
-    except Exception as exc:
+    if not input_details or not output_details:
         checks["inference_smoke_test"] = False
-        errors.append(f"Inference smoke test failed: {exc}. Model cannot be invoked.")
+        errors.append("No input/output tensor available for inference smoke test")
+    else:
+        try:
+            _inp_shape = list(input_details[0]["shape"]) if input_details else [1, 3, 40]
+            _stride = _inp_shape[1] if len(_inp_shape) == 3 else 3
+            test_input = np.zeros((1, _stride, 40), dtype=np.int8)
+            interpreter.set_tensor(input_details[0]["index"], test_input)
+            interpreter.invoke()
+            test_out = interpreter.get_tensor(output_details[0]["index"])
+            checks["inference_smoke_test"] = True
+            details["smoke_test_output"] = int(test_out.flat[0])
+            details["smoke_test_output_dtype"] = str(test_out.dtype)
+        except Exception as exc:
+            checks["inference_smoke_test"] = False
+            errors.append(f"Inference smoke test failed: {exc}. Model cannot be invoked.")
 
     # ------------------------------------------------------------------
     # CHECK 11: Manifest validation (optional, if --manifest provided)
@@ -504,8 +508,13 @@ def check_model(tflite_path: str, manifest_path: str | None = None) -> dict[str,
                 if fss is None:
                     warnings.append("Manifest missing 'micro.feature_step_size' field")
                     checks["manifest_feature_step_size"] = False
-                elif not (ESPHOME_FEATURE_STEP_SIZE_MIN <= int(fss) <= ESPHOME_FEATURE_STEP_SIZE_MAX):
-                    errors.append(f"[__init__.py L305-L317] manifest feature_step_size={fss} out of range [{ESPHOME_FEATURE_STEP_SIZE_MIN}, {ESPHOME_FEATURE_STEP_SIZE_MAX}]")
+                try:
+                    fss_int = int(fss)
+                    if not (ESPHOME_FEATURE_STEP_SIZE_MIN <= fss_int <= ESPHOME_FEATURE_STEP_SIZE_MAX):
+                        errors.append(f"[__init__.py L305-L317] manifest feature_step_size={fss} out of range [{ESPHOME_FEATURE_STEP_SIZE_MIN}, {ESPHOME_FEATURE_STEP_SIZE_MAX}]")
+                        checks["manifest_feature_step_size"] = False
+                except (ValueError, TypeError):
+                    errors.append(f"manifest feature_step_size='{fss}' is not a valid integer")
                     checks["manifest_feature_step_size"] = False
                 else:
                     checks["manifest_feature_step_size"] = True

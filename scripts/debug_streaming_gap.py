@@ -211,7 +211,7 @@ def main():
     parser.add_argument("--n-samples", type=int, default=50, help="Number of test samples")
     args = parser.parse_args()
 
-    config = load_full_config(preset_name="max_quality", override_path=args.config)
+    config = load_full_config(override_path=args.config)
     compare_models(config, args.checkpoint, args.n_samples)
 
 

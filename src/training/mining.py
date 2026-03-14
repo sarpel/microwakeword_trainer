@@ -53,9 +53,16 @@ import numpy as np
 import tensorflow as tf
 
 from src.training.rich_logger import RichTrainingLogger
+from src.utils.logging_config import setup_rich_logging
 
 logger = logging.getLogger(__name__)
 rich_logger = RichTrainingLogger()
+
+
+def _configure_mining_logging(verbose: bool = False) -> None:
+    """Configure Rich logging for mining CLI."""
+    level = logging.DEBUG if verbose else logging.INFO
+    setup_rich_logging(level=level, show_time=True, show_path=True)
 
 
 # =============================================================================
@@ -1736,16 +1743,11 @@ Examples:
         parser.print_help()
         return 1
 
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-    )
+    # Setup Rich logging for all project logs
+    _configure_mining_logging(verbose=args.verbose)
 
     # ── mine ──────────────────────────────────────────────────────────────
     if args.command == "mine":
-        if args.verbose:
-            logging.getLogger().setLevel(logging.DEBUG)
 
         return mine_from_prediction_logs(
             prediction_log=args.prediction_log,

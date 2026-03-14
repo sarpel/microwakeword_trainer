@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import logging
 import re
 import shutil
 import sys
@@ -41,6 +42,8 @@ from typing import Any
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_WAKE_WORD = "Hey Katya"
 WAKE_WORD_PRONUNCIATIONS: dict[str, list[str]] = {"Hey Katya": ["heɪ kɑtjə", "heɪ kætjə", "heɪ kɑːtjɑ", "heɪ kɑtjɑ"]}
@@ -338,7 +341,8 @@ def score_directory(
                     distance_obj=distance_obj,
                 )
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error scoring file {filepath}: {e}")
             results.append(
                 PhoneticScore(
                     path=str(filepath),
@@ -591,7 +595,7 @@ def build_parser() -> argparse.ArgumentParser:
     score_parser.add_argument("--wake-word", type=str, default=DEFAULT_WAKE_WORD, help='Wake word phrase (default: "Hey Katya")')
     score_parser.add_argument("--language", type=str, default=DEFAULT_LANGUAGE, help="epitran language code or alias (default: tur-Latn). Aliases: en, tr, de, fr, es, it, nl, pt")
     score_parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="JSON report output path")
-    score_parser.add_argument("--recursive", action="store_true", default=True, help="Scan directories recursively (default: True)")
+    score_parser.add_argument("--recursive", action="store_true", default=False, help="Scan directories recursively (default: False)")
     score_parser.add_argument("--min-score", type=float, default=0.0, help="Only show results above this score")
     score_parser.add_argument("--verbose", action="store_true", help="Show all results, not just flagged")
 
