@@ -16,8 +16,15 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn
 from rich.table import Table
 from rich.tree import Tree
 
+from ..utils.logging_config import setup_rich_logging
+
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def _configure_cluster_logging() -> None:
+    """Configure Rich logging for cluster file operations."""
+    setup_rich_logging(level=logging.INFO, show_time=True, show_path=False)
 
 
 def load_namelist(namelist_path: Path) -> dict[str, Any]:
@@ -311,8 +318,9 @@ Examples:
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without moving files")
 
     args = parser.parse_args()
-    if not logging.getLogger().handlers:
-        logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
+
+    # Configure Rich logging for all project logs
+    _configure_cluster_logging()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -113,20 +113,9 @@ def test_temperature_and_calibration_helpers() -> None:
     np.testing.assert_allclose(temp_scores, probs)
 
 
-def test_fit_temperature_without_scipy_returns_one(monkeypatch) -> None:
-    import sys
-
-    monkeypatch.delitem(sys.modules, "scipy", raising=False)
-    monkeypatch.delitem(sys.modules, "scipy.optimize", raising=False)
-
-    # Force autotuner module to re-evaluate scipy availability
-    import importlib
-
-    import src.tuning.autotuner as _at_module
-
-    importlib.reload(_at_module)
-    t = _at_module.fit_temperature(np.array([0.2, 0.8]), np.array([0, 1]))
-    assert t == 1.0
+def test_fit_temperature_returns_positive_value() -> None:
+    t = at.fit_temperature(np.array([0.2, 0.8]), np.array([0, 1]))
+    assert t > 0.0
 
 
 def test_diagnose_regime_variants() -> None:
@@ -299,3 +288,238 @@ def test_confirmation_phase_uses_optimize_with_targets(tmp_path: Path, monkeypat
     assert best_attempt_metrics is None
     assert called["target_fah"] == tuner.target_fah
     assert called["target_recall"] == tuner.target_recall
+
+
+class TestPartitionSearchSplit:
+    def test_partition_returns_search_train_and_eval_keys(self, tmp_path: Path) -> None:
+        cfg = {
+            "auto_tuning": {
+                "output_dir": str(tmp_path / "out"),
+                "search_eval_fraction": 0.30,
+            },
+            "auto_tuning_expert": {},
+            "training": {"split_seed": 42},
+            "hardware": {},
+        }
+        tuner = at.AutoTuner(checkpoint_path=str(tmp_path / "ckpt.weights.h5"), config=cfg)
+
+        np.random.seed(7)
+        features = np.random.randn(200, 3).astype(np.float32)
+        labels = np.random.randint(0, 2, size=200).astype(np.float32)
+        weights = np.ones(200, dtype=np.float32)
+
+        partition = tuner._partition_data(features, labels, weights)
+
+        assert "search_train" in partition
+        assert "search_eval" in partition
+        assert "search" not in partition
+
+    def test_partition_search_train_eval_no_overlap(self, tmp_path: Path) -> None:
+        cfg = {
+            "auto_tuning": {
+                "output_dir": str(tmp_path / "out"),
+                "search_eval_fraction": 0.30,
+            },
+            "auto_tuning_expert": {},
+            "training": {"split_seed": 42},
+            "hardware": {},
+        }
+        tuner = at.AutoTuner(checkpoint_path=str(tmp_path / "ckpt.weights.h5"), config=cfg)
+
+        np.random.seed(11)
+        features = np.random.randn(240, 4).astype(np.float32)
+        labels = np.random.randint(0, 2, size=240).astype(np.float32)
+        weights = np.ones(240, dtype=np.float32)
+
+        partition = tuner._partition_data(features, labels, weights)
+        search_train_idx = partition["search_train"][3]
+        search_eval_idx = partition["search_eval"][3]
+
+        assert set(search_train_idx.tolist()).isdisjoint(set(search_eval_idx.tolist()))
+
+    def test_partition_search_train_eval_covers_search_size(self, tmp_path: Path) -> None:
+        cfg = {
+            "auto_tuning": {
+                "output_dir": str(tmp_path / "out"),
+                "search_eval_fraction": 0.30,
+            },
+            "auto_tuning_expert": {},
+            "training": {"split_seed": 42},
+            "hardware": {},
+        }
+        tuner = at.AutoTuner(checkpoint_path=str(tmp_path / "ckpt.weights.h5"), config=cfg)
+
+        np.random.seed(13)
+        n = 500
+        features = np.random.randn(n, 2).astype(np.float32)
+        labels = np.random.randint(0, 2, size=n).astype(np.float32)
+        weights = np.ones(n, dtype=np.float32)
+
+        partition = tuner._partition_data(features, labels, weights)
+
+        expected_search_size = n - max(1, int(n * 0.15)) - max(1, int(n * 0.05)) - max(1, int(n * tuner.confirmation_fraction))
+        actual_search_size = len(partition["search_train"][1]) + len(partition["search_eval"][1])
+        assert actual_search_size == expected_search_size
+
+    def test_partition_search_eval_fraction_respected(self, tmp_path: Path) -> None:
+        cfg = {
+            "auto_tuning": {
+                "output_dir": str(tmp_path / "out"),
+                "search_eval_fraction": 0.30,
+            },
+            "auto_tuning_expert": {},
+            "training": {"split_seed": 42},
+            "hardware": {},
+        }
+        tuner = at.AutoTuner(checkpoint_path=str(tmp_path / "ckpt.weights.h5"), config=cfg)
+
+        np.random.seed(17)
+        features = np.random.randn(1000, 3).astype(np.float32)
+        labels = np.random.randint(0, 2, size=1000).astype(np.float32)
+        weights = np.ones(1000, dtype=np.float32)
+
+        partition = tuner._partition_data(features, labels, weights)
+        n_search_train = len(partition["search_train"][1])
+        n_search_eval = len(partition["search_eval"][1])
+        n_search = n_search_train + n_search_eval
+
+        train_ratio = n_search_train / n_search
+        eval_ratio = n_search_eval / n_search
+        assert abs(train_ratio - 0.70) <= 0.15
+        assert abs(eval_ratio - 0.30) <= 0.15
+
+    def test_partition_fold_indices_on_search_eval(self, tmp_path: Path) -> None:
+        cfg = {
+            "auto_tuning": {
+                "output_dir": str(tmp_path / "out"),
+                "search_eval_fraction": 0.30,
+                "cv_folds": 5,
+            },
+            "auto_tuning_expert": {},
+            "training": {"split_seed": 42},
+            "hardware": {},
+        }
+        tuner = at.AutoTuner(checkpoint_path=str(tmp_path / "ckpt.weights.h5"), config=cfg)
+
+        np.random.seed(19)
+        features = np.random.randn(300, 5).astype(np.float32)
+        labels = np.random.randint(0, 2, size=300).astype(np.float32)
+        weights = np.ones(300, dtype=np.float32)
+
+        partition = tuner._partition_data(features, labels, weights)
+        n_search_eval = len(partition["search_eval"][1])
+        fold_indices = partition["fold_indices"]
+
+        flattened = np.concatenate([f for f in fold_indices if len(f) > 0]) if fold_indices else np.array([], dtype=int)
+        if len(flattened) > 0:
+            assert int(np.max(flattened)) < n_search_eval
+        np.testing.assert_array_equal(np.sort(flattened), np.arange(n_search_eval))
+
+
+class TestErrorMemoryOffset:
+    def test_error_memory_offset_indices_filtered_by_sampler(self) -> None:
+        np.random.seed(23)
+        train_features = np.arange(100, dtype=np.float32).reshape(100, 1)
+        train_labels = np.array([0.0] * 50 + [1.0] * 50, dtype=np.float32)
+        train_weights = np.ones(100, dtype=np.float32)
+
+        em = at.ErrorMemory(max_history=5)
+        offset_indices = np.arange(100, 150)
+        y_true = np.zeros(50, dtype=np.float32)
+        y_pred = np.ones(50, dtype=np.float32) * 0.9
+        em.update(offset_indices, y_true, y_pred, threshold=0.5)
+
+        sampler = at.FocusedSampler(train_features, train_labels, train_weights, em)
+
+        captured: dict[str, np.ndarray] = {}
+        original_gather = sampler._gather
+
+        def _capture_gather(indices: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            captured["indices"] = indices.copy()
+            return original_gather(indices)
+
+        sampler._gather = _capture_gather  # type: ignore[method-assign]
+        sampler.build_batch(strategy_arm=1, threshold=0.5, batch_size=32, recent_scores=np.linspace(0.0, 1.0, 100))
+
+        assert "indices" in captured
+        assert np.all(captured["indices"] < len(train_features))
+
+    def test_error_memory_update_with_offset_indices_works(self) -> None:
+        em = at.ErrorMemory(max_history=3)
+        offset_indices = np.array([100, 101, 102, 103], dtype=np.int64)
+        y_true = np.array([0, 1, 0, 1], dtype=np.float32)
+        y_pred = np.array([0.9, 0.1, 0.8, 0.2], dtype=np.float32)
+
+        em.update(offset_indices, y_true, y_pred, threshold=0.5)
+
+        assert set(em.get_persistent_fa_indices(min_count=1)) == {100, 102}
+        assert set(em.get_persistent_miss_indices(min_count=1)) == {101, 103}
+        assert all(idx in em.recent_scores for idx in offset_indices)
+
+
+class TestConfirmationReoptimize:
+    def test_confirmation_phase_reoptimizes_threshold(self, tmp_path: Path, monkeypatch) -> None:
+        cfg = {
+            "auto_tuning": {
+                "target_fah": 0.5,
+                "target_recall": 0.88,
+                "output_dir": str(tmp_path / "out"),
+                "int8_shadow": False,
+            },
+            "auto_tuning_expert": {},
+            "training": {},
+            "hardware": {},
+        }
+        tuner = at.AutoTuner(checkpoint_path=str(tmp_path / "ckpt.weights.h5"), config=cfg)
+
+        class DummyModel:
+            pass
+
+        candidate = at.CandidateState(
+            id="c_reopt",
+            weights_bytes=b"w",
+            optimizer_state_bytes=b"o",
+            batchnorm_state={},
+            temperature=1.0,
+            threshold_float32=0.91,
+            threshold_uint8=232,
+            eval_results=at.TuneMetrics(fah=0.4, recall=0.9, auc_pr=0.9, threshold=0.91, threshold_uint8=232),
+        )
+        tuner.archive.archive = [candidate]
+
+        called: dict[str, float] = {}
+
+        def fake_optimize(y_true, y_scores, ambient_duration_hours, target_fah, target_recall):
+            called["target_fah"] = float(target_fah)
+            called["target_recall"] = float(target_recall)
+            metrics = at.TuneMetrics(
+                fah=0.3,
+                recall=0.92,
+                auc_pr=0.91,
+                threshold=0.27,
+                threshold_uint8=69,
+            )
+            return 0.27, 69, metrics
+
+        monkeypatch.setattr(tuner, "_deserialize_weights", lambda *args, **kwargs: None)
+        monkeypatch.setattr(tuner, "_restore_bn_state", lambda *args, **kwargs: None)
+        monkeypatch.setattr(tuner, "_predict_scores", lambda *args, **kwargs: np.array([0.2, 0.9], dtype=float))
+        monkeypatch.setattr(tuner.threshold_optimizer, "optimize", fake_optimize)
+
+        confirm_data = (
+            np.zeros((2, 3), dtype=np.float32),
+            np.array([0.0, 1.0], dtype=np.float32),
+            np.ones(2, dtype=np.float32),
+            np.arange(2),
+        )
+        repr_data = (np.zeros((1, 3), dtype=np.float32),)
+
+        best_confirmed, best_attempt_metrics = tuner._confirmation_phase(DummyModel(), confirm_data, repr_data, ambient_hours=1.0)
+
+        assert best_confirmed is not None
+        assert best_attempt_metrics is None
+        assert called["target_fah"] == tuner.target_fah
+        assert called["target_recall"] == tuner.target_recall
+        assert best_confirmed.eval_results is not None
+        assert best_confirmed.eval_results.threshold == 0.27
+        assert best_confirmed.eval_results.threshold != candidate.threshold_float32

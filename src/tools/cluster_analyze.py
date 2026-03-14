@@ -16,11 +16,17 @@ from rich.table import Table
 from rich.tree import Tree
 
 from ..config.loader import ConfigLoader, load_full_config
+from ..utils.logging_config import setup_rich_logging
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def _configure_cluster_logging() -> None:
+    """Configure Rich logging for cluster analysis."""
+    setup_rich_logging(level=logging.INFO, show_time=True, show_path=False)
 
 
 def discover_audio_files(audio_dir: Path) -> list[Path]:
@@ -274,8 +280,9 @@ Output files (per dataset):
     )
 
     args = parser.parse_args()
-    if not logging.getLogger().handlers:
-        logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
+
+    # Configure Rich logging for all project logs
+    _configure_cluster_logging()
 
     console.print("[bold]Loading configuration...[/bold]")
     if args.config in ConfigLoader.VALID_PRESETS:

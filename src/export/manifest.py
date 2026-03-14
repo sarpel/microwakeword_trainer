@@ -10,8 +10,8 @@ import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
-# Default tensor arena size in bytes (official okay_nabu baseline)
-DEFAULT_TENSOR_ARENA_SIZE = 22860
+# Default tensor arena size in bytes (0 = auto-calculate from model)
+DEFAULT_TENSOR_ARENA_SIZE = 0
 
 
 def generate_manifest(
@@ -49,7 +49,7 @@ def generate_manifest(
         "type": "micro",
         "wake_word": export_config.get("wake_word", "Hey Katya"),
         "author": export_config.get("author", "Sarpel GURAY"),
-        "website": export_config.get("website", "https://github.com/sarpel/microwakeword-training-platform"),
+        "website": export_config.get("website", "https://github.com/sarpel/microwakeword_trainer"),
         "model": model_filename,
         "trained_languages": export_config.get("trained_languages", ["en"]),
         "version": 2,
@@ -129,7 +129,7 @@ def calculate_tensor_arena_size(tflite_path: str, margin: float = 1.3) -> int:
 
         allocation = interpreter.get_tensor_details()
 
-        total_memory = 0
+        largest_tensor_size = 0
         for tensor in allocation:
             shape = tensor.get("shape", [])
             dtype = tensor.get("dtype")
@@ -166,13 +166,19 @@ def calculate_tensor_arena_size(tflite_path: str, margin: float = 1.3) -> int:
                     d = abs(dim)
                 num_elements *= d
 
-            total_memory += num_elements * elem_size
+            tensor_size = num_elements * elem_size
+            if tensor_size > largest_tensor_size:
+                largest_tensor_size = tensor_size
 
-        # Add safety margin
-        arena_size = int(total_memory * margin)
+        # TFLite tensor arena holds peak concurrent memory, not total tensor memory.
+        # Heuristic: largest tensor * 2 (input + output of largest op),
+        # plus fixed interpreter bookkeeping overhead.
+        peak_memory_estimate = largest_tensor_size * 2 + 16384
+        arena_size = int(peak_memory_estimate * margin)
 
-        # Ensure minimum size (26KB is the minimum for okay_nabu models)
-        arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)
+        # Apply minimum floor only if DEFAULT_TENSOR_ARENA_SIZE is non-zero
+        if DEFAULT_TENSOR_ARENA_SIZE > 0:
+            arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)
 
         return arena_size
 

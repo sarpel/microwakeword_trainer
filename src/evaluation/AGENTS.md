@@ -6,19 +6,17 @@ Evaluation layer for wake-word quality analysis.
 
 | File | Lines | Responsibility |
 |------|-------|----------------|
-| `metrics.py` | 397 | Main metrics orchestration via `MetricsCalculator` + standalone functions |
-| `fah_estimator.py` | 74 | FAH-specific estimation logic (`FAHEstimator`) and ambient-duration handling |
-| `calibration.py` | 94 | Probability calibration analysis utilities |
+| `metrics.py` | 397 | Main metrics orchestration via `MetricsCalculator` |
+| `fah_estimator.py` | 74 | FAH-specific estimation logic |
+| `calibration.py` | 94 | Probability calibration analysis |
 
 ## Primary Entry Point
-
-Use `MetricsCalculator` for standardized class-based evaluation:
 
 ```python
 from src.evaluation.metrics import MetricsCalculator
 
 calc = MetricsCalculator(y_true=y_true, y_score=y_scores)
-metrics = calc.compute_all_metrics(ambient_duration_hours=ambient_hours, threshold=0.5)
+metrics = calc.compute_all_metrics(ambient_duration_hours=hours, threshold=0.5)
 ```
 
 ## MetricsCalculator Methods
@@ -27,60 +25,37 @@ metrics = calc.compute_all_metrics(ambient_duration_hours=ambient_hours, thresho
 |--------|---------|
 | `compute_fah_metrics()` | False activations per hour |
 | `compute_roc_pr_curves()` | ROC and precision-recall curves |
-| `compute_average_viable_recall()` | Average recall across viable thresholds |
-| `compute_recall_at_no_faph()` | Recall at zero false activations per hour |
+| `compute_recall_at_target_fah()` | Recall at target FAH threshold |
 | `compute_all_metrics()` | All metrics in single call |
-| `compute_latency()` | Detection latency analysis |
-| `compute_precision_recall()` | Precision/recall at threshold |
 
-## Standalone Functions (metrics.py)
+## Key Metrics
 
-| Function | Purpose |
-|----------|---------|
-| `compute_accuracy()` | Simple accuracy calculation |
-| `compute_roc_auc()` | ROC AUC score |
-| `_manual_roc_auc()` | Manual ROC AUC (fallback) |
-| `compute_precision_recall()` | Precision/recall at threshold |
-| `_synchronize_output()` | Output alignment for streaming |
-| `compute_latency()` | Latency measurement |
-| `compute_roc_pr_curves()` | ROC and PR curve data |
-| `compute_recall_at_no_faph()` | Recall at zero FAPH |
-| `compute_average_viable_recall()` | Average viable recall |
-| `compute_fah_metrics()` | FAH metrics |
-| `compute_all_metrics()` | All metrics (standalone wrapper) |
-
-## FAHEstimator (`fah_estimator.py`)
-
-```python
-from src.evaluation.fah_estimator import FAHEstimator
-
-estimator = FAHEstimator(ambient_duration_hours=24.0)
-fah_metrics = estimator.compute_fah_metrics(y_true, y_score, threshold=0.5)
-fah_rate = estimator.estimate_false_activations_per_hour(false_positives, duration)
-```
-
-## Calibration Section (`calibration.py`)
-
-| Function | Purpose |
-|----------|---------|
-| `compute_calibration_curve()` | Reliability bins for calibration analysis |
-| `compute_brier_score()` | Probabilistic error quality metric |
-| `calibrate_probabilities()` | Lightweight post-hoc score calibration |
-
-## Notes
-
-- Keep FAH-specific fields/state (e.g., `ambient_duration_hours`) in `FAHEstimator`.
-- Maintain backward compatibility via standalone wrapper functions in `metrics.py`.
-- Prefer centralized ROC/AUC and PR handling through `MetricsCalculator.compute_all_metrics()`.
-- Used by `src/training/trainer.py` during validation steps.
-- **Checkpoint selection** in the trainer uses a two-stage strategy (not a single FAH-then-recall heuristic):
-  - Stage 1 (warm-up): `auc_pr` (PR-AUC) — PR-AUC is robust to class imbalance and is threshold-free.
-  - Stage 2 (operational): `recall_at_target_fah` with FAH guard — best recall of models meeting the FAH budget.
-  - The composite `quality_score` is still logged but does NOT drive checkpoint decisions.
-  - See `src/training/trainer.py::_is_best_model()` for full logic.
-
+- **FAH**: False Activations per Hour
+- **ROC-AUC**: Area under ROC curve
+- **PR-AUC**: Area under precision-recall curve
+- **Recall@target_fah**: Recall at target false activation rate
 
 ## Related Documentation
 
-- [Training Guide](../../docs/TRAINING.md) - Training workflow and metrics
-- [Configuration Reference](../../docs/CONFIGURATION.md) - Evaluation config options
+- [Training Guide](../../docs/TRAINING.md)
+- [Configuration Reference](../../docs/CONFIGURATION.md)
+
+## Evaluation Reporting Workflow
+
+For end-to-end post-training assessment, use:
+
+```bash
+python scripts/evaluate_model.py --model models/exported/wake_word.tflite --config standard --output-dir logs/
+```
+
+Outputs under `evaluation_artifacts/` include:
+- `evaluation_report.json`
+- PNG plots (ROC, PR, DET, confusion matrix, calibration, threshold/cost curves)
+- `executive_report.md`
+- `executive_report.html`
+
+Optional interactive dashboard generation:
+
+```bash
+python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
+```

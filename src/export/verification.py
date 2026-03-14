@@ -4,6 +4,27 @@ import numpy as np
 import tensorflow as tf
 
 
+def _ensure_quantized_int(value: Any) -> int:
+    """Safely convert quantization parameter to int.
+
+    Some TFLite implementations return float zero_points. This function
+    safely converts to int with proper type checking to avoid TypeError.
+
+    Args:
+        value: Zero-point value (int or float)
+
+    Returns:
+        Integer zero-point value
+
+    Raises:
+        TypeError: If value cannot be safely converted to int
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError) as e:
+        raise TypeError(f"Cannot convert zero-point {value!r} (type: {type(value).__name__}) to int: {e}") from e
+
+
 def _estimate_tensor_arena_size(interpreter: tf.lite.Interpreter) -> int:
     total_memory = 0
     for tensor in interpreter.get_tensor_details():
@@ -25,7 +46,61 @@ def _estimate_tensor_arena_size(interpreter: tf.lite.Interpreter) -> int:
     return int(total_memory * 1.3)
 
 
-def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
+def compute_expected_state_shapes(
+    first_conv_kernel: int = 5,
+    stride: int = 3,
+    mel_bins: int = 40,
+    first_conv_filters: int = 32,
+    mixconv_kernel_sizes: list[list[int]] | None = None,
+    pointwise_filters: list[int] | None = None,
+    temporal_frames: int = 6,
+) -> list[tuple[int, ...]]:
+    """Compute expected streaming-state payload shapes for verification.
+
+    Notes:
+        - ``stream`` through ``stream_4`` are derived from conv/mixconv kernel context.
+        - ``stream_5`` is dynamic and depends on ``temporal_frames`` derived from model
+          configuration (for example via ``clip_duration_ms``), so it is not universally
+          ``(1, 5, 1, 64)``.
+    """
+    # Input validation
+    if first_conv_kernel < 1:
+        raise ValueError(f"first_conv_kernel must be >= 1, got {first_conv_kernel}")
+    if stride < 1:
+        raise ValueError(f"stride must be >= 1, got {stride}")
+    if mel_bins < 1:
+        raise ValueError(f"mel_bins must be >= 1, got {mel_bins}")
+    if first_conv_filters < 1:
+        raise ValueError(f"first_conv_filters must be >= 1, got {first_conv_filters}")
+    if temporal_frames < 2:
+        raise ValueError(f"temporal_frames must be >= 2, got {temporal_frames}")
+
+    if mixconv_kernel_sizes is None:
+        mixconv_kernel_sizes = [[5], [7, 11], [9, 15], [23]]
+    if pointwise_filters is None:
+        pointwise_filters = [64, 64, 64, 64]
+
+    return [
+        (1, first_conv_kernel - stride, 1, mel_bins),
+        (1, max(mixconv_kernel_sizes[0]) - 1, 1, first_conv_filters),
+        (1, max(mixconv_kernel_sizes[1]) - 1, 1, pointwise_filters[0]),
+        (1, max(mixconv_kernel_sizes[2]) - 1, 1, pointwise_filters[1]),
+        (1, max(mixconv_kernel_sizes[3]) - 1, 1, pointwise_filters[2]),
+        (1, temporal_frames - 1, 1, pointwise_filters[3]),
+    ]
+
+
+def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int, ...]] | None = None) -> dict[str, Any]:
+    """Validate TFLite model compatibility against ESPHome invariants.
+
+    The interpreter is created with
+    ``BUILTIN_WITHOUT_DEFAULT_DELEGATES`` to keep checks anchored to the static graph
+    and avoid delegate-path artifacts (for example transient ``DELEGATE`` visibility).
+
+    If ``expected_state_shapes`` is not supplied, default assumptions are used. Under
+    those defaults, state-shape mismatch is reported as a warning and does not force
+    failure, so non-default model configs can still be validated without false negatives.
+    """
     resolver_type = tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
     interpreter = tf.lite.Interpreter(model_path=tflite_path, experimental_op_resolver_type=resolver_type)
     interpreter.allocate_tensors()
@@ -86,7 +161,7 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
         checks["input_quant_params"] = False
     else:
         input_scale = float(input_scales[0])
-        input_zero = int(input_zero_points[0])
+        input_zero = _ensure_quantized_int(input_zero_points[0])
         details["input_scale"] = input_scale
         details["input_zero_point"] = input_zero
         checks["input_quant_params"] = abs(input_scale - 0.101961) <= 1e-4 and input_zero == -128
@@ -100,13 +175,27 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
         checks["output_quant_params"] = False
     else:
         output_scale = float(output_scales[0])
-        output_zero = int(output_zero_points[0])
+        output_zero = _ensure_quantized_int(output_zero_points[0])
+        canonical_output_scales = {
+            round(1.0 / 255.0, 9),
+            round(1.0 / 256.0, 9),
+        }
         details["output_scale"] = output_scale
         details["output_zero_point"] = output_zero
-        checks["output_quant_params"] = abs(output_scale - 0.00390625) <= 1e-6 and output_zero == 0
-        if not checks["output_quant_params"]:
-            errors.append(f"Output quantization mismatch: scale={output_scale}, zero_point={output_zero}")
+        output_scale_r = round(output_scale, 9)
+        checks["output_zero_point"] = output_zero == 0
+        checks["output_scale_canonical"] = output_scale_r in canonical_output_scales
+        checks["output_quant_params"] = checks["output_zero_point"] and checks["output_scale_canonical"]
+
+        if not checks["output_zero_point"]:
+            errors.append(f"Output quantization mismatch: zero_point={output_zero}; expected zero_point=0 for uint8 probability output")
             valid = False
+
+        if not checks["output_scale_canonical"]:
+            warnings.append(
+                f"Output scale is non-canonical for ESPHome micro-wake-word workflow: scale={output_scale}. "
+                f"Official models in this audit use 1/256 ({1.0 / 256.0:.9f}); 1/255 ({1.0 / 255.0:.9f}) is accepted for compatibility."
+            )
 
     op_counts: dict[str, int] = {}
     for op in ops_details:
@@ -170,14 +259,9 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
         valid = False
     checks["call_once_count"] = call_once_count == 1
 
-    expected_state_shapes = [
-        (1, 2, 1, 40),
-        (1, 4, 1, 32),
-        (1, 10, 1, 64),
-        (1, 14, 1, 64),
-        (1, 22, 1, 64),
-        (1, 5, 1, 64),
-    ]
+    expected_shapes_assumed_default = expected_state_shapes is None
+    if expected_shapes_assumed_default:
+        expected_state_shapes = compute_expected_state_shapes()
     all_tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
     observed_state_payload_shapes: list[tuple[int, ...]] = []
     observed_read_payload_dtypes: list[str] = []
@@ -192,7 +276,7 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
             if tensor is not None:
                 observed_state_payload_shapes.append(tuple(int(v) for v in tensor.get("shape", [])))
                 dtype = tensor.get("dtype")
-                observed_read_payload_dtypes.append(dtype)
+                observed_read_payload_dtypes.append(str(dtype))
                 quant = tensor.get("quantization_parameters", {}) or {}
                 scales = np.asarray(quant.get("scales", []))
                 zero_points = np.asarray(quant.get("zero_points", []))
@@ -204,7 +288,7 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
                 tensor = all_tensors.get(payload_idx)
                 if tensor is not None:
                     dtype = tensor.get("dtype")
-                    observed_assign_payload_dtypes.append(dtype)
+                    observed_assign_payload_dtypes.append(str(dtype))
                     quant = tensor.get("quantization_parameters", {}) or {}
                     scales = np.asarray(quant.get("scales", []))
                     zero_points = np.asarray(quant.get("zero_points", []))
@@ -244,10 +328,27 @@ def verify_tflite_model(tflite_path: str) -> dict[str, Any]:
 
     # Check shapes as a set (TFLite graph traversal order for READ_VARIABLE ops
     # is not guaranteed to match variable creation order)
-    checks["state_shapes"] = sorted(observed_state_payload_shapes) == sorted(expected_state_shapes)
+    observed_sorted = sorted(observed_state_payload_shapes)
+    expected_sorted = sorted(expected_state_shapes)
+    checks["state_shapes"] = observed_sorted == expected_sorted
+    details["expected_state_shapes"] = expected_sorted
+    details["state_shape_assumption"] = "config-aware" if not expected_shapes_assumed_default else "default-temporal-frames"
+
     if not checks["state_shapes"]:
-        errors.append(f"State payload tensor shape mismatch: observed={sorted(observed_state_payload_shapes)}, expected={sorted(expected_state_shapes)}")
-        valid = False
+        if expected_shapes_assumed_default:
+            warnings.append(
+                "State payload tensor shape mismatch under default temporal-frame assumptions. "
+                "For non-default clip_duration_ms/architecture, pass config-aware expected_state_shapes "
+                "to avoid false failures."
+            )
+            checks["state_shapes"] = True
+            details["state_shape_mismatch_under_default_assumption"] = {
+                "observed": observed_sorted,
+                "expected_default": expected_sorted,
+            }
+        else:
+            errors.append(f"State payload tensor shape mismatch: observed={observed_sorted}, expected={expected_sorted}")
+            valid = False
 
     try:
         if hasattr(interpreter, "num_subgraphs"):

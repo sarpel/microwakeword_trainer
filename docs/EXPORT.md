@@ -40,7 +40,15 @@ The official `okay_nabu` reference model maintains 6 state tensors across stream
 3. `stream_2`: [1,10,1,64] - Block 1 buffer
 4. `stream_3`: [1,14,1,64] - Block 2 buffer
 5. `stream_4`: [1,22,1,64] - Block 3 buffer
-6. `stream_5`: [1,5,1,64] - Pre-flatten temporal buffer
+6. `stream_5`: [1,5,1,64] - Pre-flatten temporal buffer (okay_nabu defaults)
+
+**Important**: State shapes depend on `temporal_frames`, which is inferred from the checkpoint's Dense kernel shape:
+
+- `temporal_frames = dense_input_features // 64` (where 64 is the last pointwise filter count)
+- `stream_5` shape = `(1, temporal_frames - 1, 1, pointwise_filters[3])` — NOT always `(1, 5, 1, 64)`
+- `clip_duration_ms` and model architecture together determine `dense_input_features`, but `temporal_frames` is derived from the actual Dense kernel
+- For okay_nabu defaults (dense_input_features=384): temporal_frames=6, so stream_5=(1,5,1,64)
+- For dense_input_features=1984: temporal_frames=31, so stream_5=(1,30,1,64)
 
 These buffers do **not** all follow the same formula:
 
@@ -74,6 +82,26 @@ temporal_frames = dense_input_features // 64  # 64 = last pointwise filter count
 ```
 
 **Important**: Checkpoints trained before the Flatten architecture fix (2026-03-11) have Dense kernel shape `(64, 1)` and are incompatible with current export. Must retrain with current code.
+
+### Config-Aware State Shape Computation
+
+Use `compute_expected_state_shapes()` from `src/export/verification.py` to derive correct state shapes from model configuration:
+
+```python
+from src.export.verification import compute_expected_state_shapes
+
+shapes = compute_expected_state_shapes(temporal_frames=32)
+# Returns dict mapping state names to expected shapes
+```
+
+Parameters (all have okay_nabu defaults):
+- `temporal_frames`: Number of temporal frames (derived from clip_duration_ms)
+- `first_conv_kernel`: First conv kernel size (default: 5)
+- `stride`: Conv stride (default: 3)
+- `mel_bins`: Number of mel bins (default: 40)
+- `first_conv_filters`: First conv output filters (default: 32)
+- `mixconv_kernel_sizes`: List of 4 lists of kernel sizes
+- `pointwise_filters`: List of 4 filter counts (default: [64,64,64,64])
 
 ## INT8 Quantization
 
@@ -317,6 +345,20 @@ Adjust `probability_cutoff` based on your environment:
 
 ## Troubleshooting
 
+### Troubleshooting: State Payload Tensor Shape Mismatch
+
+**Symptom**: Export/verification reports a state payload shape mismatch.
+
+**Cause**: Shape checks must be config-aware. `stream_5` depends on `temporal_frames` inferred from the Dense kernel shape, so it is not universally `[1, 5, 1, 64]`.
+
+**Current behavior**: Verification computes expected state shapes with `compute_expected_state_shapes()` and validates against model-derived dimensions.
+
+**Fix**: Re-export with your intended config and re-run:
+
+```bash
+python scripts/verify_esphome.py models/exported/wake_word.tflite --verbose --json
+```
+
 ### Debug Commands
 
 ```bash
@@ -329,6 +371,27 @@ python -c "import tensorflow as tf; interpreter = tf.lite.Interpreter('model.tfl
 # Check manifest validity
 python -c "import json; print(json.load(open('manifest.json')))"
 ```
+
+### Post-Export Evaluation Reports
+
+After export verification, run advanced evaluation to generate deployment-quality diagnostics and executive summaries:
+
+```bash
+python scripts/evaluate_model.py --model models/exported/wake_word.tflite --config standard --output-dir logs/
+```
+
+Generated under `logs/evaluation_artifacts/`:
+- `evaluation_report.json` (full metrics payload)
+- `executive_report.md` and `executive_report.html`
+- PNG plots (ROC, PR, DET, confusion matrix, calibration, threshold/cost curves)
+
+Optional interactive dashboard:
+
+```bash
+python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
+```
+
+Note: the interactive dashboard uses Plotly CDN for charts (network required). For offline sharing, use `executive_report.html`.
 
 ### Common Debug Steps
 

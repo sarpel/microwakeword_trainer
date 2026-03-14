@@ -98,7 +98,7 @@ Available environment variables:
 | `optimizer` | str | "adam" | Optimizer type |
 | `label_smoothing` | float | 0.1 | Label smoothing factor |
 | `gradient_clipnorm` | float | 5.0 | Gradient clipping norm |
-| `ema_decay` | float | null | EMA decay (null = disabled) |
+ | `ema_decay` | float | null | EMA decay (null = disabled). Default in `max_quality.yaml`: 0.999. See ARCHITECTURAL_CONSTITUTION.md Article IX for EMA behavior and checkpoint usage. |
 | `random_seed` | int | null | Global RNG seed |
 | `auto_tune_on_poor_fah` | bool | false | Auto-run mww-autotune if FAH high |
 
@@ -314,6 +314,24 @@ Available environment variables:
 | `warmup_runs` | int | 10 | Warmup runs for latency |
 | `n_latency_runs` | int | 100 | Number of latency runs |
 
+`scripts/evaluate_model.py` consumes these settings and writes `evaluation_artifacts/` output:
+- `evaluation_report.json`
+- `executive_report.md`
+- `executive_report.html`
+- PNG plots (ROC/PR/DET/confusion/calibration/threshold/cost)
+
+Use `--output-dir` to choose artifact location, and `--n-thresholds` to override sweep density per run.
+
+### 13. AutoTuningConfig
+
+**File**: `config/loader.py` - Auto-tuning hyperparameters
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `search_eval_fraction` | float | 0.30 (standard/fast_test), 0.35 (max_quality) | Fraction of search data reserved for evaluation during auto-tuning. Prevents train-on-test contamination by ensuring FocusedSampler trains on `search_train` while evaluation uses the held-out `search_eval` split. Higher values provide more robust evaluation but reduce training data for the sampler. |
+
+> **Added in**: Phase 7 auto-tuner fix
+
 ## Preset Comparison
 
 ### fast_test.yaml (~1 hour)
@@ -483,13 +501,6 @@ The config loader enforces these validations:
 6. **Training**: batch_size must be greater than 0
 7. **Paths**: All directories must exist or be creatable
 8. **Export**: inference_input_type must be "int8", inference_output_type must be "uint8"
-
-1. **Hardware**: sample_rate_hz must be 16000
-2. **Splits**: train_split + val_split + test_split must equal 1.0
-3. **Model**: stride must be 3 (per ARCHITECTURAL_CONSTITUTION.md)
-4. **Training**: training_steps and learning_rates must have same length
-5. **Paths**: All directories must exist or be creatable
-6. **Export**: inference_input_type must be "int8", inference_output_type must be "uint8"
 
 ## See Also
 

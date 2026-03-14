@@ -8,6 +8,7 @@ os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -16,6 +17,13 @@ from rich.panel import Panel
 from rich.table import Table
 
 from src.tuning.autotuner import AutoTuner
+from src.utils.logging_config import setup_rich_logging
+
+
+def _configure_logging(verbose: bool = False) -> None:
+    """Configure Rich logging for auto-tuning."""
+    level = logging.DEBUG if verbose else logging.INFO
+    setup_rich_logging(level=level, show_time=True, show_path=True)
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -203,6 +211,9 @@ def main() -> int:
 
     console = Console()
 
+    # Configure Rich logging for all project logs
+    _configure_logging(verbose=args.verbose)
+
     # Validate arguments
     if not validate_args(args):
         return 1
@@ -275,10 +286,37 @@ def main() -> int:
         conf_attempted = bool(result.get("confirmation_attempted"))
         target_met = bool(result.get("target_met"))
         if conf_attempted and not target_met:
-            fah = result.get("confirmation_best_fah", result.get("best_fah"))
-            recall = result.get("confirmation_best_recall", result.get("best_recall"))
-            result_table.add_row("Best FAH", f"{fah:.4f}")
-            result_table.add_row("Best Recall", f"{recall:.4f}")
+            conf_fah = result.get("confirmation_best_fah")
+            conf_recall = result.get("confirmation_best_recall")
+            conf_cutoff = result.get("confirmation_best_cutoff")
+            conf_cutoff_u8 = result.get("confirmation_best_cutoff_uint8")
+            search_fah = result.get("search_best_fah", result.get("best_fah"))
+            search_recall = result.get("search_best_recall", result.get("best_recall"))
+            search_cutoff = result.get("search_best_cutoff", result.get("recommended_probability_cutoff"))
+            search_cutoff_u8 = result.get("search_best_cutoff_uint8", result.get("recommended_probability_cutoff_uint8"))
+            search_id = result.get("search_best_candidate_id")
+            confirm_id = result.get("confirmation_best_candidate_id")
+
+            if conf_fah is not None and conf_recall is not None:
+                result_table.add_row("Best FAH (confirm)", f"{float(conf_fah):.4f}")
+                result_table.add_row("Best Recall (confirm)", f"{float(conf_recall):.4f}")
+            if conf_cutoff is not None:
+                result_table.add_row(
+                    "Best Cutoff (confirm)",
+                    f"{float(conf_cutoff):.4f} ({conf_cutoff_u8 if conf_cutoff_u8 is not None else 'N/A'})",
+                )
+            result_table.add_row("Best FAH (search)", f"{float(search_fah):.4f}" if search_fah is not None else "N/A")
+            result_table.add_row("Best Recall (search)", f"{float(search_recall):.4f}" if search_recall is not None else "N/A")
+            if search_cutoff is not None:
+                result_table.add_row(
+                    "Best Cutoff (search)",
+                    f"{float(search_cutoff):.4f} ({search_cutoff_u8 if search_cutoff_u8 is not None else 'N/A'})",
+                )
+            if search_id:
+                result_table.add_row("Search Candidate", str(search_id))
+            if confirm_id:
+                result_table.add_row("Confirm Candidate", str(confirm_id))
+
             cutoff = result.get("recommended_probability_cutoff")
             cutoff_u8 = result.get("recommended_probability_cutoff_uint8")
             if cutoff is not None:
@@ -292,7 +330,7 @@ def main() -> int:
                 result_table.add_row("INT8 FAH (diag)", f"{float(int8_fah):.4f}")
                 result_table.add_row("INT8 Recall (diag)", f"{float(int8_recall):.4f}")
             result_table.add_row("Iterations", str(result["iterations"]))
-            result_table.add_row("Notes", "confirmation metrics (failed)")
+            result_table.add_row("Notes", "confirmation failed; showing both confirm and search metrics")
             result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
             result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
             result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))

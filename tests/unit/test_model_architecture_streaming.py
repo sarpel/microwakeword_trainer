@@ -106,6 +106,22 @@ def test_streaming_layers_and_helpers() -> None:
     assert d(x).shape[1] == 3
     assert k(x).shape[1] == 2
 
+    # Startup streaming context: keep should left-pad causally when input
+    # has fewer frames than requested.
+    k_pad = sm.StridedKeep(4, mode=sm.Modes.STREAM_INTERNAL_STATE_INFERENCE)
+    x_short = tf.ones((1, 1, 1, 2), dtype=tf.float32)
+    kept = k_pad(x_short)
+    assert kept.shape[1] == 4
+    np.testing.assert_allclose(kept.numpy()[:, :3, :, :], 0.0)
+    np.testing.assert_allclose(kept.numpy()[:, -1:, :, :], 1.0)
+
+    # MixConv streaming path should remain one-step even with mixed kernels
+    # when only a short startup context is available.
+    mix_stream = arch.MixConvBlock(kernel_sizes=[3, 5], filters=8, mode=sm.Modes.STREAM_INTERNAL_STATE_INFERENCE)
+    y_stream = mix_stream(tf.ones((1, 1, 1, 8), dtype=tf.float32), training=False)
+    assert y_stream.shape[1] == 1
+    assert y_stream.shape[-1] == 8
+
     split = sm.ChannelSplit([2, 2], axis=-1)
     parts = split(tf.zeros((1, 3, 1, 4), dtype=tf.float32))
     assert len(parts) == 2
@@ -140,6 +156,10 @@ def test_streaming_mixednet_wrapper_predict_clip(monkeypatch) -> None:
     class FakeMicroFrontend:
         def __init__(self, config):
             self.config = config
+
+        def compute_mel_spectrogram(self, audio):
+            # Return a minimal valid spectrogram: [num_frames, mel_bins]
+            return np.zeros((3, 40), dtype=np.float32)
 
     fake_mod.__dict__["FeatureConfig"] = FakeFeatureConfig
     fake_mod.__dict__["MicroFrontend"] = FakeMicroFrontend

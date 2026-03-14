@@ -78,10 +78,7 @@ class TestEvaluator:
         evaluation_config = config.get("evaluation", {})
         self.test_split = training_config.get("test_split", 0.1)
         self.ambient_duration_hours = training_config.get("ambient_duration_hours", 42.02)
-        # Canonical threshold name with backward compatibility
-        threshold = evaluation_config.get("detection_threshold")
-        if threshold is None:
-            threshold = evaluation_config.get("default_threshold", 0.97)
+        threshold = evaluation_config.get("default_threshold", 0.97)
         self.default_threshold = float(threshold)
         self.n_thresholds = int(evaluation_config.get("n_thresholds", 101) or 101)
 
@@ -122,7 +119,7 @@ class TestEvaluator:
             "test_samples": int(len(y_true)),
             "timestamp": datetime.now().isoformat(),
             "test_split": float(self.test_split),
-            "ambient_duration_hours": float(self.ambient_duration_hours * self.test_split),
+            "ambient_duration_hours": float(self.ambient_duration_hours),
         }
 
         self._display_results(results, has_both_classes)
@@ -196,13 +193,6 @@ class TestEvaluator:
                 return np.array(raw_labels, dtype=np.int32)
             finally:
                 store.close()
-            store.open()
-            raw_labels = []
-            for i in range(len(store)):
-                _, label = store.get(i)
-                raw_labels.append(label)
-            store.close()
-            return np.array(raw_labels, dtype=np.int32)
         except Exception as e:
             logger.warning(f"Could not load raw labels: {e}")
             return None
@@ -261,7 +251,7 @@ class TestEvaluator:
             results["eer"] = None
             results["eer_threshold"] = None
 
-        scaled_duration = self.ambient_duration_hours * self.test_split
+        scaled_duration = self.ambient_duration_hours / self.test_split
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
         fah_metrics = fah_estimator.compute_fah_metrics(y_true, y_score, threshold=self.default_threshold)
         results["fah"] = fah_metrics.get("ambient_false_positives_per_hour", 0.0)
@@ -289,7 +279,7 @@ class TestEvaluator:
             f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
             fp_count = int(fp)
-            scaled_duration = self.ambient_duration_hours * self.test_split
+            scaled_duration = self.ambient_duration_hours / self.test_split
             fah = fp_count / scaled_duration if scaled_duration > 0 else 0.0
 
             return recall, precision, f1, fah
@@ -377,7 +367,7 @@ class TestEvaluator:
     def _compute_operating_points(self, y_true: np.ndarray, y_score: np.ndarray) -> list[dict]:
         """Find optimal thresholds at target FAH rates."""
         target_fahs = [0.1, 0.5, 1.0, 2.0]
-        scaled_duration = self.ambient_duration_hours * self.test_split
+        scaled_duration = self.ambient_duration_hours / self.test_split
 
         thresholds = np.linspace(0.01, 0.99, self.n_thresholds)
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
@@ -391,7 +381,13 @@ class TestEvaluator:
             for thresh in thresholds:
                 fah_metrics = fah_estimator.compute_fah_metrics(y_true, y_score, threshold=thresh)
                 fah = fah_metrics.get("ambient_false_positives_per_hour", float("inf"))
-                recall = fah_metrics.get("recall", 0.0)
+                y_pred = (y_score >= thresh).astype(np.int32)
+                positive_mask = y_true == 1
+                n_positives = int(np.sum(positive_mask))
+                if n_positives > 0:
+                    recall = float(np.sum(y_pred[positive_mask]) / n_positives)
+                else:
+                    recall = 0.0
 
                 if fah <= target_fah and recall > best_recall:
                     best_fah = fah
@@ -412,7 +408,7 @@ class TestEvaluator:
     def _compute_threshold_sweep(self, y_true: np.ndarray, y_score: np.ndarray) -> list[dict]:
         """Sweep thresholds and compute metrics."""
         thresholds = np.arange(0.1, 1.0, 0.1)
-        scaled_duration = self.ambient_duration_hours * self.test_split
+        scaled_duration = self.ambient_duration_hours / self.test_split
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
 
         results = []
@@ -660,7 +656,7 @@ class TestEvaluator:
         plt.close()
 
         thresholds = np.linspace(0.01, 0.99, 100)
-        scaled_duration = self.ambient_duration_hours * self.test_split
+        scaled_duration = self.ambient_duration_hours / self.test_split
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
 
         recalls, fahs_list = [], []

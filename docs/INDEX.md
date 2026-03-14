@@ -484,6 +484,8 @@ pytest --cov=src --cov=config tests/
 | `docs/ARCHITECTURE.md` | MixedNet architecture details |
 | `docs/CONFIGURATION.md` | Complete config reference |
 | `docs/TRAINING.md` | Training workflow and optimization |
+| `scripts/evaluate_model.py` | Advanced evaluation + JSON/image/executive reports |
+| `scripts/eval_dashboard.py` | Interactive HTML dashboard from `evaluation_report.json` |
 | `docs/EXPORT.md` | TFLite export and ESPHome deployment |
 | `docs/USER_ADDITIONS.md` | Project-specific profiles and notes |
 | `specs/implementation_status.md` | Comprehensive implementation status and recent changes |

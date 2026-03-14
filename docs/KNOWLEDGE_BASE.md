@@ -264,13 +264,13 @@ mww-train --config standard
 
 **Phase 1 — Feature Learning:**
 - Steps: 20,000 (default)
-- Learning rate: 0.001
+- Learning rate: 0.001 (For 384 batch size --> 0.0017)
 - Focus: Basic feature extraction
 - Augmentation: Full pipeline
 
 **Phase 2 — Fine-tuning:**
 - Steps: 10,000 (default)
-- Learning rate: 0.0001
+- Learning rate: 0.0001 (For 384 batch size --> 0.00035)
 - Focus: Precision optimization
 - Augmentation: Reduced intensity
 
@@ -278,9 +278,9 @@ mww-train --config standard
 
 | Class | Weight | Purpose |
 |-------|--------|---------|
-| Positive | 1.0 | Wake word samples |
-| Negative | 20.0 | Compensate for imbalance |
-| Hard Negative | 40.0 | Emphasize difficult examples |
+| Positive | 4.0 | Wake word samples |
+| Negative | 2.0 | Compensate for imbalance |
+| Hard Negative | 2.0 | Emphasize difficult examples |
 
 > Target ratio: 1 positive : 10+ negative samples
 
@@ -385,7 +385,7 @@ converter.inference_output_type = tf.uint8  # NOT int8!
   "type": "micro",
   "wake_word": "Hey Katya",
   "author": "Sarpel GURAY",
-  "website": "https://github.com/sarpel/microwakeword-training-platform",
+  "website": "https://github.com/sarpel/microwakeword-trainer",
   "model": "hey_katya.tflite",
   "trained_languages": ["en"],
   "version": 2,
@@ -513,8 +513,8 @@ FAH = (false_positives / total_ambient_duration_hours)
 **Usage:**
 ```bash
 mww-autotune \
-    --checkpoint checkpoints/best_weights.weights.h5 \
-    --config standard \
+    --checkpoint models/checkpoints/best_weights.weights.h5 \
+    --config max_quality \
     --target-fah 0.2 \
     --target-recall 0.95
 ```

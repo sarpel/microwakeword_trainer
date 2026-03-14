@@ -1,4 +1,4 @@
-"""Export module for model conversion to TFLite."""
+"""Export utilities for ESPHome-compatible streaming TFLite models."""
 
 import json
 import logging
@@ -15,11 +15,42 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
+
+@contextmanager
+def _suppress_stderr_fd():
+    """Temporarily silence process stderr at OS fd level.
+
+    TensorFlow/XLA may emit startup noise directly from native code before
+    Python log filters are active. This keeps CLI output focused.
+    """
+    stderr_fd = sys.stderr.fileno()
+    saved_fd = os.dup(stderr_fd)
+    try:
+        with open(os.devnull, "w") as devnull:
+            os.dup2(devnull.fileno(), stderr_fd)
+        yield
+    finally:
+        os.dup2(saved_fd, stderr_fd)
+        os.close(saved_fd)
+
+
 import h5py
 import numpy as np
-import tensorflow as tf
 
-from src.export.verification import verify_tflite_model
+with _suppress_stderr_fd():
+    import tensorflow as tf
+
+try:
+    from absl import logging as _absl_logging
+
+    _absl_logging.set_verbosity(_absl_logging.ERROR)
+    _absl_logging.set_stderrthreshold("error")
+except Exception as exc:
+    logging.getLogger(__name__).debug("absl logging suppression unavailable: %s", exc)
+
+tf.get_logger().setLevel("ERROR")
+
+from src.export.verification import compute_expected_state_shapes, verify_tflite_model
 from src.model.architecture import build_core_layers
 
 logger = logging.getLogger(__name__)
@@ -536,7 +567,13 @@ def create_representative_dataset(
     config: dict,
     num_samples: int | None = None,
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
-    """Create representative dataset generator for quantization.
+    """Create representative dataset from random noise for quantization (FALLBACK ONLY).
+
+    WARNING: This fallback uses random noise which will NOT trigger wake word
+    detection. The model's output quantization range may be miscalibrated
+    (capped at ~0.5 instead of full [0, 1] range). Always prefer
+    ``create_representative_dataset_from_data()`` which feeds sequential chunks
+    from real spectrograms including positive samples.
 
     Args:
         config: Configuration dict with mel_bins
@@ -573,24 +610,31 @@ def create_representative_dataset_from_data(
     config: dict,
     data_dir: str,
     num_samples: int | None = None,
+    allow_random_fallback: bool = True,
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset from real training features for quantization.
 
-    Loads preprocessed spectrograms from FeatureStore and slices them into
-    stride-sized chunks. This produces calibration data that matches the
-    actual feature distribution and model input shape.
+    Loads preprocessed spectrograms from FeatureStore and yields stride-sized
+    chunks **sequentially** from each spectrogram. This is critical for correct
+    INT8 quantization of streaming models — the TFLite converter runs the model
+    forward through yielded samples, so state accumulates across sequential
+    chunks just like during real inference.
 
-    Uses ~4000 samples by default — the sweet spot for INT8 calibration quality
-    per TFLite best practices. With 150k+ files in the dataset, this is trivially
-    achievable from real data alone.
+    Includes both positive (wake word) and negative spectrograms (~30% positive)
+    so the model produces both high and low confidence outputs during calibration,
+    giving the quantizer the full output range to calibrate against.
+
+    Without sequential feeding, every calibration chunk starts from zero state,
+    the model never sees accumulated context, output is clamped to ~0.5, and the
+    Dense layer's quantization range covers only negative logits.
 
     Args:
-        config: Configuration dict with mel_bins
+        config: Configuration dict with mel_bins, stride, export settings
         data_dir: Path to processed data directory (containing train/ subfolder)
-        num_samples: Number of calibration samples to generate (default 4000)
+        num_samples: Approximate number of calibration chunks to generate
 
     Returns:
-        Generator function that yields samples
+        Generator function that yields [np.ndarray] samples for TFLite calibration
     """
     from src.data.dataset import FeatureStore
 
@@ -600,67 +644,376 @@ def create_representative_dataset_from_data(
     raw_num_samples = num_samples if num_samples is not None else export_cfg.get("representative_dataset_real_size", 4000)
     if raw_num_samples is None:
         raw_num_samples = 4000
-    num_samples = int(raw_num_samples)
+    target_chunks = int(raw_num_samples)
     store_path = Path(data_dir) / "train"
 
     if not store_path.exists():
-        print(f"  Warning: No training data at {store_path}, falling back to random calibration")
-        return create_representative_dataset(config, num_samples)
+        if allow_random_fallback:
+            print(f"  Warning: No training data at {store_path}, falling back to random calibration")
+            return create_representative_dataset(config, target_chunks)
+        raise ValueError(f"Quantized export requires real representative calibration data. Expected feature store at: {store_path}. Provide --data-dir pointing to processed training features.")
 
     store = FeatureStore(store_path)
     try:
         store.open()
     except (FileNotFoundError, OSError) as e:
-        print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
-        return create_representative_dataset(config, num_samples)
+        if allow_random_fallback:
+            print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
+            return create_representative_dataset(config, target_chunks)
+        raise ValueError(f"Quantized export requires real representative calibration data, but feature store could not be opened: {e}") from e
 
     try:
         n_stored = len(store)
         if n_stored == 0:
-            print("  Warning: Feature store is empty, falling back to random calibration")
-            return create_representative_dataset(config, num_samples)
+            if allow_random_fallback:
+                print("  Warning: Feature store is empty, falling back to random calibration")
+                return create_representative_dataset(config, target_chunks)
+            raise ValueError("Quantized export requires real representative calibration data, but the feature store is empty.")
 
-        # Pre-extract stride-sized chunks from real spectrograms
-        chunks: list[np.ndarray] = []
-        rng = np.random.RandomState(42)  # Local RNG for reproducible calibration
-        indices = rng.permutation(n_stored)
+        # Separate positive and negative sample indices
+        positive_indices = []
+        negative_indices = []
+        for idx in range(n_stored):
+            _spec, label = store.get(idx)
+            if label == 1:
+                positive_indices.append(idx)
+            else:
+                negative_indices.append(idx)
 
-        for idx in indices:
-            if len(chunks) >= num_samples:
-                break
-            spec, _label = store.get(int(idx))  # shape: [time_frames, mel_bins] or flat
+        rng = np.random.RandomState(42)
+        rng.shuffle(positive_indices)
+        rng.shuffle(negative_indices)
+
+        # Build ordered list of full spectrograms to feed sequentially.
+        # Target ~30% positive for output range coverage.
+        # Each spectrogram yields multiple stride-sized chunks.
+
+        # Estimate avg chunks per spectrogram from first few samples
+        sample_indices = (positive_indices[:5] if positive_indices else []) + negative_indices[:5]
+        avg_chunks_per_spec = 0
+        for idx in sample_indices:
+            spec, _ = store.get(idx)
             if spec.ndim == 1:
-                # Flat array — reshape to [time_frames, mel_bins]
+                if spec.size % mel_bins != 0:
+                    continue
+                spec = spec.reshape(-1, mel_bins)
+            avg_chunks_per_spec += spec.shape[0] // stride
+        if sample_indices:
+            avg_chunks_per_spec = max(1, avg_chunks_per_spec // len(sample_indices))
+        else:
+            avg_chunks_per_spec = 10  # Reasonable default
+
+        # Calculate how many spectrograms we need
+        target_positive_chunks = int(target_chunks * 0.3)
+        target_negative_chunks = target_chunks - target_positive_chunks
+
+        n_positive_specs = min(
+            len(positive_indices),
+            max(1, target_positive_chunks // avg_chunks_per_spec) if positive_indices else 0,
+        )
+        n_negative_specs = min(
+            len(negative_indices),
+            max(1, target_negative_chunks // avg_chunks_per_spec),
+        )
+
+        # Interleave: groups of negative specs followed by positive specs
+        # This ensures state accumulates through negatives, then positives
+        # trigger high confidence — giving calibration both extremes
+        selected_positive = positive_indices[:n_positive_specs]
+        selected_negative = negative_indices[:n_negative_specs]
+
+        # Build interleaved order: chunks of negatives, then a positive
+        neg_per_group = max(1, n_negative_specs // max(1, n_positive_specs))
+        ordered_indices: list[int] = []
+        neg_idx = 0
+        pos_idx = 0
+
+        while neg_idx < len(selected_negative) or pos_idx < len(selected_positive):
+            # Add a group of negatives
+            for _ in range(neg_per_group):
+                if neg_idx < len(selected_negative):
+                    ordered_indices.append(selected_negative[neg_idx])
+                    neg_idx += 1
+            # Add one positive
+            if pos_idx < len(selected_positive):
+                ordered_indices.append(selected_positive[pos_idx])
+                pos_idx += 1
+
+        # Remaining negatives
+        while neg_idx < len(selected_negative):
+            ordered_indices.append(selected_negative[neg_idx])
+            neg_idx += 1
+
+        # Extract sequential chunks from each spectrogram
+        all_chunks: list[np.ndarray] = []
+        n_positive_used = 0
+        n_negative_used = 0
+
+        for idx in ordered_indices:
+            spec, label = store.get(idx)
+            if spec.ndim == 1:
                 if spec.size % mel_bins != 0:
                     continue
                 spec = spec.reshape(-1, mel_bins)
             n_frames = spec.shape[0]
             if n_frames < stride:
                 continue
-            # Extract non-overlapping stride-sized chunks from this spectrogram
-            n_possible = n_frames // stride
-            remaining = num_samples - len(chunks)
-            n_to_take = min(n_possible, remaining)
-            starts = np.arange(n_to_take) * stride
-            for t in starts:
-                chunk = spec[t : t + stride].reshape(1, stride, mel_bins).astype(np.float32)
-                chunks.append(chunk)
 
-        print(f"  Using {len(chunks)} real-data calibration samples")
+            # Yield ALL stride-sized chunks in temporal order from this spectrogram
+            for t in range(0, n_frames - stride + 1, stride):
+                chunk = spec[t : t + stride].reshape(1, stride, mel_bins).astype(np.float32)
+                all_chunks.append(chunk)
+
+            if label == 1:
+                n_positive_used += 1
+            else:
+                n_negative_used += 1
+
+        if not all_chunks:
+            if allow_random_fallback:
+                print("  Warning: Could not extract any chunks, falling back to random calibration")
+                return create_representative_dataset(config, target_chunks)
+            raise ValueError("Quantized export requires real representative calibration data, but no valid calibration chunks could be extracted from feature store.")
+
+        positive_pct = (n_positive_used / max(1, n_positive_used + n_negative_used)) * 100
+        print(
+            f"  Using {len(all_chunks)} sequential calibration chunks from "
+            f"{n_positive_used + n_negative_used} spectrograms "
+            f"({n_positive_used} positive [{positive_pct:.0f}%], {n_negative_used} negative)"
+        )
 
         def representative_dataset_gen():
-            # Boundary anchors for correct INT8 quantization range calibration
+            # Boundary anchors for correct INT8 input range calibration
             anchor_min = np.zeros((1, stride, mel_bins), dtype=np.float32)  # 0.0
             anchor_max = np.full((1, stride, mel_bins), 26.0, dtype=np.float32)  # 26.0
             yield [anchor_min]
             yield [anchor_max]
 
-            for chunk in chunks:
+            # Yield chunks in sequential order — state accumulates across
+            # chunks from the same spectrogram, allowing the model to
+            # produce high-confidence outputs on positive samples
+            for chunk in all_chunks:
                 yield [chunk]
 
         return representative_dataset_gen
     finally:
         store.close()
+
+
+def _write_checkpoint_metadata(checkpoint_path: str, metadata: dict) -> None:
+    """Persist checkpoint sidecar metadata best-effort."""
+    cache_path = Path(checkpoint_path).with_suffix(".metadata.json")
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+    except (OSError, IOError, Exception) as e:
+        logger.warning(f"Failed to write checkpoint metadata to {cache_path}: {e}")
+
+
+def _select_export_probability_cutoff(
+    y_true: np.ndarray,
+    y_scores: np.ndarray,
+    config: Optional[dict],
+    ambient_duration_hours_override: Optional[float] = None,
+) -> dict:
+    """Select deployment cutoff from test-set predictions.
+
+    Uses the same FAH/recall sweep utilities as the evaluation layer.
+    Primary objective: minimize FAH while meeting target recall.
+    """
+    from src.evaluation.metrics import compute_fah_at_target_recall, compute_recall_at_target_fah
+
+    y_true = np.asarray(y_true, dtype=np.int32).reshape(-1)
+    y_scores = np.asarray(y_scores, dtype=np.float32).reshape(-1)
+    if y_true.size != y_scores.size:
+        raise ValueError(f"y_true and y_scores size mismatch: {y_true.size} vs {y_scores.size}")
+    if y_true.size < 2:
+        raise ValueError("Need at least 2 scored samples to auto-calculate probability_cutoff")
+    if len(np.unique(y_true)) < 2:
+        raise ValueError("Need both positive and negative classes to auto-calculate probability_cutoff")
+
+    cfg = config if isinstance(config, dict) else {}
+    evaluation_cfg = dict(cfg.get("evaluation", {}))
+    training_cfg = dict(cfg.get("training", {}))
+    export_cfg = dict(cfg.get("export", {}))
+
+    n_thresholds = int(evaluation_cfg.get("n_thresholds", 101) or 101)
+    target_recall = float(evaluation_cfg.get("target_recall", 0.90) or 0.90)
+    target_fah = float(evaluation_cfg.get("target_fah", 2.0) or 2.0)
+    sliding_window_size = int(export_cfg.get("sliding_window_size", 5) or 5)
+
+    if ambient_duration_hours_override is not None:
+        ambient_duration_hours = float(ambient_duration_hours_override)
+    else:
+        ambient_duration_hours = float(training_cfg.get("ambient_duration_hours", 42.02) or 42.02)
+    ambient_duration_hours = max(ambient_duration_hours, 1e-8)
+
+    best_fah, best_threshold, best_recall = compute_fah_at_target_recall(
+        y_true=y_true,
+        y_scores=y_scores,
+        ambient_duration_hours=ambient_duration_hours,
+        target_recall=target_recall,
+        n_thresholds=n_thresholds,
+        sliding_window_size=sliding_window_size,
+    )
+
+    method = "fah_at_target_recall"
+    if not np.isfinite(best_fah):
+        # Fallback when strict recall target cannot be met.
+        best_recall, best_threshold, best_fah = compute_recall_at_target_fah(
+            y_true=y_true,
+            y_scores=y_scores,
+            ambient_duration_hours=ambient_duration_hours,
+            target_fah=target_fah,
+            n_thresholds=n_thresholds,
+            sliding_window_size=sliding_window_size,
+        )
+        method = "recall_at_target_fah"
+
+    raw_cutoff = float(np.clip(best_threshold, 0.0, 1.0))
+    fallback_cutoff = float(
+        np.clip(
+            export_cfg.get(
+                "probability_cutoff",
+                evaluation_cfg.get("default_threshold", 0.97),
+            ),
+            0.0,
+            1.0,
+        )
+    )
+
+    cutoff = raw_cutoff
+    fallback_applied = False
+    # Guardrail: extremely low thresholds are unstable and produce false activations.
+    if (not np.isfinite(cutoff)) or cutoff < 0.05:
+        cutoff = fallback_cutoff
+        method = f"{method}_safety_fallback"
+        fallback_applied = True
+
+    return {
+        "probability_cutoff": cutoff,
+        "probability_cutoff_uint8": int(np.clip(round(cutoff * 255.0), 1, 255)),
+        "raw_probability_cutoff": raw_cutoff,
+        "fallback_probability_cutoff": fallback_cutoff,
+        "fallback_applied": fallback_applied,
+        "estimated_fah": float(best_fah),
+        "estimated_recall": float(best_recall),
+        "scaled_ambient_hours": float(ambient_duration_hours),
+        "selection_method": method,
+    }
+
+
+def _auto_calculate_probability_cutoff(
+    tflite_path: str,
+    data_dir: str,
+    config: Optional[dict],
+) -> dict:
+    """Run TFLite test-split inference and compute deployment probability cutoff."""
+    from src.data.dataset import FeatureStore
+
+    test_store_path = Path(data_dir) / "test"
+    if not test_store_path.exists():
+        raise FileNotFoundError(f"Auto cutoff requires test feature store at: {test_store_path}")
+
+    interpreter = tf.lite.Interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
+
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+
+    input_idx = int(input_details[0]["index"])
+    output_idx = int(output_details[0]["index"])
+
+    input_shape = tuple(int(v) for v in input_details[0].get("shape", [1, 3, 40]))
+    if len(input_shape) != 3:
+        raise ValueError(f"Unexpected TFLite input shape for export auto cutoff: {input_shape}")
+    stride = int(input_shape[1])
+    mel_bins = int(input_shape[2])
+
+    input_dtype = input_details[0]["dtype"]
+    input_quant = input_details[0].get("quantization_parameters", {})
+    input_scale = float(input_quant.get("scales", np.array([1.0]))[0])
+    input_zero_point = int(input_quant.get("zero_points", np.array([0]))[0])
+
+    output_dtype = output_details[0]["dtype"]
+    output_quant = output_details[0].get("quantization_parameters", {})
+    output_scale = float(output_quant.get("scales", np.array([1.0]))[0])
+    output_zero_point = int(output_quant.get("zero_points", np.array([0]))[0])
+
+    input_indices = {d["index"] for d in input_details}
+    output_indices = {d["index"] for d in output_details}
+    state_tensors: list[tuple[int, tuple[int, ...], np.dtype]] = []
+    for tensor in interpreter.get_tensor_details():
+        idx = tensor["index"]
+        if idx in input_indices or idx in output_indices:
+            continue
+        if "ReadVariableOp" in tensor.get("name", ""):
+            shape = tuple(int(x) for x in tensor.get("shape", ()))
+            state_tensors.append((idx, shape, tensor["dtype"]))
+
+    y_true: list[int] = []
+    y_scores: list[float] = []
+    negative_chunk_count = 0
+    positive_chunk_count = 0
+
+    store = FeatureStore(test_store_path)
+    try:
+        store.open(readonly=True)
+        for i in range(len(store)):
+            features, raw_label = store.get(i)
+            label = int(raw_label) & 1
+
+            spec = np.asarray(features, dtype=np.float32)
+            if spec.ndim == 1:
+                if spec.size % mel_bins != 0:
+                    continue
+                spec = spec.reshape(-1, mel_bins)
+            if spec.ndim != 2 or spec.shape[1] != mel_bins or spec.shape[0] < stride:
+                continue
+
+            for idx, shape, dtype in state_tensors:
+                interpreter.set_tensor(idx, np.zeros(shape, dtype=dtype))
+
+            for t in range(0, spec.shape[0] - stride + 1, stride):
+                chunk = spec[t : t + stride].reshape(1, stride, mel_bins)
+                if input_dtype == np.int8:
+                    if input_scale <= 0.0:
+                        raise ValueError("Invalid int8 input quantization scale for auto cutoff")
+                    q = np.round(chunk / input_scale + input_zero_point)
+                    chunk_input = np.clip(q, -128, 127).astype(np.int8)
+                else:
+                    chunk_input = chunk.astype(input_dtype)
+
+                interpreter.set_tensor(input_idx, chunk_input)
+                interpreter.invoke()
+                out_val = float(np.asarray(interpreter.get_tensor(output_idx)).reshape(-1)[0])
+                if output_dtype == np.uint8 and output_scale > 0.0:
+                    out_val = (out_val - output_zero_point) * output_scale
+                chunk_score = float(np.clip(out_val, 0.0, 1.0))
+                y_true.append(label)
+                y_scores.append(chunk_score)
+                if label == 1:
+                    positive_chunk_count += 1
+                else:
+                    negative_chunk_count += 1
+    finally:
+        store.close()
+
+    cfg = config if isinstance(config, dict) else {}
+    hardware_cfg = dict(cfg.get("hardware", {}))
+    window_step_ms = float(hardware_cfg.get("window_step_ms", 10) or 10)
+    chunk_duration_hours = (window_step_ms * float(stride)) / 3_600_000.0
+    observed_ambient_hours = max(negative_chunk_count * chunk_duration_hours, 1e-8)
+
+    out = _select_export_probability_cutoff(
+        np.asarray(y_true),
+        np.asarray(y_scores),
+        config,
+        ambient_duration_hours_override=observed_ambient_hours,
+    )
+    out["observed_negative_chunks"] = int(negative_chunk_count)
+    out["observed_positive_chunks"] = int(positive_chunk_count)
+    return out
 
 
 def export_streaming_tflite(
@@ -673,11 +1026,11 @@ def export_streaming_tflite(
 ) -> dict:
     """Export trained checkpoint to ESPHome-compatible streaming TFLite.
 
-    This is the main export function that:
-    1. Builds a streaming model with proper state variables
+    This is the main export entry point and it:
+    1. Builds a streaming model with state variables
     2. Loads weights from Keras 3 checkpoint format
-    3. Converts to quantized TFLite with proper settings
-    4. Verifies the exported model
+    3. Converts to quantized TFLite with required settings
+    4. Verifies ESPHome compatibility invariants
 
 
     Args:
@@ -689,7 +1042,7 @@ def export_streaming_tflite(
 
 
     Returns:
-        Dict with export results including paths and validation info
+        Dict with export outputs (paths, size, and verification result)
     """
     print("=" * 60)
     print("Streaming TFLite Export for ESPHome")
@@ -794,10 +1147,13 @@ def export_streaming_tflite(
             converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
             converter.inference_input_type = tf.int8
             converter.inference_output_type = tf.uint8
-            if data_dir:
-                converter.representative_dataset = create_representative_dataset_from_data(config, data_dir)
-            else:
-                converter.representative_dataset = create_representative_dataset(config)
+            if not data_dir:
+                raise ValueError("Quantized export requires real representative calibration data. Pass --data-dir pointing to processed training features.")
+            converter.representative_dataset = create_representative_dataset_from_data(
+                config,
+                data_dir,
+                allow_random_fallback=False,
+            )
         else:
             converter.experimental_enable_resource_variables = True
 
@@ -818,7 +1174,46 @@ def export_streaming_tflite(
     print(f"  Size: {len(tflite_model) / 1024:.2f} KB")
 
     # Verify
-    verification = verify_exported_model(str(tflite_file))
+    expected_shapes = compute_expected_state_shapes(
+        first_conv_kernel=config.get("first_conv_kernel", 5),
+        stride=config.get("stride", 3),
+        mel_bins=config.get("mel_bins", 40),
+        first_conv_filters=config.get("first_conv_filters", 32),
+        mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
+        pointwise_filters=config.get("pointwise_filters", [64, 64, 64, 64]),
+        temporal_frames=temporal_frames,
+    )
+    verification = verify_exported_model(str(tflite_file), expected_state_shapes=expected_shapes)
+
+    # Auto-calculate deployment cutoff from test split and persist into checkpoint metadata.
+    # This runs on exported TFLite to match deployment behavior.
+    try:
+        if data_dir:
+            print("\n[4.5/5] Auto-calculating probability_cutoff from test split...")
+            auto_cutoff = _auto_calculate_probability_cutoff(
+                tflite_path=str(tflite_file),
+                data_dir=data_dir,
+                config=config,
+            )
+            metadata["tuned_probability_cutoff"] = float(auto_cutoff["probability_cutoff"])
+            metadata["tuned_probability_cutoff_uint8"] = int(auto_cutoff["probability_cutoff_uint8"])
+            metadata["export_estimated_fah"] = float(auto_cutoff["estimated_fah"])
+            metadata["export_estimated_recall"] = float(auto_cutoff["estimated_recall"])
+            metadata["export_cutoff_selection_method"] = str(auto_cutoff["selection_method"])
+            metadata["export_scaled_ambient_hours"] = float(auto_cutoff["scaled_ambient_hours"])
+            metadata["export_observed_negative_chunks"] = int(auto_cutoff.get("observed_negative_chunks", 0))
+            metadata["export_observed_positive_chunks"] = int(auto_cutoff.get("observed_positive_chunks", 0))
+            metadata["export_raw_probability_cutoff"] = float(auto_cutoff.get("raw_probability_cutoff", auto_cutoff["probability_cutoff"]))
+            metadata["export_fallback_probability_cutoff"] = float(auto_cutoff.get("fallback_probability_cutoff", auto_cutoff["probability_cutoff"]))
+            metadata["export_cutoff_fallback_applied"] = bool(auto_cutoff.get("fallback_applied", False))
+            metadata["export_cutoff_source"] = "mww-export"
+            _write_checkpoint_metadata(checkpoint_path, metadata)
+
+            print(f"  ✓ Auto probability_cutoff: {auto_cutoff['probability_cutoff']:.4f} ({auto_cutoff['probability_cutoff_uint8']}) method={auto_cutoff['selection_method']}")
+        else:
+            print("  Note: --data-dir not provided; skipping auto probability_cutoff calculation")
+    except Exception as e:
+        print(f"  Warning: Auto probability_cutoff calculation failed, using configured/default cutoff: {e}")
 
     print("\n[5/5] Generating manifest...")
 
@@ -867,13 +1262,13 @@ def _build_manifest_config(config: Optional[dict], model_name: str, metadata: di
         export_cfg["probability_cutoff"] = float(tuned_cutoff)
 
     export_cfg.setdefault("wake_word", model_name)
-    # Prefer detection_threshold from evaluation section, then top-level config, then default 0.5
+    # Use default_threshold from evaluation section, then top-level config, then default 0.5
     if isinstance(config, dict):
         evaluation_cfg = dict(config.get("evaluation", {}))
-        _detection_threshold = export_cfg.get("detection_threshold") or evaluation_cfg.get("detection_threshold") or config.get("detection_threshold", 0.5)
+        _default_threshold = export_cfg.get("default_threshold") or evaluation_cfg.get("default_threshold") or config.get("default_threshold", 0.5)
     else:
-        _detection_threshold = 0.5
-    export_cfg.setdefault("detection_threshold", _detection_threshold)
+        _default_threshold = 0.5
+    export_cfg.setdefault("default_threshold", _default_threshold)
 
     return {
         "export": export_cfg,
@@ -881,16 +1276,18 @@ def _build_manifest_config(config: Optional[dict], model_name: str, metadata: di
     }
 
 
-def verify_exported_model(tflite_path: str) -> dict:
+def verify_exported_model(tflite_path: str, expected_state_shapes: list[tuple[int, ...]] | None = None) -> dict:
     """Verify exported TFLite model meets ESPHome requirements.
 
     Args:
         tflite_path: Path to TFLite model file
+        expected_state_shapes: Optional config-aware state payload shapes.
+            When omitted, verification uses default assumptions.
 
     Returns:
-        Dict with verification results
+        Dict with compatibility checks, warnings, and detailed evidence.
     """
-    return verify_tflite_model(tflite_path)
+    return verify_tflite_model(tflite_path, expected_state_shapes=expected_state_shapes)
 
 
 # =============================================================================
@@ -903,9 +1300,10 @@ def convert_model_saved(
     folder: str,
     mode: str = "stream_internal_state_inference",
 ) -> tf.keras.Model:
-    """Convert non-streaming model to streaming SavedModel (Article IX Stage 1).
+    """Convert non-streaming model to streaming SavedModel (Article X Stage 1).
 
-    This implements the mandated Stage 1 conversion from ARCHITECTURAL_CONSTITUTION.md:
+    This implements the mandated Stage 1 conversion from
+    ARCHITECTURAL_CONSTITUTION.md Article X:
     - Takes a non-streaming trained model
     - Converts to streaming with internal state inference
     - Produces SavedModel with proper state variables
@@ -914,7 +1312,7 @@ def convert_model_saved(
         model: Non-streaming trained model (e.g., MixedNet in NON_STREAM mode)
         config: Configuration dict with model parameters
         folder: Output directory for streaming SavedModel
-        mode: Must be "stream_internal_state_inference" (Article IX requirement)
+        mode: Must be "stream_internal_state_inference" (Article X requirement)
 
     Returns:
         Streaming model ready for Stage 2 TFLite conversion
@@ -1035,11 +1433,6 @@ def main():
         help="Name for exported model",
     )
     parser.add_argument(
-        "--no-quantize",
-        action="store_true",
-        help="Disable quantization (not recommended for ESPHome)",
-    )
-    parser.add_argument(
         "--data-dir",
         type=str,
         default=None,
@@ -1067,7 +1460,7 @@ def main():
                 config["export"] = {
                     "wake_word": export_cfg.get("wake_word", args.model_name),
                     "author": export_cfg.get("author", "Sarpel GURAY"),
-                    "website": export_cfg.get("website", "https://github.com/sarpel/microwakeword-training-platform"),
+                    "website": export_cfg.get("website", "https://github.com/sarpel/microwakeword_trainer"),
                     "trained_languages": export_cfg.get("trained_languages", ["en"]),
                     "probability_cutoff": export_cfg.get("probability_cutoff", 0.97),
                     "sliding_window_size": export_cfg.get("sliding_window_size", 5),
@@ -1104,7 +1497,7 @@ def main():
             model_name=args.model_name,
             config=config,
             data_dir=args.data_dir,
-            quantize=not args.no_quantize,
+            quantize=True,
         )
 
         if result["model_valid"]:

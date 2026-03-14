@@ -81,7 +81,7 @@ def analyze_model_architecture(model_path: str) -> dict[str, Any]:
         )
     except (AttributeError, TypeError) as exc:
         logger.warning(
-            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. " "Falling back to Interpreter-based analysis.",
+            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. Falling back to Interpreter-based analysis.",
             exc,
         )
         analysis_text = _build_interpreter_analysis(model_content)
@@ -200,10 +200,11 @@ def validate_model_quality(
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
         # Get actual subgraph count from interpreter, handle different TF versions
-        if hasattr(interpreter, "num_subgraphs"):
-            num_subgraphs = interpreter.num_subgraphs()
-        elif hasattr(interpreter, "_interpreter") and hasattr(interpreter._interpreter, "GetSubgraphCount"):
-            num_subgraphs = interpreter._interpreter.GetSubgraphCount()
+        interp_obj: Any = interpreter
+        if hasattr(interp_obj, "num_subgraphs"):
+            num_subgraphs = interp_obj.num_subgraphs()
+        elif hasattr(interp_obj, "_interpreter") and hasattr(interp_obj._interpreter, "GetSubgraphCount"):
+            num_subgraphs = interp_obj._interpreter.GetSubgraphCount()
         else:
             # Fallback - check via tensor details or another method
             num_subgraphs = 1  # conservative default
@@ -240,7 +241,7 @@ def validate_model_quality(
 
             if out_dtype != expected_output_dtype:
                 results["valid"] = False
-                results["errors"].append(f"Invalid output dtype: {out_dtype}. Expected {expected_output_dtype} " "(CRITICAL for ESPHome compatibility)")
+                results["errors"].append(f"Invalid output dtype: {out_dtype}. Expected {expected_output_dtype} (CRITICAL for ESPHome compatibility)")
             else:
                 results["info"]["output_dtype_correct"] = True
 
@@ -470,7 +471,12 @@ def estimate_performance(
 
 
 def check_gpu_compatibility(model_path: str) -> dict[str, Any]:
-    """Check if model is compatible with GPU delegation."""
+    """Check whether the model appears GPU-delegate compatible.
+
+    Note:
+        This check is best-effort and depends on Analyzer availability in the
+        installed TensorFlow build.
+    """
     if not os.path.exists(model_path):
         return {"error": f"Model not found: {model_path}"}
 
@@ -486,7 +492,7 @@ def check_gpu_compatibility(model_path: str) -> dict[str, Any]:
         )
     except (AttributeError, TypeError) as exc:
         logger.warning(
-            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. " "GPU compatibility cannot be determined.",
+            "tf.lite.experimental.Analyzer is unavailable (removed in TF 2.16+): %s. GPU compatibility cannot be determined.",
             exc,
         )
         gpu_compatibility_checked = False
@@ -528,7 +534,6 @@ def check_gpu_compatibility(model_path: str) -> dict[str, Any]:
         if re.search(re.escape(pattern), analysis_text, re.IGNORECASE):
             # Check if there's a negation nearby (within 50 characters)
             for neg_pattern in negative_patterns:
-
                 # Find all occurrences of the positive pattern
                 for match in re.finditer(re.escape(pattern), analysis_text, re.IGNORECASE):
                     pos_start = match.start()

@@ -1,7 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-03-08
-**Commit:** consolidation
+**Generated:** 2026-03-13
 **Project:** microwakeword_trainer v2.0.0
 
 ## OVERVIEW
@@ -11,11 +10,11 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 ```
 ./
 ├── src/                  # Source code (8 modules, ~19,685 lines Python)
-├── config/                # YAML presets + Python loader (dual structure)
+├── config/                # YAML presets + Python loader
 ├── tests/                 # Unit + integration tests
-├── scripts/               # Standalone tools (~10 utilities)
+├── scripts/               # Standalone tools
 ├── docs/                  # User documentation
-├── specs/                 # Implementation specs & status (NEW)
+├── specs/                 # Implementation specs
 ├── ARCHITECTURAL_CONSTITUTION.md  # Immutable architectural truth
 └── AGENTS.md             # This file
 ```
@@ -23,15 +22,15 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| Training loop | `src/training/trainer.py` (951 lines) | Two-phase, hard negative mining |
-| Mining & FP extraction | `src/training/mining.py` (1859 lines) | Unified: HardExampleMiner, AsyncMiner, FP logging, top-FP extraction, consolidation |
-| Config system | `config/loader.py` (736 lines) | 14 dataclasses, env var substitution |
-| Model architecture | `src/model/architecture.py` (694 lines) | MixedNet, streaming layers, `build_core_layers()` factory |
-| TFLite export | `src/export/tflite.py` (780 lines) | INT8 quantization, dual subgraphs |
-| Data pipeline | `src/data/dataset.py` (962 lines) | RaggedMmap, WakeWordDataset |
-| Speaker clustering | `src/data/clustering.py` (1,212 lines) | ECAPA-TDNN embeddings |
-| Auto-tuning | `src/tuning/autotuner.py` (2689 lines) | MaxQualityAutoTuner: Pareto archive, Thompson sampling, 7 strategy arms |
-| Evaluation metrics | `src/evaluation/metrics.py` (373 lines) | FAH, ROC-AUC, calibration |
+| Training loop | `src/training/trainer.py` | Two-phase, hard negative mining |
+| Mining & FP extraction | `src/training/mining.py` | HardExampleMiner, AsyncMiner |
+| Config system | `config/loader.py` | 14 dataclasses, env var substitution |
+| Model architecture | `src/model/architecture.py` | MixedNet, streaming layers |
+| TFLite export | `src/export/tflite.py` | INT8 quantization, dual subgraphs |
+| Data pipeline | `src/data/dataset.py` | RaggedMmap, WakeWordDataset |
+| Speaker clustering | `src/data/clustering.py` | ECAPA-TDNN embeddings |
+| Auto-tuning | `src/tuning/autotuner.py` | MaxQualityAutoTuner |
+| Evaluation metrics | `src/evaluation/metrics.py` | FAH, ROC-AUC |
 
 ## CONVENTIONS
 
@@ -41,70 +40,51 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 - **Environment variable substitution**: `${VAR}` or `${VAR:-default}`
 - **Immutable hardware section**: Enforced by ARCHITECTURAL_CONSTITUTION.md
 - **Two separate venvs**: TF (main) + PyTorch (clustering)
+- **`search_eval_fraction`** in AutoTuningConfig controls search data split (default 0.30)
 
 ### Code Style
 - **Relaxed typing**: mypy `disallow_untyped_defs=false`
-- **Line count**: 70 files with ~19,685 lines total
-- **Large files**: 18 files >500 lines (cluster.py, dataset.py, etc.)
-- **Directory structure**: src/ layout despite root __init__.py
-
-### Testing
-- **Unit tests**: 5 modules (async_miner, config, test_evaluator, vectorized_metrics, spec_augment)
-- **Integration tests**: 1 module (training pipeline)
-- **No CI/CD**: Manual testing, Makefile for automation
+- **Directory structure**: src/ layout
 
 ## ANTI-PATTERNS (THIS PROJECT)
 
-### Critical Violations (Silent Failure on Device)
-- **⛔ Don't contradict ARCHITECTURAL_CONSTITUTION.md** - Silent device failure
-- **⛔ Don't use int8 output dtype** - ESPHome requires uint8; model silently broken
-- **⛔ Don't use `model.export()`** - Fails with ring buffer states; use `tf.keras.export.ExportArchive`
-- **⛔ Don't modify immutable constants** - No exceptions, no "quick tweaks"
-- **⛔ Don't use `model.trainable_weights` for serialization** - Excludes BatchNorm moving statistics (non-trainable). Use `model.get_weights()`/`model.set_weights()` for full state. See `src/tuning/AGENTS.md` for details.
-
+### Critical Violations (Silent Device Failure)
+- **Don't contradict ARCHITECTURAL_CONSTITUTION.md** - Silent device failure
+- **Don't use int8 output dtype** - ESPHome requires uint8
+- **Don't use `model.export()`** - Use `tf.keras.export.ExportArchive`
+- **Don't use `model.trainable_weights` for serialization** - Excludes BatchNorm moving stats. Use `model.get_weights()`/`model.set_weights()`
+- **Don't evaluate auto-tuner on same data used for FocusedSampler training** — split search into search_train/search_eval via `search_eval_fraction` config. Training and evaluating on same data causes train-on-test contamination that degrades model quality.
+- **Don't hardcode okay_nabu state shapes in export verification** — use `compute_expected_state_shapes()` for config-aware validation. Models with different `clip_duration_ms` produce different `temporal_frames`, changing stream_5 shape.
+- **Don't reload checkpoints after EMA finalize** - At end of training, EMA may have cleared optimizer state; reloading triggers "optimizer has 2 variables whereas saved has 92 variables" warning without benefit. Only reload when resuming from interruption (see ARCHITECTURAL_CONSTITUTION.md Article IX).
 
 ### Environment & Dependencies
-- **⛔ Don't install nvidia-driver inside WSL** - Install on Windows host only
-- **⛔ Don't mix TF and PyTorch in same venv** - Use separate environments (mww-tf, mww-torch)
-- **⛔ Don't use CPU-only CuPy** - SpecAugment requires GPU, no fallback
-- **⛔ Don't import scripts as a module** - scripts/ has no __init__.py. Run as `python scripts/<script>.py` or use subprocess
-  - Exception: `trainer.py` line 1614 wraps optional import in try/except for top FP extraction
-### Configuration Rules
-- **⛔ Don't add config only to loader.py** - Must add to ALL THREE presets (fast_test, standard, max_quality)
-- **⛔ Don't use deprecated variable names** - No backward compatibility (Rule-1)
+- **Don't mix TF and PyTorch in same venv** - Use separate environments
+- **Don't use CPU-only CuPy** - SpecAugment requires GPU
+- **Don't import scripts as a module** - Run as `python scripts/<script>.py`
 
-### Editing Rules (MANDATORY)
-- **⛔ Don't use LINE#IDs older than 10 seconds** - Re-read file immediately before editing
-- **⛔ Don't make sequential edits to same file** - Batch ALL changes into ONE edit() call
-- **⛔ Don't guess LINE#IDs** - Always use exact tags from most recent read
+### Configuration
+- **Don't add config only to loader.py** - Must add to ALL THREE presets
+- **Don't use deprecated variable names** - No backward compatibility
+
+### Editing Rules
+- **Don't use LINE#IDs older than 10 seconds** - Re-read file before editing
+- **Don't make sequential edits to same file** - Batch into ONE edit
 
 ## UNIQUE STYLES
 
-### Data Management
-- **RaggedMmap**: Custom memory-mapped storage for variable-length audio
-- **Separate data directories**: dataset/ (raw) vs data/processed/ (features)
-- **Quality scoring**: Pre-filtering pipeline (SNR, clipping, WQI)
-
 ### PCAN (Per-Channel Normalization)
-- PCAN is always ON in the pymicro-features C++ backend; there is no Python flag to enable or disable.
-- This matches the ESPHome okay_nabu model configuration.
+- PCAN is always ON in pymicro-features C++ backend; no Python flag exists
 
 ### Training Pipeline
-- **AsyncHardExampleMiner**: Background hard negative mining (no training interruption)
+- **AsyncHardExampleMiner**: Background hard negative mining
 - **Two-phase training**: Phase 1 (feature learning) + Phase 2 (fine-tuning)
 - **Class weighting**: positive=1.0, negative=20.0, hard_neg=40.0
-- **Rich-based logger**: RichTrainingLogger for formatted progress
+- **Checkpoint selection**: Two-stage (PR-AUC warm-up → recall@target_FAH)
 
 ### Export System
 - **Dual subgraphs**: Main inference + initialization
-- **Official reference state variables**: 6 int8-quantized state tensors named `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`
-- **BatchNorm folding**: Critical for streaming export
-- **Representative dataset**: Required for INT8 quantization calibration
-
-### CLI Organization
-- **Console scripts**: Defined in pyproject.toml (mww-train, mww-export, mww-autotune, mww-cluster-analyze, mww-cluster-apply)
-- **Standalone scripts**: 14 utilities in scripts/ directory
-- **Makefile targets**: 20+ targets for common workflows
+- **6 state variables**: `stream` through `stream_5` (see ARCHITECTURAL_CONSTITUTION.md)
+- **Input**: int8 [1,3,40], **Output**: uint8 [1,1]
 
 ## COMMANDS
 ```bash
@@ -115,7 +95,7 @@ mww-train --config config/presets/standard.yaml
 mww-export --checkpoint checkpoints/best_weights.weights.h5 --output models/exported/
 
 # Auto-tune
-mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config standard --users-hard-negs /path/to/custom_hard_negatives/
+mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config standard
 
 # Speaker clustering (PyTorch env)
 mww-cluster-analyze --config standard --dataset all --n-clusters 200
@@ -123,45 +103,42 @@ mww-cluster-apply --namelist-dir cluster_output
 
 # Verification
 python scripts/verify_esphome.py models/exported/wake_word.tflite
+
+# Advanced evaluation + reports
+python scripts/evaluate_model.py --model models/exported/wake_word.tflite --config standard --output-dir logs/
+
+# Interactive dashboard from report
+python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
 ```
 
 ## NOTES
 
 ### Critical Files
-- **ARCHITECTURAL_CONSTITUTION.md**: Supreme source of truth - read before any architectural changes
-- **AGENTS.md** (root): This file - main project patterns
-- **src/*/AGENTS.md**: Per-module patterns and anti-patterns
-
-### Recent Enhancements
-- **User-defined hard negatives in AutoTuner** (commit 2fa00e22e): `--users-hard-negs` CLI flag, `users_hard_negs_dir` parameter
-- **Configuration validation enhancements** (commit f62bb69a3): Improved validation in config/loader.py, better error messages
-- **Critical Bug Fix** (2026-03-10): Auto-tuner weight serialization now uses `model.get_weights()`/`model.set_weights()` instead of `model.trainable_weights` to include BatchNorm moving statistics. The tuning model runs in NON_STREAM mode (no streaming states), but BatchNorm moving_mean/moving_variance are non-trainable and were lost. Prevents confirmation failures (FAH 0→129).
-- **Two-Stage Checkpoint Strategy** (2026-03-12): Replaced `quality_score`-based checkpoint selection with a principled two-stage approach. Stage 1 (warm-up): saves by PR-AUC (`auc_pr`) until FAH budget is first met. Stage 2 (operational): saves by `recall_at_target_fah` when FAH ≤ `target_fah × 1.1`. `quality_score` is retained for logging/display only. Eliminates arbitrary 0.7/0.3 weights, Lorentzian config-sensitivity, and AGENTS.md/code contradictions. See `src/training/trainer.py::_is_best_model()`.
-- **Ground Truth Audit** (2026-03-13): Verified documentation against `official_okay_nabu_analysis.txt` / `official_architecture.md`. Key confirmed facts: 94 tensors in Subgraph 0, 13 unique op types used by okay_nabu, 20 registered op resolvers in ESPHome, the official streaming state names are `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`, `QUANTIZE` re-quantizes int8 sigmoid output to uint8, and `stream_5` is a pre-flatten temporal buffer rather than a simple `kernel - stride` ring buffer.
-- **Pipeline Alignment** (2026-03-12): `build_core_layers()` factory extracted to architecture.py — both `MixedNet` and `StreamingExportModel` use it. `convert_to_tflite()` dead code removed from tflite.py. INT8 shadow evaluation removed from AutoTuner (float32 eval only). PCAN hardcoded ON in pymicro-features C++ backend (no Python flag). All residual_connections defaults aligned to `[0,1,1,1]`.
+- **ARCHITECTURAL_CONSTITUTION.md**: Supreme source of truth for all architectural constants
+- **src/*/AGENTS.md**: Per-module patterns
 
 ### Gotchas
-- **CuPy no CPU fallback**: Must have GPU for training (SpecAugment)
-- **uint8 output mandatory**: ESPHome rejects int8 outputs
-- **ExportArchive required**: `model.export()` fails with streaming state variables
-- **BatchNorm state in serialization**: BatchNorm moving_mean/moving_variance are NON-TRAINABLE. Use `model.get_weights()`/`model.set_weights()` for serialization, NOT `model.trainable_weights`
-- **Immutable constants**: Never override ARCHITECTURAL_CONSTITUTION.md values
-- **Old checkpoint incompatibility**: Checkpoints trained before the Flatten architecture fix (2026-03-11) have Dense layer shape `(64, 1)` and are incompatible with the current export pipeline which expects `(temporal_frames × 64, 1)`. Must retrain with current code.
-- **temporal_frames inference**: Export pipeline infers `temporal_frames = dense_input_features // 64` from checkpoint Dense kernel shape. Dense layer input size = `temporal_frames × 64` (64 = last pointwise filter count).
-- **Official state variable naming**: The verified `okay_nabu` flatbuffer names the streaming states `stream`, `stream_1`, `stream_2`, `stream_3`, `stream_4`, `stream_5`.
-- **convert_to_tflite() removed**: Legacy function deleted in pipeline-alignment. Use `export_streaming_tflite()` or `convert_model_saved()` instead.
+- CuPy no CPU fallback: Must have GPU for training
+- uint8 output mandatory: ESPHome rejects int8 outputs
+- Old checkpoint incompatibility: Pre-2026-03-11 checkpoints have incompatible Dense shapes
+- BatchNorm state: moving_mean/moving_variance are NON-TRAINABLE
+- Auto-tuner search split: search data is split into search_train (70%) and search_eval (30%) — FocusedSampler trains on search_train only
+- Export state shapes vary: stream_5 shape depends on temporal_frames derived from clip_duration_ms, not always (1,5,1,64)
+- `verify_esphome.py` JSON mode sanitizes NumPy values before serialization; use `--json` for CI and `--verbose` for detailed local diagnostics
+- `evaluate_model.py` writes `evaluation_report.json`, PNG plots, and executive reports (`executive_report.md` / `.html`) under `evaluation_artifacts/`
+- `eval_dashboard.py` builds `interactive_dashboard.html` from `evaluation_report.json` (keep dashboard in same folder as report/images)
+- `DELEGATE` visibility is runtime/delegate-path dependent in analyzers; compatibility checks should focus on static-graph invariants and ESPHome-registered op set
 
 ### Module AGENTS.md Files
-- `src/data/AGENTS.md` - Data pipeline, augmentation, clustering, quality
-- `src/training/AGENTS.md` - Training loop, mining, profiling, augmentation
-- `src/model/AGENTS.md` - Architecture, streaming layers, state management
-- `src/export/AGENTS.md` - TFLite export, manifest, verification
-- `src/evaluation/AGENTS.md` - Metrics, FAH estimation, calibration
-- `src/utils/AGENTS.md` - GPU config, performance, logging
-- `src/tools/AGENTS.md` - CLI tools (cluster-analyze, cluster-apply)
-- `src/tuning/AGENTS.md` - Auto-tuning (NEW)
-- `config/AGENTS.md` - Configuration system
-- `scripts/AGENTS.md` - Standalone utilities (NEW)
+- `src/data/AGENTS.md` - Data pipeline
+- `src/training/AGENTS.md` - Training loop
+- `src/model/AGENTS.md` - Architecture
+- `src/export/AGENTS.md` - TFLite export
+- `src/evaluation/AGENTS.md` - Metrics
+- `src/utils/AGENTS.md` - GPU config
+- `src/tools/AGENTS.md` - CLI tools
+- `src/tuning/AGENTS.md` - Auto-tuning
+- `config/AGENTS.md` - Configuration
 
 ---
 
@@ -169,8 +146,4 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 - `docs/INDEX.md` - Documentation index
 - `docs/ARCHITECTURE.md` - MixedNet architecture
 - `docs/CONFIGURATION.md` - Config reference
-- `docs/TRAINING.md` - Training workflow
-- `docs/EXPORT.md` - Export guide
-- `specs/implementation_status.md` - Implementation status
-- `specs/phase1_complete.yaml` - Phase 1 summary
-- `specs/testing_plan.md` - Testing strategy
+- `ARCHITECTURAL_CONSTITUTION.md` - Immutable constants and constraints

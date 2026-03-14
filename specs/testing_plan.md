@@ -27,7 +27,8 @@ tests/
 │   ├── test_config.py                # ConfigLoader and dataclasses
 │   ├── test_test_evaluator.py        # TestEvaluator
 │   ├── test_vectorized_metrics.py    # MetricsCalculator
-│   └── test_spec_augment_tf.py       # TF SpecAugment
+│   ├── test_spec_augment_tf.py       # TF SpecAugment
+│   └── test_tuning_autotuner_components.py  # Auto-tuner components (8 tests)
 └── integration/                       # Integration tests (slow, end-to-end)
     └── test_training.py              # Full training pipeline
 ```
@@ -191,6 +192,40 @@ pytest tests/unit/test_spec_augment_tf.py -v
 
 ---
 
+### 1.6 Auto-Tuner Components (`test_tuning_autotuner_components.py`)
+
+**Purpose**: Test auto-tuner search data partitioning and threshold re-optimization
+
+**Test Cases** (8 total):
+
+**TestPartitionSearchSplit**:
+- `test_basic_split_ratio` — verifies 70/30 split respects search_eval_fraction
+- `test_group_aware_splitting` — ensures no group leaks across train/eval
+- `test_no_overlap` — confirms zero index overlap between search_train and search_eval
+
+**TestErrorMemoryOffset**:
+- `test_offset_indices_match_eval` — verifies ErrorMemory indices map to search_eval
+- `test_offset_preserves_ordering` — confirms relative ordering preserved after offset
+
+**TestConfirmationReoptimize**:
+- `test_reoptimize_threshold_differs` — confirms threshold re-optimized on confirm data differs from search threshold
+- `test_reoptimize_uses_confirm_data` — verifies confirm data (not search data) is used
+- `test_reoptimize_improves_metric` — confirms re-optimized threshold improves metric on confirm data
+
+**Fixtures**:
+- Mock search dataset with group labels
+- Mock config with search_eval_fraction
+
+**Expected Coverage**:
+- `src/tuning/autotuner.py`: >85% for `_partition_data()` and confirmation phase
+
+**Run Command**:
+```bash
+pytest tests/unit/test_tuning_autotuner_components.py -v
+```
+
+---
+
 ## 2. Integration Tests
 
 ### 2.1 Training Pipeline (`test_training.py`)
@@ -238,7 +273,7 @@ pytest tests/integration/test_training.py -v
 **Procedure**:
 1. Train model with standard preset
 2. Export model with `mww-export`
-3. Run `scripts/verify_esphome.py` on exported `.tflite`
+3. Run `scripts/verify_esphome.py` on exported `.tflite` (both human-readable and JSON modes)
 4. Flash model to ESP32 device
 5. Test wake word detection with various audio samples
 6. Verify probability threshold behavior
@@ -260,6 +295,12 @@ pytest tests/integration/test_training.py -v
 - ✅ No false triggers on negative samples
 - ✅ Probability cutoff works as expected
 - ✅ Memory usage within tensor arena
+
+**Recommended local verification commands**:
+```bash
+python scripts/verify_esphome.py models/exported/wake_word.tflite --verbose
+python scripts/verify_esphome.py models/exported/wake_word.tflite --json
+```
 
 ---
 
@@ -700,7 +741,7 @@ Before marking issue as resolved, verify:
 
 This testing plan provides comprehensive coverage for microwakeword_trainer:
 
-**Unit Tests**: 5 test modules covering core functionality
+**Unit Tests**: 6 test modules, 453 tests passing
 **Integration Tests**: Full training pipeline validation
 **Manual Testing**: ESPHome compatibility, performance, auto-tuning
 **Continuous Testing**: CI/CD pipeline, nightly builds

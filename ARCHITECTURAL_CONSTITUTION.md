@@ -37,11 +37,12 @@ You are reading this document because you are building or modifying code for thi
 6. [Article VI — Streaming State Variables](#article-vi--streaming-state-variables)
 7. [Article VII — Inference Timing and Ring Buffer Math](#article-vii--inference-timing-and-ring-buffer-math)
 8. [Article VIII — MixedNet Architecture](#article-viii--mixednet-architecture)
-9. [Article IX — Export and Quantization Pipeline](#article-ix--export-and-quantization-pipeline)
-10. [Article X — ESPHome Manifest Contract](#article-x--esphome-manifest-contract)
-11. [Article XI — Package Dependencies and Version Constraints](#article-xi--package-dependencies-and-version-constraints)
-12. [Article XII — v1 vs v2 Model Differences](#article-xii--v1-vs-v2-model-differences)
-13. [Violation Consequence Matrix](#violation-consequence-matrix)
+9. [Article IX — Training Pipeline and EMA Management](#article-ix--training-pipeline-and-ema-management)
+10. [Article X — Export and Quantization Pipeline](#article-x--export-and-quantization-pipeline)
+11. [Article XI — ESPHome Manifest Contract](#article-xi--esphome-manifest-contract)
+12. [Article XII — Package Dependencies and Version Constraints](#article-xii--package-dependencies-and-version-constraints)
+13. [Article XIII — v1 vs v2 Model Differences](#article-xiii--v1-vs-v2-model-differences)
+14. [Violation Consequence Matrix](#violation-consequence-matrix)
 
 ---
 
@@ -240,6 +241,8 @@ and therefore produce a **58-op** main subgraph while still remaining
 ESPHome-compatible, because `ADD` is part of the registered resolver set.
 
 All ops show `CustomCode: N/A` in flatbuffer analysis — there are zero custom ops.
+
+`DELEGATE` visibility is runtime/delegate-path dependent and not a required architectural op in the static `.tflite` compatibility contract. Static-graph compliance must be validated against flatbuffer ops and the ESPHome-registered resolver set.
 
 ---
 
@@ -466,7 +469,87 @@ stream_3: max(9, 15) - 1 = 14 → [1, 14, 1, 64]
 
 ---
 
-## Article IX — Export and Quantization Pipeline
+## Article IX — Training Pipeline and EMA Management
+
+**Status: IMPLEMENTATION RULES FOR CHECKPOINT LOADING.**
+
+The training pipeline uses Keras 3 with EMA (Exponential Moving Average) for smoothed weight evaluation and checkpointing. EMA is configured via `training.ema_decay` parameter.
+
+### EMA Weight Usage in Training
+
+When EMA is enabled (default in `max_quality.yaml` with `ema_decay: 0.999`):
+
+1. **During training**: The optimizer maintains two weight sets:
+   - **Training weights**: Current batch-updated weights for gradient updates
+   - **EMA weights**: Exponentially smoothed weights for evaluation/checkpointing
+
+2. **Before evaluation/checkpointing**: `_swap_to_ema_weights()` is called
+   - Calls `optimizer.finalize_variable_values(model.trainable_variables)` to apply EMA smoothing
+   - This replaces model weights with EMA-smoothed versions for validation
+   - Training weights are saved internally to restore later
+
+3. **After evaluation**: `_restore_training_weights()` is called
+   - Restores original (non-EMA) training weights
+   - Allows gradient updates to continue on unsmoothed weights
+
+### Checkpoint Files and Their EMA Status
+
+| Checkpoint File Type | When Saved | EMA Weights? | Purpose |
+|---------------------|------------|------------|---------|
+| `final_weights.weights.h5` | End of training (after EMA swap) | ✅ Yes | Export/inference - has smoothed EMA weights |
+| `best_weights.weights.h5` | During training (best model found) | ✅ Yes | Resume training - has EMA weights |
+| `checkpoint_step_NNNN.weights.h5` | Periodic checkpoints | ✅ Yes | Recovery/checkpointing - has EMA weights |
+
+### CRITICAL RULE: Final Checkpoint Loading
+
+**Do NOT load `best_weights.weights.h5` at end of training.** 
+
+**Why:**
+1. Training is complete - no further gradient updates needed
+2. Model already contains correct weights in memory (either training or EMA from last checkpoint)
+3. `final_weights.weights.h5` already has EMA-smoothed weights (preferred for inference)
+4. Loading `best_weights` after EMA finalize triggers optimizer state mismatch warnings:
+   - Saved checkpoint has full optimizer state (momentum + variance for each trainable variable)
+   - By end of training, EMA finalize may have cleared/reset optimizer state
+   - Keras warning: "Skipping variable loading for optimizer 'adam', because it has 2 variables whereas the saved optimizer has 92 variables"
+
+**Consequence:** Warning is informational and model weights load correctly, but it indicates unnecessary operation.
+
+**Implementation:**
+```python
+# At end of training (trainer.py lines 1912-1919):
+self._swap_to_ema_weights()  # Swaps in EMA weights
+final_path = os.path.join(self.checkpoint_dir, "final_weights.weights.h5")
+model.save_weights(final_path)  # Saves EMA-smoothed weights
+self._restore_training_weights()  # Restores training weights (cleanup)
+
+# Removed: model.load_weights(self.best_weights_path)
+# This line was causing optimizer state warnings without benefit
+```
+
+### EMA and Optimizer State Interaction
+
+Keras 3 Adam optimizer with `use_ema=True` maintains:
+- **2 base variables**: iteration counter, learning rate
+- **N momentum variables**: One per trainable weight (Adam first moment)
+- **N variance variables**: One per trainable weight (Adam second moment)
+- **Total**: `2 + 2 × num_trainable_variables`
+
+Example with 46 trainable weights (typical MixedNet):
+- **During active training**: 94 optimizer variables (2 + 2×46 = 94)
+- **After `finalize_variable_values()`**: May reduce to 2 (base vars only)
+- **Loading saved checkpoint**: Expecting 94 variables, but optimizer may only have 2 → warning
+
+### Anti-Patterns
+
+1. **Never reload `best_weights` after training completion** - Training is done; final_weights has correct EMA-smoothed weights
+2. **Never load checkpoint into finalized optimizer state** - Only reload if resuming training from interruption
+3. **Don't recompile optimizer after training** - Optimizer is not used after training completes
+4. **Use `final_weights` for export/inference** - Already has smoothed weights that were just validated
+
+---
+
+## Article X — Export and Quantization Pipeline
 
 **Status: IMMUTABLE. THESE FLAGS ARE NOT OPTIONAL.**
 
@@ -508,7 +591,7 @@ converter.inference_output_type = tf.uint8       # UINT8. ALWAYS.
 converter.representative_dataset = tf.lite.RepresentativeDataset(representative_dataset_gen)
 ```
 
-**CRITICAL PACKAGE NOTE:** The export uses `tf.lite.TFLiteConverter` from the standard `tensorflow` package (NOT `ai_edge_litert`). The `ai_edge_litert` package is used only for inference/testing via its `Interpreter` class. See Article XI for the full dependency map.
+**CRITICAL PACKAGE NOTE:** The export uses `tf.lite.TFLiteConverter` from the standard `tensorflow` package (NOT `ai_edge_litert`). The `ai_edge_litert` package is used only for inference/testing via its `Interpreter` class. See Article XII for the full dependency map.
 
 ### What `_experimental_variable_quantization = True` Does
 
@@ -516,7 +599,7 @@ VAR_HANDLE tensors are resource handles (dtype `object`) — they are pointers, 
 
 ---
 
-## Article X — ESPHome Manifest Contract
+## Article XI — ESPHome Manifest Contract
 
 **Status: IMMUTABLE. REQUIRED EXACT VALUES FOR DEVICE-CRITICAL FIELDS.**
 
@@ -562,7 +645,7 @@ ESPHome reads the manifest JSON to configure its wake word engine. The v2 JSON s
 
 ---
 
-## Article XI — Package Dependencies and Version Constraints
+## Article XII — Package Dependencies and Version Constraints
 
 **Status: VERIFIED FROM `setup.py` AND SOURCE CODE IMPORTS.**
 
@@ -617,7 +700,7 @@ Different interpreter implementations may enumerate different numbers of tensors
 
 ---
 
-## Article XII — v1 vs v2 Model Differences
+## Article XIII — v1 vs v2 Model Differences
 
 **Status: REFERENCE. DERIVED FROM ESPHOME MODEL REPOSITORY AND RELEASE NOTES.**
 
@@ -677,7 +760,7 @@ Check these four things:
 
 ### "I need to export a trained model"
 
-Follow the two-stage pipeline in Article IX exactly. Use `tf.lite.TFLiteConverter` from standard `tensorflow`. Do NOT use `ai_edge_litert` for export.
+Follow the two-stage pipeline in Article X exactly. Use `tf.lite.TFLiteConverter` from standard `tensorflow`. Do NOT use `ai_edge_litert` for export.
 
 ### "I need to count tensors"
 

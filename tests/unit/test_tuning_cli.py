@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,22 +19,22 @@ def test_create_parser_requires_checkpoint() -> None:
 
 
 def test_validate_args_failures_and_success(tmp_path: Path) -> None:
-    missing = SimpleNamespace(checkpoint=str(tmp_path / "missing"), target_fah=None, target_recall=None, max_iterations=None)
+    missing = argparse.Namespace(checkpoint=str(tmp_path / "missing"), target_fah=None, target_recall=None, max_iterations=None)
     assert cli.validate_args(missing) is False
 
     ckpt = tmp_path / "ok.weights.h5"
     ckpt.write_bytes(b"x")
 
-    bad_fah = SimpleNamespace(checkpoint=str(ckpt), target_fah=0.0, target_recall=None, max_iterations=None)
+    bad_fah = argparse.Namespace(checkpoint=str(ckpt), target_fah=0.0, target_recall=None, max_iterations=None)
     assert cli.validate_args(bad_fah) is False
 
-    bad_recall = SimpleNamespace(checkpoint=str(ckpt), target_fah=None, target_recall=1.2, max_iterations=None)
+    bad_recall = argparse.Namespace(checkpoint=str(ckpt), target_fah=None, target_recall=1.2, max_iterations=None)
     assert cli.validate_args(bad_recall) is False
 
-    bad_iters = SimpleNamespace(checkpoint=str(ckpt), target_fah=None, target_recall=None, max_iterations=0)
+    bad_iters = argparse.Namespace(checkpoint=str(ckpt), target_fah=None, target_recall=None, max_iterations=0)
     assert cli.validate_args(bad_iters) is False
 
-    good = SimpleNamespace(checkpoint=str(ckpt), target_fah=0.5, target_recall=0.9, max_iterations=5)
+    good = argparse.Namespace(checkpoint=str(ckpt), target_fah=0.5, target_recall=0.9, max_iterations=5)
     assert cli.validate_args(good) is True
 
 
@@ -46,7 +47,7 @@ def test_print_config_summary(monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "Console", DummyConsole)
 
-    args = SimpleNamespace(checkpoint="c", config="standard")
+    args = argparse.Namespace(checkpoint="c", config="standard")
     cfg = {
         "auto_tuning": {
             "target_fah": 0.2,
@@ -129,7 +130,6 @@ def test_main_success_and_overrides(monkeypatch, tmp_path: Path) -> None:
     args.patience = 7
     args.max_gradient_steps = 123
     args.cv_folds = 2
-    args.no_int8_shadow = True
     args.no_confirmation = True
 
     monkeypatch.setattr(cli, "create_parser", lambda: SimpleNamespace(parse_args=lambda: args))
@@ -169,7 +169,6 @@ def test_main_success_and_overrides(monkeypatch, tmp_path: Path) -> None:
     assert at["patience"] == 7
     assert at["max_gradient_steps"] == 123
     assert at["cv_folds"] == 2
-    assert at["int8_shadow"] is False
     assert at["require_confirmation"] is False
 
 
