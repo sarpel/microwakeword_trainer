@@ -719,7 +719,6 @@ mww-export [OPTIONS]
 | `--config` | string | `config/presets/standard.yaml` | No | Config file path |
 | `--output` | string | `./models/exported` | No | Output directory |
 | `--model-name` | string | `wake_word` | No | Model filename (without extension) |
-| `--no-quantize` | flag | False | No | Disable INT8 quantization |
 
 ### Export Examples
 
@@ -734,8 +733,8 @@ mww-export --checkpoint models/checkpoints/best_weights.weights.h5 --output mode
 # Export to custom directory
 mww-export --checkpoint checkpoints/best.ckpt --output /path/to/output
 
-# Export without quantization (for debugging only)
-mww-export --checkpoint checkpoints/best.ckpt --no-quantize
+# Export with explicit preset path
+mww-export --checkpoint checkpoints/best.ckpt --config config/presets/standard.yaml
 
 # Full custom export
 mww-export \
@@ -1024,7 +1023,7 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite --json
 |-------|-------|-----|
 | Wrong output dtype (int8) | Used int8 instead of uint8 | Set `inference_output_type: "uint8"` |
 | Wrong subgraph count | Export failed | Re-export with correct config |
-| Missing quantization | `--no-quantize` used | Re-export without `--no-quantize` |
+| Missing quantization | Export pipeline misconfigured | Re-export with default INT8 settings (`inference_input_type=int8`, `inference_output_type=uint8`) |
 | Wrong input shape | Wrong stride | Set `stride: 3` in model config |
 
 ### Programmatic Verification

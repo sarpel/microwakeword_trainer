@@ -1,4 +1,4 @@
-"""Export module for model conversion to TFLite."""
+"""Export utilities for ESPHome-compatible streaming TFLite models."""
 
 import json
 import logging
@@ -579,6 +579,7 @@ def create_representative_dataset_from_data(
     config: dict,
     data_dir: str,
     num_samples: int | None = None,
+    allow_random_fallback: bool = True,
 ) -> Callable[[], Generator[list[np.ndarray], None, None]]:
     """Create representative dataset from real training features for quantization.
 
@@ -616,21 +617,27 @@ def create_representative_dataset_from_data(
     store_path = Path(data_dir) / "train"
 
     if not store_path.exists():
-        print(f"  Warning: No training data at {store_path}, falling back to random calibration")
-        return create_representative_dataset(config, target_chunks)
+        if allow_random_fallback:
+            print(f"  Warning: No training data at {store_path}, falling back to random calibration")
+            return create_representative_dataset(config, target_chunks)
+        raise ValueError(f"Quantized export requires real representative calibration data. Expected feature store at: {store_path}. Provide --data-dir pointing to processed training features.")
 
     store = FeatureStore(store_path)
     try:
         store.open()
     except (FileNotFoundError, OSError) as e:
-        print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
-        return create_representative_dataset(config, target_chunks)
+        if allow_random_fallback:
+            print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
+            return create_representative_dataset(config, target_chunks)
+        raise ValueError(f"Quantized export requires real representative calibration data, but feature store could not be opened: {e}") from e
 
     try:
         n_stored = len(store)
         if n_stored == 0:
-            print("  Warning: Feature store is empty, falling back to random calibration")
-            return create_representative_dataset(config, target_chunks)
+            if allow_random_fallback:
+                print("  Warning: Feature store is empty, falling back to random calibration")
+                return create_representative_dataset(config, target_chunks)
+            raise ValueError("Quantized export requires real representative calibration data, but the feature store is empty.")
 
         # Separate positive and negative sample indices
         positive_indices = []
@@ -732,8 +739,10 @@ def create_representative_dataset_from_data(
                 n_negative_used += 1
 
         if not all_chunks:
-            print("  Warning: Could not extract any chunks, falling back to random calibration")
-            return create_representative_dataset(config, target_chunks)
+            if allow_random_fallback:
+                print("  Warning: Could not extract any chunks, falling back to random calibration")
+                return create_representative_dataset(config, target_chunks)
+            raise ValueError("Quantized export requires real representative calibration data, but no valid calibration chunks could be extracted from feature store.")
 
         positive_pct = (n_positive_used / max(1, n_positive_used + n_negative_used)) * 100
         print(
@@ -770,11 +779,11 @@ def export_streaming_tflite(
 ) -> dict:
     """Export trained checkpoint to ESPHome-compatible streaming TFLite.
 
-    This is the main export function that:
-    1. Builds a streaming model with proper state variables
+    This is the main export entry point and it:
+    1. Builds a streaming model with state variables
     2. Loads weights from Keras 3 checkpoint format
-    3. Converts to quantized TFLite with proper settings
-    4. Verifies the exported model
+    3. Converts to quantized TFLite with required settings
+    4. Verifies ESPHome compatibility invariants
 
 
     Args:
@@ -786,7 +795,7 @@ def export_streaming_tflite(
 
 
     Returns:
-        Dict with export results including paths and validation info
+        Dict with export outputs (paths, size, and verification result)
     """
     print("=" * 60)
     print("Streaming TFLite Export for ESPHome")
@@ -891,10 +900,13 @@ def export_streaming_tflite(
             converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
             converter.inference_input_type = tf.int8
             converter.inference_output_type = tf.uint8
-            if data_dir:
-                converter.representative_dataset = create_representative_dataset_from_data(config, data_dir)
-            else:
-                converter.representative_dataset = create_representative_dataset(config)
+            if not data_dir:
+                raise ValueError("Quantized export requires real representative calibration data. Pass --data-dir pointing to processed training features.")
+            converter.representative_dataset = create_representative_dataset_from_data(
+                config,
+                data_dir,
+                allow_random_fallback=False,
+            )
         else:
             converter.experimental_enable_resource_variables = True
 
@@ -992,9 +1004,11 @@ def verify_exported_model(tflite_path: str, expected_state_shapes: list[tuple[in
 
     Args:
         tflite_path: Path to TFLite model file
+        expected_state_shapes: Optional config-aware state payload shapes.
+            When omitted, verification uses default assumptions.
 
     Returns:
-        Dict with verification results
+        Dict with compatibility checks, warnings, and detailed evidence.
     """
     return verify_tflite_model(tflite_path, expected_state_shapes=expected_state_shapes)
 
@@ -1009,9 +1023,10 @@ def convert_model_saved(
     folder: str,
     mode: str = "stream_internal_state_inference",
 ) -> tf.keras.Model:
-    """Convert non-streaming model to streaming SavedModel (Article IX Stage 1).
+    """Convert non-streaming model to streaming SavedModel (Article X Stage 1).
 
-    This implements the mandated Stage 1 conversion from ARCHITECTURAL_CONSTITUTION.md:
+    This implements the mandated Stage 1 conversion from
+    ARCHITECTURAL_CONSTITUTION.md Article X:
     - Takes a non-streaming trained model
     - Converts to streaming with internal state inference
     - Produces SavedModel with proper state variables
@@ -1020,7 +1035,7 @@ def convert_model_saved(
         model: Non-streaming trained model (e.g., MixedNet in NON_STREAM mode)
         config: Configuration dict with model parameters
         folder: Output directory for streaming SavedModel
-        mode: Must be "stream_internal_state_inference" (Article IX requirement)
+        mode: Must be "stream_internal_state_inference" (Article X requirement)
 
     Returns:
         Streaming model ready for Stage 2 TFLite conversion
@@ -1141,11 +1156,6 @@ def main():
         help="Name for exported model",
     )
     parser.add_argument(
-        "--no-quantize",
-        action="store_true",
-        help="Disable quantization (not recommended for ESPHome)",
-    )
-    parser.add_argument(
         "--data-dir",
         type=str,
         default=None,
@@ -1210,7 +1220,7 @@ def main():
             model_name=args.model_name,
             config=config,
             data_dir=args.data_dir,
-            quantize=not args.no_quantize,
+            quantize=True,
         )
 
         if result["model_valid"]:

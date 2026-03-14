@@ -320,11 +320,11 @@ evaluation:
 # ─────────────────────────────────────────────────────────────────
 auto_tuning:
   enabled: true
-  target_fah: 0.5               # Realistic per AGENTS.md; was 5.0 (too loose → optimizer overfits to FAH=0)
-  target_recall: 0.88           # 0.88 (vs. target 0.90) leaves headroom for early-stage instability; restore to 0.90 after first successful run confirms the FAH budget is reliably met
+  target_fah: 0.2               # Realistic per AGENTS.md; was 5.0 (too loose → optimizer overfits to FAH=0)
+  target_recall: 0.90           # 0.88 (vs. target 0.90) leaves headroom for early-stage instability; restore to 0.90 after first successful run confirms the FAH budget is reliably met
   max_iterations: 30            # Matches new gradient budget; was 50
-  max_gradient_steps: 15000     # Prevents overfitting; was 2500 (too low) / 250000 (full retrain)
-  patience: 8                   # Faster stagnation detection; was 15
+  max_gradient_steps: 10000     # Prevents overfitting; was 2500 (too low) / 250000 (full retrain)
+  patience: 10                   # Faster stagnation detection; was 15
   cv_folds: 3
   confirmation_fraction: 0.50   # Larger held-out set catches overfit better; was 0.40
   search_eval_fraction: 0.35
@@ -341,7 +341,7 @@ auto_tuning_expert:
   max_burst_steps: 2500          # Surgical updates only; was 25000 (destroys generalization)
   default_burst_steps: 500       # Conservative start; was 750
   min_lr: 0.0000001
-  max_lr: 0.0001
+  max_lr: 0.00005
   default_lr: 0.00001
   sam_rho: 0.05
   swa_collection_interval: 100

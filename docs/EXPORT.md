@@ -42,11 +42,13 @@ The official `okay_nabu` reference model maintains 6 state tensors across stream
 5. `stream_4`: [1,22,1,64] - Block 3 buffer
 6. `stream_5`: [1,5,1,64] - Pre-flatten temporal buffer (okay_nabu defaults)
 
-**Important**: State shapes depend on `temporal_frames`, which is derived from `clip_duration_ms`:
+**Important**: State shapes depend on `temporal_frames`, which is inferred from the checkpoint's Dense kernel shape:
 
+- `temporal_frames = dense_input_features // 64` (where 64 is the last pointwise filter count)
 - `stream_5` shape = `(1, temporal_frames - 1, 1, pointwise_filters[3])` — NOT always `(1, 5, 1, 64)`
-- For okay_nabu defaults (clip_duration_ms=750): temporal_frames=6, so stream_5=(1,5,1,64)
-- For clip_duration_ms=1000: temporal_frames=32, so stream_5=(1,31,1,64)
+- `clip_duration_ms` and model architecture together determine `dense_input_features`, but `temporal_frames` is derived from the actual Dense kernel
+- For okay_nabu defaults (dense_input_features=384): temporal_frames=6, so stream_5=(1,5,1,64)
+- For dense_input_features=1984: temporal_frames=31, so stream_5=(1,30,1,64)
 
 These buffers do **not** all follow the same formula:
 
@@ -345,11 +347,17 @@ Adjust `probability_cutoff` based on your environment:
 
 ### Troubleshooting: State Payload Tensor Shape Mismatch
 
-**Symptom**: Export fails with "State payload tensor shape mismatch" error.
+**Symptom**: Export/verification reports a state payload shape mismatch.
 
-**Cause**: The verification function was comparing against hardcoded okay_nabu reference shapes. If your model uses a different `clip_duration_ms`, the `temporal_frames` value changes, which changes the stream_5 shape.
+**Cause**: Shape checks must be config-aware. `stream_5` depends on `temporal_frames` derived from `clip_duration_ms`, so it is not universally `[1, 5, 1, 64]`.
 
-**Fix**: The export pipeline now automatically computes expected shapes from your model config. If you see this error with an older version, update to get `compute_expected_state_shapes()` support.
+**Current behavior**: Verification computes expected state shapes with `compute_expected_state_shapes()` and validates against model-derived dimensions.
+
+**Fix**: Re-export with your intended config and re-run:
+
+```bash
+python scripts/verify_esphome.py models/exported/wake_word.tflite --verbose --json
+```
 
 ### Debug Commands
 

@@ -98,7 +98,8 @@ Available environment variables:
 | `optimizer` | str | "adam" | Optimizer type |
 | `label_smoothing` | float | 0.1 | Label smoothing factor |
 | `gradient_clipnorm` | float | 5.0 | Gradient clipping norm |
-| `ema_decay` | float | null | EMA decay (null = disabled) |
+ | `ema_decay` | float | null | EMA decay (null = disabled). Default in `max_quality.yaml`: 0.999. See ARCHITECTURAL_CONSTITUTION.md Article IX for EMA behavior and checkpoint usage. |
+| `random_seed` | int | null | Global RNG seed |
 | `random_seed` | int | null | Global RNG seed |
 | `auto_tune_on_poor_fah` | bool | false | Auto-run mww-autotune if FAH high |
 
@@ -493,13 +494,6 @@ The config loader enforces these validations:
 6. **Training**: batch_size must be greater than 0
 7. **Paths**: All directories must exist or be creatable
 8. **Export**: inference_input_type must be "int8", inference_output_type must be "uint8"
-
-1. **Hardware**: sample_rate_hz must be 16000
-2. **Splits**: train_split + val_split + test_split must equal 1.0
-3. **Model**: stride must be 3 (per ARCHITECTURAL_CONSTITUTION.md)
-4. **Training**: training_steps and learning_rates must have same length
-5. **Paths**: All directories must exist or be creatable
-6. **Export**: inference_input_type must be "int8", inference_output_type must be "uint8"
 
 ## See Also
 

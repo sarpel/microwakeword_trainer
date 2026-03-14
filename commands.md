@@ -4,7 +4,7 @@
 
 ```python
 python scripts/evaluate_model.py \
-	--checkpoint ./models/checkpoints/best_weights.weights.h5 \
+	--checkpoint ./models/checkpoints/final_weights.weights.h5 \
 	--config max_quality \
 	--split test \
 	--analyze
@@ -14,7 +14,7 @@ python scripts/evaluate_model.py \
 
 ```bash
 mww-autotune \
-	--checkpoint ./models/checkpoints/best_weights.weights.h5 \
+	--checkpoint ./models/checkpoints/final_weights.weights.h5 \
 	--config max_quality \
 	--target-fah 0.5 \
 	--target-recall 0.92 \
@@ -36,7 +36,7 @@ python scripts/evaluate_model.py \
 
 ```bash
 mww-export \
-	--checkpoint ./models/checkpoints/best_weights.weights.h5 \
+	--checkpoint ./models/checkpoints/final_weights.weights.h5 \
 	--output models/exported/ \
 	--config max_quality
 ```

@@ -1797,7 +1797,7 @@ class AutoTuner:
 
             # SWA snapshot collection
             if use_swa and (step + 1) % self.swa_interval == 0:
-                snapshot = [w.numpy().copy() for w in model.trainable_weights]
+                snapshot = self._serialize_weights(model)
                 swa_snapshots.append(snapshot)
 
             # Cosine schedule
@@ -1885,11 +1885,11 @@ class AutoTuner:
         """Average SWA snapshots and assign to model."""
         if not swa_snapshots:
             return
+        deserialized = [pickle.loads(snapshot) for snapshot in swa_snapshots]
         averaged = []
-        for weight_group in zip(*swa_snapshots):
+        for weight_group in zip(*deserialized):
             averaged.append(np.mean(weight_group, axis=0))
-        for w, avg_val in zip(model.trainable_weights, averaged):
-            w.assign(avg_val)
+        model.set_weights(averaged)
 
     # ------------------------------------------------------------------
     # Refresh BN statistics
@@ -2163,9 +2163,12 @@ class AutoTuner:
 
             for probe in range(4):
                 self._deserialize_weights(model, original_weights)
-                for w in model.trainable_weights:
+                all_weights = model.get_weights()
+                perturbed = []
+                for w in all_weights:
                     noise = np.random.normal(0, 0.001, w.shape)
-                    w.assign_add(noise)
+                    perturbed.append(w + noise)
+                model.set_weights(perturbed)
 
                 # Quick eval
                 batch = sampler.build_batch(
@@ -2190,9 +2193,12 @@ class AutoTuner:
         if stir_level >= 5:
             # L5: Gaussian noise perturbation + reheat annealing
             info["action"] = "diversify"
-            for w in model.trainable_weights:
+            all_weights = model.get_weights()
+            perturbed = []
+            for w in all_weights:
                 noise = np.random.normal(0, 0.001, w.shape)
-                w.assign_add(noise)
+                perturbed.append(w + noise)
+            model.set_weights(perturbed)
             self.annealing.temperature *= self.reheat_factor
 
         self.file_logger.info(f"Stir L{stir_level} applied: {info['action']}")

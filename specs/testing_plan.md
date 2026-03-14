@@ -273,7 +273,7 @@ pytest tests/integration/test_training.py -v
 **Procedure**:
 1. Train model with standard preset
 2. Export model with `mww-export`
-3. Run `scripts/verify_esphome.py` on exported `.tflite`
+3. Run `scripts/verify_esphome.py` on exported `.tflite` (both human-readable and JSON modes)
 4. Flash model to ESP32 device
 5. Test wake word detection with various audio samples
 6. Verify probability threshold behavior
@@ -295,6 +295,12 @@ pytest tests/integration/test_training.py -v
 - ✅ No false triggers on negative samples
 - ✅ Probability cutoff works as expected
 - ✅ Memory usage within tensor arena
+
+**Recommended local verification commands**:
+```bash
+python scripts/verify_esphome.py models/exported/wake_word.tflite --verbose
+python scripts/verify_esphome.py models/exported/wake_word.tflite --json
+```
 
 ---
 

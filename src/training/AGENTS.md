@@ -48,6 +48,24 @@ Two-stage strategy:
 1. **Stage 1 (warm-up)**: Saves by PR-AUC until FAH budget first met
 2. **Stage 2 (operational)**: Saves by recall@target_fah when FAH ≤ target
 
+## EMA Weight Management
+
+When EMA is enabled (`training.ema_decay` configured, default in `max_quality.yaml`):
+
+**Checkpoint types and EMA status:**
+
+| Checkpoint File | EMA Weights? | Purpose |
+|---------------|-------------|---------|
+| `final_weights.weights.h5` | ✅ Yes | End of training, export/inference (preferred) |
+| `best_weights.weights.h5` | ✅ Yes | Best model during training, resume training |
+| `checkpoint_step_NNNN.weights.h5` | ✅ Yes | Periodic recovery checkpoints |
+
+**Training flow with EMA:**
+1. `_swap_to_ema_weights()` called before validation/checkpointing
+2. Optimizer EMA weights used for evaluation
+3. `_restore_training_weights()` called after validation
+4. Original training weights restored for gradient updates
+
 ## Class Weights (Default)
 - Positive: 1.0
 - Negative: 20.0
@@ -58,6 +76,8 @@ Two-stage strategy:
 - **Don't ignore config validation** - Pass validated config from loader
 - **Don't use `trainable_weights` for serialization** - Use `get_weights()`/`set_weights()`
 - **Don't export with pre-Flatten checkpoints** - Pre-2026-03-11 checkpoints incompatible
+- **Don't reload `best_weights` at end of training** - Training complete; `final_weights` already has EMA-smoothed weights
+- **Never load checkpoint after EMA finalize** - Triggers optimizer state warnings without benefit; only reload when resuming from interruption
 
 ## Related Documentation
 

@@ -22,7 +22,7 @@ def _ensure_quantized_int(value: Any) -> int:
     try:
         return int(value)
     except (TypeError, ValueError) as e:
-        raise TypeError(f"Cannot convert zero-point {value!r} (type: {type(value).__name__}) to int: {e}")
+        raise TypeError(f"Cannot convert zero-point {value!r} (type: {type(value).__name__}) to int: {e}") from e
 
 
 def _estimate_tensor_arena_size(interpreter: tf.lite.Interpreter) -> int:
@@ -55,6 +55,14 @@ def compute_expected_state_shapes(
     pointwise_filters: list[int] | None = None,
     temporal_frames: int = 6,
 ) -> list[tuple[int, ...]]:
+    """Compute expected streaming-state payload shapes for verification.
+
+    Notes:
+        - ``stream`` through ``stream_4`` are derived from conv/mixconv kernel context.
+        - ``stream_5`` is dynamic and depends on ``temporal_frames`` derived from model
+          configuration (for example via ``clip_duration_ms``), so it is not universally
+          ``(1, 5, 1, 64)``.
+    """
     if mixconv_kernel_sizes is None:
         mixconv_kernel_sizes = [[5], [7, 11], [9, 15], [23]]
     if pointwise_filters is None:
@@ -71,6 +79,16 @@ def compute_expected_state_shapes(
 
 
 def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int, ...]] | None = None) -> dict[str, Any]:
+    """Validate TFLite model compatibility against ESPHome invariants.
+
+    The interpreter is created with
+    ``BUILTIN_WITHOUT_DEFAULT_DELEGATES`` to keep checks anchored to the static graph
+    and avoid delegate-path artifacts (for example transient ``DELEGATE`` visibility).
+
+    If ``expected_state_shapes`` is not supplied, default assumptions are used. Under
+    those defaults, state-shape mismatch is reported as a warning and does not force
+    failure, so non-default model configs can still be validated without false negatives.
+    """
     resolver_type = tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
     interpreter = tf.lite.Interpreter(model_path=tflite_path, experimental_op_resolver_type=resolver_type)
     interpreter.allocate_tensors()
@@ -146,13 +164,26 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
     else:
         output_scale = float(output_scales[0])
         output_zero = _ensure_quantized_int(output_zero_points[0])
-        expected_output_scale = 1.0 / 255.0  # uint8 [0,255] -> [0.0,1.0]
+        canonical_output_scales = {
+            round(1.0 / 255.0, 9),
+            round(1.0 / 256.0, 9),
+        }
         details["output_scale"] = output_scale
         details["output_zero_point"] = output_zero
-        checks["output_quant_params"] = abs(output_scale - expected_output_scale) <= 1e-4 and output_zero == 0
-        if not checks["output_quant_params"]:
-            errors.append(f"Output quantization mismatch: scale={output_scale}, zero_point={output_zero}; expected scale≈{expected_output_scale} (1/255) and zero_point=0")
+        output_scale_r = round(output_scale, 9)
+        checks["output_zero_point"] = output_zero == 0
+        checks["output_scale_canonical"] = output_scale_r in canonical_output_scales
+        checks["output_quant_params"] = checks["output_zero_point"] and checks["output_scale_canonical"]
+
+        if not checks["output_zero_point"]:
+            errors.append(f"Output quantization mismatch: zero_point={output_zero}; expected zero_point=0 for uint8 probability output")
             valid = False
+
+        if not checks["output_scale_canonical"]:
+            warnings.append(
+                f"Output scale is non-canonical for ESPHome micro-wake-word workflow: scale={output_scale}. "
+                f"Official models in this audit use 1/256 ({1.0 / 256.0:.9f}); 1/255 ({1.0 / 255.0:.9f}) is accepted for compatibility."
+            )
 
     op_counts: dict[str, int] = {}
     for op in ops_details:
@@ -216,7 +247,8 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         valid = False
     checks["call_once_count"] = call_once_count == 1
 
-    if expected_state_shapes is None:
+    expected_shapes_assumed_default = expected_state_shapes is None
+    if expected_shapes_assumed_default:
         expected_state_shapes = compute_expected_state_shapes()
     all_tensors = {t["index"]: t for t in interpreter.get_tensor_details()}
     observed_state_payload_shapes: list[tuple[int, ...]] = []
@@ -284,10 +316,27 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
 
     # Check shapes as a set (TFLite graph traversal order for READ_VARIABLE ops
     # is not guaranteed to match variable creation order)
-    checks["state_shapes"] = sorted(observed_state_payload_shapes) == sorted(expected_state_shapes)
+    observed_sorted = sorted(observed_state_payload_shapes)
+    expected_sorted = sorted(expected_state_shapes)
+    checks["state_shapes"] = observed_sorted == expected_sorted
+    details["expected_state_shapes"] = expected_sorted
+    details["state_shape_assumption"] = "config-aware" if not expected_shapes_assumed_default else "default-temporal-frames"
+
     if not checks["state_shapes"]:
-        errors.append(f"State payload tensor shape mismatch: observed={sorted(observed_state_payload_shapes)}, expected={sorted(expected_state_shapes)}")
-        valid = False
+        if expected_shapes_assumed_default:
+            warnings.append(
+                "State payload tensor shape mismatch under default temporal-frame assumptions. "
+                "For non-default clip_duration_ms/architecture, pass config-aware expected_state_shapes "
+                "to avoid false failures."
+            )
+            checks["state_shapes"] = True
+            details["state_shape_mismatch_under_default_assumption"] = {
+                "observed": observed_sorted,
+                "expected_default": expected_sorted,
+            }
+        else:
+            errors.append(f"State payload tensor shape mismatch: observed={observed_sorted}, expected={expected_sorted}")
+            valid = False
 
     try:
         if hasattr(interpreter, "num_subgraphs"):

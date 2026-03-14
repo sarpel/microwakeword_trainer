@@ -42,6 +42,20 @@ temporal_frames = dense_input_features // 64  # 64 = last pointwise filter count
 - **Don't forget representative dataset** - 500+ samples with boundary anchors
 - **Don't hardcode state shapes** — use `compute_expected_state_shapes()` for config-aware validation. Models with different `clip_duration_ms` produce different `temporal_frames`, changing stream_5 shape.
 
+## Verification Notes
+
+- `scripts/verify_esphome.py` supports:
+  - default human-readable output
+  - `--verbose` for check/detail dump
+  - `--json` for machine-readable CI output
+- JSON payloads are sanitized for NumPy-derived values (e.g., `np.int32`, `np.float32`, `np.ndarray`, `np.dtype`) before serialization.
+- Canonical compatibility invariants remain:
+  - input `[1,3,40] int8`
+  - output `[1,1] uint8`
+  - output quantization typically `scale=0.00390625 (1/256), zero_point=0` in official models
+  - required streaming state op family (`CALL_ONCE`, `VAR_HANDLE`, `READ_VARIABLE`, `ASSIGN_VARIABLE`)
+- `DELEGATE` visibility is runtime/delegate-path dependent and not a required static-graph compatibility op.
+
 ## Ground Truth (from ARCHITECTURAL_CONSTITUTION.md)
 
 - **94 tensors** in Subgraph 0, **12 tensors** in Subgraph 1
