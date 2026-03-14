@@ -11,6 +11,41 @@ from .fah_estimator import FAHEstimator
 logger = logging.getLogger(__name__)
 
 
+def apply_sliding_window_detection(
+    y_scores: np.ndarray,
+    threshold: float,
+    sliding_window_size: int,
+) -> np.ndarray:
+    """Apply ESPHome-style sliding-window detection semantics to score sequence.
+
+    ESPHome triggers detection when:
+        sum(recent_probabilities) > probability_cutoff * sliding_window_size
+    which is equivalent to sliding-average > probability_cutoff.
+
+    This helper returns a binary detection sequence where each element indicates
+    whether the detection condition is satisfied at that timestep using the
+    trailing window ending at that timestep.
+    """
+    scores = np.asarray(y_scores, dtype=float).reshape(-1)
+    if sliding_window_size <= 1:
+        return (scores >= threshold).astype(int)
+
+    if scores.size == 0:
+        return np.array([], dtype=int)
+
+    cumsum = np.cumsum(scores)
+    detections = np.zeros(scores.shape[0], dtype=int)
+
+    for i in range(scores.shape[0]):
+        start = max(0, i - sliding_window_size + 1)
+        window_sum = cumsum[i] - (cumsum[start - 1] if start > 0 else 0.0)
+        window_len = i - start + 1
+        cutoff_sum = float(threshold) * window_len
+        detections[i] = 1 if window_sum > cutoff_sum else 0
+
+    return detections
+
+
 def compute_accuracy(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -146,6 +181,7 @@ def compute_roc_pr_curves(
     y_true: np.ndarray,
     y_scores: np.ndarray,
     n_thresholds: int = 101,
+    sliding_window_size: int = 1,
 ) -> dict[str, np.ndarray]:
     """Compute ROC and PR curves at multiple thresholds."""
     thresholds = np.linspace(0, 1, n_thresholds)
@@ -156,7 +192,10 @@ def compute_roc_pr_curves(
     recall_list = []
 
     for thresh in thresholds:
-        y_pred = (y_scores >= thresh).astype(int)
+        if sliding_window_size > 1:
+            y_pred = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+        else:
+            y_pred = (y_scores >= thresh).astype(int)
 
         tp = np.sum((y_true == 1) & (y_pred == 1))
         fp = np.sum((y_true == 0) & (y_pred == 1))
@@ -186,23 +225,37 @@ def compute_recall_at_no_faph(
     y_true: np.ndarray,
     y_scores: np.ndarray,
     n_thresholds: int = 101,
+    sliding_window_size: int = 1,
 ) -> tuple[float, float]:
     """Compute recall at the lowest threshold yielding zero false positives."""
     thresholds = np.linspace(0, 1, n_thresholds)
 
+    y_pred_curr = np.array([], dtype=int)
+
     for thresh in thresholds:
         neg_mask = y_true == 0
-        fp = np.sum(y_scores[neg_mask] >= thresh)
+        if sliding_window_size > 1:
+            y_pred_curr = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+            fp = np.sum((y_pred_curr == 1) & neg_mask)
+        else:
+            fp = np.sum(y_scores[neg_mask] >= thresh)
 
         if fp == 0:
             pos_mask = y_true == 1
-            tp = np.sum(y_scores[pos_mask] >= thresh)
+            if sliding_window_size > 1:
+                tp = np.sum((y_pred_curr == 1) & pos_mask)
+            else:
+                tp = np.sum(y_scores[pos_mask] >= thresh)
             recall = tp / np.sum(pos_mask) if np.sum(pos_mask) > 0 else 0.0
             return float(recall), float(thresh)
 
     thresh = float(thresholds[-1])
     pos_mask = y_true == 1
-    tp = np.sum(y_scores[pos_mask] >= thresh)
+    if sliding_window_size > 1:
+        y_pred = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+        tp = np.sum((y_pred == 1) & pos_mask)
+    else:
+        tp = np.sum(y_scores[pos_mask] >= thresh)
     recall = tp / np.sum(pos_mask) if np.sum(pos_mask) > 0 else 0.0
     return float(recall), thresh
 
@@ -213,6 +266,7 @@ def compute_recall_at_target_fah(
     ambient_duration_hours: float,
     target_fah: float,
     n_thresholds: int = 101,
+    sliding_window_size: int = 1,
 ) -> tuple[float, float, float]:
     """Compute the best recall achievable while meeting target FAH.
 
@@ -227,11 +281,20 @@ def compute_recall_at_target_fah(
     best_recall = 0.0
     best_fah = float("inf")
 
+    y_pred_curr = np.array([], dtype=int)
+
     for thresh in thresholds:
-        fp = np.sum(y_scores[neg_mask] >= thresh)
+        if sliding_window_size > 1:
+            y_pred_curr = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+            fp = np.sum((y_pred_curr == 1) & neg_mask)
+        else:
+            fp = np.sum(y_scores[neg_mask] >= thresh)
         fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else float("inf")
         if fah <= target_fah:
-            tp = np.sum(y_scores[pos_mask] >= thresh)
+            if sliding_window_size > 1:
+                tp = np.sum((y_pred_curr == 1) & pos_mask)
+            else:
+                tp = np.sum(y_scores[pos_mask] >= thresh)
             recall = tp / pos_total if pos_total > 0 else 0.0
             recall_f = float(recall)
             fah_f = float(fah)
@@ -254,6 +317,7 @@ def compute_fah_at_target_recall(
     ambient_duration_hours: float,
     target_recall: float,
     n_thresholds: int = 101,
+    sliding_window_size: int = 1,
 ) -> tuple[float, float, float]:
     """Compute FAH at the best (highest) threshold meeting target recall.
 
@@ -273,11 +337,20 @@ def compute_fah_at_target_recall(
     best_recall = 0.0
     best_fah = float("inf")
 
+    y_pred_curr = np.array([], dtype=int)
+
     for thresh in thresholds:
-        tp = np.sum(y_scores[pos_mask] >= thresh)
+        if sliding_window_size > 1:
+            y_pred_curr = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+            tp = np.sum((y_pred_curr == 1) & pos_mask)
+        else:
+            tp = np.sum(y_scores[pos_mask] >= thresh)
         recall = tp / pos_total if pos_total > 0 else 0.0
         if recall >= target_recall:
-            fp = np.sum(y_scores[neg_mask] >= thresh)
+            if sliding_window_size > 1:
+                fp = np.sum((y_pred_curr == 1) & neg_mask)
+            else:
+                fp = np.sum(y_scores[neg_mask] >= thresh)
             fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else float("inf")
             # Always update — later (higher) thresholds have lower FAH,
             # so the last feasible threshold gives the best operating point
@@ -295,6 +368,7 @@ def compute_average_viable_recall(
     ambient_duration_hours: float,
     max_fah: float = 10.0,
     n_thresholds: int = 101,
+    sliding_window_size: int = 1,
 ) -> float:
     """Compute average viable recall (AUC of recall vs normalized FAH)."""
     thresholds = np.linspace(0, 1, n_thresholds)
@@ -303,7 +377,10 @@ def compute_average_viable_recall(
     fahs = []
 
     for thresh in thresholds:
-        y_pred = (y_scores >= thresh).astype(int)
+        if sliding_window_size > 1:
+            y_pred = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+        else:
+            y_pred = (y_scores >= thresh).astype(int)
 
         tp = np.sum((y_true == 1) & (y_pred == 1))
         fp = np.sum((y_true == 0) & (y_pred == 1))
@@ -347,6 +424,7 @@ class MetricsCalculator:
         self.sample_weight = sample_weight
         self.opts = opts
         self.fah_estimator = FAHEstimator(ambient_duration_hours=opts.get("ambient_duration_hours"))
+        self.sliding_window_size = int(opts.get("sliding_window_size", 1) or 1)
 
     def compute_fah_metrics(
         self,
@@ -355,9 +433,18 @@ class MetricsCalculator:
     ) -> dict[str, Any]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_fah_metrics requires y_score")
+        effective_scores = self.y_score
+        if self.sliding_window_size > 1:
+            effective_scores = apply_sliding_window_detection(
+                self.y_score,
+                threshold,
+                self.sliding_window_size,
+            )
+            threshold = 0.5
+
         return self.fah_estimator.compute_fah_metrics(
             self.y_true,
-            self.y_score,
+            effective_scores,
             threshold=threshold,
             ambient_duration_hours=ambient_duration_hours,
         )
@@ -365,7 +452,12 @@ class MetricsCalculator:
     def compute_roc_pr_curves(self, n_thresholds: int = 101) -> dict[str, np.ndarray]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_roc_pr_curves requires y_score")
-        return compute_roc_pr_curves(self.y_true, self.y_score, n_thresholds)
+        return compute_roc_pr_curves(
+            self.y_true,
+            self.y_score,
+            n_thresholds,
+            sliding_window_size=self.sliding_window_size,
+        )
 
     def compute_average_viable_recall(
         self,
@@ -381,12 +473,18 @@ class MetricsCalculator:
             ambient_duration_hours=ambient_duration_hours,
             max_fah=max_fah,
             n_thresholds=n_thresholds,
+            sliding_window_size=self.sliding_window_size,
         )
 
     def compute_recall_at_no_faph(self, n_thresholds: int = 101) -> tuple[float, float]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_recall_at_no_faph requires y_score")
-        return compute_recall_at_no_faph(self.y_true, self.y_score, n_thresholds=n_thresholds)
+        return compute_recall_at_no_faph(
+            self.y_true,
+            self.y_score,
+            n_thresholds=n_thresholds,
+            sliding_window_size=self.sliding_window_size,
+        )
 
     def compute_recall_at_target_fah(
         self,
@@ -402,6 +500,7 @@ class MetricsCalculator:
             ambient_duration_hours=ambient_duration_hours,
             target_fah=target_fah,
             n_thresholds=n_thresholds,
+            sliding_window_size=self.sliding_window_size,
         )
 
     def compute_fah_at_target_recall(
@@ -418,6 +517,7 @@ class MetricsCalculator:
             ambient_duration_hours=ambient_duration_hours,
             target_recall=target_recall,
             n_thresholds=n_thresholds,
+            sliding_window_size=self.sliding_window_size,
         )
 
     def compute_all_metrics(
@@ -428,7 +528,14 @@ class MetricsCalculator:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_all_metrics requires y_score")
 
-        y_pred = (self.y_score >= threshold).astype(int)
+        if self.sliding_window_size > 1:
+            y_pred = apply_sliding_window_detection(
+                self.y_score,
+                threshold,
+                self.sliding_window_size,
+            )
+        else:
+            y_pred = (self.y_score >= threshold).astype(int)
 
         accuracy = compute_accuracy(self.y_true, y_pred, sample_weight=self.sample_weight)
         precision, recall, f1 = compute_precision_recall(
@@ -469,6 +576,19 @@ class MetricsCalculator:
 
             metrics["average_viable_recall"] = self.compute_average_viable_recall(ambient_duration_hours=ambient_duration_hours)
 
+            # Guardrail: surface clearly poor deployment operating points.
+            fah = metrics.get("false_activations_per_hour")
+            recall_at_threshold = metrics.get("recall_at_threshold")
+            if isinstance(fah, (float, int)) and isinstance(recall_at_threshold, (float, int)):
+                if fah > 0.5 or recall_at_threshold < 0.90:
+                    logger.warning(
+                        "Potential soft-break risk for deployment threshold %.4f: FAH=%.4f, recall_at_threshold=%.4f. "
+                        "Consider re-tuning probability_cutoff/sliding_window_size with stream-ordered evaluation data.",
+                        threshold,
+                        float(fah),
+                        float(recall_at_threshold),
+                    )
+
         return metrics
 
     def compute_latency(
@@ -499,6 +619,7 @@ def compute_fah_metrics(
         y_true=y_true,
         y_score=y_scores,
         ambient_duration_hours=ambient_duration_hours,
+        sliding_window_size=1,
     )
     return calculator.compute_fah_metrics(threshold=threshold)
 
@@ -509,8 +630,14 @@ def compute_all_metrics(
     ambient_duration_hours: float = 0.0,
     threshold: float = 0.5,
     sample_weight: np.ndarray | None = None,
+    sliding_window_size: int = 1,
 ) -> dict[str, Any]:
-    calculator = MetricsCalculator(y_true=y_true, y_score=y_scores, sample_weight=sample_weight)
+    calculator = MetricsCalculator(
+        y_true=y_true,
+        y_score=y_scores,
+        sample_weight=sample_weight,
+        sliding_window_size=sliding_window_size,
+    )
     return calculator.compute_all_metrics(
         ambient_duration_hours=ambient_duration_hours,
         threshold=threshold,

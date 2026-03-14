@@ -55,6 +55,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 - **Don't use `model.trainable_weights` for serialization** - Excludes BatchNorm moving stats. Use `model.get_weights()`/`model.set_weights()`
 - **Don't evaluate auto-tuner on same data used for FocusedSampler training** — split search into search_train/search_eval via `search_eval_fraction` config. Training and evaluating on same data causes train-on-test contamination that degrades model quality.
 - **Don't hardcode okay_nabu state shapes in export verification** — use `compute_expected_state_shapes()` for config-aware validation. Models with different `clip_duration_ms` produce different `temporal_frames`, changing stream_5 shape.
+- **Don't reload checkpoints after EMA finalize** - At end of training, EMA may have cleared optimizer state; reloading triggers "optimizer has 2 variables whereas saved has 92 variables" warning without benefit. Only reload when resuming from interruption (see ARCHITECTURAL_CONSTITUTION.md Article IX).
 
 ### Environment & Dependencies
 - **Don't mix TF and PyTorch in same venv** - Use separate environments
@@ -117,6 +118,8 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 - BatchNorm state: moving_mean/moving_variance are NON-TRAINABLE
 - Auto-tuner search split: search data is split into search_train (70%) and search_eval (30%) — FocusedSampler trains on search_train only
 - Export state shapes vary: stream_5 shape depends on temporal_frames derived from clip_duration_ms, not always (1,5,1,64)
+- `verify_esphome.py` JSON mode sanitizes NumPy values before serialization; use `--json` for CI and `--verbose` for detailed local diagnostics
+- `DELEGATE` visibility is runtime/delegate-path dependent in analyzers; compatibility checks should focus on static-graph invariants and ESPHome-registered op set
 
 ### Module AGENTS.md Files
 - `src/data/AGENTS.md` - Data pipeline

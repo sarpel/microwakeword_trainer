@@ -51,6 +51,7 @@ class EvaluationMetrics:
         cutoffs: list[float] | None = None,
         ambient_duration_hours: float = 0.0,
         default_threshold: float = 0.5,
+        sliding_window_size: int = 1,
     ):
         # Initialize validation file paths to None
         self._val_file_paths: list[str] | None = None
@@ -66,6 +67,7 @@ class EvaluationMetrics:
         self.cutoffs: list[float] = [float(cutoff) for cutoff in cutoffs_list]
         self.ambient_duration_hours = ambient_duration_hours
         self.default_threshold = default_threshold
+        self.sliding_window_size = int(sliding_window_size or 1)
 
         # Accumulated predictions and labels
         self.all_y_true: list = []
@@ -139,6 +141,7 @@ class EvaluationMetrics:
             y_true=y_true,
             y_score=y_scores,
             ambient_duration_hours=self.ambient_duration_hours,
+            sliding_window_size=self.sliding_window_size,
         )
 
         # Get basic metrics using default threshold
@@ -349,6 +352,7 @@ class Trainer:
         default_threshold = float(self.evaluation_config.get("detection_threshold", self.evaluation_config.get("default_threshold", 0.97)) or 0.97)
         self.eval_target_fah = float(self.evaluation_config.get("target_fah", self.target_minimization) or self.target_minimization)
         self.eval_target_recall = float(self.evaluation_config.get("target_recall", 0.90) or 0.90)
+        self.eval_sliding_window_size = int(config.get("export", {}).get("sliding_window_size", 1) or 1)
 
         # Plateau-based LR reduction state
         self._plateau_reduction_count = 0  # How many times LR has been reduced
@@ -365,11 +369,13 @@ class Trainer:
             cutoffs=self._get_cutoffs(lazy=True),
             ambient_duration_hours=self.ambient_duration_hours,
             default_threshold=default_threshold,
+            sliding_window_size=self.eval_sliding_window_size,
         )
         self.val_metrics = TrainingMetrics(
             cutoffs=self._get_cutoffs(lazy=True),
             ambient_duration_hours=self.val_ambient_duration_hours,
             default_threshold=default_threshold,
+            sliding_window_size=self.eval_sliding_window_size,
         )
         self._last_val_raw_labels: list[int] = []
         self._last_materialized_accuracy: float = 0.0  # Keep last accuracy for display between materialization intervals
@@ -1246,6 +1252,7 @@ class Trainer:
             cutoffs=list(self.val_metrics.cutoffs),
             ambient_duration_hours=effective_ambient,
             default_threshold=self.val_metrics.default_threshold,
+            sliding_window_size=self.eval_sliding_window_size,
         )
 
         iterator = data_generator() if callable(data_generator) else data_generator
@@ -1324,6 +1331,7 @@ class Trainer:
                     y_true=y_true,
                     y_score=y_score,
                     ambient_duration_hours=effective_ambient,
+                    sliding_window_size=self.eval_sliding_window_size,
                 )
                 curves = calc.compute_roc_pr_curves(n_thresholds=len(metrics_tracker.cutoffs))
                 fpr = curves["fpr"]
@@ -1348,6 +1356,7 @@ class Trainer:
                 y_true=np.array(metrics_tracker.all_y_true),
                 y_score=np.array(metrics_tracker.all_y_scores),
                 ambient_duration_hours=effective_ambient,
+                sliding_window_size=self.eval_sliding_window_size,
             )
             recall_at_fah, threshold_at_fah, _ = calc.compute_recall_at_target_fah(
                 ambient_duration_hours=effective_ambient,
@@ -1916,9 +1925,12 @@ class Trainer:
             self.best_recall,
         )
 
-        # Load best weights for return
-        if self.best_weights_path and os.path.exists(self.best_weights_path):
-            self.model.load_weights(self.best_weights_path)
+        # Note: We do NOT load best_weights here because:
+        # 1. Training is complete - no need to reload weights
+        # 2. model already contains the right weights (either training or EMA depending on when we last saved)
+        # 3. final_weights.weights.h5 (saved above) has EMA-smoothed weights, which is preferred
+        # 4. Loading best_weights here causes optimizer state warnings due to EMA finalize
+        # For export/inference, use final_weights.weights.h5 which has smoothed EMA weights
 
         if test_data_factory is not None:
             from src.evaluation.test_evaluator import TestEvaluator

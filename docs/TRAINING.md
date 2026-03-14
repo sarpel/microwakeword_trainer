@@ -46,10 +46,10 @@ dataset/
 ```yaml
 data:
   sample_rate: 16000
-  min_duration: 0.5
-  max_duration: 3.0
+  min_duration: 0.3
+  max_duration: 2.0
   vad_trim: true
-  quality_threshold: 0.7
+  quality_threshold: 0.95
 ```
 
 ## Feature Extraction

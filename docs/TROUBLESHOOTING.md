@@ -1038,13 +1038,16 @@ model.summary()
    python scripts/evaluate_model.py --checkpoint checkpoints/best_weights.weights.h5
    ```
 
-2. **Export without quantization (for debugging):**
+2. **Re-export with canonical INT8 settings:**
    ```bash
    mww-export \
        --checkpoint checkpoints/best_weights.weights.h5 \
-       --output models/exported/ \
-       --no-quantize
+       --output models/exported/
    ```
+   Ensure export config keeps:
+   - `export.quantize: true`
+   - `export.inference_input_type: int8`
+   - `export.inference_output_type: uint8`
 
 3. **Check config consistency:**
    ```bash

@@ -231,7 +231,7 @@ JQ|
 - **Export pipeline (tflite.py)**: ✅ Fully aligned — all 10 verification points pass (state vars, reshape flatten, residuals, BN fold, ExportArchive, uint8, boundary anchors, variable quantization)
 - **Evaluation (evaluate_model.py, metrics.py)**: ✅ Clean — threshold from config, no hardcoded arch values
 - **Auto-tuner (autotuner.py)**: ✅ Clean — uses get_weights/set_weights correctly, no hardcoded arch values
-- **Verification (verification.py, verify_esphome.py)**: ✅ Clean — checks uint8, 6 state vars, correct shapes/dtypes
+- **Verification (verification.py, verify_esphome.py)**: ✅ Clean — checks uint8, 6 state vars, correct shapes/dtypes; JSON output now sanitizes nested NumPy values and supports `--verbose` CLI output
 - **Manifest (manifest.py)**: ✅ Clean — uses config values, no hardcoded assumptions
 - **Config (loader.py, all 3 presets)**: ✅ Clean — architecture params properly defined
 - **Documentation (ARCHITECTURAL_CONSTITUTION.md, docs/ARCHITECTURE.md)**: ✅ Clean — all references to "mean pooling" removed, "flatten buffer" updated

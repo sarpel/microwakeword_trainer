@@ -85,22 +85,24 @@ class PerformanceMonitor:
             self.baseline_metrics[section] = duration_ms
             logger.info(f"Baseline established for {section}: {duration_ms:.1f}ms")
         else:
-            self.baseline_metrics[section] = alpha * duration_ms + (1 - alpha) * self.baseline_metrics[section]
+            old_baseline = self.baseline_metrics[section]  # Store old baseline first
 
-        # Bottleneck detection (2x slower than baseline)
-        ratio = duration_ms / self.baseline_metrics[section]
-        if ratio > 2.0:
-            alert_msg = f"BOTTLENECK: {section} took {ratio:.1f}x longer than baseline ({duration_ms:.1f}ms vs {self.baseline_metrics[section]:.1f}ms)"
-            # Check dedup: only alert if new message or cooldown expired
-            current_time = time.time()
-            last_time = self._last_alert_time.get(section, 0)
-            last_msg = self._last_alert_msg.get(section, "")
-            if alert_msg != last_msg or (current_time - last_time) >= self._alert_cooldown_seconds:
-                self.alerts.append(alert_msg)
-                logger.warning(alert_msg)
-                self._last_alert_time[section] = current_time
-                self._last_alert_msg[section] = alert_msg
+            # Bottleneck detection (2x slower than baseline) - compare against old baseline
+            ratio = duration_ms / old_baseline
+            if ratio > 2.0:
+                alert_msg = f"BOTTLENECK: {section} took {ratio:.1f}x longer than baseline ({duration_ms:.1f}ms vs {old_baseline:.1f}ms)"
+                # Check dedup: only alert if new message or cooldown expired
+                current_time = time.time()
+                last_time = self._last_alert_time.get(section, 0)
+                last_msg = self._last_alert_msg.get(section, "")
+                if alert_msg != last_msg or (current_time - last_time) >= self._alert_cooldown_seconds:
+                    self.alerts.append(alert_msg)
+                    logger.warning(alert_msg)
+                    self._last_alert_time[section] = current_time
+                    self._last_alert_msg[section] = alert_msg
 
+            # Update EMA baseline AFTER alarm decision
+            self.baseline_metrics[section] = alpha * duration_ms + (1 - alpha) * old_baseline
         # Trend detection (gradual degradation)
         history = self.section_history[section]
         if len(history) >= 20:  # Ensure both windows have enough samples

@@ -331,11 +331,11 @@ mww-export \
     --output models/exported/ \
     --model-name "hey_computer"
 
-# Export without quantization (for debugging)
+# Export with explicit config override (example)
 mww-export \
     --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
-    --no-quantize
+    --config config/presets/standard.yaml
 ```
 
 **Generated Files:**
@@ -552,11 +552,11 @@ mww-export \
     --output models/exported/ \
     --model-name "hey_computer"
 
-# Export without quantization (for debugging)
+# Export with explicit preset path
 mww-export \
     --checkpoint checkpoints/best_weights.weights.h5 \
     --output models/exported/ \
-    --no-quantize
+    --config config/presets/standard.yaml
 ```
 
 ### Verification
