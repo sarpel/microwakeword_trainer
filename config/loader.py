@@ -144,6 +144,8 @@ class ModelConfig:
     def __post_init__(self) -> None:
         if self.architecture != "mixednet":
             raise ValueError("model.architecture must be 'mixednet'")
+        if not 0.0 <= self.dropout_rate <= 1.0:
+            raise ValueError(f"model.dropout_rate must be in range [0.0, 1.0], got {self.dropout_rate}")
 
 
 @dataclass
@@ -331,7 +333,7 @@ class ExportConfig:
 
     wake_word: str = "Hey Katya"
     author: str = "Sarpel GURAY"
-    website: str = "https://github.com/sarpel/microwakeword-training-platform"
+    website: str = "https://github.com/sarpel/microwakeword_trainer"
     trained_languages: List[str] = field(default_factory=lambda: ["en"])
     quantize: bool = True
     inference_input_type: str = "int8"
@@ -405,7 +407,6 @@ class EvaluationConfig:
     """Evaluation and metrics configuration."""
 
     default_threshold: float = 0.97  # Default probability threshold for metrics (legacy name)
-    detection_threshold: float = 0.97  # Canonical threshold name (alias for default_threshold)
     n_thresholds: int = 101  # Number of thresholds for ROC/PR curves
     max_fah: float = 10.0  # Maximum FAH for average viable recall calculation
     target_fah: float = 2.0  # Target FAH for recall@FAH metrics
@@ -416,15 +417,6 @@ class EvaluationConfig:
     plateau_slope_eps: float = 0.0001  # Slope epsilon for plateau detection
     warmup_runs: int = 10  # Warmup runs for latency measurement
     n_latency_runs: int = 100  # Number of runs for latency measurement
-
-    # Backwards-compatibility alias: expose canonical name via property
-    @property
-    def detection_threshold(self) -> float:
-        return self.default_threshold
-
-    @detection_threshold.setter
-    def detection_threshold(self, value: float) -> None:
-        self.default_threshold = float(value)
 
 
 @dataclass
@@ -455,6 +447,8 @@ class AutoTuningConfig:
     # Cross-validation & confirmation
     cv_folds: int = 3
     confirmation_fraction: float = 0.40
+    # Fraction of search partition reserved for evaluation (rest for training)
+    search_eval_fraction: float = 0.30
     bootstrap_samples: int = 2000
 
     require_confirmation: bool = True
@@ -782,7 +776,12 @@ class ConfigLoader:
         if "training" in config and "export" in config:
             ls = config["training"].get("label_smoothing", 0.0)
             threshold = config["export"].get("probability_cutoff", 0.97)
-            eval_threshold = config.get("evaluation", {}).get("detection_threshold") or config.get("evaluation", {}).get("default_threshold", threshold)
+            # Handle both dict and dataclass/obj forms for evaluation config
+            eval_config = config.get("evaluation", {})
+            if isinstance(eval_config, dict):
+                eval_threshold = float(eval_config.get("default_threshold", 0.97))
+            else:
+                eval_threshold = float(getattr(eval_config, "default_threshold", 0.97))
             deploy_threshold = max(threshold, eval_threshold)
 
             if ls > 0:
