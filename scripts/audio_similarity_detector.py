@@ -388,7 +388,6 @@ class AudioSimilarityDetector:
             # 2. similarity[i, j] = similarity[j, i] (symmetry)
             # This cuts computation roughly in half!
             for j in range(i, n):
-
                 if i == j:
                     # DIAGONAL ELEMENTS: Audio compared with itself
                     similarity_matrix[i, j] = 1.0
@@ -468,7 +467,6 @@ class AudioSimilarityDetector:
             # OPTIMIZATION: Start j from i+1 to skip diagonal and lower triangle
             # This ensures we only look at each unique pair once
             for j in range(i + 1, n):
-
                 # GET SIMILARITY VALUE FROM MATRIX
                 similarity = similarity_matrix[i, j]
 
@@ -549,8 +547,7 @@ class AudioSimilarityDetector:
 
         # ITERATE THROUGH ALL SIMILAR PAIRS
         # SYNTAX: "for a, b, sim in list" unpacks each tuple into 3 variables
-        for file1, file2, similarity in tqdm(similar_pairs, desc="Clustering"):
-
+        for file1, file2, _similarity in tqdm(similar_pairs, desc="Clustering"):
             # CHECK IF EITHER FILE IS ALREADY IN A CLUSTER
             cluster1 = file_to_cluster.get(file1)  # Returns None if not found
             cluster2 = file_to_cluster.get(file2)
@@ -576,7 +573,7 @@ class AudioSimilarityDetector:
                 file_to_cluster[file1] = cluster2
 
             # CASE 4: BOTH ARE ALREADY IN CLUSTERS
-            elif cluster1 != cluster2:
+            elif cluster1 != cluster2 and cluster2 is not None:
                 # MERGE CLUSTERS: This is more complex!
                 # All files in cluster2 should move to cluster1
                 # CONCEPT: We iterate through all mappings and update them
@@ -607,7 +604,6 @@ class AudioSimilarityDetector:
         # PROCESS EACH CLUSTER
         # SYNTAX: dict.items() gives us both keys and values
         for cluster_num, files in tqdm(clusters.items(), desc="Organizing files"):
-
             # CREATE CLUSTER FOLDER
             # SYNTAX: f"string{variable}" embeds variable value in string
             cluster_folder = output_dir / f"cluster_{cluster_num}"
@@ -795,7 +791,7 @@ Examples:
     # PROCESS EACH FILE
     # SYNTAX: enumerate() gives us both index and value
     # EXAMPLE: enumerate(['a', 'b']) yields (0, 'a'), (1, 'b')
-    for idx, file_path in enumerate(tqdm(audio_files, desc="Extracting embeddings")):
+    for _idx, file_path in enumerate(tqdm(audio_files, desc="Extracting embeddings")):
         # EXTRACT EMBEDDING
         embedding = detector.get_audio_embedding(file_path)
 

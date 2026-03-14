@@ -62,5 +62,8 @@ performance:
 evaluation:
   default_threshold: 0.97       # Match deployment probability_cutoff
 
+export:
+  max_samples_for_cutoff_calc: 5000
+
 auto_tuning:
   search_eval_fraction: 0.30

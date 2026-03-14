@@ -27,7 +27,7 @@ def find_tempstate_files(cache_dir: str) -> list[Path]:
         "*.lockfile",
     ]
 
-    files = []
+    files: list[Path] = []
     for pattern in patterns:
         files.extend(cache_path.glob(pattern))
 

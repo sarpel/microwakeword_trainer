@@ -775,6 +775,16 @@ def create_representative_dataset_from_data(
                 return create_representative_dataset(config, target_chunks)
             raise ValueError("Quantized export requires real representative calibration data, but no valid calibration chunks could be extracted from feature store.")
 
+        if len(all_chunks) < 500:
+            if allow_random_fallback:
+                print(f"  Warning: Only {len(all_chunks)} calibration chunks available (< 500 minimum), falling back to random calibration")
+                return create_representative_dataset(config, target_chunks)
+            raise ValueError(
+                f"Quantized export requires at least 500 representative calibration chunks for reliable INT8 quantization, "
+                f"but only {len(all_chunks)} valid chunks were extracted from feature store. "
+                f"Provide more training data or enable --allow-random-fallback for calibration."
+            )
+
         positive_pct = (n_positive_used / max(1, n_positive_used + n_negative_used)) * 100
         print(
             f"  Using {len(all_chunks)} sequential calibration chunks from "
@@ -837,10 +847,10 @@ def _select_export_probability_cutoff(
     training_cfg = dict(cfg.get("training", {}))
     export_cfg = dict(cfg.get("export", {}))
 
-    n_thresholds = int(evaluation_cfg.get("n_thresholds", 101) or 101)
-    target_recall = float(evaluation_cfg.get("target_recall", 0.90) or 0.90)
-    target_fah = float(evaluation_cfg.get("target_fah", 2.0) or 2.0)
-    sliding_window_size = int(export_cfg.get("sliding_window_size", 5) or 5)
+    n_thresholds = int(evaluation_cfg.get("n_thresholds", 101))
+    target_recall = float(evaluation_cfg.get("target_recall", 0.90))
+    target_fah = float(evaluation_cfg.get("target_fah", 2.0))
+    sliding_window_size = int(export_cfg.get("sliding_window_size", 5))
 
     if ambient_duration_hours_override is not None:
         ambient_duration_hours = float(ambient_duration_hours_override)
@@ -870,13 +880,16 @@ def _select_export_probability_cutoff(
         )
         method = "recall_at_target_fah"
 
-    raw_cutoff = float(np.clip(best_threshold, 0.0, 1.0))
+    raw_cutoff = float(np.clip(float(best_threshold), 0.0, 1.0))
+    _fallback_threshold = export_cfg.get(
+        "probability_cutoff",
+        evaluation_cfg.get("default_threshold", 0.97),
+    )
+    if _fallback_threshold is None:
+        _fallback_threshold = 0.97
     fallback_cutoff = float(
         np.clip(
-            export_cfg.get(
-                "probability_cutoff",
-                evaluation_cfg.get("default_threshold", 0.97),
-            ),
+            float(_fallback_threshold),
             0.0,
             1.0,
         )
@@ -1065,6 +1078,15 @@ def export_streaming_tflite(
     if dense_input_features % pointwise_filters != 0:
         raise ValueError(f"Dense input features ({dense_input_features}) is not divisible by pointwise_filters ({pointwise_filters}). Architecture mismatch?")
 
+    temporal_frames = dense_input_features // pointwise_filters
+    if temporal_frames < 2:
+        raise ValueError(
+            f"temporal_frames ({temporal_frames}) < 2. This is likely an old Flatten()-based checkpoint "
+            f"incompatible with the expected GlobalAveragePooling2D/reshape export. "
+            f"Required: dense_input_features={dense_input_features}, pointwise_filters={pointwise_filters}, "
+            f"producing temporal_frames={temporal_frames}. Expected temporal_frames >= 2 for valid stream_5 shape."
+        )
+
     print(f"  Checkpoint Dense layer: ({dense_input_features}, {dense_output_features})")
     print(f"  Inferred temporal frames: {temporal_frames} (from {dense_input_features} / {pointwise_filters})")
 
@@ -1212,8 +1234,12 @@ def export_streaming_tflite(
             print(f"  ✓ Auto probability_cutoff: {auto_cutoff['probability_cutoff']:.4f} ({auto_cutoff['probability_cutoff_uint8']}) method={auto_cutoff['selection_method']}")
         else:
             print("  Note: --data-dir not provided; skipping auto probability_cutoff calculation")
-    except Exception as e:
+    except (ValueError, TypeError, ZeroDivisionError) as e:
         print(f"  Warning: Auto probability_cutoff calculation failed, using configured/default cutoff: {e}")
+    except Exception as e:
+        # Re-raise unexpected exceptions for debugging
+        print(f"  Error: Unexpected exception during auto probability_cutoff calculation: {type(e).__name__}: {e}")
+        raise
 
     print("\n[5/5] Generating manifest...")
 
@@ -1265,7 +1291,12 @@ def _build_manifest_config(config: Optional[dict], model_name: str, metadata: di
     # Use default_threshold from evaluation section, then top-level config, then default 0.5
     if isinstance(config, dict):
         evaluation_cfg = dict(config.get("evaluation", {}))
-        _default_threshold = export_cfg.get("default_threshold") or evaluation_cfg.get("default_threshold") or config.get("default_threshold", 0.5)
+        if export_cfg.get("default_threshold") is not None:
+            _default_threshold = export_cfg["default_threshold"]
+        elif evaluation_cfg.get("default_threshold") is not None:
+            _default_threshold = evaluation_cfg["default_threshold"]
+        else:
+            _default_threshold = config.get("default_threshold", 0.5)
     else:
         _default_threshold = 0.5
     export_cfg.setdefault("default_threshold", _default_threshold)

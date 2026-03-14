@@ -74,7 +74,7 @@ class TestCreateRepresentativeDataset:
         gen_fn = create_representative_dataset(DEFAULT_CONFIG, num_samples=5)
         samples_a = [s[0].copy() for s in gen_fn()]
         samples_b = [s[0].copy() for s in gen_fn()]
-        for a, b in zip(samples_a, samples_b):
+        for a, b in zip(samples_a, samples_b, strict=False):
             np.testing.assert_array_equal(a, b)
 
 
@@ -93,10 +93,10 @@ class TestCreateRepresentativeDatasetFromData:
     ) -> list[tuple[np.ndarray, int]]:
         """Create a list of (spectrogram, label) pairs."""
         data = []
-        for i in range(n_positive):
+        for _i in range(n_positive):
             # Positive samples with higher values (simulates wake word features)
             data.append((_make_spectrogram(frames_per_spec, mel_bins, value=20.0), 1))
-        for i in range(n_negative):
+        for _i in range(n_negative):
             # Negative samples with lower values
             data.append((_make_spectrogram(frames_per_spec, mel_bins, value=5.0), 0))
         return data

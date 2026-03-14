@@ -5,6 +5,7 @@ for consistent terminal output with colors and formatting.
 """
 
 import logging
+import os
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -53,7 +54,7 @@ def setup_rich_logging(
         show_time=show_time,
         show_path=show_path,
         rich_tracebacks=True,
-        tracebacks_show_locals=True,
+        tracebacks_show_locals=os.getenv("MWW_DEBUG_TRACEBACKS") == "1",
     )
     rich_handler.setLevel(level)
 

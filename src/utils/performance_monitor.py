@@ -45,9 +45,9 @@ class PerformanceMonitor:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.enable_profiling = enable_profiling
-        self.baseline_metrics = {}
-        self.section_history = defaultdict(list)
-        self.alerts = []
+        self.baseline_metrics: dict[str, float] = {}
+        self.section_history: defaultdict[str, list[float]] = defaultdict(list)
+        self.alerts: list[dict[str, Any]] = []
         self._last_alert_time: dict[str, float] = {}  # section -> last alert timestamp
         self._last_alert_msg: dict[str, str] = {}  # section -> last alert message
         self._alert_cooldown_seconds = 300  # 5 minutes cooldown for same alert

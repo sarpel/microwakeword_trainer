@@ -202,7 +202,6 @@ class TestAudioAugmentation:
                 patch.object(aug, "apply_background_noise") as mock_bg,
                 patch.object(aug, "apply_rir") as mock_rir,
             ):
-
                 mock_dist.return_value = sample_audio
                 mock_pitch.return_value = sample_audio
                 mock_band.return_value = sample_audio
@@ -238,7 +237,7 @@ class TestAudioAugmentation:
         original = sample_audio.copy()
         config = AugmentationConfig(Gain=0.0)
         aug = AudioAugmentation(config)
-        result = aug(sample_audio)
+        result = aug(sample_audio)  # noqa: F841
         np.testing.assert_array_equal(sample_audio, original)
 
     # -------------------------------------------------------------------------
@@ -281,7 +280,7 @@ class TestAudioAugmentation:
 
         with patch.dict("sys.modules", {"audiomentations": MagicMock(SevenBandParametricEQ=MagicMock(return_value=mock_eq))}):
             with patch("audiomentations.SevenBandParametricEQ", return_value=mock_eq):
-                result = aug.apply_eq(sample_audio)
+                result = aug.apply_eq(sample_audio)  # noqa: F841
                 mock_eq.assert_called_once()
 
     def test_apply_eq_without_audiomentations(self, sample_audio, caplog):
@@ -289,7 +288,6 @@ class TestAudioAugmentation:
         aug = AudioAugmentation()
 
         with patch.dict("sys.modules", {"audiomentations": None}):
-
             # Force reimport to test ImportError path
             with caplog.at_level("DEBUG"):
                 result = aug.apply_eq(sample_audio)
@@ -310,7 +308,7 @@ class TestAudioAugmentation:
         mock_dist.return_value = sample_audio * 0.8
 
         with patch("audiomentations.TanhDistortion", return_value=mock_dist):
-            result = aug.apply_distortion(sample_audio)
+            result = aug.apply_distortion(sample_audio)  # noqa: F841
             mock_dist.assert_called_once()
 
     def test_apply_distortion_fallback(self, sample_audio):
@@ -363,7 +361,7 @@ class TestAudioAugmentation:
         mock_filter.return_value = sample_audio * 0.85
 
         with patch("audiomentations.BandStopFilter", return_value=mock_filter):
-            result = aug.apply_band_stop(sample_audio)
+            result = aug.apply_band_stop(sample_audio)  # noqa: F841
             mock_filter.assert_called_once()
 
     def test_apply_band_stop_without_audiomentations(self, sample_audio, caplog):
@@ -390,7 +388,7 @@ class TestAudioAugmentation:
         mock_noise.return_value = sample_audio + np.random.randn(*sample_audio.shape) * 0.01
 
         with patch("audiomentations.AddColorNoise", return_value=mock_noise):
-            result = aug.apply_color_noise(sample_audio)
+            result = aug.apply_color_noise(sample_audio)  # noqa: F841
             mock_noise.assert_called_once()
 
     def test_apply_color_noise_fallback(self, sample_audio):
@@ -428,7 +426,7 @@ class TestAudioAugmentation:
 
         with patch.object(aug, "apply_color_noise") as mock_color:
             mock_color.return_value = sample_audio
-            result = aug.apply_background_noise(sample_audio)
+            result = aug.apply_background_noise(sample_audio)  # noqa: F841
             mock_color.assert_called_once()
 
     def test_apply_background_noise_with_files(self, sample_audio, temp_audio_files):
@@ -488,7 +486,7 @@ class TestAudioAugmentation:
             with caplog.at_level("WARNING"):
                 with patch.object(aug, "apply_color_noise") as mock_color:
                     mock_color.return_value = sample_audio
-                    result = aug.apply_background_noise(sample_audio)
+                    result = aug.apply_background_noise(sample_audio)  # noqa: F841
 
                 assert "Failed to apply background noise" in caplog.text
 
@@ -570,7 +568,7 @@ class TestApplySpecAugmentGPU:
         """Test SpecAugment when CuPy is available."""
         # This test requires GPU and is marked accordingly
         try:
-            import cupy as cp
+            import cupy as cp  # noqa: F401
 
             result = apply_spec_augment_gpu(
                 sample_spectrogram,

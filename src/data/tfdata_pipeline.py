@@ -121,7 +121,7 @@ class OptimizedDataPipeline:
 
         def generator():
             if split == "train":
-                factory = self.dataset.train_generator_factory(self.max_time_frames)  # type: ignore[attr-defined]
+                factory = self.dataset.train_generator_factory(self.max_time_frames) 
             elif split == "test":
                 if not hasattr(self.dataset, "test_generator_factory"):
                     raise ValueError(f"Dataset {type(self.dataset).__name__} does not support 'test' split. Use 'train' or 'val'.")
@@ -571,7 +571,7 @@ def benchmark_pipeline(
 
     # Benchmark original generator
     logger.info("Benchmarking original generator...")
-    factory = dataset.train_generator_factory(None)  # type: ignore[attr-defined]
+    factory = dataset.train_generator_factory(None) 
     gen = factory() if callable(factory) else factory
 
     start = time.time()

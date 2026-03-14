@@ -25,8 +25,8 @@ import tensorflow as tf
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config.loader import load_full_config
-from src.model.architecture import build_model
 from src.export.tflite import StreamingExportModel, load_weights_from_keras3_checkpoint
+from src.model.architecture import build_model
 
 
 def parse_kernel_sizes(s: str) -> list[list[int]]:
@@ -168,27 +168,27 @@ def compare_models(config, checkpoint_path: str, n_samples: int = 50):
             print(f"{i:>8} | {p_train:>10.6f} | {p_stream_no_fold:>12.6f} | {p_stream_folded:>12.6f} | {d_no_fold:>10.6f} | {d_folded:>10.6f}")
 
     print("\n--- Summary Statistics ---")
-    diffs_no_fold = np.array(diffs_no_fold)
-    diffs_folded = np.array(diffs_folded)
+    diffs_no_fold_arr = np.array(diffs_no_fold)
+    diffs_folded_arr = np.array(diffs_folded)
 
     print(f"{'Metric':>20} | {'No BN fold':>12} | {'With BN fold':>12}")
     print("-" * 50)
-    print(f"{'Mean abs diff':>20} | {diffs_no_fold.mean():>12.6f} | {diffs_folded.mean():>12.6f}")
-    print(f"{'Max abs diff':>20} | {diffs_no_fold.max():>12.6f} | {diffs_folded.max():>12.6f}")
-    print(f"{'Median abs diff':>20} | {np.median(diffs_no_fold):>12.6f} | {np.median(diffs_folded):>12.6f}")
-    print(f"{'Std abs diff':>20} | {diffs_no_fold.std():>12.6f} | {diffs_folded.std():>12.6f}")
+    print(f"{'Mean abs diff':>20} | {diffs_no_fold_arr.mean():>12.6f} | {diffs_folded_arr.mean():>12.6f}")
+    print(f"{'Max abs diff':>20} | {diffs_no_fold_arr.max():>12.6f} | {diffs_folded_arr.max():>12.6f}")
+    print(f"{'Median abs diff':>20} | {np.median(diffs_no_fold_arr):>12.6f} | {np.median(diffs_folded_arr):>12.6f}")
+    print(f"{'Std abs diff':>20} | {diffs_no_fold_arr.std():>12.6f} | {diffs_folded_arr.std():>12.6f}")
 
     print("\n--- Diagnosis ---")
-    if diffs_no_fold.mean() < 0.01:
+    if diffs_no_fold_arr.mean() < 0.01:
         print("✅ Streaming (no BN fold) closely matches training → architecture is correct")
-        if diffs_folded.mean() < 0.01:
+        if diffs_folded_arr.mean() < 0.01:
             print("✅ BN folding is numerically accurate")
             print("→ AUC gap is likely due to INT8 quantization")
         else:
             print("❌ BN folding introduces significant error")
             print("→ Investigate fold_batch_norms() math")
     else:
-        print(f"❌ Streaming architecture DIVERGES from training (mean diff: {diffs_no_fold.mean():.4f})")
+        print(f"❌ Streaming architecture DIVERGES from training (mean diff: {diffs_no_fold_arr.mean():.4f})")
         print("→ Possible causes:")
         print("   1. Temporal pooling: training=GlobalAvgPool(33 frames), streaming=Mean(5 frames)")
         print("   2. Residual connection computation differs")

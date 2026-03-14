@@ -742,19 +742,7 @@ def _plot_and_save_all(
         plt.close(fig)
         artifacts.append(str(p))
     except ImportError:
-        console.print("[yellow]Warning: scipy not installed. Skipping DET curve plot.[/]")
-
-    # 5) Score distributions
-    plt.xlabel("False Positive Rate (normal deviate)")
-    plt.ylabel("False Negative Rate (normal deviate)")
-    plt.title("DET Curve")
-    plt.grid(alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    p = output_dir / "eval_det_curve.png"
-    plt.savefig(p, dpi=160)
-    plt.close(fig)
-    artifacts.append(str(p))
+        print("[yellow]Warning: scipy not installed. Skipping DET curve plot.[/]")
 
     # 5) Score distributions
     fig = plt.figure(figsize=(8, 6))
@@ -1489,7 +1477,7 @@ def main() -> int:
         print("Error: Must specify --model, --checkpoint, or --tflite")
         return 1
 
-    console = Console()
+    console = Console(stderr=True) if args.json else Console()
 
     # Load config
     try:

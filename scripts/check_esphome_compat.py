@@ -677,7 +677,7 @@ def main() -> int:
     else:
         _print_human(result, verbose=args.verbose)
 
-    return 0 if result["compatible"] else 4
+    return 0 if result["compatible"] else 2
 
 
 if __name__ == "__main__":
