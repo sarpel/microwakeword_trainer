@@ -250,8 +250,8 @@ class Stream(tf.keras.layers.Layer):
                 # For the initial strided conv this becomes kernel_size - stride.
                 # For stride-1 downstream blocks this becomes kernel_size - 1.
                 # With dilation: dilation * (kernel_size - 1) - (stride - 1)
-                # Ensure at least 1 to avoid zero-sized buffers that cause crashes
-                self.ring_buffer_size_in_time_dim = max(1, dilation * (kern - 1) - stride_val + 1)
+                # Allow zero-sized buffers (when kernel == stride, no state needed)
+                self.ring_buffer_size_in_time_dim = dilation * (kern - 1) - stride_val + 1
 
         # Build the wrapped cell if needed
         if isinstance(wrapped_cell, tf.keras.layers.Layer) and not wrapped_cell.built:
@@ -719,13 +719,17 @@ class StreamingMixedNet:
 
     def reset(self):
         """Reset all state variables to zero tensors."""
+        # Reset internal state in Stream layers (actual TensorFlow state variables)
+        for layer in self.model.layers:
+            if isinstance(layer, Stream) and hasattr(layer, "states") and layer.states is not None:
+                layer.states.assign(tf.zeros_like(layer.states))
+
+        # Reset external state dictionary (for external streaming mode)
         state_names = get_streaming_state_names()
         for name in state_names:
             current = self.state.get(name)
             if current is not None:
                 self.state[name] = tf.zeros_like(current)
-            else:
-                logger.warning(f"State '{name}' not yet initialized; call predict() first to populate state shapes.")
 
     def predict(self, features):
         """Run inference on features.

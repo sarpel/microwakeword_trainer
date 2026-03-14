@@ -10,8 +10,8 @@ import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
-# Default tensor arena size in bytes (official okay_nabu baseline)
-DEFAULT_TENSOR_ARENA_SIZE = 22860
+# Default tensor arena size in bytes (0 = auto-calculate from model)
+DEFAULT_TENSOR_ARENA_SIZE = 0
 
 
 def generate_manifest(
@@ -176,8 +176,9 @@ def calculate_tensor_arena_size(tflite_path: str, margin: float = 1.3) -> int:
         peak_memory_estimate = largest_tensor_size * 2 + 16384
         arena_size = int(peak_memory_estimate * margin)
 
-        # Ensure minimum size (26KB is the minimum for okay_nabu models)
-        arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)
+        # Apply minimum floor only if DEFAULT_TENSOR_ARENA_SIZE is non-zero
+        if DEFAULT_TENSOR_ARENA_SIZE > 0:
+            arena_size = max(arena_size, DEFAULT_TENSOR_ARENA_SIZE)
 
         return arena_size
 

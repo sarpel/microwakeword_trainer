@@ -1342,6 +1342,8 @@ class AutoTuner:
 
         self.total_gradient_steps = 0
         self.best_checkpoint_path: Optional[str] = None
+        self._last_confirmation_best_attempt: Optional[CandidateState] = None
+        self._last_confirmation_best_confirmed: Optional[CandidateState] = None
 
     def _setup_file_logger(self) -> logging.Logger:
         flogger = logging.getLogger(f"autotuner.{id(self)}")
@@ -1444,6 +1446,10 @@ class AutoTuner:
         """
         n = len(labels)
         indices = np.arange(n)
+
+        # Input validation: dataset must be large enough for all partitions
+        if n < 4:
+            raise ValueError(f"Dataset too small for partitioning: need at least 4 samples, got {n}")
 
         n_cal = max(1, int(n * 0.15))
         n_repr = max(1, int(n * 0.05))
@@ -2014,6 +2020,7 @@ class AutoTuner:
         )[:5]
 
         confirm_features, confirm_labels, confirm_weights, _ = confirm_data
+        repr_features = repr_data[0] if isinstance(repr_data, tuple) and len(repr_data) > 0 else confirm_features
         best_confirmed = None
         best_attempt = None
         best_attempt_metrics = None
@@ -2029,6 +2036,11 @@ class AutoTuner:
             # Restore weights
             self._deserialize_weights(model, candidate.weights_bytes)
             self._restore_bn_state(model, candidate.batchnorm_state)
+
+            # Refresh BN stats on independent representative partition to reduce
+            # search/confirmation distribution mismatch.
+            if hasattr(model, "layers") and len(repr_features) > 0:
+                self._refresh_bn_statistics(model, repr_features)
 
             # Re-optimize threshold on confirmation data (not search-overfit threshold)
             scores = self._predict_scores(model, confirm_features, candidate.temperature)
@@ -2084,6 +2096,10 @@ class AutoTuner:
             self.file_logger.warning("No candidate passed confirmation phase")
             if best_attempt and best_attempt_metrics:
                 self.file_logger.info(f"Best failed attempt: {best_attempt.id} — FAH={best_attempt_metrics.fah:.4f}, Recall={best_attempt_metrics.recall:.4f}")
+
+        # Persist confirmation picks for downstream reporting.
+        self._last_confirmation_best_confirmed = best_confirmed
+        self._last_confirmation_best_attempt = best_attempt
 
         return best_confirmed, best_attempt_metrics
 
@@ -2161,14 +2177,36 @@ class AutoTuner:
             best_weights = None
             original_weights = self._serialize_weights(model)
 
+            # Save BatchNorm running statistics before perturbation
+            bn_stats_before = {}
+            for layer in model.layers:
+                if isinstance(layer, tf.keras.layers.BatchNormalization):
+                    bn_stats_before[layer.name] = {
+                        "moving_mean": layer.moving_mean.numpy().copy(),
+                        "moving_variance": layer.moving_variance.numpy().copy(),
+                    }
+
             for probe in range(4):
                 self._deserialize_weights(model, original_weights)
+
+                # Restore BN running stats before perturbation
+                for layer in model.layers:
+                    if isinstance(layer, tf.keras.layers.BatchNormalization) and layer.name in bn_stats_before:
+                        layer.moving_mean.assign(bn_stats_before[layer.name]["moving_mean"])
+                        layer.moving_variance.assign(bn_stats_before[layer.name]["moving_variance"])
+
                 all_weights = model.get_weights()
                 perturbed = []
                 for w in all_weights:
                     noise = np.random.normal(0, 0.001, w.shape)
                     perturbed.append(w + noise)
                 model.set_weights(perturbed)
+
+                # Restore BN running stats after perturbation (BN stats get overwritten by set_weights)
+                for layer in model.layers:
+                    if isinstance(layer, tf.keras.layers.BatchNormalization) and layer.name in bn_stats_before:
+                        layer.moving_mean.assign(bn_stats_before[layer.name]["moving_mean"])
+                        layer.moving_variance.assign(bn_stats_before[layer.name]["moving_variance"])
 
                 # Quick eval
                 batch = sampler.build_batch(
@@ -2193,12 +2231,29 @@ class AutoTuner:
         if stir_level >= 5:
             # L5: Gaussian noise perturbation + reheat annealing
             info["action"] = "diversify"
+
+            # Save BatchNorm running statistics before perturbation
+            bn_stats_before = {}
+            for layer in model.layers:
+                if isinstance(layer, tf.keras.layers.BatchNormalization):
+                    bn_stats_before[layer.name] = {
+                        "moving_mean": layer.moving_mean.numpy().copy(),
+                        "moving_variance": layer.moving_variance.numpy().copy(),
+                    }
+
             all_weights = model.get_weights()
             perturbed = []
             for w in all_weights:
                 noise = np.random.normal(0, 0.001, w.shape)
                 perturbed.append(w + noise)
             model.set_weights(perturbed)
+
+            # Restore BN running stats after perturbation (BN stats get overwritten by set_weights)
+            for layer in model.layers:
+                if isinstance(layer, tf.keras.layers.BatchNormalization) and layer.name in bn_stats_before:
+                    layer.moving_mean.assign(bn_stats_before[layer.name]["moving_mean"])
+                    layer.moving_variance.assign(bn_stats_before[layer.name]["moving_variance"])
+
             self.annealing.temperature *= self.reheat_factor
 
         self.file_logger.info(f"Stir L{stir_level} applied: {info['action']}")
@@ -2415,6 +2470,7 @@ class AutoTuner:
         cal_features, cal_labels = partition["cal"][0], partition["cal"][1]
         confirm_data = partition["confirm"]
         repr_data = partition["repr"]
+        repr_features = repr_data[0]
         fold_indices = partition["fold_indices"]
 
         # Scale ambient hours for each sub-partition
@@ -2426,6 +2482,31 @@ class AutoTuner:
         confirm_labels_for_fraction = confirm_data[1]
         confirm_fraction = len(confirm_labels_for_fraction) / max(len(labels), 1)
         ambient_hours_confirm = ambient_hours_val * confirm_fraction
+
+        # FAH resolution diagnostics: with finite ambient hours, FAH is quantized by
+        # 1 / ambient_hours for single FP steps. Targets below that force FP=0 regime.
+        min_resolvable_fah_search_eval = 1.0 / max(ambient_hours_search_eval, 1e-8)
+        min_resolvable_fah_confirm = 1.0 / max(ambient_hours_confirm, 1e-8)
+        if self.target_fah < min_resolvable_fah_search_eval:
+            self.file_logger.warning(
+                "Target FAH %.4f is stricter than search-eval resolution %.4f (ambient_hours=%.4f). Optimizer is effectively forced into FP=0 regime, which can suppress recall.",
+                self.target_fah,
+                min_resolvable_fah_search_eval,
+                ambient_hours_search_eval,
+            )
+            self.console.print(
+                f"  [yellow]⚠ Target FAH {self.target_fah:.4f} < search-eval resolution {min_resolvable_fah_search_eval:.4f} (ambient {ambient_hours_search_eval:.2f}h): FP=0 regime likely[/yellow]"
+            )
+        if self.target_fah < min_resolvable_fah_confirm:
+            self.file_logger.warning(
+                "Target FAH %.4f is stricter than confirmation resolution %.4f (ambient_hours=%.4f). Confirmation is effectively forced into FP=0 regime, often reducing achievable recall.",
+                self.target_fah,
+                min_resolvable_fah_confirm,
+                ambient_hours_confirm,
+            )
+            self.console.print(
+                f"  [yellow]⚠ Target FAH {self.target_fah:.4f} < confirmation resolution {min_resolvable_fah_confirm:.4f} (ambient {ambient_hours_confirm:.2f}h): FP=0 regime likely[/yellow]"
+            )
 
         self.file_logger.info(f"Search sub-partitions: train={len(search_train_labels)} ({search_train_fraction:.1%}), eval={len(search_eval_labels)} ({search_eval_fraction:.1%})")
 
@@ -2559,8 +2640,9 @@ class AutoTuner:
                     _ = self._serialize_weights(model)
                     self._apply_swa(model, swa_snapshots)
 
-                # j. Refresh BN statistics
-                self._refresh_bn_statistics(model, search_eval_features)
+                # j. Refresh BN statistics on independent representative partition
+                # to avoid search-eval contamination.
+                self._refresh_bn_statistics(model, repr_features)
 
                 # k. Recalibrate temperature
                 cal_scores = self._predict_scores(model, cal_features)
@@ -2694,9 +2776,11 @@ class AutoTuner:
                 self.best_checkpoint_path = self._save_checkpoint(model, confirmed.eval_results, confirmed.iteration)
 
         # 8. Build final results
-        best = confirmed or self.archive.get_best(self.target_fah, self.target_recall)
-        if best is None and len(self.archive) > 0:
-            best = self.archive.archive[0]
+        search_best = self.archive.get_best(self.target_fah, self.target_recall)
+        if search_best is None and len(self.archive) > 0:
+            search_best = self.archive.archive[0]
+
+        best = confirmed or search_best
 
         # Ensure we have a checkpoint for the best
         if best is not None and self.best_checkpoint_path is None:
@@ -2726,6 +2810,16 @@ class AutoTuner:
             "confirmation_attempted": self.require_confirmation and len(self.archive) > 0,
             "confirmation_best_fah": best_attempt_metrics.fah if best_attempt_metrics else None,
             "confirmation_best_recall": best_attempt_metrics.recall if best_attempt_metrics else None,
+            "confirmation_best_cutoff": best_attempt_metrics.threshold if best_attempt_metrics else None,
+            "confirmation_best_cutoff_uint8": best_attempt_metrics.threshold_uint8 if best_attempt_metrics else None,
+            "confirmation_best_candidate_id": self._last_confirmation_best_attempt.id if self._last_confirmation_best_attempt else None,
+            "search_best_fah": search_best.eval_results.fah if search_best and search_best.eval_results else None,
+            "search_best_recall": search_best.eval_results.recall if search_best and search_best.eval_results else None,
+            "search_best_cutoff": search_best.eval_results.threshold if search_best and search_best.eval_results else None,
+            "search_best_cutoff_uint8": search_best.eval_results.threshold_uint8 if search_best and search_best.eval_results else None,
+            "search_best_candidate_id": search_best.id if search_best else None,
+            "min_resolvable_fah_search_eval": min_resolvable_fah_search_eval,
+            "min_resolvable_fah_confirm": min_resolvable_fah_confirm,
         }
 
         self._log_final_summary(result)

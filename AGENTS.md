@@ -103,6 +103,12 @@ mww-cluster-apply --namelist-dir cluster_output
 
 # Verification
 python scripts/verify_esphome.py models/exported/wake_word.tflite
+
+# Advanced evaluation + reports
+python scripts/evaluate_model.py --model models/exported/wake_word.tflite --config standard --output-dir logs/
+
+# Interactive dashboard from report
+python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
 ```
 
 ## NOTES
@@ -119,6 +125,8 @@ python scripts/verify_esphome.py models/exported/wake_word.tflite
 - Auto-tuner search split: search data is split into search_train (70%) and search_eval (30%) — FocusedSampler trains on search_train only
 - Export state shapes vary: stream_5 shape depends on temporal_frames derived from clip_duration_ms, not always (1,5,1,64)
 - `verify_esphome.py` JSON mode sanitizes NumPy values before serialization; use `--json` for CI and `--verbose` for detailed local diagnostics
+- `evaluate_model.py` writes `evaluation_report.json`, PNG plots, and executive reports (`executive_report.md` / `.html`) under `evaluation_artifacts/`
+- `eval_dashboard.py` builds `interactive_dashboard.html` from `evaluation_report.json` (keep dashboard in same folder as report/images)
 - `DELEGATE` visibility is runtime/delegate-path dependent in analyzers; compatibility checks should focus on static-graph invariants and ESPHome-registered op set
 
 ### Module AGENTS.md Files

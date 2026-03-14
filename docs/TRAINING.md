@@ -49,7 +49,7 @@ data:
   min_duration: 0.3
   max_duration: 2.0
   vad_trim: true
-  quality_threshold: 0.95
+  quality_threshold: 0.7
 ```
 
 ## Feature Extraction
@@ -361,8 +361,21 @@ performance:
 After training:
 1. Export model with `mww-export`
 2. Verify ESPHome compatibility
-3. Test on device
-4. Consider auto-tuning for better FAH/recall balance
+3. Run advanced evaluation with report artifacts:
+   ```bash
+   python scripts/evaluate_model.py --model models/exported/wake_word.tflite --config standard --output-dir logs/
+   ```
+   This generates:
+   - `evaluation_report.json` (full machine-readable metrics)
+   - plot images (ROC/PR/DET/confusion/calibration/threshold curves)
+   - `executive_report.md` and `executive_report.html`
+4. Optional: generate interactive dashboard from the report:
+   ```bash
+   python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
+   ```
+   Note: interactive charts rely on Plotly CDN (network required). For offline sharing, use `executive_report.html`.
+5. Test on device
+6. Consider auto-tuning for better FAH/recall balance
 
 ## Checkpoint Selection Strategy
 

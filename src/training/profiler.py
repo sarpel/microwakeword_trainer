@@ -53,7 +53,7 @@ class TrainingProfiler:
             >>> with profiler.profile_section("data_loading"):
             ...     data = load_data()
         """
-        timestamp = int(time.time())
+        timestamp = time.time_ns()  # Nanosecond resolution prevents filename collisions
         profile_path = os.path.join(self.output_dir, f"{name}_{timestamp}.prof")
 
         profiler = cProfile.Profile()

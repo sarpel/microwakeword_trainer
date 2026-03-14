@@ -595,6 +595,12 @@ python scripts/split_audio.py <audio_file>
 
 # VAD-based audio trimming
 python scripts/vad_trim.py <audio_file>
+
+# Comprehensive model evaluation (JSON + images + executive reports)
+python scripts/evaluate_model.py --model models/exported/wake_word.tflite --config standard --output-dir logs/
+
+# Build interactive dashboard from evaluation_report.json
+python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
 ```
 
 ---

@@ -15,7 +15,7 @@ config/
 
 ## ConfigLoader
 
-- **14 dataclass sections**: Hardware, Paths, Training, Model, Augmentation, Performance, SpeakerClustering, Mining, Export, Preprocessing, Quality, Evaluation, AutoTune
+- **14 dataclass sections**: Hardware, Paths, Training, Model, Augmentation, Performance, SpeakerClustering, Mining, Export, Preprocessing, Quality, Evaluation, AutoTune, AutoTuningExpert, FullConfig
 - **Preset loading**: Load base from `presets/`
 - **Config merging**: Override with custom YAML
 - **Env var substitution**: `${VAR}` or `${VAR:-default}`
@@ -28,6 +28,7 @@ config/
 | training | learning_rates, training_steps, batch_size |
 | model | architecture, first_conv_filters, mixconv_kernel_sizes |
 | export | wake_word, quantize, tensor_arena_size |
+| auto_tuning | target_fah, target_recall, initial_lr, max_iterations |
 
 ## Convenience Functions
 

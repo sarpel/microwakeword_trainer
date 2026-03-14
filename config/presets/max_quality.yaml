@@ -321,7 +321,7 @@ evaluation:
 auto_tuning:
   enabled: true
   target_fah: 0.2               # Realistic per AGENTS.md; was 5.0 (too loose → optimizer overfits to FAH=0)
-  target_recall: 0.90           # 0.88 (vs. target 0.90) leaves headroom for early-stage instability; restore to 0.90 after first successful run confirms the FAH budget is reliably met
+  target_recall: 0.90           # Target recall for max quality - matches deployment expectation
   max_iterations: 30            # Matches new gradient budget; was 50
   max_gradient_steps: 10000     # Prevents overfitting; was 2500 (too low) / 250000 (full retrain)
   patience: 10                   # Faster stagnation detection; was 15
