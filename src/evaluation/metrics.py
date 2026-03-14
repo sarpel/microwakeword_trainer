@@ -212,6 +212,7 @@ def compute_roc_pr_curves(
     y_scores: np.ndarray,
     n_thresholds: int = 101,
     sliding_window_size: int = 1,
+    clip_ids: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute ROC and PR curves at multiple thresholds."""
     thresholds = np.linspace(0, 1, n_thresholds)
@@ -223,7 +224,12 @@ def compute_roc_pr_curves(
 
     for thresh in thresholds:
         if sliding_window_size > 1:
-            y_pred = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+            y_pred = apply_sliding_window_detection(
+                y_scores,
+                float(thresh),
+                sliding_window_size,
+                clip_ids=clip_ids,
+            )
         else:
             y_pred = (y_scores > thresh).astype(int)
 
@@ -256,6 +262,7 @@ def compute_recall_at_no_faph(
     y_scores: np.ndarray,
     n_thresholds: int = 101,
     sliding_window_size: int = 1,
+    clip_ids: np.ndarray | None = None,
 ) -> tuple[float, float]:
     """Compute recall at the lowest threshold yielding zero false positives."""
     thresholds = np.linspace(0, 1, n_thresholds)
@@ -265,7 +272,12 @@ def compute_recall_at_no_faph(
     for thresh in thresholds:
         neg_mask = y_true == 0
         if sliding_window_size > 1:
-            y_pred_curr = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+            y_pred_curr = apply_sliding_window_detection(
+                y_scores,
+                float(thresh),
+                sliding_window_size,
+                clip_ids=clip_ids,
+            )
             fp = np.sum((y_pred_curr == 1) & neg_mask)
         else:
             fp = np.sum(y_scores[neg_mask] > thresh)
@@ -282,7 +294,12 @@ def compute_recall_at_no_faph(
     thresh = float(thresholds[-1])
     pos_mask = y_true == 1
     if sliding_window_size > 1:
-        y_pred = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+        y_pred = apply_sliding_window_detection(
+            y_scores,
+            float(thresh),
+            sliding_window_size,
+            clip_ids=clip_ids,
+        )
         tp = np.sum((y_pred == 1) & pos_mask)
     else:
         tp = np.sum(y_scores[pos_mask] > thresh)
@@ -297,6 +314,7 @@ def compute_recall_at_target_fah(
     target_fah: float,
     n_thresholds: int = 101,
     sliding_window_size: int = 1,
+    clip_ids: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
     """Compute the best recall achievable while meeting target FAH.
 
@@ -315,7 +333,12 @@ def compute_recall_at_target_fah(
 
     for thresh in thresholds:
         if sliding_window_size > 1:
-            y_pred_curr = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+            y_pred_curr = apply_sliding_window_detection(
+                y_scores,
+                float(thresh),
+                sliding_window_size,
+                clip_ids=clip_ids,
+            )
             fp = np.sum((y_pred_curr == 1) & neg_mask)
         else:
             fp = np.sum(y_scores[neg_mask] > thresh)
@@ -348,6 +371,7 @@ def compute_fah_at_target_recall(
     target_recall: float,
     n_thresholds: int = 101,
     sliding_window_size: int = 1,
+    clip_ids: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
     """Compute FAH at the best (highest) threshold meeting target recall.
 
@@ -371,7 +395,12 @@ def compute_fah_at_target_recall(
 
     for thresh in thresholds:
         if sliding_window_size > 1:
-            y_pred_curr = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+            y_pred_curr = apply_sliding_window_detection(
+                y_scores,
+                float(thresh),
+                sliding_window_size,
+                clip_ids=clip_ids,
+            )
             tp = np.sum((y_pred_curr == 1) & pos_mask)
         else:
             tp = np.sum(y_scores[pos_mask] > thresh)
@@ -399,6 +428,7 @@ def compute_average_viable_recall(
     max_fah: float = 10.0,
     n_thresholds: int = 101,
     sliding_window_size: int = 1,
+    clip_ids: np.ndarray | None = None,
 ) -> float:
     """Compute average viable recall (AUC of recall vs normalized FAH)."""
     thresholds = np.linspace(0, 1, n_thresholds)
@@ -408,7 +438,12 @@ def compute_average_viable_recall(
 
     for thresh in thresholds:
         if sliding_window_size > 1:
-            y_pred = apply_sliding_window_detection(y_scores, float(thresh), sliding_window_size)
+            y_pred = apply_sliding_window_detection(
+                y_scores,
+                float(thresh),
+                sliding_window_size,
+                clip_ids=clip_ids,
+            )
         else:
             y_pred = (y_scores > thresh).astype(int)
 
@@ -446,12 +481,14 @@ class MetricsCalculator:
         y_pred: np.ndarray | None = None,
         y_score: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
+        clip_ids: np.ndarray | None = None,
         **opts: Any,
     ):
         self.y_true = y_true
         self.y_pred = y_pred
         self.y_score = y_score
         self.sample_weight = sample_weight
+        self.clip_ids = clip_ids
         self.opts = opts
         self.fah_estimator = FAHEstimator(ambient_duration_hours=opts.get("ambient_duration_hours"))
         self.sliding_window_size = int(opts.get("sliding_window_size", 1) or 1)
@@ -469,6 +506,7 @@ class MetricsCalculator:
                 self.y_score,
                 threshold,
                 self.sliding_window_size,
+                clip_ids=self.clip_ids,
             )
             threshold = 0.5
 
@@ -487,6 +525,7 @@ class MetricsCalculator:
             self.y_score,
             n_thresholds,
             sliding_window_size=self.sliding_window_size,
+            clip_ids=self.clip_ids,
         )
 
     def compute_average_viable_recall(
@@ -504,6 +543,7 @@ class MetricsCalculator:
             max_fah=max_fah,
             n_thresholds=n_thresholds,
             sliding_window_size=self.sliding_window_size,
+            clip_ids=self.clip_ids,
         )
 
     def compute_recall_at_no_faph(self, n_thresholds: int = 101) -> tuple[float, float]:
@@ -514,6 +554,7 @@ class MetricsCalculator:
             self.y_score,
             n_thresholds=n_thresholds,
             sliding_window_size=self.sliding_window_size,
+            clip_ids=self.clip_ids,
         )
 
     def compute_recall_at_target_fah(
@@ -531,6 +572,7 @@ class MetricsCalculator:
             target_fah=target_fah,
             n_thresholds=n_thresholds,
             sliding_window_size=self.sliding_window_size,
+            clip_ids=self.clip_ids,
         )
 
     def compute_fah_at_target_recall(
@@ -548,6 +590,7 @@ class MetricsCalculator:
             target_recall=target_recall,
             n_thresholds=n_thresholds,
             sliding_window_size=self.sliding_window_size,
+            clip_ids=self.clip_ids,
         )
 
     def compute_all_metrics(
@@ -563,6 +606,7 @@ class MetricsCalculator:
                 self.y_score,
                 threshold,
                 self.sliding_window_size,
+                clip_ids=self.clip_ids,
             )
         else:
             y_pred = (self.y_score > threshold).astype(int)

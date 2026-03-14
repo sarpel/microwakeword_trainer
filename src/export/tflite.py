@@ -23,22 +23,24 @@ def _suppress_stderr_fd():
     TensorFlow/XLA may emit startup noise directly from native code before
     Python log filters are active. This keeps CLI output focused.
     """
-    stderr_fd = sys.stderr.fileno()
-    saved_fd = os.dup(stderr_fd)
     try:
-        with open(os.devnull, "w") as devnull:
-            os.dup2(devnull.fileno(), stderr_fd)
+        saved_fd = os.dup(2)
+    except OSError:
+        yield
+        return
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, 2)
+        os.close(devnull)
         yield
     finally:
-        os.dup2(saved_fd, stderr_fd)
+        os.dup2(saved_fd, 2)
         os.close(saved_fd)
 
 
 import h5py
 import numpy as np
-
-with _suppress_stderr_fd():
-    import tensorflow as tf
+import tensorflow as tf
 
 try:
     from absl import logging as _absl_logging
@@ -924,6 +926,35 @@ def _auto_calculate_probability_cutoff(
     """Run TFLite test-split inference and compute deployment probability cutoff."""
     from src.data.dataset import FeatureStore
 
+    cfg = config if isinstance(config, dict) else {}
+    export_cfg = dict(cfg.get("export", {}))
+    maybe_checkpoint_metadata = cfg.get("checkpoint_metadata")
+    checkpoint_metadata: dict = maybe_checkpoint_metadata if isinstance(maybe_checkpoint_metadata, dict) else {}
+
+    cached_cutoff = checkpoint_metadata.get("probability_cutoff")
+    if cached_cutoff is None:
+        cached_cutoff = checkpoint_metadata.get("tuned_probability_cutoff")
+    if cached_cutoff is not None:
+        cutoff = float(cached_cutoff)
+        if 0.0 < cutoff <= 1.0:
+            logger.info(
+                "Auto-cutoff: using cached checkpoint metadata probability_cutoff=%.4f; skipping recomputation",
+                cutoff,
+            )
+            return {
+                "probability_cutoff": cutoff,
+                "probability_cutoff_uint8": int(np.clip(round(cutoff * 255.0), 1, 255)),
+                "raw_probability_cutoff": float(checkpoint_metadata.get("export_raw_probability_cutoff", cutoff)),
+                "fallback_probability_cutoff": float(checkpoint_metadata.get("export_fallback_probability_cutoff", cutoff)),
+                "fallback_applied": bool(checkpoint_metadata.get("export_cutoff_fallback_applied", False)),
+                "estimated_fah": float(checkpoint_metadata.get("export_estimated_fah", float("nan"))),
+                "estimated_recall": float(checkpoint_metadata.get("export_estimated_recall", float("nan"))),
+                "scaled_ambient_hours": float(checkpoint_metadata.get("export_scaled_ambient_hours", float("nan"))),
+                "selection_method": "checkpoint_metadata_cache",
+                "observed_negative_chunks": int(checkpoint_metadata.get("export_observed_negative_chunks", 0)),
+                "observed_positive_chunks": int(checkpoint_metadata.get("export_observed_positive_chunks", 0)),
+            }
+
     test_store_path = Path(data_dir) / "test"
     if not test_store_path.exists():
         raise FileNotFoundError(f"Auto cutoff requires test feature store at: {test_store_path}")
@@ -969,10 +1000,17 @@ def _auto_calculate_probability_cutoff(
     negative_chunk_count = 0
     positive_chunk_count = 0
 
+    max_samples = int(export_cfg.get("max_samples_for_cutoff_calc", 5000))
     store = FeatureStore(test_store_path)
     try:
         store.open(readonly=True)
-        for i in range(len(store)):
+        total_samples = len(store)
+        sample_indices: np.ndarray = np.arange(total_samples, dtype=np.int64)
+        if total_samples > max_samples:
+            sample_indices = np.random.choice(sample_indices, size=max_samples, replace=False)
+            logger.info(f"Auto-cutoff: sampling {max_samples} of {total_samples} test samples for efficiency")
+
+        for i in sample_indices:
             features, raw_label = store.get(i)
             label = int(raw_label) & 1
 
@@ -1012,7 +1050,6 @@ def _auto_calculate_probability_cutoff(
     finally:
         store.close()
 
-    cfg = config if isinstance(config, dict) else {}
     hardware_cfg = dict(cfg.get("hardware", {}))
     window_step_ms = float(hardware_cfg.get("window_step_ms", 10) or 10)
     chunk_duration_hours = (window_step_ms * float(stride)) / 3_600_000.0
@@ -1179,7 +1216,7 @@ def export_streaming_tflite(
         else:
             converter.experimental_enable_resource_variables = True
 
-        with _suppress_tf_flatbuffer_warnings():
+        with _suppress_stderr_fd():
             tflite_model = converter.convert()
     finally:
         shutil.rmtree(saved_model_dir, ignore_errors=True)
@@ -1212,6 +1249,7 @@ def export_streaming_tflite(
     try:
         if data_dir:
             print("\n[4.5/5] Auto-calculating probability_cutoff from test split...")
+            config["checkpoint_metadata"] = metadata
             auto_cutoff = _auto_calculate_probability_cutoff(
                 tflite_path=str(tflite_file),
                 data_dir=data_dir,

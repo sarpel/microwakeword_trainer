@@ -35,7 +35,7 @@ paths:
 # ─────────────────────────────────────────────────────────────────
 training:
   # 3-phase schedule: Phase 1 learns discrimination, Phase 2 refines boundary, Phase 3 polishes
-  training_steps: [25000, 15000, 10000]  # Number of training steps per phase
+  training_steps: [50000, 30000, 20000]  # Number of training steps per phase
   base_batch_size: 128  # Base batch size before auto-scaling
   base_learning_rates: [0.001, 0.0002, 0.00005]  # Base learning rates per phase before auto-scaling
   auto_lr_scale_method: "sqrt"  # Method to scale LR based on batch size (sqrt or linear)
@@ -52,9 +52,9 @@ training:
   eval_log_every_step: true  # Log evaluation status every step
   steps_per_epoch: 1000  # Number of steps per epoch for progress tracking
 
-  positive_class_weight: [4.0, 6.0, 8.0]  # Weight for positive samples per phase
+  positive_class_weight: [3.0, 4.0, 6.0]  # Weight for positive samples per phase
   negative_class_weight: [2.0, 4.0, 6.0]  # Weight for negative samples per phase
-  hard_negative_class_weight: [2.0, 3.0, 5.0]  # Weight for hard negatives per phase
+  hard_negative_class_weight: [3.0, 5.0, 7.0]  # Weight for hard negatives per phase
 
   # Progressive SpecAugment: light→moderate→strong
   time_mask_max_size: [2, 3, 4]  # Max SpecAugment time mask length per phase
@@ -76,9 +76,9 @@ training:
 
   # Optimizer and loss parameters
   optimizer: "adam"  # Optimizer algorithm (adam or sgd)
-  label_smoothing: 0.0  # Label smoothing factor (0.0 = disabled, 0.1-0.2 typical)
+  label_smoothing: 0.1  # Label smoothing factor (0.0 = disabled, 0.1-0.2 typical)
   gradient_clipnorm: 1.0  # Clips gradient L2 norm to prevent exploding gradients
-  ema_decay: 0.999  # EMA smoothing factor (higher = slower decay, half-life ~6900 steps)
+  ema_decay: 0.9995  # EMA smoothing factor (higher = slower decay, half-life ~6900 steps)
   random_seed: 42  # Random seed for reproducible runs
   auto_tune_on_poor_fah: true  # Enable auto-tuning if FAH is poor after training
   # Intra-phase cosine LR decay (prevents flat LR stagnation)
@@ -106,8 +106,8 @@ model:
   residual_connection: "0,1,1,1"  # Which blocks have residual connections
 
   # Moderate regularization (less than before to avoid score compression)
-  dropout_rate: 0.12  # Dropout probability for classification head
-  l2_regularization: 0.0001  # L2 weight regularization factor
+  dropout_rate: 0.2  # Dropout probability for classification head
+  l2_regularization: 0.0005  # L2 weight regularization factor
 
 # ─────────────────────────────────────────────────────────────────
 # AUGMENTATION (aggressive for max generalization)
@@ -269,8 +269,8 @@ export:
   minimum_esphome_version: "2024.7.0"  # Minimum ESPHome version requirement
 
   # Larger calibration dataset for max quality quantization
-  representative_dataset_size: 1000  # Size of representative dataset for quantization
-  representative_dataset_real_size: 4000  # Real size of representative dataset
+  representative_dataset_size: 2000  # Size of representative dataset for quantization
+  representative_dataset_real_size: 6000  # Real size of representative dataset
   max_samples_for_cutoff_calc: 5000  # Max test samples for auto-cutoff inference
   arena_size_margin: 1.3  # Margin factor for arena size calculation
 
@@ -326,11 +326,11 @@ auto_tuning:
   target_fah: 0.2  # Target false alarms per hour for auto-tuning
   target_recall: 0.95  # Target recall score for auto-tuning
   max_iterations: 30  # Maximum auto-tuning iterations
-  max_gradient_steps: 10000  # Total gradient steps budget for tuning
+  max_gradient_steps: 5000  # Total gradient steps budget for tuning
   patience: 10  # Consecutive non-improvements before stopping
   cv_folds: 7  # Cross-validation folds for threshold optimization
-  confirmation_fraction: 0.30  # Fraction of data for final confirmation
-  search_eval_fraction: 0.15  # Fraction of search data for evaluation
+  confirmation_fraction: 0.40  # Fraction of data for final confirmation
+  search_eval_fraction: 0.25  # Fraction of search data for evaluation
   bootstrap_samples: 2000  # Bootstrap samples for confidence intervals
   require_confirmation: true  # Require final confirmation phase
   group_key: speaker_id  # Group key for speaker-aware splits
@@ -341,7 +341,7 @@ auto_tuning:
 # Expert-level auto-tuning parameters (max quality settings)
 auto_tuning_expert:
   min_burst_steps: 100  # Minimum gradient steps per burst
-  max_burst_steps: 5000  # Maximum gradient steps per burst
+  max_burst_steps: 2500  # Maximum gradient steps per burst
   default_burst_steps: 500  # Default gradient steps per burst
   min_lr: 0.0000001  # Minimum learning rate for bursts
   max_lr: 0.00005  # Maximum learning rate for bursts
