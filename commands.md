@@ -12,10 +12,12 @@ python scripts/evaluate_model.py \
 ```
 
 ```bash
-# Generate interactive dashboard from evaluation JSON report
-python scripts/eval_dashboard.py \
-	--report ./logs/evaluation_artifacts/evaluation_report.json
+python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
 ```
+
+python scripts/evaluate_model.py --model models/exported/hey_katya.tflite --config max_quality --split test --output-dir logs/ --analyze
+python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
+
 mww-mine-hard-negatives extract-top-fps
 ## AUTO-TUNE
 

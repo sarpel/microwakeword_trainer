@@ -17,6 +17,13 @@ from rich.panel import Panel
 from rich.table import Table
 
 from src.tuning.autotuner import AutoTuner
+from src.utils.logging_config import setup_rich_logging
+
+
+def _configure_logging(verbose: bool = False) -> None:
+    """Configure Rich logging for auto-tuning."""
+    level = logging.DEBUG if verbose else logging.INFO
+    setup_rich_logging(level=level, show_time=True, show_path=True)
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -204,12 +211,8 @@ def main() -> int:
 
     console = Console()
 
-    # Configure logging to output to console
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.StreamHandler()],
-    )
+    # Configure Rich logging for all project logs
+    _configure_logging(verbose=args.verbose)
 
     # Validate arguments
     if not validate_args(args):
@@ -302,8 +305,8 @@ def main() -> int:
                     "Best Cutoff (confirm)",
                     f"{float(conf_cutoff):.4f} ({conf_cutoff_u8 if conf_cutoff_u8 is not None else 'N/A'})",
                 )
-            result_table.add_row("Best FAH (search)", f"{float(search_fah):.4f}")
-            result_table.add_row("Best Recall (search)", f"{float(search_recall):.4f}")
+            result_table.add_row("Best FAH (search)", f"{float(search_fah):.4f}" if search_fah is not None else "N/A")
+            result_table.add_row("Best Recall (search)", f"{float(search_recall):.4f}" if search_recall is not None else "N/A")
             if search_cutoff is not None:
                 result_table.add_row(
                     "Best Cutoff (search)",

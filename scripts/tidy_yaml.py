@@ -21,6 +21,9 @@ from pathlib import Path
 from collections import OrderedDict
 from typing import List, Dict, Any
 
+if __name__ == "__main__":
+    sys.exit(main())
+
 
 def parse_yaml_simple(content: str) -> OrderedDict:
     """
@@ -29,24 +32,23 @@ def parse_yaml_simple(content: str) -> OrderedDict:
     """
     lines = content.split("\n")
     sections = OrderedDict()
-    current_section = None
+    current_section = "__preamble__"
     current_content = []
 
     for line in lines:
         # Check for section header (top-level key)
         if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*:\s*$", line):
-            # Save previous section
-            if current_section is not None:
-                sections[current_section] = current_content
+            # Save previous section (including preamble)
+            sections[current_section] = current_content
 
             # Start new section
             current_section = line.rstrip(":").strip()
             current_content = []
-        elif current_section is not None:
+        else:
             current_content.append(line)
 
     # Save last section
-    if current_section is not None:
+    if current_content or current_section == "__preamble__":
         sections[current_section] = current_content
 
     return sections
@@ -77,7 +79,7 @@ def sort_section_keys(lines: List[str]) -> List[str]:
             else:
                 current_key = stripped
             current_entry = [line]
-        else:
+        elif current_key is not None:
             current_entry.append(line)
 
     # Save last entry

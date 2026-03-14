@@ -803,8 +803,11 @@ def create_representative_dataset_from_data(
 def _write_checkpoint_metadata(checkpoint_path: str, metadata: dict) -> None:
     """Persist checkpoint sidecar metadata best-effort."""
     cache_path = Path(checkpoint_path).with_suffix(".metadata.json")
-    with open(cache_path, "w") as f:
-        json.dump(metadata, f, indent=2)
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+    except (OSError, IOError, Exception) as e:
+        logger.warning(f"Failed to write checkpoint metadata to {cache_path}: {e}")
 
 
 def _select_export_probability_cutoff(

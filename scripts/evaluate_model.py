@@ -308,6 +308,11 @@ def _evaluate_tflite(
     # Get evaluation threshold from config (instead of hardcoding 0.5)
     threshold, threshold_source = _resolve_eval_threshold(tflite_path, config)
 
+    # Get hardware config for stride and mel_bins
+    hardware_cfg = config.get("hardware", {})
+    stride = hardware_cfg.get("stride", 3)
+    mel_bins = hardware_cfg.get("mel_bins", 40)
+
     # Load TFLite model
     interpreter = tf.lite.Interpreter(model_path=tflite_path)
     interpreter.allocate_tensors()
@@ -315,9 +320,6 @@ def _evaluate_tflite(
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
-    # Architectural constants (Article II, Article VII)
-    stride = 3
-    mel_bins = 40
     input_dtype = input_details[0]["dtype"]
     input_quant = input_details[0].get("quantization_parameters", {})
     input_scale = input_quant.get("scales", np.array([1.0]))[0]
@@ -720,14 +722,29 @@ def _plot_and_save_all(
 
     # 4) DET curve
     fnr = 1.0 - tpr
-    with np.errstate(divide="ignore", invalid="ignore"):
+    try:
         from scipy.stats import norm
 
-        det_x = norm.ppf(np.clip(fpr, 1e-6, 1 - 1e-6))
-        det_y = norm.ppf(np.clip(fnr, 1e-6, 1 - 1e-6))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            det_x = norm.ppf(np.clip(fpr, 1e-6, 1 - 1e-6))
+            det_y = norm.ppf(np.clip(fnr, 1e-6, 1 - 1e-6))
 
-    fig = plt.figure(figsize=(7, 6))
-    plt.plot(det_x, det_y, linewidth=2, label="DET")
+        fig = plt.figure(figsize=(7, 6))
+        plt.plot(det_x, det_y, linewidth=2, label="DET")
+        plt.xlabel("False Positive Rate (normal deviate)")
+        plt.ylabel("False Negative Rate (normal deviate)")
+        plt.title("DET Curve")
+        plt.grid(alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        p = output_dir / "eval_det_curve.png"
+        plt.savefig(p, dpi=160)
+        plt.close(fig)
+        artifacts.append(str(p))
+    except ImportError:
+        console.print("[yellow]Warning: scipy not installed. Skipping DET curve plot.[/]")
+
+    # 5) Score distributions
     plt.xlabel("False Positive Rate (normal deviate)")
     plt.ylabel("False Negative Rate (normal deviate)")
     plt.title("DET Curve")

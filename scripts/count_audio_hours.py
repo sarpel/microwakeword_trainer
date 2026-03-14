@@ -94,7 +94,7 @@ def main():
         print(f"  Files: {count}")
         print(f"  Duration: {seconds:.1f}s = {hours:.2f} hours")
         print()
-    elif args.negative_dir:
+    elif negative_dir:
         print(f"Warning: Directory not found: {negative_dir}")
         print()
 
@@ -107,7 +107,7 @@ def main():
         print(f"  Files: {count}")
         print(f"  Duration: {seconds:.1f}s = {hours:.2f} hours")
         print()
-    elif args.background_dir:
+    elif background_dir:
         print(f"Warning: Directory not found: {background_dir}")
         print()
 

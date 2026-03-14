@@ -160,7 +160,7 @@ def main():
 
         return 0 if payload_safe["compatible"] else 4
     except Exception as exc:
-        with open(evidence_dir / "task-9-missing-model.txt", "w") as f:
+        with open(evidence_dir / "task-9-verification-error.txt", "w") as f:
             f.write("Verification error: " + str(exc) + "\n")
         sys.stderr.write("ERROR during verification: " + str(exc) + "\n")
         return 5
