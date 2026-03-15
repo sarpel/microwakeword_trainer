@@ -5,10 +5,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import tensorflow as tf
 
 from .tflite_utils import estimate_tensor_arena_size
+
 logger = logging.getLogger(__name__)
 
 # Default tensor arena size in bytes (0 = auto-calculate from model)
