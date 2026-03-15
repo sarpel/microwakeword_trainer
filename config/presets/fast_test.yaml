@@ -340,19 +340,9 @@ auto_tuning:
   bootstrap_samples: 500  # Minimal bootstrap samples
   require_confirmation: false  # Skip confirmation for fast tests
   group_key: speaker_id  # Group key for speaker-aware splits
-  pareto_improvement_threshold: 0.003  # Pareto improvement threshold
-  convergence_window: 5  # Convergence check window
   output_dir: ./tuning_output  # Output directory for tuning results
   calibration_fraction: 0.15  # Calibration fraction
   representative_fraction: 0.05  # Representative dataset fraction
-  # Legacy fields
-  steps_per_iteration: 8000  # Legacy: training steps per iteration
-  initial_lr: 0.00005  # Legacy: initial learning rate
-  lr_decay_factor: 0.7  # Legacy: learning rate decay factor
-  min_lr: 0.00001  # Legacy: minimum learning rate
-  positive_weight_range: [0.5, 3.0]  # Legacy: positive weight range
-  negative_weight_range: [10.0, 50.0]  # Legacy: negative weight range
-  hard_negative_weight_range: [20.0, 100.0]  # Legacy: hard negative weight range
 
 # ─────────────────────────────────────────────────────────────────
 # AUTO-TUNING EXPERT
