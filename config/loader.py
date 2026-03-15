@@ -546,6 +546,8 @@ class AutoTuningConfig:
             raise ValueError(f"AutoTuningConfig: cv_folds must be >= 2, got {self.cv_folds}")
         if not 0.0 < self.confirmation_fraction < 1.0:
             raise ValueError(f"AutoTuningConfig: confirmation_fraction must be between 0 and 1, got {self.confirmation_fraction}")
+        if not 0.0 < self.search_eval_fraction < 1.0:
+            raise ValueError(f"AutoTuningConfig: search_eval_fraction must be between 0 and 1, got {self.search_eval_fraction}")
 
 
 @dataclass
