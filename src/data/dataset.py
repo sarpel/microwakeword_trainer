@@ -929,7 +929,7 @@ class WakeWordDataset:
         positive_dir = paths_cfg.get("positive_dir")
         negative_dir = paths_cfg.get("negative_dir")
         hard_negative_dir = paths_cfg.get("hard_negative_dir")
-        hn_cfg = cfg.get("hard_negative_mining", {})
+        hn_cfg = cfg.get("mining", {})
         mined_subdir = hn_cfg.get("mined_subdirectory", "mined")
         include_mined = bool(hn_cfg.get("enable_post_training_mining", True))
         processed_dir = paths_cfg.get("processed_dir", "./data/processed")

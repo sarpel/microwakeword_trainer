@@ -91,6 +91,7 @@ training:
   phase_stagger_steps: 2000  # Delay class weights + augmentation after LR phase change
   # BatchNorm freezing
   freeze_bn_on_plateau: true  # Freeze BatchNorm layers when plateau detected
+  speaker_based_split: true  # Enable speaker-based train/val/test split for stricter data isolation
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
@@ -147,6 +148,7 @@ augmentation:
   # Background sources
   impulse_paths: ["${DATASET_DIR:-./dataset}/rirs"]  # Paths to impulse response files
   background_paths: ["${DATASET_DIR:-./dataset}/background"]  # Paths to background noise files
+  augmentation_duration_s: 4.0  # Duration window for augmentation in seconds (longer = more natural mixing)
 
 # ─────────────────────────────────────────────────────────────────
 # PERFORMANCE CONFIGURATION (tuned for RTX 3060 Ti + Ryzen 9 7950X)
@@ -176,6 +178,7 @@ performance:
   tensorboard_log_histograms: false  # Log weight histograms
   tensorboard_log_images: false  # Log image tensors
   tensorboard_log_pr_curves: true  # Log precision-recall curves
+  tensorboard_log_roc_curves: true  # Log ROC curve visualizations (produces ROC/AUC plots)
   tensorboard_log_graph: true  # Log computation graph
   tensorboard_log_advanced_scalars: true  # Log advanced scalar metrics
   tensorboard_log_weight_histograms: false  # Log weight histograms separately
@@ -198,6 +201,10 @@ performance:
   log_throughput: false  # Log throughput statistics
   log_throughput_interval: 1000  # Throughput logging interval in steps
   disable_mmap: false  # Disable memory-mapped files
+  prefetch_buffer: 16  # tf.data prefetch buffer size (larger = faster GPU feed)
+  use_tfdata: true  # Use tf.data pipeline instead of Python generators
+  tfdata_cache_dir: null  # Cache directory (null = in-memory cache)
+  tfdata_shuffle_buffer: 4000  # Shuffle buffer size for tf.data pipeline (larger = better shuffling)
 
 # ─────────────────────────────────────────────────────────────────
 # SPEAKER CLUSTERING (strict for max quality)
@@ -229,6 +236,7 @@ speaker_clustering:
 # ─────────────────────────────────────────────────────────────────
 mining:
   enabled: true  # Enable hard negative mining
+  async_mining: true  # Use async (non-blocking background) mining for better throughput
 
   fp_threshold: 0.5  # False positive probability threshold for mining
   max_samples: 1000  # Maximum samples to mine per epoch
@@ -273,6 +281,10 @@ export:
   representative_dataset_real_size: 6000  # Real size of representative dataset
   max_samples_for_cutoff_calc: 5000  # Max test samples for auto-cutoff inference
   arena_size_margin: 1.3  # Margin factor for arena size calculation
+  calibration_seed: 42  # RNG seed for calibration dataset sampling
+  representative_positive_fraction: 0.2  # Fraction of positives in representative dataset
+  representative_dataset_min_chunks: 1000  # Minimum chunks for representative dataset
+  min_probability_cutoff_guard: 0.05  # Safety floor for probability cutoff (avoids near-zero cutoffs)
 
 # ─────────────────────────────────────────────────────────────────
 # PREPROCESSING (strict filtering for max quality)
@@ -317,6 +329,7 @@ evaluation:
   gain_window_steps: 1000  # Window size for gain metrics
   plateau_window_evals: 5  # Window size for plateau detection
   plateau_min_delta: 0.001  # Minimum delta for plateau detection
+  plateau_slope_eps: 0.0001  # Slope epsilon for plateau detection
 
 # ─────────────────────────────────────────────────────────────────
 # AUTO-TUNING (post-training fine-tuning, aggressive for max quality)
@@ -337,6 +350,16 @@ auto_tuning:
   pareto_improvement_threshold: 0.001  # Minimum improvement for Pareto progress
   convergence_window: 10  # Rolling window for convergence check
   output_dir: ./tuning_output  # Output directory for tuning results
+  calibration_fraction: 0.15  # Fraction of search data for INT8 model calibration
+  representative_fraction: 0.05  # Fraction of search data for representative calibration dataset
+  # Legacy fields (kept for backward compatibility, ignored by MaxQualityAutoTuner)
+  steps_per_iteration: 8000  # Legacy: training steps per iteration
+  initial_lr: 0.00005  # Legacy: initial learning rate for fine-tuning bursts
+  lr_decay_factor: 0.7  # Legacy: learning rate decay factor
+  min_lr: 0.00001  # Legacy: minimum learning rate floor
+  positive_weight_range: [0.5, 3.0]  # Legacy: search range for positive class weight
+  negative_weight_range: [10.0, 50.0]  # Legacy: search range for negative class weight
+  hard_negative_weight_range: [20.0, 100.0]  # Legacy: search range for hard negative weight
 
 # Expert-level auto-tuning parameters (max quality settings)
 auto_tuning_expert:

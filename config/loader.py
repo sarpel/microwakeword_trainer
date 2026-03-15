@@ -163,6 +163,7 @@ class TrainingConfig:
     test_split: float = 0.1
     split_seed: int = 42
     strict_content_hash_leakage_check: bool = True
+    speaker_based_split: bool = False  # Use speaker identity for train/val/test split to prevent data leakage
     random_seed: Optional[int] = 42
     auto_tune_on_poor_fah: bool = True  # DEPRECATED: use auto_tuning.enabled instead
     # Optimizer and loss parameters (NEW)
@@ -294,6 +295,7 @@ class PerformanceConfig:
     tensorboard_log_histograms: bool = False
     tensorboard_log_images: bool = False
     tensorboard_log_pr_curves: bool = True
+    tensorboard_log_roc_curves: bool = True  # Log ROC curve visualizations (expensive; slows evaluation)
     tensorboard_log_graph: bool = True
     tensorboard_log_advanced_scalars: bool = True
     tensorboard_log_weight_histograms: bool = False
@@ -310,6 +312,7 @@ class PerformanceConfig:
     prefetch_buffer: int = 8  # Buffer size for tf.data pipeline
     use_tfdata: bool = True  # Use tf.data pipeline instead of Python generators
     tfdata_cache_dir: Optional[str] = None  # Cache directory (None = memory cache)
+    tfdata_shuffle_buffer: int = 2000  # Shuffle buffer size for tf.data pipeline
     mmap_readonly: bool = True  # Open feature store mmap as read-only
     tfdata_prefetch_to_device: bool = True  # Use GPU prefetch when available
     tfdata_prefetch_device: str = "/GPU:0"  # Device string for prefetch_to_device
@@ -427,6 +430,11 @@ class ExportConfig:
     representative_dataset_real_size: int = 4000  # Number of samples for real-data calibration
     max_samples_for_cutoff_calc: int = 5000  # Max test samples for export auto-cutoff inference
     arena_size_margin: float = 1.3  # Multiplier for tensor arena size (1.3 = 30% margin)
+    # Calibration parameters
+    calibration_seed: int = 42  # RNG seed for calibration dataset sampling
+    representative_positive_fraction: float = 0.3  # Fraction of positives in representative dataset
+    representative_dataset_min_chunks: int = 500  # Minimum chunks for representative dataset
+    min_probability_cutoff_guard: float = 0.05  # Safety floor for probability cutoff (avoids near-zero cutoffs)
 
     def __post_init__(self):
         """Validate export configuration."""
@@ -530,6 +538,8 @@ class AutoTuningConfig:
     confirmation_fraction: float = 0.40
     # Fraction of search partition reserved for evaluation (rest for training)
     search_eval_fraction: float = 0.30
+    calibration_fraction: float = 0.15  # Fraction of search data for INT8 model calibration
+    representative_fraction: float = 0.05  # Fraction of search data for representative calibration dataset
     bootstrap_samples: int = 2000
 
     require_confirmation: bool = True
@@ -840,9 +850,10 @@ class ConfigLoader:
             tr = config["training"]
             if not isinstance(tr.get("training_steps", []), list):
                 issues.append("training.training_steps must be a list")
-            if not isinstance(tr.get("learning_rates", []), list):
+            lr = tr.get("learning_rates")  # None means auto-scale from base_learning_rates
+            if lr is not None and not isinstance(lr, list):
                 issues.append("training.learning_rates must be a list")
-            if len(tr.get("training_steps", [])) != len(tr.get("learning_rates", [])):
+            if lr is not None and len(tr.get("training_steps", [])) != len(lr):
                 issues.append("training.training_steps and learning_rates must have same length")
             if tr.get("batch_size", 0) <= 0:
                 issues.append("training.batch_size must be > 0")
