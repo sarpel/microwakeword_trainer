@@ -1351,12 +1351,9 @@ class AutoTuner:
         self.total_gradient_steps = 0
         self.best_checkpoint_path: Optional[str] = None
         self._last_confirmation_best_attempt: Optional[CandidateState] = None
+        self._last_confirmation_best_confirmed: Optional[CandidateState] = None
         self._threshold_cache: dict[str, float] = {}
         self._cached_eval_data: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None] | None = None
-        self._threshold_cache: dict[str, float] = {}
-        self.best_checkpoint_path: Optional[str] = None
-        self._last_confirmation_best_attempt: Optional[CandidateState] = None
-        self._last_confirmation_best_confirmed: Optional[CandidateState] = None
 
     def _setup_file_logger(self) -> logging.Logger:
         flogger = logging.getLogger(f"autotuner.{id(self)}")

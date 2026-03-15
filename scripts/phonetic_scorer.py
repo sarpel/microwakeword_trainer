@@ -187,7 +187,7 @@ def filename_to_text(filename: str) -> str:
     stem = re.sub(r"[-_]?\d{8}$", "", stem)
     # Strip isolated hash/id-like tokens (e.g. d38z5, odq5z, 2eiww, 21m00)
     # Must contain both letters and digits to avoid eating real words like 'kayla'
-    stem = re.sub(r"[-_](?=[a-z0-9]{4,6}[-_])(?=[^-_]*\d)(?=[^-_]*[a-z])[a-z0-9]{4,6}(?=[-_])", "", stem)
+    stem = re.sub(r"[-_](?=.*(\d))(?=.*([a-z]))[a-z0-9]{4,6}(?=[-_])", "", stem)
     # Strip trailing standalone numbers (segment indices like _2, _36, _66)
     stem = re.sub(r"[-_]\d{1,3}$", "", stem)
     text = re.sub(r"[-_]+", " ", stem).strip().lower()
@@ -230,13 +230,14 @@ def compute_phonetic_similarity(ipa1: str, ipa2: str, distance_obj: Any | None =
             distance = distance_obj.feature_edit_distance_div_maxlen(ipa1, ipa2)
             similarity = 1.0 - float(distance)
             return max(0.0, min(1.0, similarity))
-        except Exception:
-            distance_obj = None
+        except Exception as e:
+            logger.debug(f"Panphon distance calculation failed: {e}, falling back to jellyfish")
     jellyfish = _lazy_import("jellyfish")
     if jellyfish is not None:
         try:
             return max(0.0, min(1.0, float(jellyfish.jaro_winkler_similarity(ipa1, ipa2))))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Jellyfish similarity calculation failed: {e}")
             return 0.0
 
     return 0.0
@@ -374,7 +375,7 @@ def write_json_report(
     unique_texts = len({r.text for r in results})
 
     payload = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "tool": "phonetic_scorer",
         "version": TOOL_VERSION,
         "wake_word": wake_word,
@@ -537,7 +538,8 @@ def move_flagged_files(
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(src), str(dst))
                 moved_count += 1
-            except Exception:
+            except Exception as e:
+                logger.exception(f"Failed to move {src} to {dst}: {e}")
                 error_count += 1
                 continue
 

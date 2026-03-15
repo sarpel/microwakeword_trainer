@@ -51,7 +51,10 @@ def main() -> None:
         print("\n  NOTE: Original files were NOT deleted.")
         print("  After verifying the splits look correct, you may remove")
         print("  the originals with:")
-        print("\n    python scripts/split_audio.py --dir <DIR> --remove-originals")
+        if args.max_duration != 2000.0:
+            print(f"\n    python scripts/split_audio.py --dir <DIR> --remove-originals --max-duration {args.max_duration}")
+        else:
+            print("\n    python scripts/split_audio.py --dir <DIR> --remove-originals")
     print("=" * 60)
 
 

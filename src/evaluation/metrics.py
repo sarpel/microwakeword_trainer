@@ -55,6 +55,10 @@ def apply_sliding_window_detection(
         window_len = i - start + 1
         return (window_sum > float(threshold) * window_len).astype(int)
 
+    # Validate clip_ids length matches scores
+    if len(clip_ids) != scores.size:
+        raise ValueError(f"clip_ids length ({len(clip_ids)}) must equal scores size ({scores.size})")
+
     clip_ids_arr = np.asarray(clip_ids).reshape(-1)
     detections = np.zeros(scores.size, dtype=int)
     boundaries = np.where(np.diff(clip_ids_arr) != 0)[0] + 1

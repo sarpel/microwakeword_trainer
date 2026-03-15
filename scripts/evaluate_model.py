@@ -171,7 +171,7 @@ def _build_and_load_model(checkpoint_path: str, config: dict) -> tuple[tf.keras.
         pointwise_filters=config.get("model", {}).get("pointwise_filters", "64,64,64,64"),
         mixconv_kernel_sizes=config.get("model", {}).get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"),
         repeat_in_block=config.get("model", {}).get("repeat_in_block", "1,1,1,1"),
-        residual_connection=config.get("model", {}).get("residual_connection", "0,0,0,0"),
+        residual_connection=config.get("model", {}).get("residual_connection", "0,1,1,1"),
         dropout_rate=config.get("model", {}).get("dropout_rate", 0.0),
         mode="non_stream",
     )
@@ -308,9 +308,10 @@ def _evaluate_tflite(
     # Get evaluation threshold from config (instead of hardcoding 0.5)
     threshold, threshold_source = _resolve_eval_threshold(tflite_path, config)
 
-    # Get hardware config for stride and mel_bins
+    # Get model config for stride and hardware config for mel_bins
+    model_cfg = config.get("model", {})
     hardware_cfg = config.get("hardware", {})
-    stride = hardware_cfg.get("stride", 3)
+    stride = model_cfg.get("stride", 3)
     mel_bins = hardware_cfg.get("mel_bins", 40)
 
     # Load TFLite model
@@ -742,7 +743,7 @@ def _plot_and_save_all(
         plt.close(fig)
         artifacts.append(str(p))
     except ImportError:
-        print("[yellow]Warning: scipy not installed. Skipping DET curve plot.[/]")
+        console.print("[yellow]Warning: scipy not installed. Skipping DET curve plot.[/]")
 
     # 5) Score distributions
     fig = plt.figure(figsize=(8, 6))

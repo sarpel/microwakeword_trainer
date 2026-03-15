@@ -15,7 +15,7 @@ config/
 
 ## ConfigLoader
 
-- **14 dataclass sections**: Hardware, Paths, Training, Model, Augmentation, Performance, SpeakerClustering, Mining, Export, Preprocessing, Quality, Evaluation, AutoTune, AutoTuningExpert, FullConfig
+- **15 dataclass sections**: Hardware, Paths, Training, Model, Augmentation, Performance, SpeakerClustering, Mining, Export, Preprocessing, Quality, Evaluation, AutoTune, AutoTuningExpert (FullConfig is the container)
 - **Preset loading**: Load base from `presets/`
 - **Config merging**: Override with custom YAML
 - **Env var substitution**: `${VAR}` or `${VAR:-default}`
@@ -28,7 +28,11 @@ config/
 | training | learning_rates, training_steps, batch_size |
 | model | architecture, first_conv_filters, mixconv_kernel_sizes |
 | export | wake_word, quantize, tensor_arena_size |
-| auto_tuning | target_fah, target_recall, initial_lr, max_iterations |
+| auto_tuning | target_fah, target_recall, max_iterations, fine_tuning_lr, fine_tuning_steps |
+
+### Notes
+- **AutoTuneConfig vs AutoTuningExpertConfig**: AutoTuneConfig contains basic tuning parameters (targets, iterations, cross-validation). AutoTuningExpertConfig contains advanced parameters for burst steps, learning rates, SAM/SWA, simulated annealing, and curriculum learning. FullConfig is the container that combines all 15 dataclasses.
+- **fine_tuning_lr** (conceptual): This concept is used in AutoTuningExpertConfig's min_lr, max_lr, and default_lr fields for gradient burst steps. The old `initial_lr` field name referred to the same concept.
 
 ## Convenience Functions
 
