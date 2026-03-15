@@ -81,7 +81,6 @@ training:
   gradient_clipnorm: 2.0  # Gradient L2 norm clipping
   ema_decay: 0.9995  # EMA smoothing factor
   random_seed: 42  # Random seed for reproducible runs
-  auto_tune_on_poor_fah: false  # Disable auto-tune for fast tests
 
   cosine_decay_alpha: 0.0  # No cosine LR decay
 

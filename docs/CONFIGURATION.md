@@ -100,7 +100,6 @@ Available environment variables:
 | `gradient_clipnorm` | float | 5.0 | Gradient clipping norm |
  | `ema_decay` | float | null | EMA decay (null = disabled). Default in `max_quality.yaml`: 0.999. See ARCHITECTURAL_CONSTITUTION.md Article IX for EMA behavior and checkpoint usage. |
 | `random_seed` | int | null | Global RNG seed |
-| `auto_tune_on_poor_fah` | bool | false | Auto-run mww-autotune if FAH high |
 
 ### 4. ModelConfig
 
