@@ -306,18 +306,16 @@ mww-train --config standard
    - Blocking during training
    - Traditional `HardExampleMiner`
 
-2. **Asynchronous** (`performance.async_mining: true`):
+2. **Asynchronous** (`mining.async_mining: true`):
    - Background thread
    - Non-blocking to training
    - Better GPU utilization
 
 **Configuration:**
 ```yaml
-performance:
-  async_mining: true
-
-hard_negative_mining:
+mining:
   enabled: true
+  async_mining: true
   collection_mode: "mine_immediately"  # or "log_only"
   fp_threshold: 0.8
   max_samples: 5000

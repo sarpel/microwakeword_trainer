@@ -163,7 +163,6 @@ Available environment variables:
 | `gpu_only` | bool | false | Require GPU |
 | `mixed_precision` | bool | true | Enable FP16 training |
 | `spec_augment_backend` | str | "tf" | Backend for SpecAugment |
-| `async_mining` | bool | false | Async hard negative mining |
 | `num_workers` | int | 12 | Data loading workers |
 | `num_threads_per_worker` | int | 2 | Threads per worker |
 | `prefetch_factor` | int | 8 | Prefetch factor |
@@ -222,13 +221,14 @@ Available environment variables:
 | `adaptive_threshold_small` | int | 5000 | Small dataset threshold |
 | `adaptive_threshold_large` | int | 50000 | Large dataset threshold |
 
-### 8. HardNegativeMiningConfig
+### 8. MiningConfig
 
-**File**: `config/loader.py` - Hard negative mining
+**File**: `config/loader.py` - Mining, false prediction extraction, and logging
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | true | Enable mining |
+| `async_mining` | bool | true | Enable background hard negative mining |
 | `fp_threshold` | float | 0.8 | False positive threshold |
 | `max_samples` | int | 5000 | Max hard negatives to keep |
 | `mining_interval_epochs` | int | 5 | Mining frequency |
@@ -345,7 +345,7 @@ training:
 speaker_clustering:
   enabled: false
 
-hard_negative_mining:
+mining:
   enabled: false
 
 augmentation:
@@ -372,7 +372,7 @@ speaker_clustering:
   enabled: true
   method: "agglomerative"
 
-hard_negative_mining:
+mining:
   enabled: true
 
 augmentation:
@@ -399,7 +399,7 @@ speaker_clustering:
   enabled: true
   method: "adaptive"
 
-hard_negative_mining:
+mining:
   enabled: true
   async_mining: true
 
