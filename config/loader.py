@@ -273,7 +273,6 @@ class PerformanceConfig:
 
     gpu_only: bool = True
     spec_augment_backend: str = "tf"
-    async_mining: bool = True  # DEPRECATED: moved to MiningConfig (kept for backward compat)
     mixed_precision: bool = True
     num_workers: int = 8
     num_threads_per_worker: int = 2
@@ -353,8 +352,8 @@ class SpeakerClusteringConfig:
 class MiningConfig:
     """Unified configuration for all mining, false prediction extraction, and logging.
 
-    Consolidates the former HardNegativeMiningConfig, TopFPExtractionConfig,
-    and PerformanceConfig.async_mining into a single section.
+    Consolidates the former HardNegativeMiningConfig and TopFPExtractionConfig
+    into a single section.
     """
 
     # General

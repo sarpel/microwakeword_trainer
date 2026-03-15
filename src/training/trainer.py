@@ -281,7 +281,7 @@ class Trainer:
         self.use_tfdata = performance.get("use_tfdata", True)
         self.log_throughput = performance.get("log_throughput", True)
         mining_cfg = config.get("mining", {})
-        self.async_mining = mining_cfg.get("async_mining", performance.get("async_mining", False))
+        self.async_mining = mining_cfg.get("async_mining", False)
         self.spec_augment_backend = performance.get("spec_augment_backend", "tf")
         self.log_throughput_interval = int(performance.get("log_throughput_interval", 1000) or 1000)
         self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 0) or 0)

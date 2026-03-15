@@ -188,7 +188,7 @@ for epoch in training:
 ### Configuration
 
 ```yaml
-hard_negative_mining:
+mining:
   enabled: true
   fp_threshold: 0.8
   max_samples: 5000
@@ -203,14 +203,12 @@ hard_negative_mining:
 
 ### Async Mining (Background Mining)
 
-For improved throughput, the framework provides `AsyncHardExampleMiner` which runs hard negative mining in a background thread. Async mining is enabled by setting two configuration options:
+For improved throughput, the framework provides `AsyncHardExampleMiner` which runs hard negative mining in a background thread. Async mining is controlled from the `mining` section:
 
 ```yaml
-performance:
-  async_mining: true  # Enable async mining mode
-
-hard_negative_mining:
+mining:
   enabled: true
+  async_mining: true
   collection_mode: "mine_immediately"  # Use async mode
   fp_threshold: 0.8
   max_samples: 5000
@@ -224,14 +222,14 @@ hard_negative_mining:
 - Better GPU utilization
 
 **Configuration Relationship**:
-- **`performance.async_mining`**: Global flag to enable async mining (default: `false`)
-- **`hard_negative_mining.collection_mode`**: Determines when mining occurs
+- **`mining.async_mining`**: Enables background mining when immediate collection is active
+- **`mining.collection_mode`**: Determines when mining occurs
   - `"log_only"`: Only log false predictions; mining happens later (async mining not used)
-  - `"mine_immediately"`: Mine immediately during training; uses async miner if `performance.async_mining=true`
+  - `"mine_immediately"`: Mine immediately during training; uses async miner if `mining.async_mining=true`
 
 **When Both Settings Apply**:
-- If `performance.async_mining=true` AND `hard_negative_mining.collection_mode="mine_immediately"`: AsyncHardExampleMiner is used (background thread, non-blocking)
-- If `performance.async_mining=false` OR `hard_negative_mining.collection_mode="log_only"`: Traditional HardExampleMiner is used (synchronous, blocking during mining operations)
+- If `mining.async_mining=true` AND `mining.collection_mode="mine_immediately"`: AsyncHardExampleMiner is used (background thread, non-blocking)
+- If `mining.async_mining=false` OR `mining.collection_mode="log_only"`: Traditional HardExampleMiner is used (synchronous, blocking during mining operations)
 
 **Common Parameters** (same for both sync and async):
 - `fp_threshold` / `confidence_threshold`: Minimum confidence for hard negative candidates (0.0-1.0)
@@ -239,7 +237,7 @@ hard_negative_mining:
 - `mining_interval_epochs`: Number of epochs between mining operations (used by both modes to determine timing)
 - `class_weight`: Weight assigned to hard negatives during training (inherited from `training.hard_negative_class_weight`)
 
-> **Note**: Async mining is enabled by default in the `standard` and `max_quality` presets for better performance. See [docs/GUIDE.md](GUIDE.md) for all available presets and their configurations.
+> **Note**: Async mining is enabled by default in the `standard` and `max_quality` presets through `mining.async_mining`. See [docs/GUIDE.md](GUIDE.md) for all available presets and their configurations.
 
 ## Performance Optimization
 
@@ -349,7 +347,7 @@ training:
   steps: [20000, 10000]
   batch_size: 128
   negative_class_weight: 20.0
-hard_negative_mining:
+mining:
   enabled: true
   confidence_threshold: 0.8
 performance:
