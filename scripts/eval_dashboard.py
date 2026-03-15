@@ -26,7 +26,6 @@ def _read_report(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Report not found: {path}")
     with path.open("r", encoding="utf-8") as f:
-        return dict(json.load(f))
         return json.load(f)
 
 

@@ -39,7 +39,7 @@ def main() -> None:
         print("=" * 68)
         print("  ⚠  WARNING: --apply is set.")
         print("  Files in the bottom percentile / above clip threshold")
-        print(f"  will be MOVED to {args.discarded_dir}/quality/.")
+        print(f"  will be MOVED to {discarded_root}/.")
         print("  Make sure you have a backup / git history first.")
         print("=" * 68)
         answer = input("  Type 'yes' to continue: ").strip().lower()

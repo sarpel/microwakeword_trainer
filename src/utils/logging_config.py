@@ -123,13 +123,13 @@ def setup_file_and_console_logging(
 def get_logger(name: str) -> logging.Logger:
     """Get a logger instance with the specified name.
 
-    Convenience wrapper around logging.getLogger() that ensures
-    Rich logging is properly configured.
+    Convenience wrapper around logging.getLogger() that returns
+    a standard Python logger instance without configuring handlers or formatters.
 
     Args:
         name: Logger name (typically __name__)
 
     Returns:
-        Configured logger instance
+        Logger instance
     """
     return logging.getLogger(name)

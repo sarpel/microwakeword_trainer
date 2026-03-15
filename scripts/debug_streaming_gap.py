@@ -29,16 +29,39 @@ from src.export.tflite import StreamingExportModel, load_weights_from_keras3_che
 from src.model.architecture import build_model
 
 
-def parse_kernel_sizes(s: str) -> list[list[int]]:
-    """Parse mixconv_kernel_sizes string like '[5],[7,11],[9,15],[23]'."""
+def parse_kernel_sizes(s: str | list[str] | list[list[int]] | list[int]) -> list[list[int]]:
+    """Parse mixconv_kernel_sizes string like '[5],[7,11],[9,15],[23]' or already-parsed list."""
     import ast
 
-    return [list(x) if isinstance(x, (list, tuple)) else [x] for x in ast.literal_eval(f"[{s}]")]
+    if isinstance(s, str):
+        return [list(x) if isinstance(x, (list, tuple)) else [x] for x in ast.literal_eval(f"[{s}]")]
+    elif isinstance(s, list):
+        # Handle list of ints, list of strings, or already-parsed structure
+        result = []
+        for item in s:
+            if isinstance(item, int):
+                result.append([item])
+            elif isinstance(item, str):
+                # Parse string like '5' or '[5,7]'
+                if item.startswith("["):
+                    result.append(ast.literal_eval(item))
+                else:
+                    result.append([int(item)])
+            elif isinstance(item, list):
+                result.append(item)
+        return result
+    return [[int(s)]]  # Single int fallback
 
 
-def parse_int_list(s: str) -> list[int]:
-    """Parse comma-separated int string like '64,64,64,64'."""
-    return [int(x.strip()) for x in s.split(",")]
+def parse_int_list(s: str | list[int] | list[str] | int) -> list[int]:
+    """Parse comma-separated int string like '64,64,64,64' or already-parsed list."""
+    if isinstance(s, str):
+        return [int(x.strip()) for x in s.split(",")]
+    elif isinstance(s, int):
+        return [s]
+    elif isinstance(s, list):
+        return [int(x) for x in s]
+    return []  # Fallback
 
 
 def build_training_model(config, checkpoint_path: str):

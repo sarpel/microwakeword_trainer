@@ -251,7 +251,8 @@ class Stream(tf.keras.layers.Layer):
                 # For stride-1 downstream blocks this becomes kernel_size - 1.
                 # With dilation: dilation * (kernel_size - 1) - (stride - 1)
                 # Allow zero-sized buffers (when kernel == stride, no state needed)
-                self.ring_buffer_size_in_time_dim = dilation * (kern - 1) - stride_val + 1
+                # Clamp to non-negative to prevent negative buffer sizes
+                self.ring_buffer_size_in_time_dim = max(0, dilation * (kern - 1) - stride_val + 1)
 
         # Build the wrapped cell if needed
         if isinstance(wrapped_cell, tf.keras.layers.Layer) and not wrapped_cell.built:

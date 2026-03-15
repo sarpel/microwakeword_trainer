@@ -479,8 +479,6 @@ class Trainer:
         self._validation_executor = ThreadPoolExecutor(max_workers=1)
         self._pending_validation: dict[str, Any] | None = None
         self._validation_lock = threading.Lock()
-        self._pending_validation = None
-        self._validation_lock = threading.Lock()
         self._async_early_stop_requested = False
 
     def __del__(self) -> None:
@@ -490,7 +488,6 @@ class Trainer:
             try:
                 executor.shutdown(wait=False)
             except Exception:  # noqa: S110
-                pass
                 pass
 
     def _get_cutoffs(self, lazy: bool = True) -> list[float]:

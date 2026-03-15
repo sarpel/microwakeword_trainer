@@ -71,7 +71,6 @@ def validate_lr_scaling(learning_rates: List[float], batch_size: int, base_batch
     if base_learning_rates is None:
         base_learning_rates = [0.001, 0.0002, 0.00005]
     expected = scale_learning_rates(base_learning_rates, base_batch_size, batch_size)
-    expected = scale_learning_rates(base_learning_rates, base_batch_size, batch_size)
 
     if len(learning_rates) != len(expected):
         logger.warning(f"LR array length mismatch: {len(learning_rates)} vs expected {len(expected)} for batch_size={batch_size}")
@@ -134,7 +133,6 @@ class TrainingConfig:
     learning_rates: Optional[List[float]] = None
     batch_size: int = 384
     # Scaling method: "sqrt" (default) or "linear"
-    # Scaling method: "sqrt" (default) or "linear"
     auto_lr_scale_method: str = "sqrt"
     eval_step_interval: int = 500
     eval_basic_step_interval: int = 500
@@ -196,13 +194,10 @@ class TrainingConfig:
             raise ValueError(f"training.plateau_max_reductions must be an integer >= 0, got {self.plateau_max_reductions}")
         if not isinstance(self.phase_stagger_steps, int) or self.phase_stagger_steps < 0:
             raise ValueError(f"training.phase_stagger_steps must be an integer >= 0, got {self.phase_stagger_steps}")
-        if not isinstance(self.phase_stagger_steps, int) or self.phase_stagger_steps < 0:
-            raise ValueError(f"training.phase_stagger_steps must be an integer >= 0, got {self.phase_stagger_steps}")
         # Auto-scale learning rates if not explicitly set
         if self.learning_rates is None:
             self.learning_rates = scale_learning_rates(self.base_learning_rates, from_batch=self.base_batch_size, to_batch=self.batch_size, scaling_method=self.auto_lr_scale_method)
         if len(self.training_steps) != len(self.learning_rates):
-            raise ValueError("training.training_steps and learning_rates must have same length")
             raise ValueError("training.training_steps and learning_rates must have same length")
 
 

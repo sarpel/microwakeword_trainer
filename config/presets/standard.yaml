@@ -63,9 +63,9 @@ training:
   freq_mask_count: [1, 1, 1]  # Number of frequency masks per phase
 
   # Checkpoint selection: maximize recall
-  minimization_metric: "average_viable_recall"  # Metric to minimize for checkpoint selection
-  target_minimization: 1.0  # Target value for minimization metric
   maximization_metric: "average_viable_recall"  # Metric to maximize for checkpoint selection
+  target_maximization: 1.0  # Target value for maximization metric
+  # minimization_metric removed (was incorrectly set to same as maximization_metric)
 
   ambient_duration_hours: 42.02  # Total hours of ambient audio for FAH calculation
   train_split: 0.8  # Fraction of data for training
@@ -359,9 +359,9 @@ auto_tuning:
 # AUTO-TUNING EXPERT (standard settings)
 # ─────────────────────────────────────────────────────────────────
 auto_tuning_expert:
-  min_burst_steps: 200  # Minimum gradient steps per burst
-  max_burst_steps: 25000  # Maximum gradient steps per burst
-  default_burst_steps: 750  # Default gradient steps per burst
+  min_burst_steps: 20  # Minimum gradient steps per burst (surgical gradient bursts: 20-200 steps)
+  max_burst_steps: 200  # Maximum gradient steps per burst (surgical gradient bursts: 20-200 steps, staying within max_gradient_steps=2000)
+  default_burst_steps: 100  # Default gradient steps per burst (within 20-200 range)
   min_lr: 0.0000001  # Minimum learning rate for bursts
   max_lr: 0.0001  # Maximum learning rate for bursts
   default_lr: 0.00001  # Default learning rate for bursts

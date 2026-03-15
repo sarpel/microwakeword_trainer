@@ -94,7 +94,6 @@ def main() -> None:
     parser.add_argument("--pad-ms", type=int, default=200, metavar="MS", help="Silence padding around detected speech region (default: 200ms)")
     parser.add_argument("--aggressiveness", type=int, default=2, choices=[0, 1, 2, 3], metavar="N", help="webrtcvad aggressiveness 0-3 (default: 2)")
     parser.add_argument("--discarded-dir", type=str, default="discarded", metavar="DIR", help="Root dir for moved out-of-range speech files (default: discarded/)")
-    parser.add_argument("--verbose", action="store_true", help="Print a line for every file including kept/trimmed")
 
     args = parser.parse_args()
     if not args.speech_dirs and not args.bg_dirs:

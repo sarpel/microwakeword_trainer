@@ -133,7 +133,7 @@ def calculate_tensor_arena_size(tflite_path: str, margin: float = 1.3) -> int:
             shape = tensor.get("shape", [])
             if -1 in shape:
                 logger.warning(
-                    "Tensor '%s' has a dynamic dimension (-1). Arena size estimate may be too small; using 1 for this dim.",
+                    "Tensor '%s' has a dynamic dimension (-1); arena size estimate may be too small; estimate_tensor_arena_size will handle sizing.",
                     tensor.get("name", "<unnamed>"),
                 )
 

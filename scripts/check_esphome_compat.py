@@ -170,8 +170,12 @@ def check_model(tflite_path: str, manifest_path: str | None = None) -> dict[str,
     details: dict[str, Any] = {}
 
     model_file = Path(tflite_path)
-    model_bytes = model_file.read_bytes()
-    details["file_size_bytes"] = len(model_bytes)
+    try:
+        model_bytes = model_file.read_bytes()
+        details["file_size_bytes"] = len(model_bytes)
+    except (FileNotFoundError, PermissionError, OSError) as err:
+        details["error"] = f"Could not read {model_file}: {err}"
+        raise
 
     # ------------------------------------------------------------------
     # CHECK 1: TFLite schema version
@@ -508,16 +512,17 @@ def check_model(tflite_path: str, manifest_path: str | None = None) -> dict[str,
                 if fss is None:
                     warnings.append("Manifest missing 'micro.feature_step_size' field")
                     checks["manifest_feature_step_size"] = False
-                try:
-                    fss_int = int(fss)
-                    if not (ESPHOME_FEATURE_STEP_SIZE_MIN <= fss_int <= ESPHOME_FEATURE_STEP_SIZE_MAX):
-                        errors.append(f"[__init__.py L305-L317] manifest feature_step_size={fss} out of range [{ESPHOME_FEATURE_STEP_SIZE_MIN}, {ESPHOME_FEATURE_STEP_SIZE_MAX}]")
-                        checks["manifest_feature_step_size"] = False
-                except (ValueError, TypeError):
-                    errors.append(f"manifest feature_step_size='{fss}' is not a valid integer")
-                    checks["manifest_feature_step_size"] = False
                 else:
-                    checks["manifest_feature_step_size"] = True
+                    try:
+                        fss_int = int(fss)
+                        if not (ESPHOME_FEATURE_STEP_SIZE_MIN <= fss_int <= ESPHOME_FEATURE_STEP_SIZE_MAX):
+                            errors.append(f"[__init__.py L305-L317] manifest feature_step_size={fss} out of range [{ESPHOME_FEATURE_STEP_SIZE_MIN}, {ESPHOME_FEATURE_STEP_SIZE_MAX}]")
+                            checks["manifest_feature_step_size"] = False
+                        else:
+                            checks["manifest_feature_step_size"] = True
+                    except (ValueError, TypeError):
+                        errors.append(f"manifest feature_step_size='{fss}' is not a valid integer")
+                        checks["manifest_feature_step_size"] = False
 
                 # Check manifest version
                 version = manifest.get("version")

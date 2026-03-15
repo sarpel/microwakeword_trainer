@@ -82,6 +82,9 @@ def main():
     if args.hard_negative_dir:
         directories.append(Path(args.hard_negative_dir))
 
+    # Deduplicate directories by resolving paths
+    directories = list({d.resolve() for d in directories if d.exists()})
+
     if not directories:
         print("Error: No directories specified. Use --config or specify directories directly.")
         sys.exit(1)
