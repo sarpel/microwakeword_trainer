@@ -487,7 +487,6 @@ pytest --cov=src --cov=config tests/
 | `scripts/evaluate_model.py` | Advanced evaluation + JSON/image/executive reports |
 | `scripts/eval_dashboard.py` | Interactive HTML dashboard from `evaluation_report.json` |
 | `docs/EXPORT.md` | TFLite export and ESPHome deployment |
-| `docs/USER_ADDITIONS.md` | Project-specific profiles and notes |
 | `specs/implementation_status.md` | Comprehensive implementation status and recent changes |
 | `specs/phase1_complete.yaml` | Phase 1 completion summary and best practices |
 | `specs/testing_plan.md` | Comprehensive testing strategy and procedures |

@@ -94,7 +94,7 @@ class RichTrainingLogger:
             )
 
         # Hard negative mining
-        mining = config.get("hard_negative_mining", {})
+        mining = config.get("mining", {})
         mining_enabled = mining.get("enabled", False)
         table.add_row(
             "Hard Neg Mining",
