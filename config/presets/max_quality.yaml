@@ -80,7 +80,6 @@ training:
   gradient_clipnorm: 1.0  # Clips gradient L2 norm to prevent exploding gradients
   ema_decay: 0.9995  # EMA smoothing factor (higher = slower decay, half-life ~6900 steps)
   random_seed: 42  # Random seed for reproducible runs
-  auto_tune_on_poor_fah: true  # Enable auto-tuning if FAH is poor after training
   # Intra-phase cosine LR decay (prevents flat LR stagnation)
   cosine_decay_alpha: 0.3  # Intra-phase LR decay factor (LR ends at 30% of phase start)
   # Plateau-based LR reduction and early stopping

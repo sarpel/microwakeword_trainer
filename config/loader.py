@@ -165,7 +165,6 @@ class TrainingConfig:
     strict_content_hash_leakage_check: bool = True
     speaker_based_split: bool = False  # Use speaker identity for train/val/test split to prevent data leakage
     random_seed: Optional[int] = 42
-    auto_tune_on_poor_fah: bool = True  # DEPRECATED: use auto_tuning.enabled instead
     # Optimizer and loss parameters (NEW)
     optimizer: str = "adam"  # Optimizer type (currently only "adam" supported)
     label_smoothing: float = 0.01  # Label smoothing for BinaryCrossentropy (0.0 = disabled)

@@ -2080,9 +2080,6 @@ def train(config: dict) -> tf.keras.Model:
         # Auto-tune post-training if configured and final FAH > target
         at_config = config.get("auto_tuning", {})
         auto_tune_enabled = at_config.get("enabled", False)
-        # Fallback to legacy flag
-        if not auto_tune_enabled:
-            auto_tune_enabled = config.get("training", {}).get("auto_tune_on_poor_fah", False)
         target_min = config.get("training", {}).get("target_minimization", 2.0)
 
         # Track if auto-tuning was run to skip top FP extraction (config doesn't propagate back)
