@@ -522,15 +522,6 @@ class AutoTuningConfig:
     max_gradient_steps: int = 250_000
     patience: int = 15
 
-    # Legacy fields (kept for backward compat, ignored by MaxQualityAutoTuner)
-    steps_per_iteration: int = 8000
-    initial_lr: float = 0.00005
-    lr_decay_factor: float = 0.7
-    min_lr: float = 1e-5
-    positive_weight_range: List[float] = field(default_factory=lambda: [0.5, 3.0])
-    negative_weight_range: List[float] = field(default_factory=lambda: [10.0, 50.0])
-    hard_negative_weight_range: List[float] = field(default_factory=lambda: [20.0, 100.0])
-
     # Cross-validation & confirmation
     cv_folds: int = 3
     confirmation_fraction: float = 0.40
@@ -545,10 +536,6 @@ class AutoTuningConfig:
     # Grouping
     group_key: str = "speaker_id"
 
-    # Pareto / convergence (legacy)
-    pareto_improvement_threshold: float = 0.003
-    convergence_window: int = 7
-
     # Output
     output_dir: str = "./tuning_output"
 
@@ -556,27 +543,10 @@ class AutoTuningConfig:
         """Validate configuration after initialization."""
         if not 0.0 <= self.target_recall <= 1.0:
             raise ValueError(f"AutoTuningConfig: target_recall must be between 0.0 and 1.0, got {self.target_recall}")
-        if not (0.0 < self.lr_decay_factor < 1.0):
-            raise ValueError(f"AutoTuningConfig: lr_decay_factor must be >0.0 and <1.0, got {self.lr_decay_factor}")
         if not isinstance(self.max_iterations, int) or self.max_iterations <= 0:
             raise ValueError(f"AutoTuningConfig: max_iterations must be a positive integer, got {self.max_iterations}")
         if not isinstance(self.patience, int) or self.patience <= 0:
             raise ValueError(f"AutoTuningConfig: patience must be a positive integer, got {self.patience}")
-        if not isinstance(self.steps_per_iteration, int) or self.steps_per_iteration <= 0:
-            raise ValueError(f"AutoTuningConfig: steps_per_iteration must be a positive integer, got {self.steps_per_iteration}")
-        if not isinstance(self.convergence_window, int) or self.convergence_window <= 0:
-            raise ValueError(f"AutoTuningConfig: convergence_window must be a positive integer, got {self.convergence_window}")
-        if self.min_lr >= self.initial_lr:
-            raise ValueError(f"AutoTuningConfig: min_lr must be < initial_lr, got min_lr={self.min_lr} >= initial_lr={self.initial_lr}")
-        for range_name, range_val in (
-            ("positive_weight_range", self.positive_weight_range),
-            ("negative_weight_range", self.negative_weight_range),
-            ("hard_negative_weight_range", self.hard_negative_weight_range),
-        ):
-            if len(range_val) != 2:
-                raise ValueError(f"AutoTuningConfig: {range_name} must contain exactly two numbers, got {range_val}")
-            if range_val[0] >= range_val[1]:
-                raise ValueError(f"AutoTuningConfig: {range_name}[0] must be < {range_name}[1], got {range_val}")
         if not isinstance(self.cv_folds, int) or self.cv_folds < 2:
             raise ValueError(f"AutoTuningConfig: cv_folds must be >= 2, got {self.cv_folds}")
         if not 0.0 < self.confirmation_fraction < 1.0:
