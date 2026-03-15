@@ -1,6 +1,6 @@
 # Official micro-wake-word Models Deep Architecture Analysis
 
-Analyzed folder: `micro-wake-word-officials/official_models`
+Analyzed folder: `official_models`
 
 Models analyzed:
 
@@ -25,7 +25,7 @@ This report is based on **independent extraction**, not only one helper script:
 
 ## Re-validation update (after removing `needalighter.py`)
 
-- `micro-wake-word-officials/official_models/needalighter.py` was removed and is not part of this analysis path.
+- `official_models/needalighter.py` was removed and is not part of this analysis path.
 - All 4 official models were re-validated directly via TensorFlow Lite + ai_edge_litert interpreter APIs and both analyzer backends.
 - Re-validation confirms:
   - 2-subgraph streaming structure (confirmed via ai_edge_litert Interpreter and both analyzer text outputs)
