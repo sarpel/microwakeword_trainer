@@ -358,6 +358,7 @@ ITEMS_TO_DELETE=(
     "$HOME/microwakeword_trainer/tuning_output"
     "$HOME/microwakeword_trainer/coverage_html"
     "$HOME/microwakeword_trainer/tuning_results_smoke_fix"
+    "$HOME/microwakeword_trainer/test_output"
 )
 
 # SYNTAX: '$HOME' is a variable that contains your home directory path
