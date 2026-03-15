@@ -179,10 +179,13 @@ class MicroFrontend:
         Uses the TFLite Micro audio frontend for ESPHome-compatible
         feature extraction (40 mel bins, 16kHz, 30ms window, 10ms step).
 
-        The pymicro_features.MicroFrontend requires frame-by-frame feeding
-        (480 samples = 30ms at 16kHz per chunk) and returns a flat list of
-        floats in .features, where every consecutive mel_bins values form
-        one spectrogram frame.
+        pymicro_features.MicroFrontend.process_samples() produces at most ONE
+        output frame per call and advances by exactly `samples_read` samples
+        (= 160 samples = 10ms at 16kHz). Audio must be fed in step-size chunks
+        (160 samples = 10ms) and the byte index advanced by samples_read * 2.
+        Feeding larger chunks (e.g. 480 samples = 30ms) silently discards the
+        samples after the first consumed step, producing only 1/3 of the correct
+        frames with wrong values.
 
         Args:
             audio: Audio samples as float32 array in range [-1, 1]
@@ -209,20 +212,27 @@ class MicroFrontend:
         audio_int16 = np.clip(audio, -1.0, 1.0)
         audio_int16 = (audio_int16 * 32767.0).astype(np.int16)
 
-        # Feed audio in 480-sample chunks (30ms window at 16kHz)
-        frame_size = self.config.window_size_samples
+        # Feed audio byte-by-byte using samples_read to advance correctly.
+        # process_samples() produces at most ONE output frame per call and consumes
+        # exactly `samples_read` samples (= window_step_samples = 160 at 16kHz/10ms).
+        # Feeding larger chunks and advancing by the full chunk size silently discards
+        # audio: only 1 frame is produced from a 30ms (480-sample) chunk instead of 3.
+        # Official platform (audio_utils.py) uses: idx += frontend_result.samples_read * 2
+        FEED_SAMPLES = 160  # 10ms at 16kHz — one step at a time
+        audio_bytes = audio_int16.tobytes()
         all_features = []
+        byte_idx = 0
+        feed_bytes = FEED_SAMPLES * 2  # int16 = 2 bytes per sample
 
-        for i in range(0, len(audio_int16), frame_size):
-            chunk = audio_int16[i : i + frame_size]
-            if len(chunk) < frame_size:
+        while byte_idx < len(audio_bytes):
+            chunk = audio_bytes[byte_idx : byte_idx + feed_bytes]
+            if len(chunk) < feed_bytes:
                 # Pad last chunk with zeros if needed
-                chunk = np.pad(chunk, (0, frame_size - len(chunk)))
-            chunk_bytes = chunk.tobytes()
-            output = frontend.process_samples(chunk_bytes)
+                chunk = chunk + b"\x00" * (feed_bytes - len(chunk))
+            output = frontend.process_samples(chunk)
+            byte_idx += output.samples_read * 2  # advance by actual samples consumed
             if output.features:
                 all_features.extend(output.features)
-
         if not all_features:
             # Return empty spectrogram with correct shape
             return np.zeros((0, self.config.mel_bins), dtype=np.float32)

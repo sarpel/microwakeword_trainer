@@ -777,19 +777,6 @@ def create_representative_dataset_from_data(
                 return create_representative_dataset(config, target_chunks)
             raise ValueError("Quantized export requires real representative calibration data, but no valid calibration chunks could be extracted from feature store.")
 
-        # Representative dataset for INT8 quantization requires minimum 500 training samples
-        # with forced min/max boundary anchors (0.0 and 26.0).
-        required_chunks = max(500, target_chunks)
-
-        # If we extracted fewer than `required_chunks`, pad by repeating existing
-        # chunks (cycling) so the generator yields exactly `required_chunks`.
-        # The case of no chunks was handled above (fall back or raise).
-        if len(all_chunks) < required_chunks:
-            import itertools
-
-            needed = required_chunks - len(all_chunks)
-            all_chunks = all_chunks + list(itertools.islice(itertools.cycle(all_chunks), needed))
-
         positive_pct = (n_positive_used / max(1, n_positive_used + n_negative_used)) * 100
         print(
             f"  Using {len(all_chunks)} sequential calibration chunks from "

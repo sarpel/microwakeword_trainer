@@ -150,6 +150,25 @@ class EvaluationMetrics:
             threshold=self.default_threshold,
         )
 
+        # Re-compute binary metrics (accuracy/precision/recall/f1) at an adaptive threshold
+        # when the default threshold produces degenerate all-zero predictions.
+        # During early training the model's score distribution sits well below the deployment
+        # threshold (0.97), so threshold-based metrics are meaningless until scores shift up.
+        # We use threshold_for_target_fah if available (already computed above), otherwise
+        # fall back to the score median — both give a live, informative training signal.
+        adaptive_threshold = metrics.get("threshold_for_target_fah")
+        if adaptive_threshold is None:
+            # No FAH data — fall back to median score as a reasonable midpoint
+            adaptive_threshold = float(np.median(y_scores))
+        if abs(adaptive_threshold - self.default_threshold) > 1e-6:
+            # Only re-compute if the adaptive threshold differs meaningfully
+            binary_pred = (y_scores > adaptive_threshold).astype(int)
+            from src.evaluation.metrics import compute_accuracy, compute_precision_recall
+
+            metrics["accuracy"] = compute_accuracy(y_true, binary_pred)
+            metrics["precision"], metrics["recall"], metrics["f1_score"] = compute_precision_recall(y_true, binary_pred)
+            metrics["eval_threshold"] = adaptive_threshold
+
         # Add per-threshold metrics for backward compatibility (ROC/PR curves)
         for i, cutoff in enumerate(self.cutoffs):
             tp = int(self._tp_arr[i])
@@ -283,6 +302,11 @@ class Trainer:
         mining_cfg = config.get("mining", {})
         self.async_mining = mining_cfg.get("async_mining", False)
         self.spec_augment_backend = performance.get("spec_augment_backend", "tf")
+        if self.spec_augment_backend not in {"tf", "cupy"}:
+            self.logger.log_warning(f"Unknown spec_augment_backend='{self.spec_augment_backend}', falling back to 'tf'")
+            self.spec_augment_backend = "tf"
+        if self.use_tfdata and self.spec_augment_enabled and self.spec_augment_backend != "tf":
+            self.logger.log_warning("SpecAugment backend is set to CuPy while tf.data is enabled. This introduces per-step CPU↔GPU transfers; prefer backend='tf' for throughput.")
         self.log_throughput_interval = int(performance.get("log_throughput_interval", 1000) or 1000)
         self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 0) or 0)
         self.gpu_memory_log_interval = int(performance.get("gpu_memory_log_interval", 1000) or 0)
@@ -968,6 +992,12 @@ class Trainer:
         # arrive with shape (batch, 1) from different code paths (e.g. tfdata prefetch)
         y_true_t = tf.cast(tf.reshape(tf.constant(y_true), [-1]), tf.float32)
         sw_t = tf.cast(tf.reshape(tf.constant(sample_weights), [-1]), tf.float32)
+        if y_true_t.shape[0] != sw_t.shape[0]:
+            raise tf.errors.InvalidArgumentError(
+                None,
+                None,
+                f"sample_weights size must match labels size: got {sw_t.shape[0]} weights for {y_true_t.shape[0]} labels",
+            )
         if is_hard_negative is not None:
             hn_t = tf.cast(tf.reshape(tf.constant(is_hard_negative), [-1]), tf.bool)
             class_weights = tf.where(
@@ -1081,15 +1111,64 @@ class Trainer:
             self.best_quality_score = float(quality_score)  # display only
             # Update stage-specific best trackers
             auc_pr_raw = metrics.get("auc_pr")
+            recall_at_fah_raw = metrics.get("recall_at_target_fah")
             if isinstance(auc_pr_raw, (int, float, np.floating, np.integer)):
                 self.best_auc_pr = max(self.best_auc_pr, float(auc_pr_raw))
-            recall_at_fah_raw = metrics.get("recall_at_target_fah")
             if isinstance(recall_at_fah_raw, (int, float, np.floating, np.integer)):
                 self.best_constrained_recall = max(self.best_constrained_recall, float(recall_at_fah_raw))
+
+            # Persist recommended deployment threshold to best_weights .metadata.json sidecar.
+            # This allows mww-export to use it as a head-start when probability_cutoff: 0.
+            self._write_checkpoint_threshold_metadata(metrics)
 
         # Save periodic checkpoint
         checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_step_{self.current_step}.weights.h5")
         self.model.save_weights(checkpoint_path)
+
+    def _write_checkpoint_threshold_metadata(self, metrics: dict[str, float]) -> None:
+        """Persist recommended deployment threshold to best_weights .metadata.json sidecar.
+
+        Called whenever best_weights.weights.h5 is saved. Writes threshold_for_target_fah
+        (or threshold_for_target_recall as fallback) as `probability_cutoff` so the export
+        pipeline can pick it up when probability_cutoff: 0 is configured.
+        """
+        if not self.best_weights_path:
+            return
+
+        import json as _json
+
+        threshold = metrics.get("threshold_for_target_fah")
+        source = "threshold_for_target_fah"
+        if threshold is None or not isinstance(threshold, (int, float, np.floating, np.integer)):
+            threshold = metrics.get("threshold_for_target_recall")
+            source = "threshold_for_target_recall"
+        if threshold is None or not isinstance(threshold, (int, float, np.floating, np.integer)):
+            return  # No actionable threshold to persist
+
+        threshold_float = float(threshold)
+        if not (0.0 < threshold_float <= 1.0):
+            return  # Guard: skip clearly invalid values
+
+        meta_path = Path(self.best_weights_path).with_suffix(".metadata.json")
+        existing: dict = {}
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r") as f:
+                    loaded = _json.load(f)
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except Exception:
+                pass  # Re-write fresh if unreadable
+
+        existing["probability_cutoff"] = threshold_float
+        existing["probability_cutoff_source"] = source
+        existing["probability_cutoff_step"] = int(self.current_step)
+
+        try:
+            with open(meta_path, "w") as f:
+                _json.dump(existing, f, indent=2)
+        except Exception as exc:
+            self.logger.log_warning(f"Could not write threshold metadata: {exc}")
 
     def _write_run_metadata(self) -> None:
         """Write run_metadata.json to checkpoint dir for reproducibility tracking."""
@@ -1946,17 +2025,34 @@ class Trainer:
             log_dir = self.config.get("performance", {}).get("tensorboard_log_dir", "./logs")
             test_feature_store_path = os.path.join(self.config.get("paths", {}).get("processed_dir", "./data/processed"), "test")
             evaluator = TestEvaluator(self.model, self.config, str(log_dir))
-            evaluator.evaluate(test_data_factory, test_feature_store_path=test_feature_store_path)
+            eval_results = evaluator.evaluate(test_data_factory, test_feature_store_path=test_feature_store_path)
             self.logger.log_info("Running held-out test evaluation...")
-            # Use test_split-scaled ambient duration so FAH is correct for the test set.
-            training_cfg = self.config.get("training", {})
-            test_split = float(training_cfg.get("test_split", 0.1))
-            test_ambient_hours = self.ambient_duration_hours * test_split
-            test_metrics = self.validate(test_data_factory, ambient_duration_hours=test_ambient_hours)
-            self.logger.log_validation_results(test_metrics, total_steps, total_steps)
-            tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
-            self.logger.log_confusion_matrix(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
-            self.logger.log_per_class_analysis(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
+            if eval_results is not None:
+                basic = eval_results.get("basic_metrics", {})
+                advanced = eval_results.get("advanced_metrics", {})
+                test_metrics: dict[str, float] = {}
+                for key in ("accuracy", "precision", "recall", "f1_score"):
+                    value = basic.get(key)
+                    if value is not None:
+                        test_metrics[key] = float(value)
+                for key in ("auc_roc", "auc_pr", "fah"):
+                    value = advanced.get(key)
+                    if value is not None:
+                        mapped = "ambient_false_positives_per_hour" if key == "fah" else key
+                        test_metrics[mapped] = float(value)
+                if test_metrics:
+                    self.logger.log_validation_results(test_metrics, total_steps, total_steps)
+
+                confusion = eval_results.get("confusion_matrix", {})
+                tp = int(confusion.get("tp", 0))
+                fp = int(confusion.get("fp", 0))
+                tn = int(confusion.get("tn", 0))
+                fn = int(confusion.get("fn", 0))
+                threshold = float(self.evaluation_config.get("default_threshold", 0.97))
+                self.logger.log_confusion_matrix(tp, fp, tn, fn, threshold=threshold)
+                self.logger.log_per_class_analysis(tp, fp, tn, fn, threshold=threshold)
+            else:
+                self.logger.log_warning("Held-out test evaluation did not produce results; skipping consolidated test summary logs")
 
         return self.model
 

@@ -43,6 +43,7 @@ Audio (WAV) → ingestion.py → features.py → dataset.py → Training
 - **Don't batch without padding**: Variable-length clips need careful collation
 - **Don't use CPU augmentation**: SpecAugment has no CPU fallback
 - **Don't skip speaker clustering**: Leads to train/test leakage
+- **Don't feed large chunks to `process_samples`**: `pymicro_features.MicroFrontend.process_samples()` produces at most ONE frame per call, consuming only `samples_read` (160) samples. Feeding 480-sample (30ms) chunks and advancing by 480 silently discards 320 samples per call — producing 1/3 the frames at wrong values. Always advance by `output.samples_read * 2` (bytes), feeding 160-sample (10ms) steps.
 
 ## Related Documentation
 

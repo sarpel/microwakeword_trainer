@@ -1558,11 +1558,6 @@ class AutoTuner:
         n_search_eval = max(1, min(len(search_idx) - 1, int(round(len(search_idx) * self.search_eval_fraction))))
         n_search_train = len(search_idx) - n_search_eval
 
-        if len(search_train_idx) == 0 or len(search_eval_idx) == 0:
-            raise ValueError(
-                f"Search split produced empty partition: train={n_search_train}, eval={n_search_eval}, " f"len(search_idx)={len(search_idx)}, search_eval_fraction={self.search_eval_fraction}"
-            )
-
         if use_group_partition and group_ids is not None:
             # Group-aware sub-split of search partition
             search_group_to_indices: dict[str, list[int]] = {}
@@ -1994,24 +1989,28 @@ class AutoTuner:
         fold_indices: Optional[list] = None,
     ) -> TuneMetrics:
         """Full evaluation: predict → temperature scale → threshold optimize → metrics."""
-        import tensorflow as tf
+        y_scores = self._predict_scores(model, features, temperature=temperature)
+        return self._evaluate_scores(
+            y_scores=y_scores,
+            labels=labels,
+            ambient_hours=ambient_hours,
+            fold_indices=fold_indices,
+        )
 
-        # Predict in batches
-        batch_size = self.config.get("training", {}).get("batch_size", 384)
-        all_scores = []
-        for i in range(0, len(features), batch_size):
-            batch = tf.constant(features[i : i + batch_size], dtype=tf.float32)
-            preds = model(batch, training=False)
-            all_scores.append(preds.numpy())
+    def _evaluate_scores(
+        self,
+        y_scores: np.ndarray,
+        labels: np.ndarray,
+        ambient_hours: float,
+        fold_indices: Optional[list] = None,
+    ) -> TuneMetrics:
+        """Evaluate metrics from precomputed probability scores.
 
-        y_scores = np.concatenate(all_scores, axis=0).flatten()
-
-        # Apply temperature scaling
-        y_scores = apply_temperature(y_scores, temperature)
+        This avoids redundant model forward passes when scores are needed for
+        both threshold optimization and downstream error-memory updates.
+        """
         y_true = labels.flatten()
-
-        # 3-pass threshold optimization
-        threshold, threshold_uint8, metrics = self.threshold_optimizer.optimize(
+        _, _, metrics = self.threshold_optimizer.optimize(
             y_true,
             y_scores,
             ambient_hours,
@@ -2020,7 +2019,6 @@ class AutoTuner:
             cv_folds=self.cv_folds,
             fold_indices=fold_indices,
         )
-
         return metrics
 
     def _evaluate(
@@ -2578,12 +2576,11 @@ class AutoTuner:
             (cal_labels >= 0.5).astype(float).flatten(),
         )
 
-        base_metrics = self._evaluate_model(
-            model,
-            search_eval_features,
-            search_eval_labels,
-            ambient_hours_search_eval,
-            temperature=base_temperature,
+        base_eval_scores = self._predict_scores(model, search_eval_features, base_temperature)
+        base_metrics = self._evaluate_scores(
+            y_scores=base_eval_scores,
+            labels=search_eval_labels,
+            ambient_hours=ambient_hours_search_eval,
             fold_indices=fold_indices,
         )
 
@@ -2712,12 +2709,11 @@ class AutoTuner:
                 recent_scores = self._predict_scores(model, search_train_features, temperature)
 
                 # m. Full evaluation
-                eval_metrics = self._evaluate_model(
-                    model,
-                    search_eval_features,
-                    search_eval_labels,
-                    ambient_hours_search_eval,
-                    temperature=temperature,
+                eval_scores = self._predict_scores(model, search_eval_features, temperature)
+                eval_metrics = self._evaluate_scores(
+                    y_scores=eval_scores,
+                    labels=search_eval_labels,
+                    ambient_hours=ambient_hours_search_eval,
                     fold_indices=fold_indices,
                 )
                 # Diagnostic: per-set metrics after search evaluation
@@ -2775,7 +2771,6 @@ class AutoTuner:
 
                 # q. Update error memory on eval data
                 # Use indices relative to search_eval_features to stay within FocusedSampler's pool
-                eval_scores = self._predict_scores(model, search_eval_features, temperature)
                 eval_indices = np.arange(len(search_eval_labels))
                 self.error_memory.update(
                     eval_indices,

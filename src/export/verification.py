@@ -262,7 +262,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
             if tensor is not None:
                 observed_state_payload_shapes.append(tuple(int(v) for v in tensor.get("shape", [])))
                 dtype = tensor.get("dtype")
-                observed_read_payload_dtypes.append(str(dtype))
+                observed_read_payload_dtypes.append(np.dtype(dtype).name)
                 quant = tensor.get("quantization_parameters", {}) or {}
                 scales = np.asarray(quant.get("scales", []))
                 zero_points = np.asarray(quant.get("zero_points", []))
@@ -274,7 +274,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
                 tensor = all_tensors.get(payload_idx)
                 if tensor is not None:
                     dtype = tensor.get("dtype")
-                    observed_assign_payload_dtypes.append(str(dtype))
+                    observed_assign_payload_dtypes.append(np.dtype(dtype).name)
                     quant = tensor.get("quantization_parameters", {}) or {}
                     scales = np.asarray(quant.get("scales", []))
                     zero_points = np.asarray(quant.get("zero_points", []))
@@ -286,7 +286,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
     details["observed_assign_payload_dtypes"] = observed_assign_payload_dtypes
     details["observed_assign_payload_quantized"] = observed_assign_payload_quantized
 
-    checks["state_payload_dtypes_int8"] = all(np.dtype(dt) == np.dtype("int8") for dt in observed_read_payload_dtypes)
+    checks["state_payload_dtypes_int8"] = all(np.dtype(dt).name == "int8" for dt in observed_read_payload_dtypes)
     checks["state_dtypes_int8"] = checks["state_payload_dtypes_int8"]
     if not checks["state_payload_dtypes_int8"]:
         errors.append(f"READ_VARIABLE payload tensors must be int8, got dtypes: {observed_read_payload_dtypes}")
@@ -298,7 +298,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         valid = False
 
     if observed_assign_payload_dtypes:
-        checks["assign_payload_dtypes_int8"] = all(np.dtype(dt) == np.dtype("int8") for dt in observed_assign_payload_dtypes)
+        checks["assign_payload_dtypes_int8"] = all(np.dtype(dt).name == "int8" for dt in observed_assign_payload_dtypes)
         if not checks["assign_payload_dtypes_int8"]:
             errors.append(f"ASSIGN_VARIABLE payload tensors must be int8, got dtypes: {observed_assign_payload_dtypes}")
             valid = False

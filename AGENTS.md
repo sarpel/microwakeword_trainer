@@ -56,6 +56,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 - **Don't evaluate auto-tuner on same data used for FocusedSampler training** — split search into search_train/search_eval via `search_eval_fraction` config. Training and evaluating on same data causes train-on-test contamination that degrades model quality.
 - **Don't hardcode okay_nabu state shapes in export verification** — use `compute_expected_state_shapes()` for config-aware validation. Models with different `clip_duration_ms` produce different `temporal_frames`, changing stream_5 shape.
 - **Don't reload checkpoints after EMA finalize** - At end of training, EMA may have cleared optimizer state; reloading triggers "optimizer has 2 variables whereas saved has 92 variables" warning without benefit. Only reload when resuming from interruption (see ARCHITECTURAL_CONSTITUTION.md Article IX).
+- **Don't feed large chunks to `pymicro_features.process_samples`** — `process_samples()` produces at most ONE frame per call and advances by exactly `samples_read` (160) samples. Feeding 480-sample chunks and advancing by 480 silently discards 320 samples per call, producing ~1/3 the correct frames with wrong values. Always advance `byte_idx += output.samples_read * 2`, feeding 160-sample (10ms) steps (see `src/data/features.py`).
 
 ### Environment & Dependencies
 - **Don't mix TF and PyTorch in same venv** - Use separate environments

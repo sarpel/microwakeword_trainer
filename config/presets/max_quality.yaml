@@ -202,7 +202,7 @@ performance:
   disable_mmap: false  # Disable memory-mapped files
   prefetch_buffer: 16  # tf.data prefetch buffer size (larger = faster GPU feed)
   use_tfdata: true  # Use tf.data pipeline instead of Python generators
-  tfdata_cache_dir: null  # Cache directory (null = in-memory cache)
+  tfdata_cache_dir: "${DATA_DIR:-./data}/processed/tfdata_cache"  # Disk cache directory for tf.data pipelines
   tfdata_shuffle_buffer: 4000  # Shuffle buffer size for tf.data pipeline (larger = better shuffling)
 
 # ─────────────────────────────────────────────────────────────────
@@ -270,7 +270,7 @@ export:
   inference_input_type: "int8"  # Input data type for TFLite model
   inference_output_type: "uint8"  # Output data type for TFLite model
 
-  probability_cutoff: 0.97  # Probability threshold for wake word detection
+  probability_cutoff: 0  # 0 = auto-calculate from checkpoint metadata
   sliding_window_size: 5  # Sliding window size for streaming
   tensor_arena_size: 0  # Tensor arena size (0 = auto-calculate)
   minimum_esphome_version: "2024.7.0"  # Minimum ESPHome version requirement
@@ -318,7 +318,7 @@ quality:
 # EVALUATION AND METRICS
 # ─────────────────────────────────────────────────────────────────
 evaluation:
-  default_threshold: 0.97  # Default probability threshold for evaluation
+  default_threshold: 0.90  # Default probability threshold for evaluation
   n_thresholds: 101  # Number of threshold steps for ROC/PR curves
   max_fah: 10.0  # Maximum false alarms per hour for evaluation
   warmup_runs: 10  # Number of warmup runs before latency measurement

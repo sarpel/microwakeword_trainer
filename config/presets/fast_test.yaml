@@ -193,7 +193,7 @@ performance:
   # Data pipeline
   prefetch_buffer: 8  # tf.data prefetch buffer size
   use_tfdata: true  # Use tf.data pipeline
-  tfdata_cache_dir: null  # Cache directory (null = memory)
+  tfdata_cache_dir: "${DATA_DIR:-./data}/processed/tfdata_cache"  # Disk cache directory for tf.data pipelines
   tfdata_shuffle_buffer: 2000  # Shuffle buffer size
   mmap_readonly: true  # Use read-only memory-mapped files
   tfdata_prefetch_to_device: true  # Prefetch data to GPU
@@ -264,7 +264,7 @@ export:
   inference_input_type: "int8"  # Input data type
   inference_output_type: "uint8"  # Output data type (must be uint8 for ESPHome)
 
-  probability_cutoff: 0.97  # Probability threshold for wake word detection
+  probability_cutoff: 0  # 0 = auto-calculate from checkpoint metadata
   sliding_window_size: 5  # Sliding window size for streaming
   tensor_arena_size: 0  # Tensor arena size (0 = auto-calculate)
   minimum_esphome_version: "2024.7.0"  # Minimum ESPHome version

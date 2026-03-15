@@ -47,7 +47,7 @@ import threading
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import tensorflow as tf
@@ -209,11 +209,15 @@ class HardExampleMiner:
         else:
             gen = data_generator
 
-        for features, labels, _ in gen:
-            predictions = model(features, training=False).numpy()
+        for features, labels, _ in cast(Any, gen):
+            predictions = model(features, training=False)
+            if predictions.ndim == 2 and predictions.shape[1] > 1:
+                scores = predictions[:, 1].numpy()
+            else:
+                scores = tf.reshape(predictions, [-1]).numpy()
 
             # Get hard indices local to this batch
-            local_hard_indices = self.get_hard_samples(labels, predictions)
+            local_hard_indices = self.get_hard_samples(labels, scores)
 
             if len(local_hard_indices) > 0:
                 # Store batch features reference (only if we have hard samples from this batch)
@@ -222,7 +226,7 @@ class HardExampleMiner:
             # Add hard negatives to heap
             for local_idx in local_hard_indices:
                 global_idx = global_offset + int(local_idx)
-                pred_score = float(predictions[local_idx])
+                pred_score = float(scores[local_idx])
                 # Store (pred_score, global_idx, batch_id, local_idx, label, prediction)
                 heap_entry = (pred_score, global_idx, batch_counter, int(local_idx), int(labels[local_idx]), pred_score)
 
@@ -636,10 +640,7 @@ def log_false_predictions_to_json(
     with open(log_path, "w") as f:
         json.dump(log_data, f, indent=2)
 
-    if hasattr(_log, "log_info"):
-        _log.log_info(f"Logged {len(false_predictions)} false predictions for epoch {epoch} to {log_file}")
-    else:
-        _log.info(f"Logged {len(false_predictions)} false predictions for epoch {epoch} to {log_file}")
+    _log.info(f"Logged {len(false_predictions)} false predictions for epoch {epoch} to {log_file}")
 
     return epoch_entry
 

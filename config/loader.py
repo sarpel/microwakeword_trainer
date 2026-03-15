@@ -414,7 +414,7 @@ class ExportConfig:
     quantize: bool = True
     inference_input_type: str = "int8"
     inference_output_type: str = "uint8"
-    probability_cutoff: float = 0.97
+    probability_cutoff: float = 0.0
     sliding_window_size: int = 5
     tensor_arena_size: int = 0  # 0 means auto-calculate from exported TFLite
     minimum_esphome_version: str = "2024.7.0"

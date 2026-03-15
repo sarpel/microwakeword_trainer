@@ -77,6 +77,8 @@ class OptimizedDataPipeline:
         self.autotune = tf.data.AUTOTUNE
         self.prefetch_buffer = config.get("performance", {}).get("prefetch_buffer", 8)
         self.cache_dir = config.get("performance", {}).get("tfdata_cache_dir")
+        processed_dir = config.get("paths", {}).get("processed_dir", "./data/processed")
+        self.default_cache_dir = str(Path(processed_dir) / "tfdata_cache")
         self.prefetch_to_device = config.get("performance", {}).get("tfdata_prefetch_to_device", True)
         self.prefetch_device = config.get("performance", {}).get("tfdata_prefetch_device", "/GPU:0")
 
@@ -106,6 +108,26 @@ class OptimizedDataPipeline:
             )
         return cache_path
 
+    def _effective_cache_dir(self, cache_dir: str | None) -> str | None:
+        """Resolve effective cache directory with a safe default.
+
+        Resolution order:
+        1) explicit `cache_dir` argument when provided
+        2) config.performance.tfdata_cache_dir
+        3) default under processed_dir/tfdata_cache
+
+        Set cache_dir to empty string to disable caching explicitly.
+        """
+        candidate = self.cache_dir if cache_dir is None else cache_dir
+        if candidate is None:
+            return self.default_cache_dir
+        if isinstance(candidate, str):
+            normalized = candidate.strip()
+            if not normalized:
+                return None
+            return normalized
+        return str(candidate)
+
     def _generator_factory(
         self,
         split: str = "train",
@@ -121,7 +143,7 @@ class OptimizedDataPipeline:
 
         def generator():
             if split == "train":
-                factory = self.dataset.train_generator_factory(self.max_time_frames) 
+                factory = self.dataset.train_generator_factory(self.max_time_frames)
             elif split == "test":
                 if not hasattr(self.dataset, "test_generator_factory"):
                     raise ValueError(f"Dataset {type(self.dataset).__name__} does not support 'test' split. Use 'train' or 'val'.")
@@ -134,14 +156,14 @@ class OptimizedDataPipeline:
                 if not isinstance(batch, tuple) or len(batch) < 2:
                     continue
                 features = batch[0]
-                labels = batch[1]
+                labels = np.asarray(batch[1], dtype=np.int32)
                 # Yield 4-tuple: (features, labels, sample_weights, is_hard_neg)
                 batch_size = features.shape[0]
                 # Use real sample_weights and is_hard_neg from underlying generator
                 # (train generator yields 4-tuples with actual hard-neg flags;
                 #  val/test generators yield 3-tuples — fall back to defaults)
-                sample_weights = batch[2].astype(np.float32) if len(batch) > 2 else np.ones(batch_size, dtype=np.float32)
-                is_hard_neg = batch[3].astype(np.bool_) if len(batch) > 3 else np.zeros(batch_size, dtype=np.bool_)
+                sample_weights = np.asarray(batch[2], dtype=np.float32) if len(batch) > 2 else np.ones(batch_size, dtype=np.float32)
+                is_hard_neg = np.asarray(batch[3], dtype=np.bool_) if len(batch) > 3 else np.zeros(batch_size, dtype=np.bool_)
                 yield features, labels, sample_weights, is_hard_neg
 
         return generator
@@ -175,7 +197,7 @@ class OptimizedDataPipeline:
         # Output signature must match generator output
         output_signature = (
             tf.TensorSpec(shape=(None, self.max_time_frames, 40), dtype=tf.float32),
-            tf.TensorSpec(shape=(None,), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.int32),
             tf.TensorSpec(shape=(None,), dtype=tf.float32),
             tf.TensorSpec(shape=(None,), dtype=tf.bool),
         )
@@ -186,14 +208,13 @@ class OptimizedDataPipeline:
         )
 
         # Cache first (before shuffle for proper training behavior)
-        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
+        resolved_cache_dir = self._effective_cache_dir(cache_dir)
         if resolved_cache_dir:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_train")
             ds = ds.cache(str(cache_path))
             logger.info(f"Using disk cache: {cache_path}")
         else:
-            # Skip memory cache to avoid OOM with large datasets
-            logger.info("No cache directory specified, skipping cache")
+            logger.info("tf.data cache disabled (empty cache_dir)")
         # Shuffle for training (after cache to reshuffle each epoch)
         training_cfg = self.config.get("training", {})
         deterministic_ops = os.environ.get("TF_DETERMINISTIC_OPS") == "1"
@@ -357,7 +378,7 @@ class OptimizedDataPipeline:
 
         output_signature = (
             tf.TensorSpec(shape=(None, self.max_time_frames, 40), dtype=tf.float32),
-            tf.TensorSpec(shape=(None,), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.int32),
             tf.TensorSpec(shape=(None,), dtype=tf.float32),
             tf.TensorSpec(shape=(None,), dtype=tf.bool),
         )
@@ -368,13 +389,13 @@ class OptimizedDataPipeline:
         )
 
         # Cache
-        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
+        resolved_cache_dir = self._effective_cache_dir(cache_dir)
         if resolved_cache_dir:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_test")
             ds = ds.cache(str(cache_path))
+            logger.info(f"Using disk cache: {cache_path}")
         else:
-            # Skip memory cache to avoid OOM with large datasets
-            logger.info("No cache directory specified, skipping cache")
+            logger.info("tf.data cache disabled (empty cache_dir)")
         # Prefetch
         ds = ds.prefetch(buffer_size=self.autotune)
         if self.prefetch_to_device:
@@ -404,7 +425,7 @@ class OptimizedDataPipeline:
 
         output_signature = (
             tf.TensorSpec(shape=(None, self.max_time_frames, 40), dtype=tf.float32),
-            tf.TensorSpec(shape=(None,), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.int32),
             tf.TensorSpec(shape=(None,), dtype=tf.float32),
             tf.TensorSpec(shape=(None,), dtype=tf.bool),
         )
@@ -415,13 +436,13 @@ class OptimizedDataPipeline:
         )
 
         # Cache (no shuffle for validation)
-        resolved_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
+        resolved_cache_dir = self._effective_cache_dir(cache_dir)
         if resolved_cache_dir:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_val")
             ds = ds.cache(str(cache_path))
+            logger.info(f"Using disk cache: {cache_path}")
         else:
-            # Skip memory cache to avoid OOM with large datasets
-            logger.info("No cache directory specified, skipping cache")
+            logger.info("tf.data cache disabled (empty cache_dir)")
         # No extra batching (generator already yields full batches)
 
         # Prefetch
@@ -571,7 +592,7 @@ def benchmark_pipeline(
 
     # Benchmark original generator
     logger.info("Benchmarking original generator...")
-    factory = dataset.train_generator_factory(None) 
+    factory = dataset.train_generator_factory(None)
     gen = factory() if callable(factory) else factory
 
     start = time.time()

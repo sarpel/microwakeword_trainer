@@ -721,9 +721,10 @@ class StreamingMixedNet:
     def reset(self):
         """Reset all state variables to zero tensors."""
         # Reset internal state in Stream layers (actual TensorFlow state variables)
-        for layer in self.model.layers:
-            if isinstance(layer, Stream) and hasattr(layer, "states") and layer.states is not None:
-                layer.states.assign(tf.zeros_like(layer.states))
+        if hasattr(self.model, 'layers'):
+            for layer in self.model.layers:
+                if isinstance(layer, Stream) and hasattr(layer, "states") and layer.states is not None:
+                    layer.states.assign(tf.zeros_like(layer.states))
 
         # Reset external state dictionary (for external streaming mode)
         state_names = get_streaming_state_names()
