@@ -743,7 +743,8 @@ def _plot_and_save_all(
         plt.close(fig)
         artifacts.append(str(p))
     except ImportError:
-        console.print("[yellow]Warning: scipy not installed. Skipping DET curve plot.[/]")
+        # SciPy optional: warn via plain print to avoid requiring a console object
+        print("Warning: scipy not installed. Skipping DET curve plot.")
 
     # 5) Score distributions
     fig = plt.figure(figsize=(8, 6))

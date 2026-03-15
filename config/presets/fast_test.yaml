@@ -152,7 +152,7 @@ augmentation:
 # ─────────────────────────────────────────────────────────────────
 performance:
   gpu_only: false  # Allow CPU for CI and local testing (override to true for GPU-only mode)
-  mixed_precision: true  # Enable mixed precision (FP16) - requires GPU/AMP, override to false for CPU
+  mixed_precision: false  # Enable mixed precision (FP16) - requires GPU/AMP, override to false for CPU
   spec_augment_backend: "tf"  # SpecAugment backend
   num_workers: 4  # Fewer workers for fast tests
   num_threads_per_worker: 2  # Threads per worker

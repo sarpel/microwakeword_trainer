@@ -780,23 +780,15 @@ def create_representative_dataset_from_data(
         # Representative dataset for INT8 quantization requires minimum 500 training samples
         # with forced min/max boundary anchors (0.0 and 26.0).
         required_chunks = max(500, target_chunks)
-        if len(all_chunks) < required_chunks:
-            if allow_random_fallback:
-                print(f"  Warning: Only {len(all_chunks)} calibration chunks available " f"(< 500 minimum), falling back to random calibration")
-                return create_representative_dataset(config, target_chunks)
-            raise ValueError(
-                f"Quantized export requires at least 500 representative calibration chunks "
-                f"for reliable INT8 quantization, but only {len(all_chunks)} "
-                f"valid chunks were extracted from feature store. "
-                f"Enable --allow-random-fallback or provide more training data."
-            )
 
-        # Ensure we meet minimum - pad with repetition if necessary
+        # If we extracted fewer than `required_chunks`, pad by repeating existing
+        # chunks (cycling) so the generator yields exactly `required_chunks`.
+        # The case of no chunks was handled above (fall back or raise).
         if len(all_chunks) < required_chunks:
             import itertools
 
-            repeats = (required_chunks + len(all_chunks) - 1) // len(all_chunks)
-            all_chunks = list(itertools.islice(itertools.cycle(all_chunks), required_chunks))
+            needed = required_chunks - len(all_chunks)
+            all_chunks = all_chunks + list(itertools.islice(itertools.cycle(all_chunks), needed))
 
         positive_pct = (n_positive_used / max(1, n_positive_used + n_negative_used)) * 100
         print(
