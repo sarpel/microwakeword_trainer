@@ -1550,8 +1550,18 @@ class AutoTuner:
             repr_idx = indices[n_cal + n_search + n_confirm :]
 
         # Sub-split search into search_train and search_eval
-        n_search_eval = max(1, int(len(search_idx) * self.search_eval_fraction))
+        # Need at least 2 samples to split into both train and eval
+        if len(search_idx) < 2:
+            raise ValueError(f"Need at least 2 search samples for train/eval split, got {len(search_idx)}")
+
+        # Ensure both partitions have at least 1 sample
+        n_search_eval = max(1, min(len(search_idx) - 1, int(round(len(search_idx) * self.search_eval_fraction))))
         n_search_train = len(search_idx) - n_search_eval
+
+        if len(search_train_idx) == 0 or len(search_eval_idx) == 0:
+            raise ValueError(
+                f"Search split produced empty partition: train={n_search_train}, eval={n_search_eval}, " f"len(search_idx)={len(search_idx)}, search_eval_fraction={self.search_eval_fraction}"
+            )
 
         if use_group_partition and group_ids is not None:
             # Group-aware sub-split of search partition
@@ -2763,14 +2773,12 @@ class AutoTuner:
                 improvement = eval_metrics.dominates(parent.eval_results)
                 self.thompson.update(arm_idx, improvement)
 
-                # q. Update error memory on eval data with offset indices
-                # Offset ensures ErrorMemory indices are > len(search_train_features),
-                # so FocusedSampler's pool filter (pool < len(self.features)) eliminates them,
-                # forcing score-based fallback instead of indexing into wrong train samples.
+                # q. Update error memory on eval data
+                # Use indices relative to search_eval_features to stay within FocusedSampler's pool
                 eval_scores = self._predict_scores(model, search_eval_features, temperature)
-                offset_eval_indices = np.arange(len(search_eval_labels)) + len(search_train_labels)
+                eval_indices = np.arange(len(search_eval_labels))
                 self.error_memory.update(
-                    offset_eval_indices,
+                    eval_indices,
                     search_eval_labels.flatten(),
                     eval_scores,
                     eval_metrics.threshold,
