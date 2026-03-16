@@ -15,13 +15,20 @@ from datetime import datetime
 from hashlib import sha1, sha256
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union, cast
 
 import numpy as np
 
 from src.data.ingestion import load_audio_wave
 
 logger = logging.getLogger(__name__)
+
+
+class _BatchBuffer(TypedDict):
+    features: np.ndarray
+    labels: np.ndarray
+    weights: np.ndarray
+    is_hard_neg: np.ndarray
 
 
 # =============================================================================
@@ -522,6 +529,12 @@ class FeatureStore:
         if self.labels is not None:
             self.labels.close()
 
+    def clear_caches(self):
+        """Clear memory caches in underlying RaggedMmap stores."""
+        if self.features is not None:
+            self.features.clear_cache()
+        if self.labels is not None:
+            self.labels.clear_cache()
 
 # =============================================================================
 # WAKE WORD DATASET (PyTorch-compatible)
@@ -575,7 +588,7 @@ class WakeWordDataset:
 
         # Pre-allocate batch buffers to avoid repeated allocation
         max_batch_size = self.batch_size
-        self._batch_buffer = {
+        self._batch_buffer: _BatchBuffer = {
             "features": np.empty((max_batch_size, self.max_time_frames, self.feature_dim), dtype=np.float32),
             "labels": np.empty(max_batch_size, dtype=np.int64),
             "weights": np.empty(max_batch_size, dtype=np.float32),
@@ -904,7 +917,11 @@ class WakeWordDataset:
 
         try:
             with open(paths_file, "r") as f:
-                return json.load(f)
+                loaded = json.load(f)
+                if isinstance(loaded, list) and all(isinstance(item, str) for item in loaded):
+                    return cast(list[str], loaded)
+                logger.warning(f"Invalid file path payload in {paths_file}; expected list[str]")
+                return None
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to load file paths from {paths_file}: {e}")
             return None
@@ -1124,7 +1141,7 @@ class WakeWordDataset:
         shuffle: bool,
         include_hard_negative_flag: bool,
     ):
-        batch_buffer = {
+        batch_buffer: _BatchBuffer = {
             "features": np.empty((self.batch_size, max_time_frames, self.feature_dim), dtype=np.float32),
             "labels": np.empty(self.batch_size, dtype=np.int64),
             "weights": np.empty(self.batch_size, dtype=np.float32),
@@ -1156,6 +1173,9 @@ class WakeWordDataset:
                 epoch_indices = rng.permutation(indices).tolist() if shuffle else indices
                 batch_idx = 0
 
+                # Clear RaggedMmap caches at epoch boundaries to prevent memory buildup
+                store.clear_caches()
+
                 for idx in epoch_indices:
                     try:
                         feature, label = store.get(idx)
@@ -1165,7 +1185,7 @@ class WakeWordDataset:
                     fixed_feature = self._pad_or_truncate(feature, max_time_frames)
                     if batch_idx < len(batch_buffer["features"]):
                         batch_buffer["features"][batch_idx] = fixed_feature
-                        batch_buffer["labels"][batch_idx] = label & 1
+                        batch_buffer["labels"][batch_idx] = int(label == 1)  # Binarize: 0=neg, 1=pos, 2=hard_neg → 0
                         batch_buffer["weights"][batch_idx] = 1.0
                         batch_buffer["is_hard_neg"][batch_idx] = label == 2
                         batch_idx += 1
@@ -1207,7 +1227,7 @@ class WakeWordDataset:
                             # Retry adding the sample after flushing
                             if batch_idx < len(batch_buffer["features"]):
                                 batch_buffer["features"][batch_idx] = fixed_feature
-                                batch_buffer["labels"][batch_idx] = label & 1
+                                batch_buffer["labels"][batch_idx] = int(label == 1)  # Binarize: 2→0
                                 batch_buffer["weights"][batch_idx] = 1.0
                                 batch_buffer["is_hard_neg"][batch_idx] = label == 2
                                 batch_idx += 1
@@ -1217,7 +1237,8 @@ class WakeWordDataset:
                             if added:
                                 break
 
-                if batch_idx != 0:
+                if batch_idx == 0:
+                    continue  # Skip empty batches to avoid yielding empty data
                     batch = (
                         batch_buffer["features"][:batch_idx].copy(),
                         batch_buffer["labels"][:batch_idx].copy(),
@@ -1268,7 +1289,7 @@ class WakeWordDataset:
             yield from self._iter_split_batches(
                 split="train",
                 max_time_frames=max_time_frames,
-                infinite=True,
+                infinite=False,
                 shuffle=True,
                 include_hard_negative_flag=True,
             )

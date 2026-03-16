@@ -41,15 +41,15 @@ training:
   auto_lr_scale_method: "sqrt"  # Method to scale LR based on batch size (sqrt or linear)
   # LR starts at standard 0.001, decays ~5x per phase for stable convergence
   # learning_rates: [0.0014, 0.00028, 0.00007]  # Sqrt-scaled for batch_size 256 (×√2 from 128)
-  batch_size: 256  # Training batch size per GPU
+  batch_size: 512  # Training batch size per GPU
   split_seed: 42  # Random seed for train/val/test split reproducibility
   eval_step_interval: 500  # Not directly used as a condition in the training loop
-  eval_basic_step_interval: 500  # Main eval trigger: runs full validation with all metrics
+  eval_basic_step_interval: 2500  # Main eval trigger: runs full validation with all metrics
   materialize_metrics_interval: 1000  # Training accuracy computation interval
-  eval_advanced_step_interval: 2000  # Advanced metrics: score distribution, gain metrics, mining updates
+  eval_advanced_step_interval: 5000  # Advanced metrics: score distribution, gain metrics, mining updates
   eval_confusion_matrix_interval: 5000  # Prints confusion matrix with per-class breakdown
-  eval_checkpoints_interval: 1000  # Best model checkpoint saving interval
-  eval_log_every_step: true  # Log evaluation status every step
+  eval_checkpoints_interval: 5000  # Fewer checkpoint sync points for better throughput
+  eval_log_every_step: false  # Reduce per-step logging overhead
   steps_per_epoch: 1000  # Number of steps per epoch for progress tracking
 
   positive_class_weight: [3.0, 4.0, 6.0]  # Weight for positive samples per phase
@@ -76,9 +76,9 @@ training:
 
   # Optimizer and loss parameters
   optimizer: "adam"  # Optimizer algorithm (adam or sgd)
-  label_smoothing: 0.1  # Label smoothing factor (0.0 = disabled, 0.1-0.2 typical)
+  label_smoothing: 0.00  # Label smoothing factor (0.0 = disabled, 0.1-0.2 typical)
   gradient_clipnorm: 1.0  # Clips gradient L2 norm to prevent exploding gradients
-  ema_decay: 0.9995  # EMA smoothing factor (higher = slower decay, half-life ~6900 steps)
+  ema_decay: 0.999  # EMA smoothing factor (higher = slower decay, half-life ~6900 steps)
   random_seed: 42  # Random seed for reproducible runs
   # Intra-phase cosine LR decay (prevents flat LR stagnation)
   cosine_decay_alpha: 0.3  # Intra-phase LR decay factor (LR ends at 30% of phase start)
@@ -106,8 +106,8 @@ model:
   residual_connection: "0,1,1,1"  # Which blocks have residual connections
 
   # Moderate regularization (less than before to avoid score compression)
-  dropout_rate: 0.2  # Dropout probability for classification head
-  l2_regularization: 0.0005  # L2 weight regularization factor
+  dropout_rate: 0.12  # Dropout probability for classification head
+  l2_regularization: 0.0001  # L2 weight regularization factor
 
 # ─────────────────────────────────────────────────────────────────
 # AUGMENTATION (aggressive for max generalization)
@@ -156,7 +156,7 @@ performance:
   gpu_only: true  # Use GPU-only mode (no CPU fallback)
   mixed_precision: true  # Enable mixed precision (FP16) for 2-3x speedup
   spec_augment_backend: "tf"  # SpecAugment backend (tf or cupy)
-  num_workers: 12  # Number of data loading workers
+  num_workers: 16  # Number of data loading workers
   num_threads_per_worker: 2  # Threads per data loading worker
   prefetch_factor: 16  # Prefetch factor for data pipeline
   pin_memory: true  # Pin CPU memory for faster GPU transfer
@@ -176,21 +176,21 @@ performance:
   tensorboard_log_dir: "./logs"  # TensorBoard log directory
   tensorboard_log_histograms: false  # Log weight histograms
   tensorboard_log_images: false  # Log image tensors
-  tensorboard_log_pr_curves: true  # Log precision-recall curves
-  tensorboard_log_roc_curves: true  # Log ROC curve visualizations (produces ROC/AUC plots)
+  tensorboard_log_pr_curves: false  # Disable expensive PR curve logging during training
+  tensorboard_log_roc_curves: false  # Disable expensive ROC curve plotting during training
   tensorboard_log_graph: true  # Log computation graph
-  tensorboard_log_advanced_scalars: true  # Log advanced scalar metrics
+  tensorboard_log_advanced_scalars: false  # Reduce eval-time TensorBoard overhead
   tensorboard_log_weight_histograms: false  # Log weight histograms separately
   tensorboard_image_interval: 5000  # Image logging interval in steps
   tensorboard_histogram_interval: 5000  # Histogram logging interval in steps
 
   # Sophisticated metrics (Phase 4) - disabled by default for cleaner logs
   tensorboard_log_learning_rate: true  # Log learning rate
-  tensorboard_log_gradient_norms: true  # Log gradient norms
-  tensorboard_log_activation_stats: true  # Log activation statistics
-  tensorboard_log_confidence_drift: true  # Log confidence drift metrics
-  tensorboard_log_per_class_accuracy: true  # Log per-class accuracy
-  tensorboard_sophisticated_interval: 2000  # Sophisticated metrics logging interval
+  tensorboard_log_gradient_norms: false  # Disable heavy histogram/scalar logging
+  tensorboard_log_activation_stats: false  # Disable expensive activation-stat collection
+  tensorboard_log_confidence_drift: false  # Disable extra eval-time logging
+  tensorboard_log_per_class_accuracy: false  # Disable extra eval-time logging
+  tensorboard_sophisticated_interval: 10000  # Sparse sophisticated logging to preserve throughput
 
   # Data pipeline
   mmap_readonly: true  # Use read-only memory-mapped files
@@ -238,10 +238,10 @@ mining:
   async_mining: true  # Use async (non-blocking background) mining for better throughput
 
   fp_threshold: 0.5  # False positive probability threshold for mining
-  max_samples: 1000  # Maximum samples to mine per epoch
-  mining_interval_epochs: 1  # Mine every N epochs (1 = every epoch)
+  max_samples: 500  # Lower mining memory/CPU overhead per mining run
+  mining_interval_epochs: 3  # Mine less frequently to reduce overhead
   collection_mode: "log_only"  # Mining collection mode
-  log_predictions: true  # Log prediction results
+  log_predictions: false  # Disable per-epoch FP logging to reduce I/O and RAM pressure
   log_file: "logs/false_predictions.json"  # Log file path
   enable_post_training_mining: true  # Enable mining after training ends
   mined_subdirectory: "mined"  # Subdirectory for mined samples
@@ -336,13 +336,13 @@ evaluation:
 auto_tuning:
   enabled: true  # Enable post-training auto-tuning
   target_fah: 0.2  # Target false alarms per hour for auto-tuning
-  target_recall: 0.95  # Target recall score for auto-tuning
+  target_recall: 0.92  # Target recall score for auto-tuning
   max_iterations: 30  # Maximum auto-tuning iterations
   max_gradient_steps: 5000  # Total gradient steps budget for tuning
   patience: 10  # Consecutive non-improvements before stopping
-  cv_folds: 7  # Cross-validation folds for threshold optimization
-  confirmation_fraction: 0.40  # Fraction of data for final confirmation
-  search_eval_fraction: 0.25  # Fraction of search data for evaluation
+  cv_folds: 5  # Cross-validation folds for threshold optimization
+  confirmation_fraction: 0.30  # Fraction of data for final confirmation
+  search_eval_fraction: 0.15  # Fraction of search data for evaluation
   bootstrap_samples: 2000  # Bootstrap samples for confidence intervals
   require_confirmation: true  # Require final confirmation phase
   group_key: speaker_id  # Group key for speaker-aware splits

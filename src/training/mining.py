@@ -202,6 +202,7 @@ class HardExampleMiner:
         # Cache batch features keyed by batch_counter; only entries still referenced
         # in the heap need to be retained (cleaned up after heap is finalized)
         batch_features_cache: dict[int, np.ndarray] = {}
+        evicted_batch_ids: set[int] = set()  # Track which batches were evicted from cache
 
         # Handle both generator factories and direct generators
         if callable(data_generator):
@@ -239,6 +240,7 @@ class HardExampleMiner:
                     evicted_batch_id = evicted[2]
                     if not any(e[2] == evicted_batch_id for e in hard_negative_heap):
                         batch_features_cache.pop(evicted_batch_id, None)
+                        evicted_batch_ids.add(evicted_batch_id)  # Track evicted batch
 
             global_offset += len(features)
             batch_counter += 1
@@ -277,8 +279,8 @@ class HardExampleMiner:
         if len(self.mining_history) > self._max_history_size:
             self.mining_history = self.mining_history[-self._max_history_size :]
 
-            # Track any entries with missing batch cache (should not happen)
-        missing_batch_entries = [entry for entry in sorted_hard if entry[2] not in batch_features_cache]
+            # Track any entries with missing batch cache that were NOT legitimately evicted
+        missing_batch_entries = [entry for entry in sorted_hard if entry[2] not in batch_features_cache and entry[2] not in evicted_batch_ids]
         if missing_batch_entries:
             logger.warning(f"Mining: {len(missing_batch_entries)} entries had missing batch cache references. This may indicate a bug in cache eviction logic.")
 
@@ -1058,13 +1060,14 @@ def consolidate_prediction_logs(
     for epoch, epoch_data in sorted(epoch_logs.items()):
         epoch_preds = epoch_data["false_predictions"]
 
-        # Map indices to file paths (use modulo to map to available files)
+        # Map indices to file paths using recorded file_path from prediction; fall back to index hint only if unavailable
         for pred in epoch_preds:
             idx = pred["index"]
-            if all_files:
-                # Use modulo to map index to file in list
-                file_idx = idx % len(all_files)
-                file_path = all_files[file_idx]
+            if pred.get("file_path"):
+                file_path = pred["file_path"]
+            elif all_files:
+                logger.warning("File path not recorded at write time; file attribution for index %d is unknown", idx)
+                file_path = f"unknown_file_index_{idx}"
             else:
                 file_path = f"unknown_file_index_{idx}"
 
@@ -1073,6 +1076,7 @@ def consolidate_prediction_logs(
             pred_with_path = pred.copy()
             pred_with_path["file_path"] = file_path
             pred_with_path["epoch"] = epoch
+            pred_with_path["true_label"] = pred.get("true_label", "negative")
             all_false_positives.append(pred_with_path)
 
         epoch_summary[epoch] = {
@@ -1274,7 +1278,10 @@ def load_prediction_log(log_path: Path) -> dict[str, Any]:
         raise FileNotFoundError(f"Prediction log not found: {log_path}")
 
     with open(log_path, "r") as f:
-        return json.load(f)
+        loaded = json.load(f)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Prediction log root must be a JSON object: {log_path}")
+    return cast(dict[str, Any], loaded)
 
 
 def filter_epochs_by_min_epoch(log_data: dict[str, Any], min_epoch: int) -> dict[int, dict]:
@@ -1745,7 +1752,7 @@ Examples:
         return 1
 
     # Setup Rich logging for all project logs
-    _configure_mining_logging(verbose=args.verbose)
+    _configure_mining_logging(verbose=getattr(args, "verbose", False))
 
     # ── mine ──────────────────────────────────────────────────────────────
     if args.command == "mine":

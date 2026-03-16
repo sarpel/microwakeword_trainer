@@ -277,12 +277,12 @@ class SpectrogramGeneration:
     @property
     def frame_size(self) -> int:
         """Get window size in samples."""
-        return self.config.window_size_samples
+        return int(self.config.window_size_samples)
 
     @property
     def frame_step(self) -> int:
         """Get step between frames in samples."""
-        return self.config.window_step_samples
+        return int(self.config.window_step_samples)
 
     @property
     def num_mel_bins(self) -> int:

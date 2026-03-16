@@ -174,7 +174,7 @@ class AudioAugmentation:
             import audiomentations
 
             augmenter = audiomentations.SevenBandParametricEQ(min_gain_db=-6.0, max_gain_db=6.0, p=1.0)
-            return augmenter(samples=audio, sample_rate=self.sample_rate)
+            return np.asarray(augmenter(samples=audio, sample_rate=self.sample_rate), dtype=np.float32)
         except ImportError:
             logger.debug("audiomentations not available, skipping EQ")
             return audio
@@ -192,11 +192,11 @@ class AudioAugmentation:
             import audiomentations
 
             augmenter = audiomentations.TanhDistortion(min_distortion=0.1, max_distortion=0.5, p=1.0)
-            return augmenter(samples=audio, sample_rate=self.sample_rate)
+            return np.asarray(augmenter(samples=audio, sample_rate=self.sample_rate), dtype=np.float32)
         except ImportError:
             # Simple tanh fallback
             drive = random.uniform(0.5, 2.0)  # noqa: S311
-            return np.tanh(audio * drive)
+            return np.asarray(np.tanh(audio * drive), dtype=np.float32)
 
     def apply_pitch_shift(self, audio: np.ndarray) -> np.ndarray:
         """Apply pitch shift.
@@ -235,7 +235,7 @@ class AudioAugmentation:
                 max_bandwidth_fraction=1.99,
                 p=1.0,
             )
-            return augmenter(samples=audio, sample_rate=self.sample_rate)
+            return np.asarray(augmenter(samples=audio, sample_rate=self.sample_rate), dtype=np.float32)
         except ImportError:
             logger.debug("audiomentations not available, skipping band stop")
             return audio
@@ -257,7 +257,7 @@ class AudioAugmentation:
                 max_snr_db=self.config.background_max_snr_db,
                 p=1.0,
             )
-            return augmenter(samples=audio, sample_rate=self.sample_rate)
+            return np.asarray(augmenter(samples=audio, sample_rate=self.sample_rate), dtype=np.float32)
         except ImportError:
             # Simple white noise fallback
             snr_db = random.uniform(self.config.background_min_snr_db, self.config.background_max_snr_db)  # noqa: S311
@@ -313,7 +313,7 @@ class AudioAugmentation:
                 target_noise_power = signal_power / (10 ** (snr_db / 10))
                 bg_audio = bg_audio * np.sqrt(target_noise_power / noise_power)
 
-            return audio + bg_audio
+            return np.asarray(audio + bg_audio, dtype=np.float32)
 
         except (FileNotFoundError, ValueError, OSError) as e:
             logger.warning(f"Failed to apply background noise: {e}")
@@ -405,4 +405,4 @@ def apply_spec_augment_gpu(
     result = cp.asnumpy(spec_gpu)
     del spec_gpu
     cp.get_default_memory_pool().free_all_blocks()
-    return result
+    return np.asarray(result)

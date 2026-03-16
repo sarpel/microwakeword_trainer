@@ -73,7 +73,7 @@ def generate_manifest(
     return manifest
 
 
-def resolve_probability_cutoff(tflite_path: str | None, export_config: dict[str, Any]) -> float:
+def resolve_probability_cutoff(tflite_path: str | None, export_config: dict[str, Any], evaluation_default: float = 0.5) -> float:
     """Resolve manifest probability_cutoff using a single canonical policy.
 
     Policy:
@@ -121,11 +121,9 @@ def resolve_probability_cutoff(tflite_path: str | None, export_config: dict[str,
                     logger.debug("Could not read metadata file %s: %s", meta_file, exc)
 
     # Final fallback: use 0.5 so model can still detect
-    logger.warning(
-        "Auto probability_cutoff: no checkpoint metadata found; using fallback 0.5. "
-        "Run mww-export with --data-dir to compute optimal cutoff from test split."
-    )
-    return 0.5
+    logger.warning("Auto probability_cutoff: no checkpoint metadata found; using fallback %.2f. Run mww-export with --data-dir to compute optimal cutoff from test split.", evaluation_default)
+    return evaluation_default
+
 
 def resolve_tensor_arena_size(tflite_path: str | None, export_config: dict[str, Any]) -> int:
     """Resolve manifest tensor_arena_size using a single canonical policy.
@@ -283,9 +281,7 @@ def verify_esphome_compatibility(manifest: dict[str, Any]) -> dict[str, Any]:
                 results["compatible"] = False
                 results["errors"].append("probability_cutoff must be between 0 and 1")
             elif prob_cutoff >= 0.95:
-                results["warnings"].append(
-                    f"probability_cutoff ({prob_cutoff}) is very high and may cause missed detections"
-                )
+                results["warnings"].append(f"probability_cutoff ({prob_cutoff}) is very high and may cause missed detections")
 
         if micro.get("feature_step_size") != 10:
             results["compatible"] = False

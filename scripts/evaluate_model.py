@@ -274,8 +274,7 @@ def _get_generator_factory(dataset, split: str, max_time_frames: int, console: C
                 return dataset.test_generator_factory(max_time_frames)
             except (AttributeError, ValueError):
                 pass
-        console.print("[yellow]Warning: No test split found, using validation split[/]")
-        return dataset.val_generator_factory(max_time_frames)
+        raise RuntimeError("No test split found in dataset. Use --split val to evaluate on validation data instead.")
     elif split == "val":
         return dataset.val_generator_factory(max_time_frames)
     else:
@@ -1483,9 +1482,18 @@ def main() -> int:
 
     # Load config
     try:
-        from config.loader import load_full_config
+        from pathlib import Path as _Path
 
-        config = load_full_config(args.config, args.override)
+        from config.loader import get_default_loader, load_full_config
+
+        if _Path(args.config).exists():
+            _loader = get_default_loader()
+            config_dict_raw = _loader.load(args.config)
+            if args.override:
+                config_dict_raw = _loader.merge(config_dict_raw, _loader.load(args.override))
+            config = _loader.to_dataclass(config_dict_raw)
+        else:
+            config = load_full_config(args.config, args.override)
         config_dict = dataclasses.asdict(config)
     except Exception as e:
         console.print(f"[red]Error loading config: {e}[/]")

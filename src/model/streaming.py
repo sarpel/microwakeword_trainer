@@ -374,11 +374,16 @@ class Stream(tf.keras.layers.Layer):
             return output, memory
         else:
             # Strided mode
-            memory = tf.concat([input_state, inputs], axis=1)
-            state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
-            output = self.cell(memory)
-            self.output_state = state_update
-            return output, state_update
+            if self.ring_buffer_size_in_time_dim:
+                memory = tf.concat([input_state, inputs], axis=1)
+                state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
+                output = self.cell(memory)
+                self.output_state = state_update
+                return output, state_update
+            else:
+                output = self.cell(inputs)
+                self.output_state = input_state
+                return output, input_state
 
     def _non_streaming(self, inputs, training=None):
         """Non-streaming mode (training or inference)."""
@@ -721,7 +726,7 @@ class StreamingMixedNet:
     def reset(self):
         """Reset all state variables to zero tensors."""
         # Reset internal state in Stream layers (actual TensorFlow state variables)
-        if hasattr(self.model, 'layers'):
+        if hasattr(self.model, "layers"):
             for layer in self.model.layers:
                 if isinstance(layer, Stream) and hasattr(layer, "states") and layer.states is not None:
                     layer.states.assign(tf.zeros_like(layer.states))

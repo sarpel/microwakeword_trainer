@@ -130,9 +130,22 @@ def main():
         return 1
 
     try:
-        from src.export.verification import verify_tflite_model
+        from config.loader import load_full_config
+        from src.export.verification import compute_expected_state_shapes, verify_tflite_model
 
-        verification = verify_tflite_model(str(model_path))
+        # Load config to compute expected state shapes for the model
+        config = load_full_config("standard")
+        expected_shapes = compute_expected_state_shapes(
+            first_conv_kernel=config.model.first_conv_kernel_size,
+            stride=config.model.stride,
+            mel_bins=config.hardware.mel_bins,
+            first_conv_filters=config.model.first_conv_filters,
+            mixconv_kernel_sizes=config.model.mixconv_kernel_sizes,
+            pointwise_filters=config.model.pointwise_filters,
+            temporal_frames=config.model.temporal_frames,
+        )
+
+        verification = verify_tflite_model(str(model_path), expected_state_shapes=expected_shapes)
         strict_result = _strict_payload_shape_check(str(model_path), verification=verification) if args.strict else None
         payload = _build_output(verification, strict_result=strict_result)
         payload_safe = cast(dict[str, Any], _to_json_safe(payload))

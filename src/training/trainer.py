@@ -8,6 +8,7 @@ Step-based training loop with:
 - Integration with TrainingProfiler
 """
 
+import gc
 import os
 import sys
 import threading
@@ -158,8 +159,18 @@ class EvaluationMetrics:
         # fall back to the score median — both give a live, informative training signal.
         adaptive_threshold = metrics.get("threshold_for_target_fah")
         if adaptive_threshold is None:
-            # No FAH data — fall back to median score as a reasonable midpoint
-            adaptive_threshold = float(np.median(y_scores))
+            # No FAH data — fall back to class-aware midpoint threshold.
+            # np.median(all_y_scores) gives ~0.0008 (dominated by negatives scoring near 0),
+            # which marks everything as positive and freezes Precision/Recall/F1.
+            # Instead use the midpoint between median-of-positives and median-of-negatives.
+            pos_mask = y_true == 1
+            neg_mask = y_true == 0
+            if pos_mask.any() and neg_mask.any():
+                pos_median = float(np.median(y_scores[pos_mask]))
+                neg_median = float(np.median(y_scores[neg_mask]))
+                adaptive_threshold = (pos_median + neg_median) / 2.0
+            else:
+                adaptive_threshold = float(np.median(y_scores))
         if abs(adaptive_threshold - self.default_threshold) > 1e-6:
             # Only re-compute if the adaptive threshold differs meaningfully
             binary_pred = (y_scores > adaptive_threshold).astype(int)
@@ -458,7 +469,7 @@ class Trainer:
         self.hn_config = hn_config  # Store config for collection mode access
         self.hard_negative_miner: HardExampleMiner | None = None
         self._async_miner: AsyncHardExampleMiner | None = None  # Async miner instance
-        self.false_predictions_log: list[dict] = []  # In-memory log for current epoch
+        self.false_predictions_log: list[dict] = []  # In-memory log for current epoch (capped)
         if self.hard_negative_mining_enabled:
             collection_mode = hn_config.get("collection_mode", "log_only")
             if self.async_mining and collection_mode == "mine_immediately":
@@ -541,7 +552,7 @@ class Trainer:
             self.logger.log_info(f"Lazy threshold mode: using default {default_threshold}")
             return [default_threshold]
 
-        return np.linspace(0.0, 1.0, n_thresholds).tolist()
+        return [float(v) for v in np.linspace(0.0, 1.0, n_thresholds)]
 
     def _init_tensorboard_logger(self, log_dir: Path) -> None:
         if not self.tensorboard_enabled:
@@ -960,7 +971,7 @@ class Trainer:
         assert optimizer is not None, "_swap_to_ema_weights called before model optimizer was created"
         optimizer_any: Any = optimizer
         # Save raw training weights before overwriting with EMA
-        self._saved_training_weights = [v.numpy().copy() for v in self.model.trainable_variables]
+        self._saved_training_weights = [w.copy() for w in self.model.get_weights()]
         # Swap EMA weights into model variables for evaluation
         optimizer_any.finalize_variable_values(self.model.trainable_variables)
 
@@ -971,12 +982,12 @@ class Trainer:
         the un-smoothed weights. Gradients should be applied to raw weights,
         not EMA weights.
         """
-        if not self._ema_enabled or not hasattr(self, "_saved_training_weights"):
+        if not self._ema_enabled or self._saved_training_weights is None:
             return
         assert self.model is not None, "_restore_training_weights called before model was built"
-        for var, saved in zip(self.model.trainable_variables, self._saved_training_weights, strict=False):
-            var.assign(saved)
-        del self._saved_training_weights
+        # Use set_weights() to properly restore all weights including BatchNorm moving stats
+        self.model.set_weights(self._saved_training_weights)
+        self._saved_training_weights = None
 
     def _apply_class_weights(
         self,
@@ -1157,8 +1168,8 @@ class Trainer:
                     loaded = _json.load(f)
                 if isinstance(loaded, dict):
                     existing = loaded
-            except Exception:
-                pass  # Re-write fresh if unreadable
+            except Exception as exc:
+                self.logger.log_warning(f"Could not read existing threshold metadata; rewriting fresh: {exc}")
 
         existing["probability_cutoff"] = threshold_float
         existing["probability_cutoff_source"] = source
@@ -1261,7 +1272,9 @@ class Trainer:
             is_hard_negative=is_hard_negative,
         )
 
-        labels = tf.reshape(train_ground_truth, [-1, 1])
+        # Defensive binarization: hard negatives (label=2) must be treated as 0 for BCE
+        binary_gt = tf.cast(tf.equal(train_ground_truth, 1), tf.float32)
+        labels = tf.reshape(binary_gt, [-1, 1])
         result = self.model.train_on_batch(
             train_fingerprints,
             labels,
@@ -1452,6 +1465,22 @@ class Trainer:
             )
             metrics["recall_at_target_fah"] = float(recall_at_fah)
             metrics["threshold_for_target_fah"] = float(threshold_at_fah)
+            # Retroactively recompute binary classification metrics at the operational FAH threshold.
+            # This overrides the metrics computed by compute_metrics() which used either the default
+            # threshold (0.97, produces all-zeros early in training) or the broken median fallback.
+            # threshold_at_fah is the only threshold that gives a live, meaningful training signal.
+            if threshold_at_fah > 0 and metrics_tracker.all_y_true:
+                _y_true_fah = np.array(metrics_tracker.all_y_true)
+                _y_scores_fah = np.array(metrics_tracker.all_y_scores)
+                _binary_pred = (_y_scores_fah > threshold_at_fah).astype(int)
+                from src.evaluation.metrics import compute_accuracy, compute_precision_recall
+
+                metrics["accuracy"] = compute_accuracy(_y_true_fah, _binary_pred)
+                _prec, _rec, _f1 = compute_precision_recall(_y_true_fah, _binary_pred)
+                metrics["precision"] = _prec
+                metrics["recall"] = _rec
+                metrics["f1_score"] = _f1
+                metrics["eval_threshold"] = float(threshold_at_fah)
             metrics["operating_threshold"] = float(threshold_at_fah)
             metrics["operating_recall"] = float(recall_at_fah)
             metrics["operating_target_fah"] = float(self.eval_target_fah)
@@ -1507,18 +1536,23 @@ class Trainer:
         eval_model = self.model.__class__.from_config(self.model.get_config())
         _ = eval_model(tf.zeros((1, *self.input_shape), dtype=tf.float32), training=False)
         eval_model.set_weights(weights_snapshot)
-        metrics, metrics_tracker, last_val_raw_labels, last_val_paths = self._validate_with_model(
-            model=eval_model,
-            data_generator=val_data_factory,
-        )
-        return {
-            "step": step,
-            "metrics": metrics,
-            "metrics_tracker": metrics_tracker,
-            "last_val_raw_labels": last_val_raw_labels,
-            "last_val_paths": last_val_paths,
-            "weights_snapshot": weights_snapshot,
-        }
+        try:
+            metrics, metrics_tracker, last_val_raw_labels, last_val_paths = self._validate_with_model(
+                model=eval_model,
+                data_generator=val_data_factory,
+            )
+            return {
+                "step": step,
+                "metrics": metrics,
+                "metrics_tracker": metrics_tracker,
+                "last_val_raw_labels": last_val_raw_labels,
+                "last_val_paths": last_val_paths,
+                "weights_snapshot": weights_snapshot,
+            }
+        finally:
+            # Explicitly delete the cloned model and weights to free memory
+            del eval_model
+            gc.collect()
 
     def _schedule_validation(
         self,
@@ -1579,6 +1613,7 @@ class Trainer:
         if advanced_due and self._check_and_act_on_plateau(val_metrics, step):
             self._save_checkpoint(val_metrics, is_best=False, reason="early_stop_plateau", weights_snapshot=weights_snapshot)
             self._async_early_stop_requested = True
+            self._release_validation_artifacts()
             return
 
         if basic_due:
@@ -1591,7 +1626,6 @@ class Trainer:
 
         if self.tensorboard_writer is not None:
             self._log_tensorboard_metrics("val", val_metrics, step, self._tb_val_metric_keys)
-            self.tensorboard_writer.flush()
         if advanced_due and self.tensorboard_logger is not None:
             self._log_advanced_tensorboard_metrics(val_metrics, step)
 
@@ -1639,8 +1673,12 @@ class Trainer:
                     elif self.hard_negative_miner is not None:
                         self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
                         try:
-                            mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
-                            mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
+                            self._swap_to_ema_weights()
+                            try:
+                                mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
+                                mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
+                            finally:
+                                self._restore_training_weights()
                             self.logger.log_mining(
                                 f"Completed at epoch {approx_epoch}",
                                 count=mining_result["num_hard_negatives"],
@@ -1652,6 +1690,19 @@ class Trainer:
                             self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
                         except Exception:
                             raise
+
+        self._release_validation_artifacts()
+
+    def _release_validation_artifacts(self) -> None:
+        """Release large validation buffers once results are consumed.
+
+        Keeps tensorboard/checkpoint/mining logic intact (they consume buffers first in
+        ``_handle_validation_results``), then frees host memory to avoid growth across
+        long trainings with frequent evaluations.
+        """
+        self.val_metrics.reset()  # Properly reset all accumulated metrics including numpy arrays
+        self._last_val_raw_labels = []
+        self._last_val_paths = []
 
     def _check_validation(self, block: bool = False) -> None:
         """Check pending validation; consume results when complete."""
@@ -1685,6 +1736,10 @@ class Trainer:
             mining_data_factory=pending["mining_data_factory"],
             weights_snapshot=result.get("weights_snapshot"),
         )
+        # Free references held by the consumed result to release memory
+        del result
+        del pending
+        gc.collect()
 
     def _log_false_predictions_to_json(self, epoch: int) -> None:
         """Log false positive predictions to JSON file for post-training mining.
@@ -1836,14 +1891,9 @@ class Trainer:
                                 freq_mask_max_size=self.freq_mask_max_size[aug_phase],
                                 freq_mask_count=self.freq_mask_count[aug_phase],
                             )
-                            # batch_spec_augment_gpu returns a CuPy GPU array.
-                            # Convert back to numpy so that train_on_batch always
-                            # receives a numpy array.  Passing CuPy arrays causes
-                            # Keras to retrace the training graph (CuPy != numpy type
-                            # signature) and the new trace triggers a broadcast error
-                            # in binary_crossentropy's internal logistic_loss path.
-                            if not isinstance(train_fingerprints, np.ndarray):
-                                train_fingerprints = np.asarray(train_fingerprints)
+                            # batch_spec_augment_gpu can return non-NumPy arrays.
+                            # Normalize to NumPy for stable Keras tracing/input typing.
+                            train_fingerprints = np.asarray(train_fingerprints)
                         except RuntimeError as e:
                             # GPU not available or CuPy not installed, skip SpecAugment
                             if not self._spec_augment_warning_shown:
@@ -1960,11 +2010,17 @@ class Trainer:
                             mining_data_factory=mining_data_factory,
                             weights_snapshot=weights_snapshot,
                         )
-                        if self._async_early_stop_requested:
+                        del weights_snapshot
+                        gc.collect()
+                        if bool(self._async_early_stop_requested):
                             break
 
                 self._check_validation()
-                if self._async_early_stop_requested:
+
+                # Periodic garbage collection to prevent memory buildup
+                if step % 500 == 0:
+                    gc.collect()
+                if bool(self._async_early_stop_requested):
                     break
 
                 # Resume progress bar if it was stopped (e.g., phase transition)

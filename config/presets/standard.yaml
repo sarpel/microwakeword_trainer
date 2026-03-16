@@ -43,12 +43,12 @@ training:
   batch_size: 128  # Training batch size
   split_seed: 42  # Random seed for train/val/test split reproducibility
   eval_step_interval: 500  # Eval trigger step interval
-  eval_basic_step_interval: 1000  # Main eval: runs full validation with all metrics
+  eval_basic_step_interval: 2500  # Main eval: less frequent to improve throughput
   materialize_metrics_interval: 1000  # Training accuracy computation interval
-  eval_advanced_step_interval: 5000  # Advanced metrics: score distribution, gain metrics
+  eval_advanced_step_interval: 10000  # Advanced metrics less frequent to reduce overhead
   eval_confusion_matrix_interval: 5000  # Confusion matrix logging interval
-  eval_checkpoints_interval: 5000  # Best model checkpoint saving interval
-  eval_log_every_step: true  # Log evaluation status every step
+  eval_checkpoints_interval: 10000  # Checkpoint less frequently to reduce sync + I/O overhead
+  eval_log_every_step: false  # Reduce per-step logging overhead
   steps_per_epoch: 1000  # Number of steps per epoch for progress tracking
 
   # Recall-biased class weighting (maximize detection at cost of more false alarms)
@@ -64,8 +64,8 @@ training:
 
   # Checkpoint selection: maximize recall
   maximization_metric: "average_viable_recall"  # Metric to maximize for checkpoint selection
-  target_maximization: 1.0  # Target value for maximization metric
-  # minimization_metric removed (was incorrectly set to same as maximization_metric)
+  minimization_metric: "ambient_false_positives_per_hour"  # Metric to minimize (FAH target)
+  target_minimization: 2.0  # Target FAH ceiling for checkpoint selection
 
   ambient_duration_hours: 42.02  # Total hours of ambient audio for FAH calculation
   train_split: 0.8  # Fraction of data for training
@@ -179,10 +179,10 @@ performance:
   tensorboard_log_dir: "./logs"  # TensorBoard log directory
   tensorboard_log_histograms: false  # Log weight histograms
   tensorboard_log_images: false  # Log image tensors
-  tensorboard_log_pr_curves: true  # Log precision-recall curves
+  tensorboard_log_pr_curves: false  # Disable expensive PR curve logging for better throughput
   tensorboard_log_roc_curves: false  # ROC curves disabled for standard (expensive)
   tensorboard_log_graph: true  # Log computation graph
-  tensorboard_log_advanced_scalars: true  # Log advanced scalar metrics
+  tensorboard_log_advanced_scalars: false  # Reduce TensorBoard overhead
   tensorboard_log_weight_histograms: false  # Log weight histograms separately
   tensorboard_image_interval: 5000  # Image logging interval in steps
   tensorboard_histogram_interval: 5000  # Histogram logging interval in steps
@@ -191,9 +191,9 @@ performance:
   tensorboard_log_learning_rate: true  # Log learning rate schedule
   tensorboard_log_gradient_norms: false  # Gradient norms disabled for standard
   tensorboard_log_activation_stats: false  # Activation stats disabled for standard
-  tensorboard_log_confidence_drift: true  # Log prediction confidence drift
-  tensorboard_log_per_class_accuracy: true  # Log per-class accuracy breakdown
-  tensorboard_sophisticated_interval: 2000  # Sophisticated metrics logging interval
+  tensorboard_log_confidence_drift: false  # Disable extra eval-time logging
+  tensorboard_log_per_class_accuracy: false  # Disable extra eval-time logging
+  tensorboard_sophisticated_interval: 10000  # Sparse sophisticated logging to preserve throughput
 
   # Data pipeline
   prefetch_buffer: 8  # tf.data prefetch buffer size
@@ -238,12 +238,12 @@ mining:
   enabled: true  # Enable hard negative mining
   async_mining: true  # Use async (non-blocking background) mining for better throughput
   fp_threshold: 0.65  # False positive probability threshold for mining
-  max_samples: 5000  # Maximum samples to mine per epoch (larger pool than max_quality)
-  mining_interval_epochs: 1  # Mine every N epochs
+  max_samples: 1000  # Lower mining memory/CPU overhead per epoch
+  mining_interval_epochs: 3  # Mine less frequently to reduce throughput impact
   collection_mode: "log_only"  # Mining collection mode
 
   # Logging
-  log_predictions: true  # Log prediction results
+  log_predictions: false  # Disable per-epoch FP logging to reduce I/O and memory pressure
   log_file: "logs/false_predictions.json"  # Log file path
   top_k_per_epoch: 150  # Top K false positives to mine per epoch
 

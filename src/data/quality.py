@@ -114,7 +114,7 @@ def _resample_to_16k(samples: np.ndarray, src_rate: int) -> np.ndarray:
         torch = require_optional("torch", extra="quality-full")
         t = torch.tensor(samples.astype(np.float32)).unsqueeze(0)
         t = torchaudio.functional.resample(t, src_rate, _DNSMOS_SAMPLE_RATE)
-        return t.squeeze(0).numpy()
+        return np.asarray(t.squeeze(0).numpy(), dtype=np.float32)
     except ImportError:
         pass
 
@@ -126,7 +126,7 @@ def _resample_to_16k(samples: np.ndarray, src_rate: int) -> np.ndarray:
     lo = idx.astype(int)
     hi = np.minimum(lo + 1, n_src - 1)
     frac = idx - lo
-    return (samples[lo] * (1.0 - frac) + samples[hi] * frac).astype(np.float32)
+    return np.asarray((samples[lo] * (1.0 - frac) + samples[hi] * frac), dtype=np.float32)
 
 
 def compute_clipping_ratio(samples: np.ndarray, threshold: float = 0.999) -> float:

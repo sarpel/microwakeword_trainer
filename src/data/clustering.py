@@ -250,7 +250,7 @@ def cluster_samples(
         )
         labels = clustering.fit_predict(normalized_features)
 
-    return labels
+    return np.asarray(labels)
 
 
 def select_diverse_samples(
@@ -528,6 +528,7 @@ def save_embeddings_cache(
         cache_path,
         embeddings=embeddings,
         files_hash=np.frombuffer(files_hash.encode(), dtype=np.uint8),
+        model_name=model_name,  # Save model_name for cache invalidation
     )
     logger.info(f"Saved embeddings cache: {cache_path}")
 
@@ -560,7 +561,7 @@ def load_embeddings_cache(
             return None
 
         logger.info(f"Loaded embeddings from cache: {cache_path}")
-        return data["embeddings"]
+        return np.asarray(data["embeddings"])
 
     except Exception as e:
         logger.warning(f"Failed to load cache: {e}")
@@ -772,7 +773,7 @@ def cluster_samples_hdbscan(
         noise_labels = np.arange(max_label + 1, max_label + 1 + n_noise)
         labels[noise_mask] = noise_labels
 
-    return labels
+    return np.asarray(labels)
 
 
 def cluster_samples_adaptive(

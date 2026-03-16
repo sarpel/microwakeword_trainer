@@ -662,7 +662,9 @@ class TestEvaluator:
         recalls, fahs_list = [], []
         for thresh in thresholds:
             fah_metrics = fah_estimator.compute_fah_metrics(y_true, y_score, threshold=thresh)
-            recalls.append(fah_metrics.get("recall", 0))
+            mask = y_score >= thresh
+            recall = float(np.sum(mask & (y_true == 1)) / max(np.sum(y_true == 1), 1))
+            recalls.append(recall)
             fahs_list.append(fah_metrics.get("ambient_false_positives_per_hour", 0))
 
         plt.figure(figsize=(8, 6))

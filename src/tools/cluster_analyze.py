@@ -375,9 +375,9 @@ Output files (per dataset):
             "Next steps:\n"
             "1. Review the reports and namelists above\n"
             "2. Inspect sample files in each cluster\n"
-            "3. Run Start-Clustering.py to organize files into speaker directories:\n"
-            "   python Start-Clustering.py --namelist-dir cluster_output --dry-run\n"
-            "   python Start-Clustering.py --namelist-dir cluster_output",
+            "3. Run mww-cluster-apply to organize files into speaker directories:\n"
+            "   mww-cluster-apply --namelist-dir cluster_output --dry-run\n"
+            "   mww-cluster-apply --namelist-dir cluster_output",
             title="Done",
             border_style="green",
         )

@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any, cast
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -139,7 +140,7 @@ def step_export(checkpoint: Path, config: str, output_dir: Path, model_name: str
     return tflite_path
 
 
-def step_verify_esphome(tflite_path: Path) -> dict:
+def step_verify_esphome(tflite_path: Path) -> dict[str, Any]:
     """Verify ESPHome compatibility.  Returns verification result dict."""
     cmd = [
         sys.executable,
@@ -159,7 +160,11 @@ def step_verify_esphome(tflite_path: Path) -> dict:
         idx = json_str.find("{")
         if idx >= 0:
             json_str = json_str[idx:]
-        data = json.loads(json_str)
+        loaded = json.loads(json_str)
+        if isinstance(loaded, dict):
+            data = cast(dict[str, Any], loaded)
+        else:
+            data = {"compatible": False, "errors": ["JSON output is not an object"]}
     except (json.JSONDecodeError, ValueError):
         print(f"✗ Could not parse verify_esphome output:\n{result.stdout}")
         # Treat non-zero returncode as failure
@@ -199,7 +204,7 @@ def step_verify_streaming(tflite_path: Path) -> None:
     print("✓ Streaming verification passed")
 
 
-def step_evaluate(tflite_path: Path, config: str, override: str | None) -> dict:
+def step_evaluate(tflite_path: Path, config: str, override: str | None) -> dict[str, Any]:
     """Run evaluate_model.py to get FAH/recall and return metrics dict.
 
     Returns empty dict if the evaluator script is not available.
@@ -231,7 +236,10 @@ def step_evaluate(tflite_path: Path, config: str, override: str | None) -> dict:
         idx = json_str.find("{")
         if idx >= 0:
             json_str = json_str[idx:]
-        return json.loads(json_str)
+        loaded = json.loads(json_str)
+        if isinstance(loaded, dict):
+            return cast(dict[str, Any], loaded)
+        return {}
     except (json.JSONDecodeError, ValueError):
         print("  ⚠ Could not parse evaluation output — skipping quality gate")
         return {}

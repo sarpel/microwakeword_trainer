@@ -53,7 +53,7 @@ def apply_sliding_window_detection(
         start = np.maximum(0, i - sliding_window_size + 1)
         window_sum = cumsum[i + 1] - cumsum[start]
         window_len = i - start + 1
-        return (window_sum > float(threshold) * window_len).astype(int)
+        return np.asarray((window_sum > float(threshold) * window_len).astype(int), dtype=int)
 
     # Validate clip_ids length matches scores
     if len(clip_ids) != scores.size:
@@ -104,6 +104,8 @@ def compute_accuracy(
 
 def compute_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
     """Compute ROC AUC score."""
+    # Defensive binarization: treat any label > 1 (e.g. hard_neg=2) as negative (0)
+    y_true = (y_true == 1).astype(np.int32)
     if len(np.unique(y_true)) < 2:
         return 0.5
 

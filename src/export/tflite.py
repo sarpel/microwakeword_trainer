@@ -414,7 +414,7 @@ class StreamingExportModel(tf.keras.Model):
     @staticmethod
     def _split_channels(inputs: tf.Tensor, splits: list) -> list:
         """Split tensor along channel dimension."""
-        return tf.split(inputs, splits, axis=-1)
+        return list(tf.split(inputs, splits, axis=-1))
 
     def fold_batch_norms(self) -> None:
         """Fold BN statistics into the preceding pointwise conv kernels.

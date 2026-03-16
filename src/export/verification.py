@@ -314,10 +314,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
 
     # Check shapes as a set (TFLite graph traversal order for READ_VARIABLE ops
     # is not guaranteed to match variable creation order)
-    if observed_state_payload_shapes is not None:
-        observed_sorted = sorted(observed_state_payload_shapes)
-    else:
-        observed_sorted = []
+    observed_sorted = sorted(observed_state_payload_shapes)
     expected_sorted = sorted(expected_state_shapes)
     checks["state_shapes"] = observed_sorted == expected_sorted
     details["expected_state_shapes"] = expected_sorted

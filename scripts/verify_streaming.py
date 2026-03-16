@@ -264,7 +264,7 @@ Examples:
             import traceback
 
             traceback.print_exc()
-        return 2
+        return 1
 
 
 if __name__ == "__main__":

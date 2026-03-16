@@ -9,7 +9,6 @@ pass through the model.
 """
 
 import numpy as np
-import pytest
 import tensorflow as tf
 
 from src.model.architecture import MixedNet
@@ -74,9 +73,10 @@ class TestAsyncValidationModelBuild:
         model = _make_model(input_shape)
         model.build((None, *input_shape))
 
-        assert len(model.get_weights()) == 0, (
+        expected_weights_message = (
             f"Expected 0 weights after build(), got {len(model.get_weights())}. If MixedNet now has a custom build() method, update _compute_metrics_background to use build() instead of forward pass."
         )
+        assert len(model.get_weights()) == 0, expected_weights_message
 
     def test_weights_transfer_correctly_after_forward_pass(self) -> None:
         """Weights set via set_weights() after forward pass must produce same outputs."""

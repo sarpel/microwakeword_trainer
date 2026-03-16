@@ -67,20 +67,24 @@ def test_pipeline_build_save_export_verify(tmp_path: Path) -> None:
     verify_result = verify_esphome_compatibility(str(tflite_path))
     assert "valid" in verify_result and "checks" in verify_result
     checks = verify_result["checks"]
-    critical_checks = {k: v for k, v in checks.items() if k not in (
-        "state_shapes",
-        # Quantization-dependent checks — skipped because quantize=False
-        "input_dtype",
-        "output_dtype",
-        "input_quant_params",
-        "output_quant_params",
-        "state_payload_dtypes_int8",
-        "state_dtypes_int8",
-        "read_payload_quant_params",
-        "assign_payload_dtypes_int8",
-        "assign_payload_quant_params",
-        "inference_works",  # Requires int8 input; skipped for float32 model
-    )}
+    critical_checks = {
+        k: v
+        for k, v in checks.items()
+        if k
+        not in (
+            # Quantization-dependent checks — skipped because quantize=False
+            "input_dtype",
+            "output_dtype",
+            "input_quant_params",
+            "output_quant_params",
+            "state_payload_dtypes_int8",
+            "state_dtypes_int8",
+            "read_payload_quant_params",
+            "assign_payload_dtypes_int8",
+            "assign_payload_quant_params",
+            "inference_works",  # Requires int8 input; skipped for float32 model
+        )
+    }
     assert all(critical_checks.values()), f"Critical ESPHome checks failed: {critical_checks}"
 
     verify_script = Path(__file__).resolve().parents[2] / "scripts" / "verify_esphome.py"

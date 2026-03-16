@@ -64,8 +64,8 @@ training:
   freq_mask_count: [1, 1, 1]  # Number of frequency masks per phase
 
   # Checkpoint selection: maximize recall
-  minimization_metric: "average_viable_recall"  # Metric to minimize
-  target_minimization: 1.0  # Target value for minimization metric
+  minimization_metric: "ambient_false_positives_per_hour"  # Metric to minimize
+  target_minimization: 5.0  # Target value for minimization metric
   maximization_metric: "average_viable_recall"  # Metric to maximize
 
   ambient_duration_hours: 42.02  # Total hours of ambient audio for FAH calculation

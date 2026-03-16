@@ -99,13 +99,38 @@ class OptimizedDataPipeline:
         cache_path = cache_root / cache_name
         lockfiles = list(cache_root.glob(f"{cache_path.name}_*.lockfile"))
         if lockfiles:
-            unique_name = f"{cache_name}_{os.getpid()}_{int(time.time())}"
-            cache_path = cache_root / unique_name
-            logger.warning(
-                "Detected existing tf.data cache lockfile %s; using unique cache path %s",
-                lockfiles[0],
-                cache_path,
-            )
+            # Try to clean up stale lockfiles from dead processes
+            stale = []
+            for lf in lockfiles:
+                try:
+                    # TF lockfiles aren't PID-named, so check .tempstate
+                    # companion; if present, cache was never finalized
+                    tempstate = lf.with_suffix(".tempstate")
+                    if tempstate.exists():
+                        stale.append(lf)
+                    else:
+                        stale.append(lf)  # orphan lockfile without data
+                except OSError:
+                    pass
+            for lf in stale:
+                try:
+                    lf.unlink(missing_ok=True)
+                    # Also remove any incomplete cache data
+                    for leftover in cache_root.glob(f"{lf.stem}*"):
+                        leftover.unlink(missing_ok=True)
+                    logger.info("Removed stale cache lockfile: %s", lf)
+                except OSError as e:
+                    logger.warning("Could not remove stale lockfile %s: %s", lf, e)
+            # Re-check if lockfiles remain after cleanup
+            lockfiles = list(cache_root.glob(f"{cache_path.name}_*.lockfile"))
+            if lockfiles:
+                unique_name = f"{cache_name}_{os.getpid()}_{int(time.time())}"
+                cache_path = cache_root / unique_name
+                logger.warning(
+                    "Active cache lockfile detected %s; using unique cache path %s",
+                    lockfiles[0],
+                    cache_path,
+                )
         return cache_path
 
     def _effective_cache_dir(self, cache_dir: str | None) -> str | None:
@@ -156,7 +181,7 @@ class OptimizedDataPipeline:
                 if not isinstance(batch, tuple) or len(batch) < 2:
                     continue
                 features = batch[0]
-                labels = np.asarray(batch[1], dtype=np.int32)
+                labels = (np.asarray(batch[1], dtype=np.int32) == 1).astype(np.int32)  # Binarize: hard_neg(2)→0
                 # Yield 4-tuple: (features, labels, sample_weights, is_hard_neg)
                 batch_size = features.shape[0]
                 # Use real sample_weights and is_hard_neg from underlying generator
@@ -212,9 +237,11 @@ class OptimizedDataPipeline:
         if resolved_cache_dir:
             cache_path = self._resolve_cache_path(resolved_cache_dir, "tfdata_train")
             ds = ds.cache(str(cache_path))
+            ds = ds.repeat()  # Replay from cache infinitely; finite generator fills cache once
             logger.info(f"Using disk cache: {cache_path}")
         else:
             logger.info("tf.data cache disabled (empty cache_dir)")
+            ds = ds.repeat()  # No cache; finite generator restarts each epoch
         # Shuffle for training (after cache to reshuffle each epoch)
         training_cfg = self.config.get("training", {})
         deterministic_ops = os.environ.get("TF_DETERMINISTIC_OPS") == "1"

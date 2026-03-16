@@ -38,6 +38,7 @@ console = Console()
 def _load_keras_model(checkpoint_path: str, config: dict):
     """Load a Keras model from a .weights.h5 checkpoint."""
     import tensorflow as tf
+
     from src.model.architecture import build_model
 
     hardware = config.get("hardware", {})
@@ -276,8 +277,9 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
-    from config.loader import load_full_config
     import dataclasses
+
+    from config.loader import load_full_config
 
     config_dc = load_full_config(args.config, args.override)
     config = dataclasses.asdict(config_dc)
@@ -313,7 +315,7 @@ def main() -> None:
             "model_b": {"path": args.model_b, "metrics": {k: v for k, v in metrics_b.items() if isinstance(v, (int, float, type(None)))}},
             "delta": {},
         }
-        for key, _, fmt in _DISPLAY_METRICS:
+        for key, _, _fmt in _DISPLAY_METRICS:
             va = metrics_a.get(key)
             vb = metrics_b.get(key)
             if va is not None and vb is not None:

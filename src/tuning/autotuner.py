@@ -576,7 +576,7 @@ class FocusedSampler:
         if scores is not None:
             neg_scores = scores[self.neg_indices]
             top_fa = np.argsort(-neg_scores)[:n]
-            return self.neg_indices[top_fa]
+            return np.asarray(self.neg_indices[top_fa])
         return self._random_from(self.neg_indices, n)
 
     def _get_miss_indices(self, threshold: float, n: int, scores: Optional[np.ndarray]) -> np.ndarray:
@@ -589,17 +589,17 @@ class FocusedSampler:
         if scores is not None:
             pos_scores = scores[self.pos_indices]
             low_recall = np.argsort(pos_scores)[:n]
-            return self.pos_indices[low_recall]
+            return np.asarray(self.pos_indices[low_recall])
         return self._random_from(self.pos_indices, n)
 
     def _random_from(self, pool: np.ndarray, n: int) -> np.ndarray:
         if len(pool) == 0:
             return self._random_sample(n)
         indices = np.random.choice(pool, size=min(n, len(pool)), replace=len(pool) < n)
-        return indices
+        return np.asarray(indices)
 
     def _random_sample(self, n: int) -> np.ndarray:
-        return np.random.choice(self.all_indices, size=n, replace=n > len(self.all_indices))
+        return np.asarray(np.random.choice(self.all_indices, size=n, replace=n > len(self.all_indices)))
 
     def _gather(self, indices: np.ndarray) -> tuple:
         indices = indices.astype(int)
@@ -617,12 +617,12 @@ class FocusedSampler:
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -500, 500)))
+    return np.asarray(1.0 / (1.0 + np.exp(-np.clip(x, -500, 500))), dtype=np.float64)
 
 
 def _logit(p: np.ndarray) -> np.ndarray:
     p = np.clip(p, 1e-7, 1.0 - 1e-7)
-    return np.log(p / (1.0 - p))
+    return np.asarray(np.log(p / (1.0 - p)), dtype=np.float64)
 
 
 def fit_temperature(probs: np.ndarray, labels: np.ndarray) -> float:
@@ -692,6 +692,9 @@ def compute_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 15) -> flo
 class ThresholdOptimizer:
     """3-pass threshold optimization with cross-validation."""
 
+    def __init__(self) -> None:
+        self._threshold_cache: dict[int, float] = {}
+
     def optimize(
         self,
         y_true: np.ndarray,
@@ -702,6 +705,7 @@ class ThresholdOptimizer:
         cv_folds: int = 5,
         fold_indices: Optional[list] = None,
         use_binary_search: bool = False,
+        sample_weights: Optional[np.ndarray] = None,
     ) -> tuple:
         """Threshold optimization.
 
@@ -714,7 +718,7 @@ class ThresholdOptimizer:
             logger.warning("Threshold optimization received empty arrays; using default threshold=0.5")
             best_threshold = 0.5
             threshold_uint8 = self._float_to_uint8(best_threshold)
-            metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours)
+            metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours, sample_weights=sample_weights)
             return best_threshold, threshold_uint8, metrics
 
         if use_binary_search:
@@ -726,7 +730,7 @@ class ThresholdOptimizer:
             )
 
             threshold_uint8 = self._float_to_uint8(best_threshold)
-            metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours)
+            metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours, sample_weights=sample_weights)
             return best_threshold, threshold_uint8, metrics
 
         # Pass 1: Coarse quantile sweep
@@ -755,7 +759,7 @@ class ThresholdOptimizer:
             )
 
         threshold_uint8 = self._float_to_uint8(best_threshold)
-        metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours)
+        metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours, sample_weights=sample_weights)
 
         return best_threshold, threshold_uint8, metrics
 
@@ -861,9 +865,6 @@ class ThresholdOptimizer:
         Caches optimization results to avoid recomputing for effectively
         identical score/label distributions.
         """
-        if not hasattr(self, "_threshold_cache"):
-            self._threshold_cache = {}
-
         if len(y_scores) == 0 or len(y_true) == 0:
             return 0.5
 
@@ -1066,17 +1067,25 @@ class ThresholdOptimizer:
         y_scores: np.ndarray,
         threshold: float,
         ambient_hours: float,
+        sample_weights: Optional[np.ndarray] = None,
     ) -> TuneMetrics:
         """Compute full metrics at a given threshold."""
         labels = (y_true >= 0.5).astype(int)
         preds = (y_scores >= threshold).astype(int)
 
-        tp = int(np.sum((preds == 1) & (labels == 1)))
-        fp = int(np.sum((preds == 1) & (labels == 0)))
-        fn = int(np.sum((preds == 0) & (labels == 1)))
-
-        n_pos = int(np.sum(labels))
-        n_neg = int(np.sum(1 - labels))
+        if sample_weights is not None:
+            w = sample_weights.flatten()
+            tp = float(np.sum(w[(preds == 1) & (labels == 1)]))
+            fp = float(np.sum(w[(preds == 1) & (labels == 0)]))
+            fn = float(np.sum(w[(preds == 0) & (labels == 1)]))
+            n_pos = float(np.sum(w[labels == 1]))
+            n_neg = float(np.sum(w[labels == 0]))
+        else:
+            tp = int(np.sum((preds == 1) & (labels == 1)))
+            fp = int(np.sum((preds == 1) & (labels == 0)))
+            fn = int(np.sum((preds == 0) & (labels == 1)))
+            n_pos = int(np.sum(labels))
+            n_neg = int(np.sum(1 - labels))
 
         recall = tp / max(n_pos, 1) if n_pos > 0 else 0.0
         precision = tp / max(tp + fp, 1) if (tp + fp) > 0 else 0.0
@@ -1097,6 +1106,10 @@ class ThresholdOptimizer:
             auc_pr = 0.0
 
         ece = compute_ece(labels, y_scores)
+        total_positives_int = int(round(float(n_pos)))
+        total_negatives_int = int(round(float(n_neg)))
+        false_positives_int = int(round(float(fp)))
+        false_negatives_int = int(round(float(fn)))
 
         return TuneMetrics(
             fah=fah,
@@ -1108,10 +1121,10 @@ class ThresholdOptimizer:
             threshold_uint8=self._float_to_uint8(threshold),
             precision=precision,
             f1=f1,
-            total_positives=n_pos,
-            total_negatives=n_neg,
-            false_positives=fp,
-            false_negatives=fn,
+            total_positives=total_positives_int,
+            total_negatives=total_negatives_int,
+            false_positives=false_positives_int,
+            false_negatives=false_negatives_int,
             ambient_duration_hours=ambient_hours,
         )
 
@@ -1242,7 +1255,7 @@ class AnnealingController:
             self._on_accept()
         else:
             self._on_reject()
-        return accepted
+        return bool(accepted)
 
     def _scalarized_cost(self, m: TuneMetrics, target_fah: float, target_recall: float) -> float:
         fah_excess = max(0, m.fah - target_fah) / max(target_fah, 1e-8)
@@ -1352,7 +1365,6 @@ class AutoTuner:
         self.best_checkpoint_path: Optional[str] = None
         self._last_confirmation_best_attempt: Optional[CandidateState] = None
         self._last_confirmation_best_confirmed: Optional[CandidateState] = None
-        self._threshold_cache: dict[str, float] = {}
         self._cached_eval_data: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None] | None = None
 
     def _setup_file_logger(self) -> logging.Logger:
@@ -2003,6 +2015,7 @@ class AutoTuner:
         labels: np.ndarray,
         ambient_hours: float,
         fold_indices: Optional[list] = None,
+        sample_weights: Optional[np.ndarray] = None,
     ) -> TuneMetrics:
         """Evaluate metrics from precomputed probability scores.
 
@@ -2018,8 +2031,9 @@ class AutoTuner:
             self.target_recall,
             cv_folds=self.cv_folds,
             fold_indices=fold_indices,
+            sample_weights=sample_weights,
         )
-        return metrics
+        return cast(TuneMetrics, metrics)
 
     def _evaluate(
         self,
@@ -2172,7 +2186,7 @@ class AutoTuner:
             return float("inf")
         fah_excess = max(0, m.fah - self.target_fah) / max(self.target_fah, 1e-8)
         recall_deficit = max(0, self.target_recall - m.recall) / max(self.target_recall, 1e-8)
-        return 2.0 * fah_excess + 1.0 * recall_deficit
+        return float(2.0 * fah_excess + 1.0 * recall_deficit)
 
     # ------------------------------------------------------------------
     # Checkpoint management
@@ -2334,7 +2348,7 @@ class AutoTuner:
                 best = c
 
         assert best is not None, "best should not be None"
-        return best
+        return cast(CandidateState, best)
 
     # ------------------------------------------------------------------
     # Rich logging
@@ -2685,7 +2699,7 @@ class AutoTuner:
                     use_swa=use_swa,
                     recent_scores=recent_scores,
                 )
-                self.total_gradient_steps += n_steps
+                self.total_gradient_steps += burst_info.get("steps", n_steps)
 
                 # i. SWA averaging if snapshots collected
                 swa_snapshots = burst_info.get("swa_snapshots", [])
@@ -2715,6 +2729,7 @@ class AutoTuner:
                     labels=search_eval_labels,
                     ambient_hours=ambient_hours_search_eval,
                     fold_indices=fold_indices,
+                    sample_weights=search_eval_weights,
                 )
                 # Diagnostic: per-set metrics after search evaluation
                 self.file_logger.info(f"Iter {iteration}: Search FAH={eval_metrics.fah:.4f}, Recall={eval_metrics.recall:.4f}, AUC-PR={eval_metrics.auc_pr:.4f}")
