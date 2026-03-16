@@ -24,7 +24,10 @@ def _base_cfg(tmp_path: Path) -> dict:
 
 
 def test_confirmation_phase_refreshes_bn_using_repr_partition(tmp_path: Path, monkeypatch) -> None:
-    tuner = at.AutoTuner(checkpoint_path=str(tmp_path / "ckpt.weights.h5"), config=_base_cfg(tmp_path))
+    tuner = at.AutoTuner(
+        checkpoint_path=str(tmp_path / "ckpt.weights.h5"),
+        config=_base_cfg(tmp_path),
+    )
 
     candidate = at.CandidateState(
         id="c0",
@@ -45,16 +48,30 @@ def test_confirmation_phase_refreshes_bn_using_repr_partition(tmp_path: Path, mo
     confirm_features = np.zeros((4, 3), dtype=np.float32)
     confirm_labels = np.array([0.0, 1.0, 0.0, 1.0], dtype=np.float32)
     confirm_weights = np.ones(4, dtype=np.float32)
-    confirm_data = (confirm_features, confirm_labels, confirm_weights, np.arange(4))
+    confirm_data = (
+        confirm_features,
+        confirm_labels,
+        confirm_weights,
+        np.arange(4),
+    )
 
     repr_features = np.ones((2, 3), dtype=np.float32)
-    repr_data = (repr_features, np.array([0.0, 1.0], dtype=np.float32), np.ones(2, dtype=np.float32), np.arange(2))
+    repr_data = (
+        repr_features,
+        np.array([0.0, 1.0], dtype=np.float32),
+        np.ones(2, dtype=np.float32),
+        np.arange(2),
+    )
 
     seen: dict[str, np.ndarray] = {}
 
     monkeypatch.setattr(tuner, "_deserialize_weights", lambda *args, **kwargs: None)
     monkeypatch.setattr(tuner, "_restore_bn_state", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tuner, "_predict_scores", lambda *args, **kwargs: np.array([0.1, 0.9, 0.2, 0.8], dtype=np.float32))
+    monkeypatch.setattr(
+        tuner,
+        "_predict_scores",
+        lambda *args, **kwargs: np.array([0.1, 0.9, 0.2, 0.8], dtype=np.float32),
+    )
 
     def fake_refresh(_model, feats, n_batches=50):
         _ = n_batches
@@ -63,8 +80,20 @@ def test_confirmation_phase_refreshes_bn_using_repr_partition(tmp_path: Path, mo
     monkeypatch.setattr(tuner, "_refresh_bn_statistics", fake_refresh)
 
     def fake_optimize(y_true, y_scores, ambient_duration_hours, target_fah, target_recall):
-        _ = (y_true, y_scores, ambient_duration_hours, target_fah, target_recall)
-        m = at.TuneMetrics(fah=0.1, recall=0.91, auc_pr=0.9, threshold=0.5, threshold_uint8=128)
+        _ = (
+            y_true,
+            y_scores,
+            ambient_duration_hours,
+            target_fah,
+            target_recall,
+        )
+        m = at.TuneMetrics(
+            fah=0.1,
+            recall=0.91,
+            auc_pr=0.9,
+            threshold=0.5,
+            threshold_uint8=128,
+        )
         return 0.5, 128, m
 
     monkeypatch.setattr(tuner.threshold_optimizer, "optimize", fake_optimize)

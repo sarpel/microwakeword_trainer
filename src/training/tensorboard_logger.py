@@ -331,7 +331,13 @@ class TensorBoardLogger:
             ax1.grid(True, alpha=0.3)
 
             # PR Curve
-            ax2.plot(recall, precision, "b-", linewidth=2, label=f"PR (AUC = {pr_auc:.3f})")
+            ax2.plot(
+                recall,
+                precision,
+                "b-",
+                linewidth=2,
+                label=f"PR (AUC = {pr_auc:.3f})",
+            )
             ax2.set_xlabel("Recall")
             ax2.set_ylabel("Precision")
             ax2.set_title("Precision-Recall Curve")
@@ -572,8 +578,20 @@ class TensorBoardLogger:
             fig, ax = plt.subplots(figsize=(10, 6))
 
             ax.plot(fahs, recalls, "b-", linewidth=2, label="Operating Curve")
-            ax.axhline(y=0.9, color="g", linestyle="--", alpha=0.5, label="90% Recall Target")
-            ax.axvline(x=0.5, color="r", linestyle="--", alpha=0.5, label="0.5 FAH Target")
+            ax.axhline(
+                y=0.9,
+                color="g",
+                linestyle="--",
+                alpha=0.5,
+                label="90% Recall Target",
+            )
+            ax.axvline(
+                x=0.5,
+                color="r",
+                linestyle="--",
+                alpha=0.5,
+                label="0.5 FAH Target",
+            )
             ax.set_xlabel("False Activations per Hour")
             ax.set_ylabel("Recall")
             ax.set_title("FAH vs Recall Operating Curve")
@@ -757,7 +775,11 @@ class TensorBoardLogger:
                         if grad is not None:
                             var_name = var.name.replace(":", "_")
                             grad_norm = tf.norm(grad)
-                            tf.summary.scalar(f"gradients/norm/{var_name}", grad_norm, step=step)
+                            tf.summary.scalar(
+                                f"gradients/norm/{var_name}",
+                                grad_norm,
+                                step=step,
+                            )
                 # Gradient norm histogram (all gradients flattened)
                 grad_list = [tf.reshape(g, [-1]) for g in gradients if g is not None]
                 if grad_list:
@@ -766,8 +788,16 @@ class TensorBoardLogger:
 
                     # Gradient statistics
                     tf.summary.scalar("gradients/mean", tf.reduce_mean(all_grads), step=step)
-                    tf.summary.scalar("gradients/std", tf.math.reduce_std(all_grads), step=step)
-                    tf.summary.scalar("gradients/max", tf.reduce_max(tf.abs(all_grads)), step=step)
+                    tf.summary.scalar(
+                        "gradients/std",
+                        tf.math.reduce_std(all_grads),
+                        step=step,
+                    )
+                    tf.summary.scalar(
+                        "gradients/max",
+                        tf.reduce_max(tf.abs(all_grads)),
+                        step=step,
+                    )
 
         except Exception as e:
             logger.warning(f"Failed to log gradient norms: {e}")
@@ -793,11 +823,23 @@ class TensorBoardLogger:
 
                     # Sparsity (% of zeros)
                     sparsity = tf.reduce_mean(tf.cast(tf.equal(activation, 0), tf.float32))
-                    tf.summary.scalar(f"activations/{clean_name}/sparsity", sparsity, step=step)
+                    tf.summary.scalar(
+                        f"activations/{clean_name}/sparsity",
+                        sparsity,
+                        step=step,
+                    )
 
                     # Activation statistics
-                    tf.summary.scalar(f"activations/{clean_name}/mean", tf.reduce_mean(activation), step=step)
-                    tf.summary.scalar(f"activations/{clean_name}/std", tf.math.reduce_std(activation), step=step)
+                    tf.summary.scalar(
+                        f"activations/{clean_name}/mean",
+                        tf.reduce_mean(activation),
+                        step=step,
+                    )
+                    tf.summary.scalar(
+                        f"activations/{clean_name}/std",
+                        tf.math.reduce_std(activation),
+                        step=step,
+                    )
                     tf.summary.scalar(
                         f"activations/{clean_name}/saturation",
                         tf.reduce_mean(tf.cast(tf.abs(activation) > 0.95, tf.float32)),
@@ -900,7 +942,11 @@ class TensorBoardLogger:
 
                 # Prediction distribution
                 pred_pos_ratio = np.mean(y_pred)
-                tf.summary.scalar("train/predicted_positive_ratio", float(pred_pos_ratio), step=step)
+                tf.summary.scalar(
+                    "train/predicted_positive_ratio",
+                    float(pred_pos_ratio),
+                    step=step,
+                )
 
         except Exception as e:
             logger.warning(f"Failed to log per-class accuracy: {e}")

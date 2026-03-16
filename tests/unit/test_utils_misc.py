@@ -14,7 +14,11 @@ def test_require_optional_success_and_failure() -> None:
     assert hasattr(math_mod, "sqrt")
 
     try:
-        optional_deps.require_optional("definitely_missing_module_xyz", extra="quality-full", pip_name="missing-pkg")
+        optional_deps.require_optional(
+            "definitely_missing_module_xyz",
+            extra="quality-full",
+            pip_name="missing-pkg",
+        )
         raise AssertionError("Expected ImportError")
     except ImportError as exc:
         msg = str(exc)
@@ -89,9 +93,29 @@ def test_seed_everything_without_cupy(monkeypatch) -> None:
 
 
 def test_performance_system_and_gpu_checks(monkeypatch) -> None:
-    monkeypatch.setattr(performance.psutil, "cpu_count", lambda logical=False: 8 if logical else 4)
-    monkeypatch.setattr(performance.psutil, "virtual_memory", lambda: SimpleNamespace(total=16 * 1024**3, available=8 * 1024**3))
-    monkeypatch.setattr(performance.GPUtil, "getGPUs", lambda: [SimpleNamespace(name="GPU0", memoryTotal=1000, memoryFree=700, memoryUsed=300, load=0.25)])
+    monkeypatch.setattr(
+        performance.psutil,
+        "cpu_count",
+        lambda logical=False: 8 if logical else 4,
+    )
+    monkeypatch.setattr(
+        performance.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=16 * 1024**3, available=8 * 1024**3),
+    )
+    monkeypatch.setattr(
+        performance.GPUtil,
+        "getGPUs",
+        lambda: [
+            SimpleNamespace(
+                name="GPU0",
+                memoryTotal=1000,
+                memoryFree=700,
+                memoryUsed=300,
+                load=0.25,
+            )
+        ],
+    )
 
     info = performance.get_system_info()
     assert info["cpu_count"] == 4
@@ -124,7 +148,11 @@ def test_format_bytes_and_io_profiler(tmp_path: Path) -> None:
 
 def test_setup_gpu_environment_sets_env(monkeypatch) -> None:
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-    performance.setup_gpu_environment(cuda_visible_devices="0", tf_force_gpu_allow_growth=True, tf_gpu_allocator="cuda_malloc_async")
+    performance.setup_gpu_environment(
+        cuda_visible_devices="0",
+        tf_force_gpu_allow_growth=True,
+        tf_gpu_allocator="cuda_malloc_async",
+    )
     assert os.environ["CUDA_VISIBLE_DEVICES"] == "0"
     assert os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] == "true"
     assert os.environ["TF_GPU_ALLOCATOR"] == "cuda_malloc_async"

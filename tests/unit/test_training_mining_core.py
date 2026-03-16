@@ -18,7 +18,9 @@ from src.training.mining import (
 )
 
 
-def test_get_hard_samples_confidence_strategy_selects_high_score_negatives(tmp_path: Path):
+def test_get_hard_samples_confidence_strategy_selects_high_score_negatives(
+    tmp_path: Path,
+):
     miner = HardExampleMiner(strategy="confidence", fp_threshold=0.8, output_dir=str(tmp_path))
 
     labels = np.array([0, 0, 1, 1, 0], dtype=np.int64)
@@ -29,7 +31,9 @@ def test_get_hard_samples_confidence_strategy_selects_high_score_negatives(tmp_p
     assert indices.tolist() == [0, 4]
 
 
-def test_get_hard_samples_entropy_strategy_selects_boundary_negatives(tmp_path: Path):
+def test_get_hard_samples_entropy_strategy_selects_boundary_negatives(
+    tmp_path: Path,
+):
     miner = HardExampleMiner(strategy="entropy", output_dir=str(tmp_path))
 
     labels = np.array([0, 0, 0, 1], dtype=np.int64)
@@ -48,7 +52,9 @@ def test_get_hard_samples_invalid_strategy_raises(tmp_path: Path):
         miner.get_hard_samples(np.array([0]), np.array([0.5], dtype=np.float32))
 
 
-def test_log_false_predictions_to_json_writes_sorted_top_k_and_metadata(tmp_path: Path):
+def test_log_false_predictions_to_json_writes_sorted_top_k_and_metadata(
+    tmp_path: Path,
+):
     log_file = tmp_path / "false_predictions.json"
     best_weights = tmp_path / "best.weights.h5"
     y_true = np.array([0, 0, 1, 0], dtype=np.int64)

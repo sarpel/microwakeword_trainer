@@ -230,7 +230,12 @@ class MicroFrontend:
                 # Pad last chunk with zeros if needed
                 chunk = chunk + b"\x00" * (feed_bytes - len(chunk))
             output = frontend.process_samples(chunk)
-            byte_idx += output.samples_read * 2  # advance by actual samples consumed
+            # Handle zero samples_read to prevent infinite loop
+            consumed_bytes = output.samples_read * 2
+            if consumed_bytes == 0:
+                # Fallback: advance by at least feed_size or minimum 2 bytes
+                consumed_bytes = min(feed_bytes, len(chunk)) if len(chunk) > 0 else 2
+            byte_idx += consumed_bytes
             if output.features:
                 all_features.extend(output.features)
         if not all_features:

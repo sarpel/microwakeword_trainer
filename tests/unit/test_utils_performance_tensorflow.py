@@ -23,20 +23,38 @@ def _install_fake_tensorflow(monkeypatch, tf_obj):
 
 
 def test_get_system_info_without_gpu(monkeypatch) -> None:
-    monkeypatch.setattr(performance.psutil, "cpu_count", lambda logical=False: 16 if logical else 8)
-    monkeypatch.setattr(performance.psutil, "virtual_memory", lambda: SimpleNamespace(total=32 * 1024**3, available=20 * 1024**3))
-    monkeypatch.setattr(performance.GPUtil, "getGPUs", lambda: (_ for _ in ()).throw(RuntimeError("gpu fail")))
+    monkeypatch.setattr(
+        performance.psutil,
+        "cpu_count",
+        lambda logical=False: 16 if logical else 8,
+    )
+    monkeypatch.setattr(
+        performance.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=32 * 1024**3, available=20 * 1024**3),
+    )
+    monkeypatch.setattr(
+        performance.GPUtil,
+        "getGPUs",
+        lambda: (_ for _ in ()).throw(RuntimeError("gpu fail")),
+    )
     info = performance.get_system_info()
     assert info["cpu_count"] == 8
     assert "gpu" not in info
 
 
 def test_check_gpu_available_exception(monkeypatch) -> None:
-    monkeypatch.setattr(performance.GPUtil, "getGPUs", lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(
+        performance.GPUtil,
+        "getGPUs",
+        lambda: (_ for _ in ()).throw(RuntimeError("x")),
+    )
     assert performance.check_gpu_available() is False
 
 
-def test_check_gpu_and_cupy_available_import_and_runtime_paths(monkeypatch) -> None:
+def test_check_gpu_and_cupy_available_import_and_runtime_paths(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(performance, "check_gpu_available", lambda: True)
 
     import builtins

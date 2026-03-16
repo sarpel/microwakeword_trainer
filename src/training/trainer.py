@@ -9,6 +9,7 @@ Step-based training loop with:
 """
 
 import gc
+import logging
 import os
 import sys
 import threading
@@ -32,10 +33,16 @@ from src.data.spec_augment_gpu import batch_spec_augment_gpu
 from src.evaluation.calibration import compute_brier_score
 from src.evaluation.metrics import MetricsCalculator
 from src.model.architecture import build_model
-from src.training.mining import AsyncHardExampleMiner, HardExampleMiner, log_false_predictions_to_json, run_top_fp_extraction
+from src.training.mining import (
+    AsyncHardExampleMiner,
+    HardExampleMiner,
+    log_false_predictions_to_json,
+    run_top_fp_extraction,
+)
 from src.training.profiler import TFProfiler, TrainingProfiler
 from src.training.rich_logger import RichTrainingLogger
 from src.training.tensorboard_logger import TensorBoardLogger
+from src.utils.logging_config import setup_rich_logging
 from src.utils.performance import get_system_info
 from src.utils.terminal_logger import TerminalLogger
 
@@ -174,7 +181,10 @@ class EvaluationMetrics:
         if abs(adaptive_threshold - self.default_threshold) > 1e-6:
             # Only re-compute if the adaptive threshold differs meaningfully
             binary_pred = (y_scores > adaptive_threshold).astype(int)
-            from src.evaluation.metrics import compute_accuracy, compute_precision_recall
+            from src.evaluation.metrics import (
+                compute_accuracy,
+                compute_precision_recall,
+            )
 
             metrics["accuracy"] = compute_accuracy(y_true, binary_pred)
             metrics["precision"], metrics["recall"], metrics["f1_score"] = compute_precision_recall(y_true, binary_pred)
@@ -211,7 +221,12 @@ class EvaluationMetrics:
         """Return (tp, fp, tn, fn) counts at the nearest stored cutoff to threshold."""
         cutoffs_arr = np.array(self.cutoffs)
         idx = int(np.argmin(np.abs(cutoffs_arr - threshold)))
-        return int(self._tp_arr[idx]), int(self._fp_arr[idx]), int(self._tn_arr[idx]), int(self._fn_arr[idx])
+        return (
+            int(self._tp_arr[idx]),
+            int(self._fp_arr[idx]),
+            int(self._tn_arr[idx]),
+            int(self._fn_arr[idx]),
+        )
 
 
 # Backward-compatible alias
@@ -262,6 +277,9 @@ class Trainer:
             seed_everything(int(self.random_seed))
             self._seed_applied = True
         # Class weights (positive upweighted to compensate for class imbalance)
+        # NOTE: These defaults differ from coding-guidelines (Pos=1.0, Neg=20.0, HardNeg=40.0)
+        # Multi-phase training uses phased weight scaling: early phases have higher positive weight,
+        # later phases gradually reduce it. This is intentional for this training strategy.
         self.positive_weights = training.get("positive_class_weight", [5.0, 7.0, 9.0])
         self.negative_weights = training.get("negative_class_weight", [1.5, 1.5, 1.5])
         self.hard_negative_weights = training.get("hard_negative_class_weight", [3.0, 5.0, 7.0])
@@ -416,7 +434,16 @@ class Trainer:
         self._last_materialized_accuracy: float = 0.0  # Keep last accuracy for display between materialization intervals
 
         # TensorBoard metric selection (keep focused, high-signal metrics)
-        self._tb_train_metric_keys = ["loss", "precision", "recall", "auc", "step_time_ms", "data_loading_ms", "spec_augment_ms", "train_step_ms"]
+        self._tb_train_metric_keys = [
+            "loss",
+            "precision",
+            "recall",
+            "auc",
+            "step_time_ms",
+            "data_loading_ms",
+            "spec_augment_ms",
+            "train_step_ms",
+        ]
         self._tb_val_metric_keys = [
             "precision",
             "recall",
@@ -548,7 +575,16 @@ class Trainer:
         )
         if lazy and not (log_pr_curves or log_roc_curves):
             # Prefer canonical detection_threshold, with backward compat
-            default_threshold = float(self.evaluation_config.get("detection_threshold", self.evaluation_config.get("default_threshold", self.evaluation_config.get("threshold", 0.97))) or 0.97)
+            default_threshold = float(
+                self.evaluation_config.get(
+                    "detection_threshold",
+                    self.evaluation_config.get(
+                        "default_threshold",
+                        self.evaluation_config.get("threshold", 0.97),
+                    ),
+                )
+                or 0.97
+            )
             self.logger.log_info(f"Lazy threshold mode: using default {default_threshold}")
             return [default_threshold]
 
@@ -597,7 +633,14 @@ class Trainer:
         tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
         if image_due:
             self.tensorboard_logger.log_score_distribution_image(y_true, y_score, step, raw_labels)
-            self.tensorboard_logger.log_confusion_matrix_image(tp, fp, tn, fn, step, threshold=self.val_metrics.default_threshold)
+            self.tensorboard_logger.log_confusion_matrix_image(
+                tp,
+                fp,
+                tn,
+                fn,
+                step,
+                threshold=self.val_metrics.default_threshold,
+            )
             self.tensorboard_logger.log_roc_pr_curves(y_true, y_score, step)
             self.tensorboard_logger.log_pr_curve_interactive(y_true, y_score, step)
             self.tensorboard_logger.log_calibration_curve(y_true, y_score, step)
@@ -835,8 +878,16 @@ class Trainer:
             # Log to TensorBoard
             if self.tensorboard_writer is not None:
                 with self.tensorboard_writer.as_default():
-                    tf.summary.scalar("train/plateau_lr_reductions", self._plateau_reduction_count, step=step)
-                    tf.summary.scalar("train/lr_reduction_factor", self._lr_reduction_factor, step=step)
+                    tf.summary.scalar(
+                        "train/plateau_lr_reductions",
+                        self._plateau_reduction_count,
+                        step=step,
+                    )
+                    tf.summary.scalar(
+                        "train/lr_reduction_factor",
+                        self._lr_reduction_factor,
+                        step=step,
+                    )
 
             return False
         else:
@@ -997,30 +1048,31 @@ class Trainer:
         negative_weight: float,
         hard_negative_weight: float,
         is_hard_negative: np.ndarray | None = None,
-    ) -> tf.Tensor:
-        """Apply class weights to sample weights (GPU-accelerated)."""
-        # Flatten to 1D to avoid SelectV2 broadcastability failures when tensors
+    ) -> np.ndarray:
+        """Apply class weights to sample weights using numpy (avoids TF graph accumulation)."""
+        # Flatten to 1D to avoid broadcastability failures when arrays
         # arrive with shape (batch, 1) from different code paths (e.g. tfdata prefetch)
-        y_true_t = tf.cast(tf.reshape(tf.constant(y_true), [-1]), tf.float32)
-        sw_t = tf.cast(tf.reshape(tf.constant(sample_weights), [-1]), tf.float32)
-        if y_true_t.shape[0] != sw_t.shape[0]:
-            raise tf.errors.InvalidArgumentError(
-                None,
-                None,
-                f"sample_weights size must match labels size: got {sw_t.shape[0]} weights for {y_true_t.shape[0]} labels",
-            )
+        y_true_flat = np.asarray(y_true, dtype=np.float32).ravel()
+        sw_flat = np.asarray(sample_weights, dtype=np.float32).ravel()
+        if y_true_flat.shape[0] != sw_flat.shape[0]:
+            raise ValueError(f"sample_weights size must match labels size: got {sw_flat.shape[0]} weights for {y_true_flat.shape[0]} labels")
         if is_hard_negative is not None:
-            hn_t = tf.cast(tf.reshape(tf.constant(is_hard_negative), [-1]), tf.bool)
-            class_weights = tf.where(
-                y_true_t == 1,
+            hn_flat = np.asarray(is_hard_negative, dtype=bool).ravel()
+            class_weights = np.where(
+                y_true_flat == 1,
                 positive_weight,
-                tf.where(hn_t, hard_negative_weight, negative_weight),
+                np.where(hn_flat, hard_negative_weight, negative_weight),
             )
         else:
-            class_weights = tf.where(y_true_t == 1, positive_weight, negative_weight)
-        return sw_t * class_weights
+            class_weights = np.where(y_true_flat == 1, positive_weight, negative_weight)
+        return np.asarray(sw_flat * class_weights)
 
-    def _is_best_model(self, metrics: dict[str, float], target_fah: float, target_recall: float) -> tuple[bool, str]:
+    def _is_best_model(
+        self,
+        metrics: dict[str, float],
+        target_fah: float,
+        target_recall: float,
+    ) -> tuple[bool, str]:
         """Determine if current model is best using a two-stage checkpoint strategy.
 
         Stage 1 — Warm-up (no epoch has yet met the FAH budget):
@@ -1133,7 +1185,10 @@ class Trainer:
             self._write_checkpoint_threshold_metadata(metrics)
 
         # Save periodic checkpoint
-        checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_step_{self.current_step}.weights.h5")
+        checkpoint_path = os.path.join(
+            self.checkpoint_dir,
+            f"checkpoint_step_{self.current_step}.weights.h5",
+        )
         self.model.save_weights(checkpoint_path)
 
     def _write_checkpoint_threshold_metadata(self, metrics: dict[str, float]) -> None:
@@ -1192,7 +1247,12 @@ class Trainer:
         try:
             import subprocess
 
-            result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
             if result.returncode == 0:
                 git_commit = result.stdout.strip()
         except Exception as exc:
@@ -1299,28 +1359,26 @@ class Trainer:
     def _process_validation_chunk(
         self,
         metrics_tracker: TrainingMetrics,
-        chunk_scores: list[tf.Tensor],
-        chunk_labels: list[tf.Tensor],
+        chunk_scores: list[np.ndarray],
+        chunk_labels: list[np.ndarray],
     ) -> None:
         """Process a chunk of validation data to update metrics incrementally.
 
-        This method concatenates the accumulated chunk tensors, converts to numpy,
-        updates the validation metrics, and clears the chunk lists to free memory.
+        This method concatenates the accumulated chunk arrays, updates the
+        validation metrics, and clears the chunk lists to free memory.
 
         Args:
             metrics_tracker: Metrics accumulator to update
-            chunk_scores: List of score tensors from model predictions
-            chunk_labels: List of label tensors
+            chunk_scores: List of score arrays from model predictions
+            chunk_labels: List of label arrays
         """
         if not chunk_scores:
             return
 
-        scores_all = tf.concat(chunk_scores, axis=0)
-        labels_all = tf.concat(chunk_labels, axis=0)
-        scores_np = scores_all.numpy()
-        labels_np = labels_all.numpy()
+        scores_np = np.concatenate(chunk_scores, axis=0)
+        labels_np = np.concatenate(chunk_labels, axis=0)
         metrics_tracker.update(labels_np, scores_np)
-        del scores_all, labels_all, scores_np, labels_np
+        del scores_np, labels_np
 
     def _validate_with_model(
         self,
@@ -1353,8 +1411,8 @@ class Trainer:
 
         score_samples: list[float] = []
         score_sample_limit = 2000
-        chunk_scores: list[tf.Tensor] = []
-        chunk_labels: list[tf.Tensor] = []
+        chunk_scores: list[np.ndarray] = []
+        chunk_labels: list[np.ndarray] = []
         total_samples = 0
         last_val_paths: list[str] = self._val_file_paths or []
         last_val_raw_labels: list[int] = []
@@ -1372,8 +1430,8 @@ class Trainer:
             else:
                 scores = tf.reshape(predictions, [-1])
 
-            chunk_scores.append(scores)
-            chunk_labels.append(tf.cast(ground_truth, tf.int32))
+            chunk_scores.append(scores.numpy())
+            chunk_labels.append(tf.cast(ground_truth, tf.int32).numpy())
             n_samples_in_batch = len(scores)
             clip_ids_accumulator.extend(range(clip_id_counter, clip_id_counter + n_samples_in_batch))
             clip_id_counter += n_samples_in_batch
@@ -1473,7 +1531,10 @@ class Trainer:
                 _y_true_fah = np.array(metrics_tracker.all_y_true)
                 _y_scores_fah = np.array(metrics_tracker.all_y_scores)
                 _binary_pred = (_y_scores_fah > threshold_at_fah).astype(int)
-                from src.evaluation.metrics import compute_accuracy, compute_precision_recall
+                from src.evaluation.metrics import (
+                    compute_accuracy,
+                    compute_precision_recall,
+                )
 
                 metrics["accuracy"] = compute_accuracy(_y_true_fah, _binary_pred)
                 _prec, _rec, _f1 = compute_precision_recall(_y_true_fah, _binary_pred)
@@ -1495,7 +1556,12 @@ class Trainer:
 
         return metrics, metrics_tracker, last_val_raw_labels, last_val_paths
 
-    def validate(self, data_generator, chunk_size: int = 2000, ambient_duration_hours: float | None = None) -> dict[str, float]:
+    def validate(
+        self,
+        data_generator,
+        chunk_size: int = 2000,
+        ambient_duration_hours: float | None = None,
+    ) -> dict[str, float]:
         """Validate model on validation set with chunked processing to limit memory.
 
         Args:
@@ -1611,7 +1677,12 @@ class Trainer:
         val_metrics = self._augment_quality_metrics(val_metrics, step)
 
         if advanced_due and self._check_and_act_on_plateau(val_metrics, step):
-            self._save_checkpoint(val_metrics, is_best=False, reason="early_stop_plateau", weights_snapshot=weights_snapshot)
+            self._save_checkpoint(
+                val_metrics,
+                is_best=False,
+                reason="early_stop_plateau",
+                weights_snapshot=weights_snapshot,
+            )
             self._async_early_stop_requested = True
             self._release_validation_artifacts()
             return
@@ -1676,7 +1747,11 @@ class Trainer:
                             self._swap_to_ema_weights()
                             try:
                                 mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
-                                mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
+                                mining_result = self.hard_negative_miner.mine_from_dataset(
+                                    self.model,
+                                    mining_source_factory,
+                                    approx_epoch,
+                                )
                             finally:
                                 self._restore_training_weights()
                             self.logger.log_mining(
@@ -1863,13 +1938,23 @@ class Trainer:
                 # Get training batch
                 _t_data_end = step_start  # fallback; overwritten on success
                 try:
-                    train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
+                    (
+                        train_fingerprints,
+                        train_ground_truth,
+                        train_sample_weights,
+                        train_is_hard_neg,
+                    ) = next(train_data_generator)
                     _t_data_end = time.perf_counter()
                 except StopIteration:
                     # Restart by calling the factory again
                     train_data_generator = train_data_factory()
                     try:
-                        train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
+                        (
+                            train_fingerprints,
+                            train_ground_truth,
+                            train_sample_weights,
+                            train_is_hard_neg,
+                        ) = next(train_data_generator)
                         _t_data_end = time.perf_counter()
                     except StopIteration as exc:
                         raise RuntimeError("train_data_factory() returned an empty generator after restart. Cannot continue training without batches.") from exc
@@ -1904,15 +1989,28 @@ class Trainer:
                 _t_train_start = time.perf_counter()
                 if self.profiler and step % self.profile_every_n == 0:
                     with self.profiler.profile_section(f"full_step_{step}"):
-                        train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg)
+                        train_metrics = self.train_step(
+                            train_fingerprints,
+                            train_ground_truth,
+                            train_sample_weights,
+                            train_is_hard_neg,
+                        )
                 else:
-                    train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg)
+                    train_metrics = self.train_step(
+                        train_fingerprints,
+                        train_ground_truth,
+                        train_sample_weights,
+                        train_is_hard_neg,
+                    )
                 _t_train_end = time.perf_counter()
                 materialize_due = step % self.materialize_metrics_interval == 0
                 if not materialize_due:
                     loss_value = float(train_metrics.get("loss", 0.0))
                     # Keep last materialized accuracy for display (don't show 0 when not materialized)
-                    train_metrics = {"loss": loss_value, "accuracy": self._last_materialized_accuracy}
+                    train_metrics = {
+                        "loss": loss_value,
+                        "accuracy": self._last_materialized_accuracy,
+                    }
                 else:
                     # Update cached accuracy when materialized
                     self._last_materialized_accuracy = float(train_metrics.get("accuracy", 0.0))
@@ -1930,7 +2028,16 @@ class Trainer:
                         delta_steps = step - last_throughput_step
                         steps_per_sec = delta_steps / elapsed if delta_steps > 0 else 0.0
                         samples_per_sec = delta_samples / elapsed if delta_samples > 0 else 0.0
-                        self.logger.log_info(f"Throughput: {steps_per_sec:.2f} steps/s, {samples_per_sec:.1f} samples/s over last {delta_steps} steps")
+                        remaining_steps = total_steps - step
+                        if steps_per_sec > 0:
+                            eta_secs = int(remaining_steps / steps_per_sec)
+                            eta_h = eta_secs // 3600
+                            eta_m = (eta_secs % 3600) // 60
+                            eta_s = eta_secs % 60
+                            eta_str = f"{eta_h}:{eta_m:02d}:{eta_s:02d}"
+                        else:
+                            eta_str = "--:--:--"
+                        self.logger.log_info(f"Throughput: {steps_per_sec:.2f} steps/s, {samples_per_sec:.1f} samples/s over last {delta_steps} steps | ETA: {eta_str}")
                     last_throughput_time = now
                     last_throughput_step = step
                     last_throughput_samples = step * self.batch_size
@@ -1940,12 +2047,27 @@ class Trainer:
                 approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
                 phase_settings_display["epoch"] = approx_epoch
                 if self.eval_log_every_step or step % self.eval_basic_step_interval == 0:
-                    self.logger.update_step(progress, progress_task, step, train_metrics, phase_settings_display)
+                    self.logger.update_step(
+                        progress,
+                        progress_task,
+                        step,
+                        train_metrics,
+                        phase_settings_display,
+                    )
 
                 if self.tensorboard_writer is not None and step % self.eval_basic_step_interval == 0:
-                    self._log_tensorboard_metrics("train", train_metrics, step, self._tb_train_metric_keys)
+                    self._log_tensorboard_metrics(
+                        "train",
+                        train_metrics,
+                        step,
+                        self._tb_train_metric_keys,
+                    )
                     with self.tensorboard_writer.as_default():
-                        tf.summary.scalar("train/learning_rate", float(phase_settings_display["learning_rate"]), step=step)
+                        tf.summary.scalar(
+                            "train/learning_rate",
+                            float(phase_settings_display["learning_rate"]),
+                            step=step,
+                        )
 
                 # Log GPU memory + utilization to TensorBoard
                 if self.tensorboard_writer is not None and self.gpu_memory_log_interval > 0 and step % self.gpu_memory_log_interval == 0 and self.tf_profiler is not None:
@@ -1955,7 +2077,11 @@ class Trainer:
                     gpu_load = float(gpu_info.get("load_percent", 0.0)) if isinstance(gpu_info, dict) else 0.0
                     with self.tensorboard_writer.as_default():
                         tf.summary.scalar("gpu/peak_memory_mb", mem["peak_mb"], step=step)
-                        tf.summary.scalar("gpu/current_memory_mb", mem["current_mb"], step=step)
+                        tf.summary.scalar(
+                            "gpu/current_memory_mb",
+                            mem["current_mb"],
+                            step=step,
+                        )
                         tf.summary.scalar("gpu/utilization_percent", gpu_load, step=step)
 
                 # Start TF Profiler trace (fires once, captures a short window)
@@ -2020,6 +2146,21 @@ class Trainer:
                 # Periodic garbage collection to prevent memory buildup
                 if step % 500 == 0:
                     gc.collect()
+                    # Every epoch boundary, do a deeper cleanup
+                    if self.steps_per_epoch > 0 and step % self.steps_per_epoch == 0:
+                        # Force all three generations of garbage collection
+                        gc.collect(0)
+                        gc.collect(1)
+                        gc.collect(2)
+                        # Clear CuPy memory pools at epoch boundary
+                        if self.spec_augment_enabled and self.spec_augment_backend == "cupy":
+                            try:
+                                import cupy as cp
+
+                                cp.get_default_memory_pool().free_all_blocks()
+                                cp.get_default_pinned_memory_pool().free_all_blocks()
+                            except (ImportError, Exception):  # noqa: S110
+                                pass
                 if bool(self._async_early_stop_requested):
                     break
 
@@ -2043,6 +2184,9 @@ class Trainer:
                 self.logger.log_info("Waiting for async hard negative mining to complete...")
                 self._async_miner.wait_for_completion()
                 self.logger.log_info("Async hard negative mining completed")
+            # Explicitly clean up training data generator
+            train_data_generator = None
+            gc.collect()
 
         # Training complete
         total_time = time.time() - start_time
@@ -2068,7 +2212,12 @@ class Trainer:
             self.best_recall,
         )
 
-        # Note: We do NOT load best_weights here because:
+        # Note: We do NOT reload best_weights here because:
+        # 1. Training is complete - no need to reload weights
+        # 2. model already contains the right weights (either training or EMA depending on when we last saved)
+        # 3. best_weights.weights.h5 (validated best checkpoint) has EMA-smoothed weights and proven metrics
+        # 4. Loading weights here causes optimizer state warnings due to EMA finalize
+        # For export/inference, use best_weights.weights.h5 which has validated EMA-smoothed weights
         # 1. Training is complete - no need to reload weights
         # 2. model already contains the right weights (either training or EMA depending on when we last saved)
         # 3. final_weights.weights.h5 (saved above) has EMA-smoothed weights, which is preferred
@@ -2079,9 +2228,15 @@ class Trainer:
             from src.evaluation.test_evaluator import TestEvaluator
 
             log_dir = self.config.get("performance", {}).get("tensorboard_log_dir", "./logs")
-            test_feature_store_path = os.path.join(self.config.get("paths", {}).get("processed_dir", "./data/processed"), "test")
+            test_feature_store_path = os.path.join(
+                self.config.get("paths", {}).get("processed_dir", "./data/processed"),
+                "test",
+            )
             evaluator = TestEvaluator(self.model, self.config, str(log_dir))
-            eval_results = evaluator.evaluate(test_data_factory, test_feature_store_path=test_feature_store_path)
+            eval_results = evaluator.evaluate(
+                test_data_factory,
+                test_feature_store_path=test_feature_store_path,
+            )
             self.logger.log_info("Running held-out test evaluation...")
             if eval_results is not None:
                 basic = eval_results.get("basic_metrics", {})
@@ -2110,6 +2265,8 @@ class Trainer:
             else:
                 self.logger.log_warning("Held-out test evaluation did not produce results; skipping consolidated test summary logs")
 
+        config_preset = self.config.get("training", {}).get("_config_preset", "standard")
+        self.logger.log_next_steps(self.best_weights_path or final_path, config_preset)
         return self.model
 
 
@@ -2185,7 +2342,12 @@ def train(config: dict) -> tf.keras.Model:
                     "seed": training_cfg.get("split_seed", 42),
                 }
 
-            pipeline = OptimizedDataPipeline(dataset, config, max_time_frames=max_time_frames, spec_augment_config=spec_augment_config)
+            pipeline = OptimizedDataPipeline(
+                dataset,
+                config,
+                max_time_frames=max_time_frames,
+                spec_augment_config=spec_augment_config,
+            )
             shuffle_seed = int(config.get("training", {}).get("split_seed", 42))
             train_ds = pipeline.create_training_pipeline(shuffle_seed=shuffle_seed)
             val_ds = pipeline.create_validation_pipeline()
@@ -2333,6 +2495,8 @@ def main():
 
     try:
         with terminal_logger:
+            # Route all Python logging (27 src/ modules) through Rich for the duration of training
+            setup_rich_logging(level=logging.WARNING)
             # Load config
             config = load_full_config(args.config, args.override)
 

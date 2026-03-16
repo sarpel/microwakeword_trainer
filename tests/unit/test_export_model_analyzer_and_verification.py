@@ -38,10 +38,30 @@ def test_build_interpreter_analysis_fallback(monkeypatch) -> None:
             return None
 
         def get_input_details(self):
-            return [{"shape": [1, 3, 40], "dtype": np.int8, "index": 0, "quantization_parameters": {"scales": [0.1], "zero_points": [-128]}}]
+            return [
+                {
+                    "shape": [1, 3, 40],
+                    "dtype": np.int8,
+                    "index": 0,
+                    "quantization_parameters": {
+                        "scales": [0.1],
+                        "zero_points": [-128],
+                    },
+                }
+            ]
 
         def get_output_details(self):
-            return [{"shape": [1, 1], "dtype": np.uint8, "index": 9, "quantization_parameters": {"scales": [0.0039], "zero_points": [0]}}]
+            return [
+                {
+                    "shape": [1, 1],
+                    "dtype": np.uint8,
+                    "index": 9,
+                    "quantization_parameters": {
+                        "scales": [0.0039],
+                        "zero_points": [0],
+                    },
+                }
+            ]
 
     monkeypatch.setattr(model_analyzer, "Interpreter", DummyInterpreter)
     txt = model_analyzer._build_interpreter_analysis(b"x")
@@ -59,7 +79,11 @@ def test_analyze_model_architecture_with_analyzer_fallback(tmp_path: Path, monke
             raise AttributeError("removed")
 
     monkeypatch.setattr(model_analyzer.tf.lite.experimental, "Analyzer", DummyAnalyzer)
-    monkeypatch.setattr(model_analyzer, "_build_interpreter_analysis", lambda _b: "T#0 INPUT [1, 3, 40] int8\nT#1 OUTPUT [1, 1] uint8")
+    monkeypatch.setattr(
+        model_analyzer,
+        "_build_interpreter_analysis",
+        lambda _b: "T#0 INPUT [1, 3, 40] int8\nT#1 OUTPUT [1, 1] uint8",
+    )
     out = model_analyzer.analyze_model_architecture(str(p))
     assert out["model_path"] == str(p)
     assert out["model_size_bytes"] == 3
@@ -81,10 +105,28 @@ def test_validate_model_quality_invalid_and_valid_paths(tmp_path: Path, monkeypa
             return None
 
         def get_input_details(self):
-            return [{"shape": np.array([1, 3, 40]), "dtype": np.int8, "quantization_parameters": {"scales": np.array([0.101961], dtype=np.float32), "zero_points": np.array([-128], dtype=np.int32)}}]
+            return [
+                {
+                    "shape": np.array([1, 3, 40]),
+                    "dtype": np.int8,
+                    "quantization_parameters": {
+                        "scales": np.array([0.101961], dtype=np.float32),
+                        "zero_points": np.array([-128], dtype=np.int32),
+                    },
+                }
+            ]
 
         def get_output_details(self):
-            return [{"shape": np.array([1, 1]), "dtype": np.uint8, "quantization_parameters": {"scales": np.array([0.00390625], dtype=np.float32), "zero_points": np.array([0], dtype=np.int32)}}]
+            return [
+                {
+                    "shape": np.array([1, 1]),
+                    "dtype": np.uint8,
+                    "quantization_parameters": {
+                        "scales": np.array([0.00390625], dtype=np.float32),
+                        "zero_points": np.array([0], dtype=np.int32),
+                    },
+                }
+            ]
 
         def get_tensor_details(self):
             return [
@@ -115,9 +157,26 @@ def test_compare_estimate_gpu_and_report(tmp_path: Path, monkeypatch) -> None:
     b.write_bytes(b"b" * 400)
 
     monkeypatch.setattr(
-        model_analyzer, "analyze_model_architecture", lambda path: {"model_size_bytes": 200 if path == str(a) else 400, "layer_count": 5, "operators": ["CONV_2D"], "has_quantization": True}
+        model_analyzer,
+        "analyze_model_architecture",
+        lambda path: {
+            "model_size_bytes": 200 if path == str(a) else 400,
+            "layer_count": 5,
+            "operators": ["CONV_2D"],
+            "has_quantization": True,
+        },
     )
-    monkeypatch.setattr(model_analyzer, "validate_model_quality", lambda *args, **kwargs: {"valid": True, "info": {"input_dtype_correct": True, "output_dtype_correct": True}})
+    monkeypatch.setattr(
+        model_analyzer,
+        "validate_model_quality",
+        lambda *args, **kwargs: {
+            "valid": True,
+            "info": {
+                "input_dtype_correct": True,
+                "output_dtype_correct": True,
+            },
+        },
+    )
     cmp_out = model_analyzer.compare_models(str(a), str(b))
     assert cmp_out["differences"]["size_diff_bytes"] == 200
 
@@ -129,7 +188,10 @@ def test_compare_estimate_gpu_and_report(tmp_path: Path, monkeypatch) -> None:
             return None
 
         def get_tensor_details(self):
-            return [{"shape": [1, 3, 40], "dtype": np.int8}, {"shape": [1, 1], "dtype": np.uint8}]
+            return [
+                {"shape": [1, 3, 40], "dtype": np.int8},
+                {"shape": [1, 1], "dtype": np.uint8},
+            ]
 
     monkeypatch.setattr(model_analyzer, "Interpreter", DummyInterpreter)
     perf = model_analyzer.estimate_performance(str(a))
@@ -163,7 +225,10 @@ def test_verification_estimate_and_verify(monkeypatch) -> None:
                     "shape": np.array([1, 3, 40]),
                     "dtype": np.int8,
                     "index": 0,
-                    "quantization_parameters": {"scales": np.array([0.101961], dtype=np.float32), "zero_points": np.array([-128], dtype=np.int32)},
+                    "quantization_parameters": {
+                        "scales": np.array([0.101961], dtype=np.float32),
+                        "zero_points": np.array([-128], dtype=np.int32),
+                    },
                 }
             ]
 
@@ -173,7 +238,10 @@ def test_verification_estimate_and_verify(monkeypatch) -> None:
                     "shape": np.array([1, 1]),
                     "dtype": np.uint8,
                     "index": 1,
-                    "quantization_parameters": {"scales": np.array([0.00390625], dtype=np.float32), "zero_points": np.array([0], dtype=np.int32)},
+                    "quantization_parameters": {
+                        "scales": np.array([0.00390625], dtype=np.float32),
+                        "zero_points": np.array([0], dtype=np.int32),
+                    },
                 }
             ]
 
@@ -192,12 +260,36 @@ def test_verification_estimate_and_verify(monkeypatch) -> None:
                 {"op_name": "READ_VARIABLE", "outputs": [23]},
                 {"op_name": "READ_VARIABLE", "outputs": [24]},
                 {"op_name": "READ_VARIABLE", "outputs": [25]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [11, 20], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [12, 21], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [13, 22], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [14, 23], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [15, 24], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [16, 25], "outputs": [0]},
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [11, 20],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [12, 21],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [13, 22],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [14, 23],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [15, 24],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [16, 25],
+                    "outputs": [0],
+                },
                 {"op_name": "CONV_2D", "outputs": [0]},
             ]
 
@@ -225,8 +317,18 @@ def test_verification_estimate_and_verify(monkeypatch) -> None:
                     }
                 )
             details += [
-                {"index": 0, "shape": np.array([1, 3, 40]), "dtype": np.int8, "name": "input"},
-                {"index": 1, "shape": np.array([1, 1]), "dtype": np.uint8, "name": "output"},
+                {
+                    "index": 0,
+                    "shape": np.array([1, 3, 40]),
+                    "dtype": np.int8,
+                    "name": "input",
+                },
+                {
+                    "index": 1,
+                    "shape": np.array([1, 1]),
+                    "dtype": np.uint8,
+                    "name": "output",
+                },
             ]
             return details
 
@@ -273,7 +375,10 @@ def test_verify_tflite_model_custom_temporal_frames(monkeypatch) -> None:
                     "shape": np.array([1, 3, 40]),
                     "dtype": np.int8,
                     "index": 0,
-                    "quantization_parameters": {"scales": np.array([0.101961], dtype=np.float32), "zero_points": np.array([-128], dtype=np.int32)},
+                    "quantization_parameters": {
+                        "scales": np.array([0.101961], dtype=np.float32),
+                        "zero_points": np.array([-128], dtype=np.int32),
+                    },
                 }
             ]
 
@@ -283,7 +388,10 @@ def test_verify_tflite_model_custom_temporal_frames(monkeypatch) -> None:
                     "shape": np.array([1, 1]),
                     "dtype": np.uint8,
                     "index": 1,
-                    "quantization_parameters": {"scales": np.array([0.00390625], dtype=np.float32), "zero_points": np.array([0], dtype=np.int32)},
+                    "quantization_parameters": {
+                        "scales": np.array([0.00390625], dtype=np.float32),
+                        "zero_points": np.array([0], dtype=np.int32),
+                    },
                 }
             ]
 
@@ -302,12 +410,36 @@ def test_verify_tflite_model_custom_temporal_frames(monkeypatch) -> None:
                 {"op_name": "READ_VARIABLE", "outputs": [23]},
                 {"op_name": "READ_VARIABLE", "outputs": [24]},
                 {"op_name": "READ_VARIABLE", "outputs": [25]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [11, 20], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [12, 21], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [13, 22], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [14, 23], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [15, 24], "outputs": [0]},
-                {"op_name": "ASSIGN_VARIABLE", "inputs": [16, 25], "outputs": [0]},
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [11, 20],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [12, 21],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [13, 22],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [14, 23],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [15, 24],
+                    "outputs": [0],
+                },
+                {
+                    "op_name": "ASSIGN_VARIABLE",
+                    "inputs": [16, 25],
+                    "outputs": [0],
+                },
                 {"op_name": "CONV_2D", "outputs": [0]},
             ]
 
@@ -335,8 +467,18 @@ def test_verify_tflite_model_custom_temporal_frames(monkeypatch) -> None:
                     }
                 )
             details += [
-                {"index": 0, "shape": np.array([1, 3, 40]), "dtype": np.int8, "name": "input"},
-                {"index": 1, "shape": np.array([1, 1]), "dtype": np.uint8, "name": "output"},
+                {
+                    "index": 0,
+                    "shape": np.array([1, 3, 40]),
+                    "dtype": np.int8,
+                    "name": "input",
+                },
+                {
+                    "index": 1,
+                    "shape": np.array([1, 1]),
+                    "dtype": np.uint8,
+                    "name": "output",
+                },
             ]
             return details
 

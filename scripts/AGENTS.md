@@ -20,7 +20,7 @@ scripts/
 ├── count_dataset.py                  # Dataset sample counter (114 lines)
 ├── debug_streaming_gap.py            # Debug streaming vs training model gap (219 lines)
 ├── eval_dashboard.py                 # Interactive HTML dashboard from evaluation_report.json
-├── evaluate_model.py                 # Advanced post-training model evaluation + report artifacts
+├── evaluate_model.py                 # Advanced post-training model evaluation + report artifacts (uses adaptive thresholding)
 ├── generate_test_dataset.py          # Synthetic dataset generator (190 lines)
 ├── phonetic_scorer.py                # Phonetic similarity scoring for hard negatives (683 lines)
 ├── score_quality_fast.py             # Fast audio quality scoring (72 lines)
@@ -161,7 +161,7 @@ This allows CI/CD pipelines to distinguish between "expected failure" (2) and "u
 2. **Cleanup TF cache**: `python scripts/cleanup_tfdata_cache.py --delete`
 
 `evaluate_model.py` now writes a full artifact bundle in `evaluation_artifacts/` including:
-- `evaluation_report.json` (machine-readable metrics)
+- `evaluation_report.json` (machine-readable metrics) (includes adaptive threshold metrics)
 - PNG plots (confusion matrix, ROC, PR, DET, calibration, threshold/cost curves)
 - `executive_report.md` and `executive_report.html`
 

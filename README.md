@@ -1,4 +1,4 @@
-# microwakeword_trainer v2.0.0
+# microwakeword_trainer v2.1.0
 
 GPU-accelerated wake word training framework for ESPHome. Train custom "Hey Siri" or "OK Google" style wake words and deploy them to ESP32 devices.
 
@@ -12,6 +12,7 @@ This framework provides a complete pipeline for training wake word detection mod
 - **MixedNet architecture** optimized for edge deployment
 - **GPU-accelerated training** with CuPy SpecAugment
 - **ESPHome-compatible export** with INT8 quantization
+- **Adaptive thresholding** for production-ready evaluation metrics
 - **Streaming inference** support for real-time detection
 
 ## Project Status

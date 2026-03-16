@@ -22,10 +22,19 @@ class TestTestEvaluator:
         from src.evaluation.test_evaluator import TestEvaluator
 
         # Create mock model
-        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
+        model = tf.keras.Sequential(
+            [
+                tf.keras.Input(shape=(100, 40)),
+                tf.keras.layers.Dense(1, activation="sigmoid"),
+            ]
+        )
 
         # Create mock config
-        config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
+        config = {
+            "performance": {"tensorboard_log_dir": str(tmp_path)},
+            "paths": {"processed_dir": str(tmp_path)},
+            "training": {"test_split": 0.1, "ambient_duration_hours": 10.0},
+        }
 
         evaluator = TestEvaluator(model, config, str(tmp_path))
 
@@ -56,9 +65,18 @@ class TestTestEvaluator:
         from src.evaluation.test_evaluator import TestEvaluator
 
         # Create mock model
-        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
+        model = tf.keras.Sequential(
+            [
+                tf.keras.Input(shape=(100, 40)),
+                tf.keras.layers.Dense(1, activation="sigmoid"),
+            ]
+        )
 
-        config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
+        config = {
+            "performance": {"tensorboard_log_dir": str(tmp_path)},
+            "paths": {"processed_dir": str(tmp_path)},
+            "training": {"test_split": 0.1, "ambient_duration_hours": 10.0},
+        }
 
         evaluator = TestEvaluator(model, config, str(tmp_path))
 
@@ -91,9 +109,18 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
+        model = tf.keras.Sequential(
+            [
+                tf.keras.Input(shape=(100, 40)),
+                tf.keras.layers.Dense(1, activation="sigmoid"),
+            ]
+        )
 
-        config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
+        config = {
+            "performance": {"tensorboard_log_dir": str(tmp_path)},
+            "paths": {"processed_dir": str(tmp_path)},
+            "training": {"test_split": 0.1, "ambient_duration_hours": 10.0},
+        }
 
         evaluator = TestEvaluator(model, config, str(tmp_path))
 
@@ -113,9 +140,18 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
+        model = tf.keras.Sequential(
+            [
+                tf.keras.Input(shape=(100, 40)),
+                tf.keras.layers.Dense(1, activation="sigmoid"),
+            ]
+        )
 
-        config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
+        config = {
+            "performance": {"tensorboard_log_dir": str(tmp_path)},
+            "paths": {"processed_dir": str(tmp_path)},
+            "training": {"test_split": 0.1, "ambient_duration_hours": 10.0},
+        }
 
         evaluator = TestEvaluator(model, config, str(tmp_path))
 
@@ -135,9 +171,18 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
+        model = tf.keras.Sequential(
+            [
+                tf.keras.Input(shape=(100, 40)),
+                tf.keras.layers.Dense(1, activation="sigmoid"),
+            ]
+        )
 
-        config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
+        config = {
+            "performance": {"tensorboard_log_dir": str(tmp_path)},
+            "paths": {"processed_dir": str(tmp_path)},
+            "training": {"test_split": 0.1, "ambient_duration_hours": 10.0},
+        }
 
         evaluator = TestEvaluator(model, config, str(tmp_path))
 
@@ -166,9 +211,18 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
+        model = tf.keras.Sequential(
+            [
+                tf.keras.Input(shape=(100, 40)),
+                tf.keras.layers.Dense(1, activation="sigmoid"),
+            ]
+        )
 
-        config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
+        config = {
+            "performance": {"tensorboard_log_dir": str(tmp_path)},
+            "paths": {"processed_dir": str(tmp_path)},
+            "training": {"test_split": 0.1, "ambient_duration_hours": 10.0},
+        }
 
         evaluator = TestEvaluator(model, config, str(tmp_path))
 
@@ -181,7 +235,14 @@ class TestTestEvaluator:
 
         result = evaluator.evaluate(test_factory)  # noqa: F841
 
-        expected_plots = ["test_roc.png", "test_pr.png", "test_det.png", "test_scores.png", "test_calibration.png", "test_fah_recall.png"]
+        expected_plots = [
+            "test_roc.png",
+            "test_pr.png",
+            "test_det.png",
+            "test_scores.png",
+            "test_calibration.png",
+            "test_fah_recall.png",
+        ]
 
         for plot_name in expected_plots:
             plot_path = tmp_path / plot_name
@@ -194,9 +255,18 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
+        model = tf.keras.Sequential(
+            [
+                tf.keras.Input(shape=(100, 40)),
+                tf.keras.layers.Dense(1, activation="sigmoid"),
+            ]
+        )
 
-        config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
+        config = {
+            "performance": {"tensorboard_log_dir": str(tmp_path)},
+            "paths": {"processed_dir": str(tmp_path)},
+            "training": {"test_split": 0.1, "ambient_duration_hours": 10.0},
+        }
 
         evaluator = TestEvaluator(model, config, str(tmp_path))
 
@@ -237,9 +307,18 @@ class TestTestEvaluator:
 
         from src.evaluation.test_evaluator import TestEvaluator
 
-        model = tf.keras.Sequential([tf.keras.Input(shape=(100, 40)), tf.keras.layers.Dense(1, activation="sigmoid")])
+        model = tf.keras.Sequential(
+            [
+                tf.keras.Input(shape=(100, 40)),
+                tf.keras.layers.Dense(1, activation="sigmoid"),
+            ]
+        )
 
-        config = {"performance": {"tensorboard_log_dir": str(tmp_path)}, "paths": {"processed_dir": str(tmp_path)}, "training": {"test_split": 0.1, "ambient_duration_hours": 10.0}}
+        config = {
+            "performance": {"tensorboard_log_dir": str(tmp_path)},
+            "paths": {"processed_dir": str(tmp_path)},
+            "training": {"test_split": 0.1, "ambient_duration_hours": 10.0},
+        }
 
         evaluator = TestEvaluator(model, config, str(tmp_path))
 

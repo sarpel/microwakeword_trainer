@@ -8,7 +8,9 @@ from pathlib import Path
 from scripts import evaluate_model as eval_mod
 
 
-def test_load_manifest_threshold_reads_adjacent_manifest(tmp_path: Path) -> None:
+def test_load_manifest_threshold_reads_adjacent_manifest(
+    tmp_path: Path,
+) -> None:
     tflite_path = tmp_path / "wake_word.tflite"
     tflite_path.write_bytes(b"x")
     manifest = {
@@ -22,7 +24,9 @@ def test_load_manifest_threshold_reads_adjacent_manifest(tmp_path: Path) -> None
     assert cutoff == 0.91
 
 
-def test_resolve_eval_threshold_prefers_manifest_for_tflite(tmp_path: Path) -> None:
+def test_resolve_eval_threshold_prefers_manifest_for_tflite(
+    tmp_path: Path,
+) -> None:
     tflite_path = tmp_path / "wake_word.tflite"
     tflite_path.write_bytes(b"x")
     (tmp_path / "manifest.json").write_text(json.dumps({"micro": {"probability_cutoff": 0.88}}))

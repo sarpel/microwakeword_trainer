@@ -11,13 +11,27 @@ import numpy as np
 from src.tuning import autotuner as at
 
 
-def _make_candidate(cid: str, fah: float, recall: float, auc_pr: float, *, strategy_arm: int = 0, iteration: int = 0) -> at.CandidateState:
+def _make_candidate(
+    cid: str,
+    fah: float,
+    recall: float,
+    auc_pr: float,
+    *,
+    strategy_arm: int = 0,
+    iteration: int = 0,
+) -> at.CandidateState:
     return at.CandidateState(
         id=cid,
         weights_bytes=b"w",
         optimizer_state_bytes=b"o",
         batchnorm_state={},
-        eval_results=at.TuneMetrics(fah=fah, recall=recall, auc_pr=auc_pr, threshold=0.5, threshold_uint8=128),
+        eval_results=at.TuneMetrics(
+            fah=fah,
+            recall=recall,
+            auc_pr=auc_pr,
+            threshold=0.5,
+            threshold_uint8=128,
+        ),
         strategy_arm=strategy_arm,
         iteration=iteration,
     )
@@ -60,7 +74,16 @@ def test_pareto_archive_get_best_and_frontier_points() -> None:
 
     pts = archive.get_frontier_points()
     assert pts
-    assert {"id", "fah", "recall", "auc_pr", "threshold", "threshold_uint8", "arm", "iteration"}.issubset(pts[0].keys())
+    assert {
+        "id",
+        "fah",
+        "recall",
+        "auc_pr",
+        "threshold",
+        "threshold_uint8",
+        "arm",
+        "iteration",
+    }.issubset(pts[0].keys())
 
 
 def test_error_memory_update_and_queries() -> None:
@@ -91,7 +114,13 @@ def test_focused_sampler_builds_batches_for_multiple_arms() -> None:
 
     scores = np.linspace(0.0, 1.0, 20)
     for arm in [0, 1, 2, 3, 5, 6, 999]:
-        x, y, w = sampler.build_batch(strategy_arm=arm, threshold=0.5, batch_size=8, curriculum_stage=1, recent_scores=scores)
+        x, y, w = sampler.build_batch(
+            strategy_arm=arm,
+            threshold=0.5,
+            batch_size=8,
+            curriculum_stage=1,
+            recent_scores=scores,
+        )
         assert x.shape[0] == 8
         assert y.shape[0] == 8
         assert w.shape[0] == 8
@@ -145,7 +174,12 @@ def test_stir_and_annealing_controllers() -> None:
     assert stir.get_stir_level(4) == 4
     assert stir.get_stir_level(50) == 5
 
-    ann = at.AnnealingController(initial_temperature=1.0, cooling_rate=0.5, reheat_factor=2.0, reheat_after=2)
+    ann = at.AnnealingController(
+        initial_temperature=1.0,
+        cooling_rate=0.5,
+        reheat_factor=2.0,
+        reheat_after=2,
+    )
     better = at.TuneMetrics(fah=0.1, recall=0.95)
     worse = at.TuneMetrics(fah=2.0, recall=0.1)
     assert ann.should_accept(better, worse, target_fah=1.0, target_recall=0.9)
@@ -167,7 +201,13 @@ def test_threshold_optimizer_core_paths(monkeypatch) -> None:
     y_true = np.array([0, 0, 1, 1, 1, 0], dtype=float)
     y_scores = np.array([0.1, 0.2, 0.7, 0.8, 0.9, 0.3], dtype=float)
 
-    t, t_u8, m = opt.optimize(y_true, y_scores, ambient_duration_hours=1.0, target_fah=1.0, target_recall=0.5)
+    t, t_u8, m = opt.optimize(
+        y_true,
+        y_scores,
+        ambient_duration_hours=1.0,
+        target_fah=1.0,
+        target_recall=0.5,
+    )
     assert 0.0 <= t <= 1.0
     assert 0 <= t_u8 <= 255
     assert isinstance(m, at.TuneMetrics)
@@ -185,7 +225,11 @@ def test_threshold_optimizer_core_paths(monkeypatch) -> None:
 
 def test_autotuner_init_and_utils(tmp_path: Path, monkeypatch) -> None:
     cfg = {
-        "auto_tuning": {"target_fah": 0.3, "target_recall": 0.92, "output_dir": str(tmp_path / "out")},
+        "auto_tuning": {
+            "target_fah": 0.3,
+            "target_recall": 0.92,
+            "output_dir": str(tmp_path / "out"),
+        },
         "auto_tuning_expert": {},
         "training": {},
         "hardware": {},
@@ -266,7 +310,11 @@ def test_confirmation_phase_uses_optimize_with_targets(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(tuner, "_deserialize_weights", lambda *args, **kwargs: None)
     monkeypatch.setattr(tuner, "_restore_bn_state", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tuner, "_predict_scores", lambda *args, **kwargs: np.array([0.2, 0.9], dtype=float))
+    monkeypatch.setattr(
+        tuner,
+        "_predict_scores",
+        lambda *args, **kwargs: np.array([0.2, 0.9], dtype=float),
+    )
     monkeypatch.setattr(
         tuner.threshold_optimizer,
         "_compute_metrics_at_threshold",
@@ -434,12 +482,19 @@ class TestErrorMemoryOffset:
         captured: dict[str, np.ndarray] = {}
         original_gather = sampler._gather
 
-        def _capture_gather(indices: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        def _capture_gather(
+            indices: np.ndarray,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
             captured["indices"] = indices.copy()
             return original_gather(indices)
 
         sampler._gather = _capture_gather  # type: ignore[method-assign]
-        sampler.build_batch(strategy_arm=1, threshold=0.5, batch_size=32, recent_scores=np.linspace(0.0, 1.0, 100))
+        sampler.build_batch(
+            strategy_arm=1,
+            threshold=0.5,
+            batch_size=32,
+            recent_scores=np.linspace(0.0, 1.0, 100),
+        )
 
         assert "indices" in captured
         assert np.all(captured["indices"] < len(train_features))
@@ -483,7 +538,13 @@ class TestConfirmationReoptimize:
             temperature=1.0,
             threshold_float32=0.91,
             threshold_uint8=232,
-            eval_results=at.TuneMetrics(fah=0.4, recall=0.9, auc_pr=0.9, threshold=0.91, threshold_uint8=232),
+            eval_results=at.TuneMetrics(
+                fah=0.4,
+                recall=0.9,
+                auc_pr=0.9,
+                threshold=0.91,
+                threshold_uint8=232,
+            ),
         )
         tuner.archive.archive = [candidate]
 
@@ -503,7 +564,11 @@ class TestConfirmationReoptimize:
 
         monkeypatch.setattr(tuner, "_deserialize_weights", lambda *args, **kwargs: None)
         monkeypatch.setattr(tuner, "_restore_bn_state", lambda *args, **kwargs: None)
-        monkeypatch.setattr(tuner, "_predict_scores", lambda *args, **kwargs: np.array([0.2, 0.9], dtype=float))
+        monkeypatch.setattr(
+            tuner,
+            "_predict_scores",
+            lambda *args, **kwargs: np.array([0.2, 0.9], dtype=float),
+        )
         monkeypatch.setattr(tuner.threshold_optimizer, "optimize", fake_optimize)
 
         confirm_data = (

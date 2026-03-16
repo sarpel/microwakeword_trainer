@@ -401,8 +401,8 @@ def apply_spec_augment_gpu(
             start = int(cp.random.randint(0, mel_bins - mask_width + 1).item())
             spec_gpu[:, start : start + mask_width] = 0
 
-    # Transfer back to CPU
+    # Transfer back to CPU with explicit float32 casting for consistency
     result = cp.asnumpy(spec_gpu)
     del spec_gpu
     cp.get_default_memory_pool().free_all_blocks()
-    return np.asarray(result)
+    return np.asarray(result, dtype=np.float32)

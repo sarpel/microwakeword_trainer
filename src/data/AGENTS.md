@@ -36,6 +36,8 @@ Audio (WAV) → ingestion.py → features.py → dataset.py → Training
 - **40 mel bins, 10ms stride, 30ms window**: Standard feature output shape [time_frames, 40]
 - **PCAN always ON**: Enabled in pymicro-features C++ backend (no Python flag)
 - **HAS_CUPY flag**: Checked at import time for GPU availability
+- **Memory Management**: Explicitly clear CuPy memory pool (`cp.get_default_memory_pool().free_all_blocks()`) after batch SpecAugment to prevent OOM.
+- **Label Consistency**: Use binary labels (0/1) for training while preserving hard negative identity in metadata for weighted loss.
 
 ## Anti-Patterns
 

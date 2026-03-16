@@ -102,10 +102,18 @@ def compute_accuracy(
     return float(np.sum(correct * weights) / total_weight)
 
 
+def _binarize_labels(y_true: np.ndarray) -> np.ndarray:
+    """Binarize labels: treat label==1 as positive, everything else as negative.
+
+    This ensures consistent handling of hard-negative label 2 across all metrics.
+    """
+    return (y_true == 1).astype(np.int32)
+
+
 def compute_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
     """Compute ROC AUC score."""
-    # Defensive binarization: treat any label > 1 (e.g. hard_neg=2) as negative (0)
-    y_true = (y_true == 1).astype(np.int32)
+    # Use helper for consistent binarization
+    y_true = _binarize_labels(y_true)
     if len(np.unique(y_true)) < 2:
         return 0.5
 
@@ -648,7 +656,12 @@ class MetricsCalculator:
 
         if ambient_duration_hours > 0:
             # Pass ambient_duration_hours explicitly instead of mutating estimator state
-            metrics.update(self.compute_fah_metrics(threshold=threshold, ambient_duration_hours=ambient_duration_hours))
+            metrics.update(
+                self.compute_fah_metrics(
+                    threshold=threshold,
+                    ambient_duration_hours=ambient_duration_hours,
+                )
+            )
 
             recall_no_faph, thresh_no_faph = self.compute_recall_at_no_faph()
             metrics["recall_at_no_faph"] = recall_no_faph

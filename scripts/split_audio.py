@@ -8,18 +8,55 @@ from pathlib import Path
 
 from src.data.preprocessing import remove_split_originals, scan_and_split
 
+# Default configuration
+DEFAULT_TARGET_DURATION = 2000.0
+DEFAULT_MAX_DURATION = 3000.0
+DEFAULT_MIN_DURATION = 500.0
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Split long audio files into shorter clips for wake word training.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--dir", nargs="+", required=True, metavar="DIR", help="One or more dataset directories to scan recursively")
-    parser.add_argument("--max-duration", type=float, default=3000.0, metavar="MS", help="Split files longer than this many milliseconds (default: 3000)")
-    parser.add_argument("--target-duration", type=float, default=2000.0, metavar="MS", help="Target clip length in milliseconds (default: 2000)")
-    parser.add_argument("--min-duration", type=float, default=500.0, metavar="MS", help="Discard remainder clips shorter than this (default: 500)")
-    parser.add_argument("--dry-run", action="store_true", help="Report what would be split without writing any files")
-    parser.add_argument("--remove-originals", action="store_true", help="Remove original files that have already been split (run this after verifying the output clips)")
+    parser.add_argument(
+        "--dir",
+        nargs="+",
+        required=True,
+        metavar="DIR",
+        help="One or more dataset directories to scan recursively",
+    )
+    parser.add_argument(
+        "--max-duration",
+        type=float,
+        default=DEFAULT_MAX_DURATION,
+        metavar="MS",
+        help=f"Split files longer than this many milliseconds (default: {DEFAULT_MAX_DURATION})",
+    )
+    parser.add_argument(
+        "--target-duration",
+        type=float,
+        default=2000.0,
+        metavar="MS",
+        help="Target clip length in milliseconds (default: 2000)",
+    )
+    parser.add_argument(
+        "--min-duration",
+        type=float,
+        default=DEFAULT_MIN_DURATION,
+        metavar="MS",
+        help=f"Discard remainder clips shorter than this (default: {DEFAULT_MIN_DURATION})",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be split without writing any files",
+    )
+    parser.add_argument(
+        "--remove-originals",
+        action="store_true",
+        help="Remove original files that have already been split (run this after verifying the output clips)",
+    )
 
     args = parser.parse_args()
     dirs = [Path(d) for d in args.dir]
@@ -51,8 +88,8 @@ def main() -> None:
         print("\n  NOTE: Original files were NOT deleted.")
         print("  After verifying the splits look correct, you may remove")
         print("  the originals with:")
-        if args.max_duration != 2000.0:
-            print(f"\n    python scripts/split_audio.py --dir <DIR> --remove-originals --max-duration {args.max_duration}")
+        if args.target_duration != DEFAULT_TARGET_DURATION:
+            print(f"\n    python scripts/split_audio.py --dir <DIR> --remove-originals --target-duration {args.target_duration}")
         else:
             print("\n    python scripts/split_audio.py --dir <DIR> --remove-originals")
     print("=" * 60)

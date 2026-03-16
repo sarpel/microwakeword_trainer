@@ -32,7 +32,9 @@ def _make_model(input_shape=(100, 40)) -> MixedNet:
 class TestAsyncValidationModelBuild:
     """Tests that eval model cloning for async validation handles dynamic batches."""
 
-    def test_forward_pass_creates_weights_and_handles_variable_batches(self) -> None:
+    def test_forward_pass_creates_weights_and_handles_variable_batches(
+        self,
+    ) -> None:
         """A concrete forward pass creates weights and still allows variable batch sizes.
 
         This is the approach used in _compute_metrics_background: from_config()
@@ -59,7 +61,10 @@ class TestAsyncValidationModelBuild:
 
         # Must handle batch=256 (typical validation batch)
         out256 = eval_model(tf.zeros((256, *input_shape), dtype=tf.float32), training=False)
-        assert out256.shape == (256, 1), f"Expected (256, 1), got {out256.shape}"
+        assert out256.shape == (
+            256,
+            1,
+        ), f"Expected (256, 1), got {out256.shape}"
 
     def test_build_creates_no_weights(self) -> None:
         """model.build() on subclassed MixedNet creates 0 weights.

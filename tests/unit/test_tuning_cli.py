@@ -19,22 +19,47 @@ def test_create_parser_requires_checkpoint() -> None:
 
 
 def test_validate_args_failures_and_success(tmp_path: Path) -> None:
-    missing = argparse.Namespace(checkpoint=str(tmp_path / "missing"), target_fah=None, target_recall=None, max_iterations=None)
+    missing = argparse.Namespace(
+        checkpoint=str(tmp_path / "missing"),
+        target_fah=None,
+        target_recall=None,
+        max_iterations=None,
+    )
     assert cli.validate_args(missing) is False
 
     ckpt = tmp_path / "ok.weights.h5"
     ckpt.write_bytes(b"x")
 
-    bad_fah = argparse.Namespace(checkpoint=str(ckpt), target_fah=0.0, target_recall=None, max_iterations=None)
+    bad_fah = argparse.Namespace(
+        checkpoint=str(ckpt),
+        target_fah=0.0,
+        target_recall=None,
+        max_iterations=None,
+    )
     assert cli.validate_args(bad_fah) is False
 
-    bad_recall = argparse.Namespace(checkpoint=str(ckpt), target_fah=None, target_recall=1.2, max_iterations=None)
+    bad_recall = argparse.Namespace(
+        checkpoint=str(ckpt),
+        target_fah=None,
+        target_recall=1.2,
+        max_iterations=None,
+    )
     assert cli.validate_args(bad_recall) is False
 
-    bad_iters = argparse.Namespace(checkpoint=str(ckpt), target_fah=None, target_recall=None, max_iterations=0)
+    bad_iters = argparse.Namespace(
+        checkpoint=str(ckpt),
+        target_fah=None,
+        target_recall=None,
+        max_iterations=0,
+    )
     assert cli.validate_args(bad_iters) is False
 
-    good = argparse.Namespace(checkpoint=str(ckpt), target_fah=0.5, target_recall=0.9, max_iterations=5)
+    good = argparse.Namespace(
+        checkpoint=str(ckpt),
+        target_fah=0.5,
+        target_recall=0.9,
+        max_iterations=5,
+    )
     assert cli.validate_args(good) is True
 
 
@@ -105,7 +130,11 @@ def test_main_config_load_error(monkeypatch, tmp_path: Path) -> None:
 
     import config.loader
 
-    monkeypatch.setattr(config.loader, "load_full_config", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("bad cfg")))
+    monkeypatch.setattr(
+        config.loader,
+        "load_full_config",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("bad cfg")),
+    )
     assert cli.main() == 1
 
 
@@ -117,7 +146,11 @@ def test_main_dry_run(monkeypatch, tmp_path: Path) -> None:
 
     import config.loader
 
-    monkeypatch.setattr(config.loader, "load_full_config", lambda *_a, **_k: _DummyCfg(auto_tuning={}))
+    monkeypatch.setattr(
+        config.loader,
+        "load_full_config",
+        lambda *_a, **_k: _DummyCfg(auto_tuning={}),
+    )
     assert cli.main() == 0
 
 
@@ -137,13 +170,24 @@ def test_main_success_and_overrides(monkeypatch, tmp_path: Path) -> None:
 
     import config.loader
 
-    monkeypatch.setattr(config.loader, "load_full_config", lambda *_a, **_k: _DummyCfg(auto_tuning={}))
+    monkeypatch.setattr(
+        config.loader,
+        "load_full_config",
+        lambda *_a, **_k: _DummyCfg(auto_tuning={}),
+    )
     monkeypatch.setattr(cli, "print_config_summary", lambda *_a, **_k: None)
 
     captured = {}
 
     class DummyTuner:
-        def __init__(self, checkpoint_path, config, auto_tuning_config, console, users_hard_negs_dir):
+        def __init__(
+            self,
+            checkpoint_path,
+            config,
+            auto_tuning_config,
+            console,
+            users_hard_negs_dir,
+        ):
             captured["checkpoint_path"] = checkpoint_path
             captured["config"] = config
             captured["auto_tuning_config"] = auto_tuning_config
@@ -179,7 +223,11 @@ def test_main_handles_keyboard_interrupt(monkeypatch, tmp_path: Path) -> None:
 
     import config.loader
 
-    monkeypatch.setattr(config.loader, "load_full_config", lambda *_a, **_k: _DummyCfg(auto_tuning={}))
+    monkeypatch.setattr(
+        config.loader,
+        "load_full_config",
+        lambda *_a, **_k: _DummyCfg(auto_tuning={}),
+    )
     monkeypatch.setattr(cli, "print_config_summary", lambda *_a, **_k: None)
 
     class InterruptTuner:
@@ -201,7 +249,11 @@ def test_main_handles_exception_verbose(monkeypatch, tmp_path: Path) -> None:
 
     import config.loader
 
-    monkeypatch.setattr(config.loader, "load_full_config", lambda *_a, **_k: _DummyCfg(auto_tuning={}))
+    monkeypatch.setattr(
+        config.loader,
+        "load_full_config",
+        lambda *_a, **_k: _DummyCfg(auto_tuning={}),
+    )
     monkeypatch.setattr(cli, "print_config_summary", lambda *_a, **_k: None)
 
     class ExplodingTuner:

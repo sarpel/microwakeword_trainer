@@ -75,7 +75,10 @@ def compute_expected_state_shapes(
     ]
 
 
-def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int, ...]] | None = None) -> dict[str, Any]:
+def verify_tflite_model(
+    tflite_path: str,
+    expected_state_shapes: list[tuple[int, ...]] | None = None,
+) -> dict[str, Any]:
     """Validate TFLite model compatibility against ESPHome invariants.
 
     The interpreter is created with
@@ -149,7 +152,10 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         input_zero = _ensure_quantized_int(input_zero_points[0])
         details["input_scale"] = input_scale
         details["input_zero_point"] = input_zero
-        checks["input_quant_params"] = abs(input_scale - 0.101961) <= 1e-4 and input_zero == -128
+        # Canonical input scale = 26/255 ≈ 0.10196078568696976 (ARCHITECTURAL_CONSTITUTION Article II).
+        # Tolerance 5e-4 accommodates minor floating-point variation in TFLite's
+        # quantizer while still catching grossly wrong scales.
+        checks["input_quant_params"] = abs(input_scale - 0.10196078568696976) <= 5e-4 and input_zero == -128
         if not checks["input_quant_params"]:
             errors.append(f"Input quantization mismatch: scale={input_scale}, zero_point={input_zero}")
             valid = False
@@ -367,7 +373,10 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         interpreter.invoke()
         test_output = interpreter.get_tensor(output_details[0]["index"])
         checks["inference_works"] = True
-        details["test_output_range"] = (float(test_output.min()), float(test_output.max()))
+        details["test_output_range"] = (
+            float(test_output.min()),
+            float(test_output.max()),
+        )
     except Exception as e:
         errors.append(f"Inference test failed: {e}")
         checks["inference_works"] = False

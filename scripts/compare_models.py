@@ -19,7 +19,7 @@ import os
 import sys
 from pathlib import Path
 
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
 import numpy as np
@@ -47,7 +47,20 @@ def _load_keras_model(checkpoint_path: str, config: dict):
     mel_bins = hardware.get("mel_bins", 40)
     input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
 
-    model = build_model(config, input_shape=input_shape)
+    model_cfg = config.get("model", {})
+    model = build_model(
+        input_shape=input_shape,
+        num_classes=2,
+        first_conv_filters=model_cfg.get("first_conv_filters", 32),
+        first_conv_kernel_size=model_cfg.get("first_conv_kernel_size", 5),
+        stride=model_cfg.get("stride", 3),
+        pointwise_filters=model_cfg.get("pointwise_filters", "64,64,64,64"),
+        mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"),
+        repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
+        residual_connection=model_cfg.get("residual_connection", "0,1,1,1"),
+        dropout_rate=model_cfg.get("dropout_rate", 0.08),
+        l2_regularization=model_cfg.get("l2_regularization", 0.00003),
+    )
     _ = model(tf.zeros((1, *input_shape), dtype=tf.float32), training=False)
 
     # Try Keras 3 checkpoint loader first
@@ -136,10 +149,16 @@ def _evaluate_model(model_path: str, config: dict, data_factory) -> dict:
     suffix = path.suffix.lower()
     if suffix in (".h5", ".hdf5") or "weights" in path.name:
         model, kind = _load_keras_model(str(path), config)
-        infer_fn = lambda batch: _infer_keras(model, batch)
+
+        def infer_fn(batch):
+            return _infer_keras(model, batch)
+
     elif suffix == ".tflite":
         interpreter, kind = _load_tflite_model(str(path))
-        infer_fn = lambda batch: _infer_tflite(interpreter, batch)
+
+        def infer_fn(batch):
+            return _infer_tflite(interpreter, batch)
+
     else:
         console.print(f"[red]✗ Unsupported model format: {suffix}[/]")
         sys.exit(1)
@@ -176,7 +195,12 @@ def _evaluate_model(model_path: str, config: dict, data_factory) -> dict:
     calc = MetricsCalculator(y_true=y_true, y_score=y_scores)
     metrics = calc.compute_all_metrics(ambient_duration_hours=scaled_hours, threshold=0.5)
 
-    return {"y_true": y_true, "y_scores": y_scores, "metrics": metrics, "kind": kind}
+    return {
+        "y_true": y_true,
+        "y_scores": y_scores,
+        "metrics": metrics,
+        "kind": kind,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -231,13 +255,17 @@ def _build_comparison_table(name_a: str, name_b: str, metrics_a: dict, metrics_b
     return table
 
 
-def _build_operating_points_table(name: str, metrics: dict) -> Table:
+def _build_operating_points_table(name: str, metrics: dict) -> "Table | None":
     """Show threshold-recall-FAH table from operating_points if available."""
     ops = metrics.get("operating_points", [])
     if not ops:
         return None
 
-    t = Table(title=f"Operating Points: {Path(name).stem}", show_header=True, header_style="bold blue")
+    t = Table(
+        title=f"Operating Points: {Path(name).stem}",
+        show_header=True,
+        header_style="bold blue",
+    )
     t.add_column("Target FAH", justify="right")
     t.add_column("Threshold", justify="right")
     t.add_column("Actual FAH", justify="right")
@@ -266,10 +294,20 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("model_a", help="Path to model A (.weights.h5 or .tflite)")
     parser.add_argument("model_b", help="Path to model B (.weights.h5 or .tflite)")
-    parser.add_argument("--config", type=str, default="standard", help="Config preset name or path (default: standard)")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="standard",
+        help="Config preset name or path (default: standard)",
+    )
     parser.add_argument("--override", type=str, default=None, help="Override config YAML path")
     parser.add_argument("--json", action="store_true", help="Output results as JSON to stdout")
-    parser.add_argument("--output", type=str, default=None, help="Save JSON results to this file")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Save JSON results to this file",
+    )
     return parser
 
 
@@ -311,8 +349,14 @@ def main() -> None:
 
     if args.json:
         out = {
-            "model_a": {"path": args.model_a, "metrics": {k: v for k, v in metrics_a.items() if isinstance(v, (int, float, type(None)))}},
-            "model_b": {"path": args.model_b, "metrics": {k: v for k, v in metrics_b.items() if isinstance(v, (int, float, type(None)))}},
+            "model_a": {
+                "path": args.model_a,
+                "metrics": {k: v for k, v in metrics_a.items() if isinstance(v, (int, float, type(None)))},
+            },
+            "model_b": {
+                "path": args.model_b,
+                "metrics": {k: v for k, v in metrics_b.items() if isinstance(v, (int, float, type(None)))},
+            },
             "delta": {},
         }
         for key, _, _fmt in _DISPLAY_METRICS:
@@ -322,7 +366,15 @@ def main() -> None:
                 out["delta"][key] = float(va) - float(vb)
         print(json.dumps(out, indent=2))
         if args.output:
-            Path(args.output).write_text(json.dumps(out, indent=2))
+            output_path = Path(args.output)
+            # Create backup if output file already exists
+            if output_path.exists():
+                from datetime import datetime
+
+                backup_path = output_path.with_suffix(f".backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                output_path.rename(backup_path)
+                console.print(f"[yellow]Backup created:[/] {backup_path}")
+            output_path.write_text(json.dumps(out, indent=2))
         return
 
     # Rich comparison table
@@ -353,8 +405,14 @@ def main() -> None:
 
     if args.output:
         out = {
-            "model_a": {"path": args.model_a, "metrics": {k: v for k, v in metrics_a.items() if isinstance(v, (int, float, type(None)))}},
-            "model_b": {"path": args.model_b, "metrics": {k: v for k, v in metrics_b.items() if isinstance(v, (int, float, type(None)))}},
+            "model_a": {
+                "path": args.model_a,
+                "metrics": {k: v for k, v in metrics_a.items() if isinstance(v, (int, float, type(None)))},
+            },
+            "model_b": {
+                "path": args.model_b,
+                "metrics": {k: v for k, v in metrics_b.items() if isinstance(v, (int, float, type(None)))},
+            },
         }
         Path(args.output).write_text(json.dumps(out, indent=2))
         console.print(f"\n  Results saved to: {args.output}")

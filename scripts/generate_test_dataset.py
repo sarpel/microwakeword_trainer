@@ -8,6 +8,8 @@ WARNING: Never change DATASET_DIR to point at dataset/. Synthetic sine waves and
          white noise will poison the real dataset.
 """
 
+import argparse
+import sys
 import wave
 from pathlib import Path
 
@@ -36,7 +38,7 @@ def generate_sine_wave(frequency: float, duration: float, sample_rate: int) -> n
     envelope = np.ones_like(t)
     envelope[:fade_len] = np.linspace(0, 1, fade_len)
     envelope[-fade_len:] = np.linspace(1, 0, fade_len)
-    return (np.sin(2 * np.pi * frequency * t) * envelope * 0.7).astype(np.float32)
+    return np.asarray(np.sin(2 * np.pi * frequency * t) * envelope * 0.7, dtype=np.float32)
 
 
 def generate_noise(duration: float, sample_rate: int) -> np.ndarray:
@@ -47,7 +49,7 @@ def generate_noise(duration: float, sample_rate: int) -> np.ndarray:
     envelope = np.ones_like(samples)
     envelope[:fade_len] = np.linspace(0, 1, fade_len)
     envelope[-fade_len:] = np.linspace(1, 0, fade_len)
-    return (envelope * samples * 0.3).astype(np.float32)
+    return np.asarray(envelope * samples * 0.3, dtype=np.float32)
 
 
 def save_wav_file(filepath: Path, samples: np.ndarray, sample_rate: int):
@@ -122,64 +124,99 @@ def verify_wav_file(filepath: Path) -> dict:
         return {"error": str(e)}
 
 
-def main():
-    print("=" * 60)
-    print("Synthetic Test Dataset Generator")
-    print("=" * 60)
-    print("Configuration:")
-    print(f"  Sample Rate: {SAMPLE_RATE} Hz")
-    print(f"  Duration: {DURATION} seconds")
-    print(f"  Channels: {NUM_CHANNELS} (mono)")
-    print(f"  Bit Depth: {SAMPLE_WIDTH * 8}-bit")
-    print()
+def main(args: argparse.Namespace | None = None) -> int:
+    """Main entry point with CLI argument parsing."""
+    parser = argparse.ArgumentParser(description="Generate synthetic test dataset for microwakeword training pipeline.")
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=str(DATASET_DIR),
+        help=f"Output directory (default: {DATASET_DIR})",
+    )
+    parser.add_argument(
+        "--num-positive",
+        type=int,
+        default=10,
+        help="Number of positive samples to generate (default: 10)",
+    )
+    parser.add_argument(
+        "--num-negative",
+        type=int,
+        default=50,
+        help="Number of negative samples to generate (default: 50)",
+    )
+    parsed_args = parser.parse_args(args)
 
-    # Create samples
-    create_positive_samples()
-    create_negative_samples()
+    # Update globals based on args
+    global DATASET_DIR, POSITIVE_DIR, NEGATIVE_DIR
+    DATASET_DIR = Path(parsed_args.output_dir)
+    POSITIVE_DIR = DATASET_DIR / "positive" / "speaker_001"
+    NEGATIVE_DIR = DATASET_DIR / "negative" / "speech"
 
-    # Verify a few files
-    print("Verification (sample files):")
-    pos_files = list(POSITIVE_DIR.glob("*.wav"))
-    neg_files = list(NEGATIVE_DIR.glob("*.wav"))
-    if not pos_files or not neg_files:
-        print("  No WAV files found for verification.")
-        return
-    pos_sample = pos_files[0]
-    neg_sample = neg_files[0]
+    try:
+        print("=" * 60)
+        print("Synthetic Test Dataset Generator")
+        print("=" * 60)
+        print("Configuration:")
+        print(f"  Sample Rate: {SAMPLE_RATE} Hz")
+        print(f"  Duration: {DURATION} seconds")
+        print(f"  Channels: {NUM_CHANNELS} (mono)")
+        print(f"  Bit Depth: {SAMPLE_WIDTH * 8}-bit")
+        print(f"  Output: {DATASET_DIR}")
+        print()
 
-    pos_info = verify_wav_file(pos_sample)
-    neg_info = verify_wav_file(neg_sample)
+        # Create samples
+        create_positive_samples()
+        create_negative_samples()
 
-    if "error" in pos_info:
-        print(f"  Positive: {pos_sample.name} - ERROR: {pos_info['error']}")
-    else:
-        print(f"  Positive: {pos_sample.name}")
-        print(f"    Channels: {pos_info['channels']}, Rate: {pos_info['sample_rate']} Hz")
-        print(f"    Duration: {pos_info['duration']:.2f}s, Frames: {pos_info['n_frames']}")
+        # Verify a few files
+        print("Verification (sample files):")
+        pos_files = list(POSITIVE_DIR.glob("*.wav"))
+        neg_files = list(NEGATIVE_DIR.glob("*.wav"))
+        if not pos_files or not neg_files:
+            print("  No WAV files found for verification.")
+            return 1
+        pos_sample = pos_files[0]
+        neg_sample = neg_files[0]
 
-    if "error" in neg_info:
-        print(f"  Negative: {neg_sample.name} - ERROR: {neg_info['error']}")
-    else:
-        print(f"  Negative: {neg_sample.name}")
-        print(f"    Channels: {neg_info['channels']}, Rate: {neg_info['sample_rate']} Hz")
-        print(f"    Duration: {neg_info['duration']:.2f}s, Frames: {neg_info['n_frames']}")
+        pos_info = verify_wav_file(pos_sample)
+        neg_info = verify_wav_file(neg_sample)
 
-    # Count files
-    pos_count = len(list(POSITIVE_DIR.glob("*.wav")))
-    neg_count = len(list(NEGATIVE_DIR.glob("*.wav")))
+        if "error" in pos_info:
+            print(f"  Positive: {pos_sample.name} - ERROR: {pos_info['error']}")
+        else:
+            print(f"  Positive: {pos_sample.name}")
+            print(f"    Channels: {pos_info['channels']}, Rate: {pos_info['sample_rate']} Hz")
+            print(f"    Duration: {pos_info['duration']:.2f}s, Frames: {pos_info['n_frames']}")
 
-    print()
-    print("=" * 60)
-    print("Summary:")
-    print(f"  Positive samples: {pos_count} (in {POSITIVE_DIR})")
-    print(f"  Negative samples: {neg_count} (in {NEGATIVE_DIR})")
-    print("=" * 60)
+        if "error" in neg_info:
+            print(f"  Negative: {neg_sample.name} - ERROR: {neg_info['error']}")
+        else:
+            print(f"  Negative: {neg_sample.name}")
+            print(f"    Channels: {neg_info['channels']}, Rate: {neg_info['sample_rate']} Hz")
+            print(f"    Duration: {neg_info['duration']:.2f}s, Frames: {neg_info['n_frames']}")
 
-    # Calculate total size
-    total_size = sum(f.stat().st_size for f in POSITIVE_DIR.glob("*.wav"))
-    total_size += sum(f.stat().st_size for f in NEGATIVE_DIR.glob("*.wav"))
-    print(f"  Total size: {total_size / 1024:.1f} KB")
+        # Count files
+        pos_count = len(list(POSITIVE_DIR.glob("*.wav")))
+        neg_count = len(list(NEGATIVE_DIR.glob("*.wav")))
+
+        print()
+        print("=" * 60)
+        print("Summary:")
+        print(f"  Positive samples: {pos_count} (in {POSITIVE_DIR})")
+        print(f"  Negative samples: {neg_count} (in {NEGATIVE_DIR})")
+        print("=" * 60)
+
+        # Calculate total size
+        total_size = sum(f.stat().st_size for f in POSITIVE_DIR.glob("*.wav"))
+        total_size += sum(f.stat().st_size for f in NEGATIVE_DIR.glob("*.wav"))
+        print(f"  Total size: {total_size / 1024:.1f} KB")
+
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

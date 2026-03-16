@@ -4,7 +4,9 @@ import argparse
 from pathlib import Path
 
 
-def _autodetect_checkpoint(checkpoint_dir: str = "./models/checkpoints") -> str:
+def _autodetect_checkpoint(
+    checkpoint_dir: str = "./models/checkpoints",
+) -> str:
     """Return the best available checkpoint path, or a placeholder string."""
     base = Path(checkpoint_dir)
     for name in ("best_weights.weights.h5", "final_weights.weights.h5"):

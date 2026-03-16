@@ -6,14 +6,14 @@ Provides:
 - FeatureStore: Manage features on disk with mmap access
 """
 
+import json
 import logging
 import os
 import struct
 from collections import OrderedDict
-import json
+from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha1, sha256
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union, cast
 
@@ -1239,27 +1239,6 @@ class WakeWordDataset:
 
                 if batch_idx == 0:
                     continue  # Skip empty batches to avoid yielding empty data
-                    batch = (
-                        batch_buffer["features"][:batch_idx].copy(),
-                        batch_buffer["labels"][:batch_idx].copy(),
-                        batch_buffer["weights"][:batch_idx].copy(),
-                        batch_buffer["is_hard_neg"][:batch_idx].copy(),
-                    )
-                    batch_idx = 0
-                    fingerprints, ground_truth, sample_weights, is_hard_neg = batch
-                    if include_hard_negative_flag:
-                        yield (
-                            fingerprints,
-                            ground_truth.astype(np.int32, copy=False),
-                            sample_weights,
-                            is_hard_neg,
-                        )
-                    else:
-                        yield (
-                            fingerprints,
-                            ground_truth.astype(np.int32, copy=False),
-                            sample_weights,
-                        )
 
                 if not infinite:
                     break

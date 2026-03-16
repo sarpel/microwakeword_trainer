@@ -88,12 +88,47 @@ def main() -> None:
         metavar="DIR",
         help="Background dirs to split-only, no VAD (background/). Files >max-duration are split into max-duration chunks in-place.",
     )
-    parser.add_argument("--apply", action="store_true", help="Apply changes. Default is dry-run (no files touched).")
-    parser.add_argument("--min-duration", type=float, default=300.0, metavar="MS", help="Discard speech clips shorter than this after VAD trim (default: 300ms)")
-    parser.add_argument("--max-duration", type=float, default=2000.0, metavar="MS", help="Discard speech clips longer than this after VAD trim; split background at this length (default: 2000ms)")
-    parser.add_argument("--pad-ms", type=int, default=200, metavar="MS", help="Silence padding around detected speech region (default: 200ms)")
-    parser.add_argument("--aggressiveness", type=int, default=2, choices=[0, 1, 2, 3], metavar="N", help="webrtcvad aggressiveness 0-3 (default: 2)")
-    parser.add_argument("--discarded-dir", type=str, default="discarded", metavar="DIR", help="Root dir for moved out-of-range speech files (default: discarded/)")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply changes. Default is dry-run (no files touched).",
+    )
+    parser.add_argument(
+        "--min-duration",
+        type=float,
+        default=300.0,
+        metavar="MS",
+        help="Discard speech clips shorter than this after VAD trim (default: 300ms)",
+    )
+    parser.add_argument(
+        "--max-duration",
+        type=float,
+        default=2000.0,
+        metavar="MS",
+        help="Discard speech clips longer than this after VAD trim; split background at this length (default: 2000ms)",
+    )
+    parser.add_argument(
+        "--pad-ms",
+        type=int,
+        default=200,
+        metavar="MS",
+        help="Silence padding around detected speech region (default: 200ms)",
+    )
+    parser.add_argument(
+        "--aggressiveness",
+        type=int,
+        default=2,
+        choices=[0, 1, 2, 3],
+        metavar="N",
+        help="webrtcvad aggressiveness 0-3 (default: 2)",
+    )
+    parser.add_argument(
+        "--discarded-dir",
+        type=str,
+        default="discarded",
+        metavar="DIR",
+        help="Root dir for moved out-of-range speech files (default: discarded/)",
+    )
 
     args = parser.parse_args()
     if not args.speech_dirs and not args.bg_dirs:
@@ -131,16 +166,31 @@ def main() -> None:
         if not d.exists():
             print(f"[WARN] Not found, skipping: {d}")
             continue
-        speech_results.extend(process_speech_directory(d, config, discarded_root, dry_run))
+        try:
+            speech_results.extend(process_speech_directory(d, config, discarded_root, dry_run))
+        except Exception as e:
+            print(f"[ERROR] Failed to process speech directory {d}: {e}")
+            continue
 
     for raw_dir in args.bg_dirs:
         d = Path(raw_dir)
         if not d.exists():
             print(f"[WARN] Not found, skipping: {d}")
             continue
-        bg_results.extend(process_background_directory(d, args.max_duration, discarded_root, dry_run))
+        try:
+            bg_results.extend(process_background_directory(d, args.max_duration, discarded_root, dry_run))
+        except Exception as e:
+            print(f"[ERROR] Failed to process background directory {d}: {e}")
+            continue
 
-    _print_summary(speech_results, bg_results, dry_run, args.min_duration, args.max_duration, discarded_root)
+    _print_summary(
+        speech_results,
+        bg_results,
+        dry_run,
+        args.min_duration,
+        args.max_duration,
+        discarded_root,
+    )
 
 
 if __name__ == "__main__":

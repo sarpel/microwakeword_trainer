@@ -348,7 +348,7 @@ class ParetoArchive:
                         "auc_pr": c.eval_results.auc_pr,
                         "threshold": c.eval_results.threshold,
                         "threshold_uint8": c.eval_results.threshold_uint8,
-                        "arm": STRATEGY_ARMS[c.strategy_arm].name if 0 <= c.strategy_arm < len(STRATEGY_ARMS) else "initial",
+                        "arm": (STRATEGY_ARMS[c.strategy_arm].name if 0 <= c.strategy_arm < len(STRATEGY_ARMS) else "initial"),
                         "iteration": c.iteration,
                     }
                 )
@@ -718,7 +718,13 @@ class ThresholdOptimizer:
             logger.warning("Threshold optimization received empty arrays; using default threshold=0.5")
             best_threshold = 0.5
             threshold_uint8 = self._float_to_uint8(best_threshold)
-            metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours, sample_weights=sample_weights)
+            metrics = self._compute_metrics_at_threshold(
+                y_true,
+                y_scores,
+                best_threshold,
+                ambient_duration_hours,
+                sample_weights=sample_weights,
+            )
             return best_threshold, threshold_uint8, metrics
 
         if use_binary_search:
@@ -730,7 +736,13 @@ class ThresholdOptimizer:
             )
 
             threshold_uint8 = self._float_to_uint8(best_threshold)
-            metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours, sample_weights=sample_weights)
+            metrics = self._compute_metrics_at_threshold(
+                y_true,
+                y_scores,
+                best_threshold,
+                ambient_duration_hours,
+                sample_weights=sample_weights,
+            )
             return best_threshold, threshold_uint8, metrics
 
         # Pass 1: Coarse quantile sweep
@@ -759,7 +771,13 @@ class ThresholdOptimizer:
             )
 
         threshold_uint8 = self._float_to_uint8(best_threshold)
-        metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_duration_hours, sample_weights=sample_weights)
+        metrics = self._compute_metrics_at_threshold(
+            y_true,
+            y_scores,
+            best_threshold,
+            ambient_duration_hours,
+            sample_weights=sample_weights,
+        )
 
         return best_threshold, threshold_uint8, metrics
 
@@ -1165,6 +1183,10 @@ class ThompsonSampler:
             sample = np.random.beta(self.successes[i], self.failures[i])
             if i in bonus_arms:
                 sample += 0.3
+            # Encourage exploration under stagnation by lightly penalizing
+            # selecting the same arm on consecutive rounds.
+            if i == self.last_arm:
+                sample -= 0.05
             samples[i] = sample
 
         selected = int(np.argmax(samples))
@@ -1351,12 +1373,9 @@ class AutoTuner:
         # Campaign state
         self.archive = ParetoArchive(max_size=self.archive_size)
         self.thompson = ThompsonSampler(n_arms=len(STRATEGY_ARMS))
-        self.annealing = AnnealingController(
-            initial_temperature=self.initial_annealing_temp,
-            cooling_rate=self.cooling_rate,
-            reheat_factor=self.reheat_factor,
-            reheat_after=self.reheat_after,
-        )
+        self.annealing = AnnealingController()
+        self.focused_sampler: Optional[FocusedSampler] = None
+
         self.stir = StirController(thresholds=self.stir_thresholds)
         self.error_memory = ErrorMemory()
         self.threshold_optimizer = ThresholdOptimizer()
@@ -1365,7 +1384,17 @@ class AutoTuner:
         self.best_checkpoint_path: Optional[str] = None
         self._last_confirmation_best_attempt: Optional[CandidateState] = None
         self._last_confirmation_best_confirmed: Optional[CandidateState] = None
-        self._cached_eval_data: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None] | None = None
+        self._cached_eval_data: (
+            tuple[
+                np.ndarray,
+                np.ndarray,
+                np.ndarray,
+                np.ndarray,
+                np.ndarray | None,
+            ]
+            | None
+        ) = None
+        self._base_metrics: Optional["TuneMetrics"] = None  # stored before tuning starts; used for Before→After comparison
 
     def _setup_file_logger(self) -> logging.Logger:
         flogger = logging.getLogger(f"autotuner.{id(self)}")
@@ -1449,7 +1478,12 @@ class AutoTuner:
                             self.file_logger.warning(f"Unsupported group_key='{self.group_key}' for autotuner split; falling back to random partition")
                     else:
                         self.file_logger.warning(f"Group metadata length mismatch: file_paths={len(file_paths)} vs labels={len(labels)}; falling back to random partition")
-                except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
+                except (
+                    OSError,
+                    json.JSONDecodeError,
+                    TypeError,
+                    ValueError,
+                ) as e:
                     self.file_logger.warning(f"Failed loading group metadata for partitioning: {e}")
 
         dataset.close()
@@ -1457,10 +1491,22 @@ class AutoTuner:
         self.file_logger.info(f"Loaded {len(labels)} samples: {int(np.sum(labels >= 0.5))} positive, {int(np.sum(labels < 0.5))} negative")
 
         # Cache the loaded data for future iterations
-        self._cached_eval_data = (features, labels, weights, indices, group_ids)
+        self._cached_eval_data = (
+            features,
+            labels,
+            weights,
+            indices,
+            group_ids,
+        )
         return self._cached_eval_data
 
-    def _partition_data(self, features: np.ndarray, labels: np.ndarray, weights: np.ndarray, group_ids: Optional[np.ndarray] = None) -> dict:
+    def _partition_data(
+        self,
+        features: np.ndarray,
+        labels: np.ndarray,
+        weights: np.ndarray,
+        group_ids: Optional[np.ndarray] = None,
+    ) -> dict:
         """Partition data: calibration 15%, search_train/search_eval 60%, confirmation 20%, representative 5%.
 
         Returns dict with keys: cal, search_train, search_eval, confirm, repr, fold_indices.
@@ -1546,7 +1592,15 @@ class AutoTuner:
             confirm_idx = np.array(bins["confirm"], dtype=np.int64)
             repr_idx = np.array(bins["repr"], dtype=np.int64)
 
-            if min(len(cal_idx), len(search_idx), len(confirm_idx), len(repr_idx)) == 0:
+            if (
+                min(
+                    len(cal_idx),
+                    len(search_idx),
+                    len(confirm_idx),
+                    len(repr_idx),
+                )
+                == 0
+            ):
                 self.file_logger.warning("Group-aware partition created an empty bin; falling back to random partition")
                 use_group_partition = False
             else:
@@ -1567,7 +1621,13 @@ class AutoTuner:
             raise ValueError(f"Need at least 2 search samples for train/eval split, got {len(search_idx)}")
 
         # Ensure both partitions have at least 1 sample
-        n_search_eval = max(1, min(len(search_idx) - 1, int(round(len(search_idx) * self.search_eval_fraction))))
+        n_search_eval = max(
+            1,
+            min(
+                len(search_idx) - 1,
+                int(round(len(search_idx) * self.search_eval_fraction)),
+            ),
+        )
         n_search_train = len(search_idx) - n_search_eval
 
         if use_group_partition and group_ids is not None:
@@ -1621,7 +1681,12 @@ class AutoTuner:
             fold_indices.append(np.arange(start, end))
 
         partition = {
-            "cal": (features[cal_idx], labels[cal_idx], weights[cal_idx], cal_idx),
+            "cal": (
+                features[cal_idx],
+                labels[cal_idx],
+                weights[cal_idx],
+                cal_idx,
+            ),
             "search_train": (
                 features[search_train_idx],
                 labels[search_train_idx],
@@ -1675,7 +1740,13 @@ class AutoTuner:
         try:
             state = [v.numpy() for v in optimizer.variables]
             return pickle.dumps(state)
-        except (AttributeError, TypeError, ValueError, RuntimeError, pickle.PickleError) as e:
+        except (
+            AttributeError,
+            TypeError,
+            ValueError,
+            RuntimeError,
+            pickle.PickleError,
+        ) as e:
             logger.warning(f"Could not serialize optimizer state, continuing without it: {e}")
             return pickle.dumps([])
 
@@ -1685,7 +1756,14 @@ class AutoTuner:
             if state:
                 for v, val in zip(optimizer.variables, state, strict=False):
                     v.assign(val)
-        except (AttributeError, TypeError, ValueError, RuntimeError, EOFError, pickle.PickleError) as e:
+        except (
+            AttributeError,
+            TypeError,
+            ValueError,
+            RuntimeError,
+            EOFError,
+            pickle.PickleError,
+        ) as e:
             logger.warning(f"Could not restore optimizer state, continuing without it: {e}")
 
     def _save_bn_state(self, model) -> dict:
@@ -1816,77 +1894,143 @@ class AutoTuner:
         patience_counter = 0
         min_steps_before_stop = max(50, n_steps // 4)  # Don't stop too early
 
-        for step in range(n_steps):
-            batch_features, batch_labels, batch_weights = sampler.build_batch(
-                strategy_arm,
-                candidate.threshold_float32,
-                batch_size=batch_size,
-                curriculum_stage=candidate.curriculum_stage,
-                recent_scores=recent_scores,
+        arm_config = STRATEGY_ARMS[strategy_arm]
+        arm_label = arm_config.name.replace("_", " ").title()
+        initial_lr = float(lr)
+
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
+        )
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn(f"  [bold cyan]Training[/bold cyan] [white]{arm_label}[/white]"),
+            BarColumn(bar_width=28),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("  loss [cyan]{task.fields[loss_display]}[/cyan]"),
+            TextColumn("  lr [magenta]{task.fields[lr_display]}[/magenta]"),
+            TimeElapsedColumn(),
+            console=self.console,
+            transient=True,
+            refresh_per_second=4,
+        ) as _progress:
+            _task_id = _progress.add_task(
+                "",
+                total=n_steps,
+                loss=0.0,
+                loss_display=self._format_compact_metric(0.0),
+                lr_display=self._format_compact_metric(initial_lr),
             )
-
-            batch_features = tf.constant(batch_features, dtype=tf.float32)
-            batch_labels = tf.constant(batch_labels.reshape(-1, 1), dtype=tf.float32)
-            batch_weights = tf.constant(batch_weights.reshape(-1), dtype=tf.float32)
-
-            if use_sam:
-                loss_val = self._sam_step(
-                    model,
-                    optimizer,
-                    loss_fn,
-                    batch_features,
-                    batch_labels,
-                    batch_weights,
-                    clipnorm,
-                )
-            else:
-                loss_val = self._standard_step(
-                    model,
-                    optimizer,
-                    loss_fn,
-                    batch_features,
-                    batch_labels,
-                    batch_weights,
-                    clipnorm,
+            for step in range(n_steps):
+                batch_features, batch_labels, batch_weights = sampler.build_batch(
+                    strategy_arm,
+                    candidate.threshold_float32,
+                    batch_size=batch_size,
+                    curriculum_stage=candidate.curriculum_stage,
+                    recent_scores=recent_scores,
                 )
 
-            losses.append(float(loss_val))
+                batch_features = tf.constant(batch_features, dtype=tf.float32)
+                batch_labels = tf.constant(batch_labels.reshape(-1, 1), dtype=tf.float32)
+                batch_weights = tf.constant(batch_weights.reshape(-1), dtype=tf.float32)
 
-            # Early stopping check for aggressive arms
-            if early_stopping_patience > 0 and step >= min_steps_before_stop:
-                current_loss = float(loss_val)
-                if current_loss < best_loss - 1e-5:  # Improved
-                    best_loss = current_loss
-                    patience_counter = 0
+                if use_sam:
+                    loss_val = self._sam_step(
+                        model,
+                        optimizer,
+                        loss_fn,
+                        batch_features,
+                        batch_labels,
+                        batch_weights,
+                        clipnorm,
+                    )
                 else:
-                    patience_counter += 1
-                    if patience_counter >= early_stopping_patience:
-                        self.file_logger.info(f"Early stopping burst at step {step + 1}/{n_steps} (no improvement for {patience_counter} steps)")
-                        break
+                    loss_val = self._standard_step(
+                        model,
+                        optimizer,
+                        loss_fn,
+                        batch_features,
+                        batch_labels,
+                        batch_weights,
+                        clipnorm,
+                    )
 
-            now = time.time()
-            should_log_step = n_steps >= heartbeat_steps and (step + 1) % heartbeat_steps == 0
-            should_log_time = now - last_heartbeat >= heartbeat_seconds
-            if should_log_step or should_log_time:
-                mean_recent = float(np.mean(losses[-100:])) if losses else 0.0
-                elapsed = now - burst_start
-                self.file_logger.info(f"Burst progress: step={step + 1}/{n_steps}, elapsed={elapsed:.1f}s, mean_recent_loss={mean_recent:.6f}, lr={float(optimizer.learning_rate.numpy()):.8f}")
-                last_heartbeat = now
+                losses.append(float(loss_val))
 
-            # SWA snapshot collection
-            if use_swa and (step + 1) % self.swa_interval == 0:
-                snapshot = self._serialize_weights(model)
-                swa_snapshots.append(snapshot)
+                # Early stopping check for aggressive arms
+                if early_stopping_patience > 0 and step >= min_steps_before_stop:
+                    current_loss = float(loss_val)
+                    if current_loss < best_loss - 1e-5:  # Improved
+                        best_loss = current_loss
+                        patience_counter = 0
+                    else:
+                        patience_counter += 1
+                        if patience_counter >= early_stopping_patience:
+                            self.file_logger.info(f"Early stopping burst at step {step + 1}/{n_steps} (no improvement for {patience_counter} steps)")
+                            break
 
-            # Cosine schedule
-            if STRATEGY_ARMS[strategy_arm].use_cosine_schedule:
-                arm = STRATEGY_ARMS[strategy_arm]
-                lr_max = arm.lr_range[1]
-                lr_min = arm.lr_range[0]
-                cosine_lr = lr_min + 0.5 * (lr_max - lr_min) * (1 + math.cos(math.pi * step / max(n_steps, 1)))
-                optimizer.learning_rate.assign(cosine_lr)
+                now = time.time()
+                should_log_step = n_steps >= heartbeat_steps and (step + 1) % heartbeat_steps == 0
+                should_log_time = now - last_heartbeat >= heartbeat_seconds
+                if should_log_step or should_log_time:
+                    mean_recent = float(np.mean(losses[-100:])) if losses else 0.0
+                    min_recent = float(np.min(losses[-100:])) if losses else 0.0
+                    max_recent = float(np.max(losses[-100:])) if losses else 0.0
+                    elapsed = now - burst_start
+                    step_rate = (step + 1) / max(elapsed, 1e-9)
+                    current_lr = float(optimizer.learning_rate.numpy())
+                    self.file_logger.info(
+                        "Burst progress: "
+                        f"step={step + 1}/{n_steps}, "
+                        f"elapsed={elapsed:.1f}s, "
+                        f"mean_recent_loss={self._format_compact_metric(mean_recent)}, "
+                        f"min_recent_loss={self._format_compact_metric(min_recent)}, "
+                        f"max_recent_loss={self._format_compact_metric(max_recent)}, "
+                        f"best_loss={self._format_compact_metric(min(losses)) if losses else '0'}, "
+                        f"lr={self._format_compact_metric(current_lr)}, "
+                        f"steps_per_sec={step_rate:.2f}"
+                    )
+                    last_heartbeat = now
 
+                # SWA snapshot collection
+                if use_swa and (step + 1) % self.swa_interval == 0:
+                    snapshot = self._serialize_weights(model)
+                    swa_snapshots.append(snapshot)
+
+                # Cosine schedule
+                if STRATEGY_ARMS[strategy_arm].use_cosine_schedule:
+                    arm = STRATEGY_ARMS[strategy_arm]
+                    lr_max = arm.lr_range[1]
+                    lr_min = arm.lr_range[0]
+                    cosine_lr = lr_min + 0.5 * (lr_max - lr_min) * (1 + math.cos(math.pi * step / max(n_steps, 1)))
+                    optimizer.learning_rate.assign(cosine_lr)
+
+                # Update progress bar
+                recent_loss = float(np.mean(losses[-20:])) if losses else 0.0
+                current_lr = float(optimizer.learning_rate.numpy())
+                _progress.update(
+                    _task_id,
+                    advance=1,
+                    loss=recent_loss,
+                    loss_display=self._format_compact_metric(recent_loss),
+                    lr_display=self._format_compact_metric(current_lr),
+                )
         self._unfreeze_bn(model)
+
+        if losses:
+            elapsed = time.time() - burst_start
+            self.file_logger.info(
+                "Burst complete: "
+                f"steps={len(losses)}/{n_steps}, "
+                f"elapsed={elapsed:.1f}s, "
+                f"final_loss={self._format_compact_metric(losses[-1])}, "
+                f"mean_loss={self._format_compact_metric(float(np.mean(losses)))}, "
+                f"best_loss={self._format_compact_metric(float(np.min(losses)))}"
+            )
 
         return {
             "steps": len(losses),  # Actual steps completed (may be less due to early stopping)
@@ -1894,6 +2038,15 @@ class AutoTuner:
             "mean_loss": float(np.mean(losses)) if losses else 0.0,
             "swa_snapshots": swa_snapshots,
         }
+
+    @staticmethod
+    def _format_compact_metric(value: float) -> str:
+        """Format metrics without hiding tiny non-zero values as 0.0000."""
+        if not math.isfinite(value):
+            return str(value)
+        if value == 0.0:
+            return "0"
+        return f"{value:.4g}"
 
     def _standard_step(self, model, optimizer, loss_fn, features, labels, weights, clipnorm):
         import tensorflow as tf
@@ -2103,13 +2256,35 @@ class AutoTuner:
         best_attempt_metrics = None
         best_score = float("inf")
 
-        table = Table(title="🔬 Confirmation Results")
-        table.add_column("Candidate", style="cyan")
-        table.add_column("Float32 FAH", justify="right")
-        table.add_column("Float32 Recall", justify="right")
-        table.add_column("Status", justify="center")
+        from rich.panel import Panel
+        from rich.rule import Rule
 
-        for candidate in shortlist:
+        self.console.print()
+        self.console.print(
+            Rule(
+                "[bold]\ud83d\udd12  Final Confirmation[/bold]",
+                style="bright_black",
+            )
+        )
+        self.console.print(
+            Panel(
+                "[bold]One final blind test.[/bold]\n\n"
+                "  The top candidates are now tested on the [bold yellow]hold-out set[/bold yellow] \u2014 data they have\n"
+                "  [italic]never seen[/italic] during training. This is the most honest measurement of real-world performance.\n\n"
+                "  A candidate must hit both targets here to be considered [bold green]ready to deploy[/bold green].",
+                title="What's happening now",
+                border_style="bright_black",
+                expand=False,
+            )
+        )
+        self.console.print()
+        table = Table(title="\ud83d\udd2c Final Validation \u2014 Held-Out Data")
+        table.add_column("#", style="cyan", justify="right")
+        table.add_column("Wake Word Detection", justify="right")
+        table.add_column("False Alarms / hr", justify="right")
+        table.add_column("Result", justify="left")
+
+        for rank, candidate in enumerate(shortlist, 1):
             # Restore weights
             self._deserialize_weights(model, candidate.weights_bytes)
             self._restore_bn_state(model, candidate.batchnorm_state)
@@ -2143,11 +2318,17 @@ class AutoTuner:
             passed = float_pass
 
             status = "✅ PASS" if passed else "❌ FAIL"
+            if passed:
+                result_str = "✅ Pass"
+            else:
+                recall_gap = (self.target_recall - metrics.recall) * 100
+                fah_gap = metrics.fah - self.target_fah
+                result_str = f"❌ Detection {recall_gap:.1f}% below target" if recall_gap > 0 else f"❌ FAH {fah_gap:.2f}/hr over limit"
             table.add_row(
-                candidate.id,
-                f"{metrics.fah:.4f}",
-                f"{metrics.recall:.4f}",
-                status,
+                str(rank),
+                f"{metrics.recall * 100:.1f}%",
+                f"{metrics.fah:.2f}",
+                result_str,
             )
 
             if passed:
@@ -2169,12 +2350,35 @@ class AutoTuner:
 
         if best_confirmed:
             assert best_confirmed.eval_results is not None, "best_confirmed.eval_results should not be None"
-            self.file_logger.info(f"Best confirmed: {best_confirmed.id} — FAH={best_confirmed.eval_results.fah:.4f}, Recall={best_confirmed.eval_results.recall:.4f}")
+            self.file_logger.info(f"Best confirmed: {best_confirmed.id} \u2014 FAH={best_confirmed.eval_results.fah:.4f}, Recall={best_confirmed.eval_results.recall:.4f}")
+            from rich.panel import Panel
+
+            self.console.print(
+                Panel(
+                    f"[bold green]\u2705 Confirmed! Your model passed the blind test.[/bold green]\n\n"
+                    f"  Detection: [bold green]{best_confirmed.eval_results.recall * 100:.1f}%[/bold green]  "
+                    f"  False alarms: [bold green]{best_confirmed.eval_results.fah:.2f}/hr[/bold green]",
+                    border_style="green",
+                    expand=False,
+                )
+            )
+            self.console.print()
         else:
             self.file_logger.warning("No candidate passed confirmation phase")
             if best_attempt and best_attempt_metrics:
-                self.file_logger.info(f"Best failed attempt: {best_attempt.id} — FAH={best_attempt_metrics.fah:.4f}, Recall={best_attempt_metrics.recall:.4f}")
+                self.file_logger.info(f"Best failed attempt: {best_attempt.id} \u2014 FAH={best_attempt_metrics.fah:.4f}, Recall={best_attempt_metrics.recall:.4f}")
+            from rich.panel import Panel
 
+            self.console.print(
+                Panel(
+                    "[bold red]\u274c No candidate passed the blind test.[/bold red]\n\n"
+                    "  The model improved during training but didn't hold up on completely unseen data.\n"
+                    "  This can happen with limited data \u2014 the best available checkpoint will still be saved.",
+                    border_style="red",
+                    expand=False,
+                )
+            )
+            self.console.print()
         # Persist confirmation picks for downstream reporting.
         self._last_confirmation_best_confirmed = best_confirmed
         self._last_confirmation_best_attempt = best_attempt
@@ -2187,6 +2391,17 @@ class AutoTuner:
         fah_excess = max(0, m.fah - self.target_fah) / max(self.target_fah, 1e-8)
         recall_deficit = max(0, self.target_recall - m.recall) / max(self.target_recall, 1e-8)
         return float(2.0 * fah_excess + 1.0 * recall_deficit)
+
+    def _is_meaningful_improvement(self, candidate: TuneMetrics, parent: TuneMetrics) -> bool:
+        """Gate tiny metric jitter so accepted-but-flat rounds still build stagnation pressure."""
+        score_gain = self._scalarized_score(parent) - self._scalarized_score(candidate)
+        if score_gain > 1e-4:
+            return True
+        if candidate.recall > parent.recall + 5e-4:
+            return True
+        if candidate.fah < parent.fah - 0.002:
+            return True
+        return candidate.auc_pr > parent.auc_pr + 5e-4
 
     # ------------------------------------------------------------------
     # Checkpoint management
@@ -2289,16 +2504,21 @@ class AutoTuner:
                         layer.moving_variance.assign(bn_stats_before[layer.name]["moving_variance"])
 
                 # Quick eval
+                # Quick eval
+                assert sampler is not None, "sampler must not be None when calling _apply_stir"
                 batch = sampler.build_batch(
-                    candidate.strategy_arm if candidate.strategy_arm >= 0 else 5,
+                    (candidate.strategy_arm if candidate.strategy_arm >= 0 else 5),
                     candidate.threshold_float32,
                     batch_size=64,
                     recent_scores=recent_scores,
                 )
-                import tensorflow as tf
+                import tensorflow as tf_internal
 
-                preds = model(tf.constant(batch[0], dtype=tf.float32), training=False)
-                loss = float(tf.keras.losses.binary_crossentropy(batch[1].reshape(-1, 1), preds).numpy().mean())
+                preds = model(
+                    tf_internal.convert_to_tensor(batch[0], dtype=tf_internal.float32),
+                    training=False,
+                )
+                loss = float(tf_internal.keras.losses.binary_crossentropy(batch[1].reshape(-1, 1), preds).numpy().mean())
                 if loss < best_loss:
                     best_loss = loss
                     best_weights = self._serialize_weights(model)
@@ -2354,43 +2574,244 @@ class AutoTuner:
     # Rich logging
     # ------------------------------------------------------------------
 
+    # Human-readable descriptions for each strategy arm
+    _STRATEGY_DESCRIPTIONS = {
+        "boundary_polish": (
+            "[cyan]Boundary Polish[/cyan]",
+            "Fine-tuning the decision boundary — teaching the model to be more confident about borderline sounds.",
+            "Feeding the model sounds that are near the detection edge, plus replay of past examples.",
+        ),
+        "fa_suppression": (
+            "[yellow]False Alarm Fix[/yellow]",
+            "Reducing false alarms — showing the model more examples of sounds it shouldn't trigger on.",
+            "Training on the sounds it mistakenly detected as wake words.",
+        ),
+        "recall_recovery": (
+            "[green]Wake Word Recovery[/green]",
+            "Improving detection rate — teaching the model to catch more wake word variants it's been missing.",
+            "Training on missed wake words, plus easy positive examples for confidence.",
+        ),
+        "sam_flatten": (
+            "[magenta]Loss Landscape Smoothing[/magenta]",
+            "Deep optimization — smoothing the model's internal decision surface for better generalization.",
+            "Running a special optimizer (SAM) that finds flatter, more stable solutions.",
+        ),
+        "cyclic_op_sweep": (
+            "[blue]Exploration Sweep[/blue]",
+            "Exploring new solutions — cycling the learning rate to escape local traps.",
+            "Warming up and cooling down the learning rate in cycles to find better regions.",
+        ),
+        "macro_refine": (
+            "[bright_cyan]Deep Curriculum Training[/bright_cyan]",
+            "Comprehensive refinement — balanced training across all data types with curriculum progression.",
+            "Training on a proportional mix of all data, gradually increasing difficulty.",
+        ),
+        "hardest_only_shock": (
+            "[red]Hard Example Shock[/red]",
+            "Breaking stagnation — focusing exclusively on the hardest examples the model struggles with.",
+            "Training only on the most difficult samples. High impact, used sparingly.",
+        ),
+    }
+
+    def _make_bar(
+        self,
+        value: float,
+        target: float,
+        width: int = 20,
+        higher_good: bool = True,
+    ) -> str:
+        """Create a colored ASCII progress bar showing value vs target."""
+        clamped = max(0.0, min(1.0, value))
+        filled = int(clamped * width)
+        bar = "█" * filled + "░" * (width - filled)
+        if higher_good:
+            color = "green" if value >= target else ("yellow" if value >= target * 0.9 else "red")
+        else:
+            color = "green" if value <= target else ("yellow" if value <= target * 1.5 else "red")
+        return f"[{color}]{bar}[/{color}]"
+
     def _log_header(self):
         from rich.panel import Panel
+        from rich.rule import Rule
 
-        header = (
-            f"[bold]MaxQualityAutoTuner[/bold]\n"
-            f"Target: FAH ≤ {self.target_fah:.2f}, Recall ≥ {self.target_recall:.2f}\n"
-            f"Max iterations: {self.max_iterations}, "
-            f"Max gradient steps: {self.max_gradient_steps:,}\n"
-            f"Checkpoint: {self.checkpoint_path}\n"
-            f"Output: {self.output_dir}"
+        self.console.print()
+        self.console.print(Rule("[bold blue]🎯  Wake Word Auto-Tuner[/bold blue]", style="blue"))
+        self.console.print()
+
+        # Goal panel
+        goal_lines = [
+            "[bold]What this tool does:[/bold]",
+            "  Auto-tuning improves your model [italic]without full retraining[/italic].",
+            "  It runs short, focused training bursts to hit your detection & false-alarm targets.",
+            "",
+            f"  [bold green]Detection target:[/bold green]  ≥ [bold]{self.target_recall * 100:.0f}%[/bold] of wake words heard",
+            f"  [bold yellow]False alarm target:[/bold yellow] ≤ [bold]{self.target_fah:.1f}[/bold] per hour of ambient noise",
+            "",
+            f"  Up to [bold]{self.max_iterations}[/bold] tuning rounds,  max [bold]{self.max_gradient_steps:,}[/bold] gradient steps",
+            f"  Checkpoint: [dim]{self.checkpoint_path}[/dim]",
+            f"  Output:     [dim]{self.output_dir}[/dim]",
+        ]
+        self.console.print(
+            Panel(
+                "\n".join(goal_lines),
+                title="📋 Session Overview",
+                border_style="blue",
+                expand=False,
+            )
         )
-        self.console.print(Panel(header, title="🎯 Auto-Tuning Campaign", border_style="blue"))
+        self.console.print()
+
+    def _log_data_loaded(
+        self,
+        n_search_train: int,
+        n_search_eval: int,
+        n_confirm: int,
+        n_total: int,
+    ):
+        """Show how the data is partitioned in friendly terms."""
+        from rich.panel import Panel
+
+        lines = [
+            "[bold]Your audio data has been split into 3 groups:[/bold]",
+            "",
+            f"  🏋  [bold cyan]Training pool[/bold cyan]   — {n_search_train:,} samples  [dim](used for each tuning burst)[/dim]",
+            f"  📊  [bold green]Evaluation set[/bold green]  — {n_search_eval:,} samples  [dim](measures progress after each round)[/dim]",
+            f"  🔒  [bold yellow]Hold-out set[/bold yellow]   — {n_confirm:,} samples  [dim](final blind test — not touched until the end)[/dim]",
+            "",
+            "[dim]The hold-out set is never used during training, so the final result is an honest measurement.[/dim]",
+        ]
+        self.console.print(
+            Panel(
+                "\n".join(lines),
+                title="📂 Data Setup",
+                border_style="cyan",
+                expand=False,
+            )
+        )
+        self.console.print()
+
+    def _log_base_model(self, metrics: "TuneMetrics"):
+        """Display the starting baseline with color-coded status."""
+        from rich.panel import Panel
+
+        det_pct = metrics.recall * 100
+        det_target_pct = self.target_recall * 100
+        det_ok = metrics.recall >= self.target_recall
+        fah_ok = metrics.fah <= self.target_fah
+
+        det_color = "green" if det_ok else "red"
+        fah_color = "green" if fah_ok else "red"
+
+        det_bar = self._make_bar(metrics.recall, self.target_recall, width=24, higher_good=True)
+        fah_norm = min(1.0, metrics.fah / max(self.target_fah * 2, 0.01))
+        fah_bar = self._make_bar(fah_norm, 0.5, width=24, higher_good=False)
+
+        det_status = "✅ Already good!" if det_ok else f"❌ Need +{(self.target_recall - metrics.recall) * 100:.1f}%"
+        fah_status = "✅ Already good!" if fah_ok else f"❌ {metrics.fah - self.target_fah:.2f}/hr over limit"
+
+        lines = [
+            "[bold]This is where your model stands before any tuning:[/bold]",
+            "",
+            f"  Wake word detection: [{det_color}][bold]{det_pct:.1f}%[/bold][/{det_color}]  {det_bar}  target ≥ {det_target_pct:.0f}%  →  {det_status}",
+            f"  False alarms/hour:  [{fah_color}][bold]{metrics.fah:.2f}[/bold][/{fah_color}]  {fah_bar}  limit  ≤ {self.target_fah:.1f}     →  {fah_status}",
+            f"  Model quality:       [dim]{metrics.auc_pr * 100:.1f}% AUC-PR[/dim]",
+        ]
+        self.console.print(
+            Panel(
+                "\n".join(lines),
+                title="📍 Starting Baseline",
+                border_style="white",
+                expand=False,
+            )
+        )
+        self.console.print()
+
+    def _log_burst_start(
+        self,
+        iteration: int,
+        arm: "StrategyArm",
+        regime: str,
+        n_steps: int,
+        parent_metrics: "TuneMetrics",
+    ):
+        """Show what we're about to try this round and why."""
+        desc_tuple = self._STRATEGY_DESCRIPTIONS.get(arm.name)
+        label = desc_tuple[0] if desc_tuple else f"[cyan]{arm.name}[/cyan]"
+        what = desc_tuple[1] if desc_tuple else arm.description
+        _ = desc_tuple[2] if desc_tuple else ""
+
+        # Regime hint
+        regime_msgs = {
+            "fah_too_high": "[yellow]Model is triggering too often[/yellow] → focusing on false alarm reduction",
+            "recall_too_low": "[red]Model is missing too many wake words[/red] → focusing on detection improvement",
+            "both_bad": "[red]Both metrics need work[/red] → balanced improvement strategy",
+            "near_target": "[cyan]Getting close to targets![/cyan] → fine-tuning the final gap",
+            "target_met": "[green]Targets already met![/green] → stabilizing and confirming",
+            "unknown": "[dim]Exploring[/dim]",
+        }
+        regime_msg = regime_msgs.get(regime, f"[dim]{regime}[/dim]")
+
+        self.console.print(f"  [dim]───── Round {iteration}/{self.max_iterations} ─────[/dim]  {regime_msg}")
+        self.console.print(f"  Strategy: {label}  [dim]({n_steps} steps)[/dim]")
+        if what:
+            self.console.print(f"  [italic dim]{what}[/italic dim]")
 
     def _log_iteration(
         self,
         iteration: int,
-        arm: StrategyArm,
-        metrics: TuneMetrics,
+        arm: "StrategyArm",
+        metrics: "TuneMetrics",
         accepted: bool,
         stir_level: int,
         burst_info: dict,
     ):
+        before = self._base_metrics
 
-        status = "✅" if accepted else "❌"
-        stir_str = f"⚡L{stir_level}" if stir_level > 0 else ""
-        target_met = "🎯" if metrics.meets_target(self.target_fah, self.target_recall) else ""
+        before = self._base_metrics
 
-        self.console.print(
-            f"  [{iteration:3d}/{self.max_iterations}] "
-            f"{arm.name:20s} │ "
-            f"FAH={metrics.fah:8.4f} │ "
-            f"Recall={metrics.recall:.4f} │ "
-            f"AUC-PR={metrics.auc_pr:.4f} │ "
-            f"Thr={metrics.threshold:.4f} │ "
-            f"Loss={burst_info.get('mean_loss', 0):.4f} │ "
-            f"{status} {stir_str} {target_met}"
-        )
+        # ── Detection bar
+        det_pct = metrics.recall * 100
+        target_det_pct = self.target_recall * 100
+        det_ok = metrics.recall >= self.target_recall
+        det_color = "green" if det_ok else ("yellow" if metrics.recall >= self.target_recall * 0.92 else "red")
+        det_bar = self._make_bar(metrics.recall, self.target_recall, width=18, higher_good=True)
+
+        # ── FAH bar
+        fah_ok = metrics.fah <= self.target_fah
+        fah_color = "green" if fah_ok else ("yellow" if metrics.fah <= self.target_fah * 1.5 else "red")
+        fah_norm = min(1.0, metrics.fah / max(self.target_fah * 2, 0.01))
+        fah_bar = self._make_bar(fah_norm, 0.5, width=18, higher_good=False)
+
+        # ── Delta vs starting point
+        if before is not None:
+            det_delta = (metrics.recall - before.recall) * 100
+            fah_delta = before.fah - metrics.fah  # positive = improvement
+            det_delta_str = f"[green](+{det_delta:.1f}% vs start)[/green]" if det_delta > 0.05 else (f"[red]({det_delta:.1f}% vs start)[/red]" if det_delta < -0.05 else "[dim](→ no change)[/dim]")
+            fah_delta_str = (
+                f"[green](-{fah_delta:.2f} vs start)[/green]" if fah_delta > 0.005 else (f"[red](+{abs(fah_delta):.2f} vs start)[/red]" if fah_delta < -0.005 else "[dim](→ no change)[/dim]")
+            )
+        else:
+            det_delta_str = ""
+            fah_delta_str = ""
+
+        # ── Accept / reject badge
+        if accepted:
+            status_badge = "[bold green]✅ Kept[/bold green]"
+        else:
+            status_badge = "[dim]↩ Reverted[/dim]"
+
+        if stir_level > 0:
+            stir_msg = f"  [yellow]⚡ Shaking stale weights (level {stir_level})[/yellow]"
+        else:
+            stir_msg = ""
+
+        target_badge = "  [bold green]🎯 TARGET MET![/bold green]" if metrics.meets_target(self.target_fah, self.target_recall) else ""
+
+        # ── Print concise two-line result
+        self.console.print(f"  Detection:  [{det_color}][bold]{det_pct:5.1f}%[/bold][/{det_color}] {det_bar} (need {target_det_pct:.0f}%) {det_delta_str}")
+        self.console.print(f"  False alms: [{fah_color}][bold]{metrics.fah:5.2f}[/bold] /hr[/{fah_color}] {fah_bar} (limit {self.target_fah:.1f})  {fah_delta_str}")
+        self.console.print(f"  Result: {status_badge}{stir_msg}{target_badge}")
+        self.console.print()
 
         self.file_logger.info(
             f"Iter {iteration}: arm={arm.name}, FAH={metrics.fah:.4f}, "
@@ -2402,73 +2823,219 @@ class AutoTuner:
 
     def _log_final_summary(self, result: dict):
         from rich.panel import Panel
+        from rich.rule import Rule
         from rich.table import Table
 
-        # Summary panel
-        met = "✅ YES" if result["target_met"] else "❌ NO"
+        met = result["target_met"]
         elapsed = result.get("elapsed_seconds", 0)
         minutes = elapsed / 60
-
-        # Check if confirmation was attempted but failed
         confirmation_attempted = result.get("confirmation_attempted", False)
-        confirmation_failed = confirmation_attempted and not result["target_met"]
+        confirmation_failed = confirmation_attempted and not met
 
-        if confirmation_failed:
-            # Show confirmation metrics (best failed attempt) instead of search-set metrics
-            conf_fah = result.get("confirmation_best_fah")
-            conf_recall = result.get("confirmation_best_recall")
-            summary = (
-                f"Target met: {met}\n"
-                f"⚠️ Confirmation failed — showing best confirmation attempt:\n"
-                f"Best FAH: {conf_fah:.4f}\n"
-                f"Best Recall: {conf_recall:.4f}\n"
-                f"Search-set metrics (overfit): FAH={result['best_fah']:.4f}, Recall={result['best_recall']:.4f}\n"
-                f"Recommended cutoff: {result.get('recommended_probability_cutoff') or float('nan'):.4f}"
-                f" ({result.get('recommended_probability_cutoff_uint8', 'N/A')})\n"
-                f"Total iterations: {result['iterations']}\n"
-                f"Total gradient steps: {self.total_gradient_steps:,}\n"
-                f"Wall clock: {minutes:.1f} min\n"
-                f"Best checkpoint: {result.get('best_checkpoint', 'N/A')}"
-            )
-
+        # Use confirmation metrics when available (more reliable than search-set)
+        if confirmation_failed or confirmation_attempted:
+            best_recall = result.get("confirmation_best_recall") or result.get("best_recall", 0)
+            best_fah = result.get("confirmation_best_fah") or result.get("best_fah", 0)
         else:
-            summary = (
-                f"Target met: {met}\n"
-                f"Best FAH: {result['best_fah']:.4f}\n"
-                f"Best Recall: {result['best_recall']:.4f}\n"
-                f"Recommended cutoff: {result.get('recommended_probability_cutoff') or float('nan'):.4f}"
-                f" ({result.get('recommended_probability_cutoff_uint8', 'N/A')})\n"
-                f"Total iterations: {result['iterations']}\n"
-                f"Total gradient steps: {self.total_gradient_steps:,}\n"
-                f"Wall clock: {minutes:.1f} min\n"
-                f"Best checkpoint: {result.get('best_checkpoint', 'N/A')}"
+            best_recall = result.get("best_recall", 0)
+            best_fah = result.get("best_fah", 0)
+
+        # Best AUC-PR from pareto frontier entries
+        frontier = result.get("pareto_frontier", [])
+        best_auc_pr = max((p.get("auc_pr", 0.0) for p in frontier), default=None) if frontier else None
+
+        before = self._base_metrics
+
+        # ── Before → After comparison ──────────────────────────────────────
+        self.console.print(Rule("[bold]📊  Results[/bold]", style="white"))
+        self.console.print()
+
+        cmp_table = Table(
+            title="Before vs After Tuning",
+            show_header=True,
+            title_style="bold",
+            border_style="bright_black",
+        )
+        cmp_table.add_column("Metric", style="bold", min_width=26)
+        cmp_table.add_column("Before", justify="right", style="dim")
+        cmp_table.add_column("After", justify="right", style="bold")
+        cmp_table.add_column("Target", justify="right", style="cyan")
+        cmp_table.add_column("Change", justify="right")
+
+        def _delta_str(new_v: float, old_v: float | None, higher_good: bool = True) -> str:
+            if old_v is None:
+                return "—"
+            d = new_v - old_v
+            if abs(d) < 0.001:
+                return "[dim]no change[/dim]"
+            if higher_good:
+                color = "green" if d > 0 else "red"
+                sign = "+" if d > 0 else ""
+                return f"[{color}]{sign}{d * 100:.1f}%[/{color}]"
+            else:
+                color = "green" if d < 0 else "red"
+                sign = "+" if d > 0 else ""
+                return f"[{color}]{sign}{d:.2f}[/{color}]"
+
+        if before is not None:
+            det_after_color = "green" if best_recall >= self.target_recall else "red"
+            cmp_table.add_row(
+                "🔊 Wake Word Detection",
+                f"{before.recall * 100:.1f}%",
+                f"[{det_after_color}]{best_recall * 100:.1f}%[/{det_after_color}]",
+                f"≥ {self.target_recall * 100:.0f}%",
+                _delta_str(best_recall, before.recall, higher_good=True),
+            )
+            fah_after_color = "green" if best_fah <= self.target_fah else "red"
+            cmp_table.add_row(
+                "🔕 False Alarms / Hour",
+                f"{before.fah:.2f}/hr",
+                f"[{fah_after_color}]{best_fah:.2f}/hr[/{fah_after_color}]",
+                f"≤ {self.target_fah:.1f}/hr",
+                _delta_str(best_fah, before.fah, higher_good=False),
+            )
+            if best_auc_pr is not None:
+                qual_color = "green" if best_auc_pr >= before.auc_pr else "yellow"
+                cmp_table.add_row(
+                    "📈 Model Quality (AUC-PR)",
+                    f"{before.auc_pr * 100:.1f}%",
+                    f"[{qual_color}]{best_auc_pr * 100:.1f}%[/{qual_color}]",
+                    "—",
+                    _delta_str(best_auc_pr, before.auc_pr, higher_good=True),
+                )
+        else:
+            det_after_color = "green" if best_recall >= self.target_recall else "red"
+            fah_after_color = "green" if best_fah <= self.target_fah else "red"
+            cmp_table.add_row(
+                "🔊 Wake Word Detection",
+                "—",
+                f"[{det_after_color}]{best_recall * 100:.1f}%[/{det_after_color}]",
+                f"≥ {self.target_recall * 100:.0f}%",
+                "—",
+            )
+            cmp_table.add_row(
+                "🔕 False Alarms / Hour",
+                "—",
+                f"[{fah_after_color}]{best_fah:.2f}/hr[/{fah_after_color}]",
+                f"≤ {self.target_fah:.1f}/hr",
+                "—",
             )
 
-        self.console.print(Panel(summary, title="📊 Auto-Tuning Results", border_style="green" if result["target_met"] else "red"))
+        self.console.print(cmp_table)
+        self.console.print()
 
-        # Pareto frontier table
-        frontier = result.get("pareto_frontier", [])
+        # ── Final result panel ────────────────────────────────────────────
+        cutoff = result.get("recommended_probability_cutoff")
+        cutoff_u8 = result.get("recommended_probability_cutoff_uint8", "N/A")
+        best_checkpoint = result.get("best_checkpoint", "N/A")
+        total_steps = self.total_gradient_steps
+
+        if met:
+            recall_margin = (best_recall - self.target_recall) * 100
+            fah_margin = self.target_fah - best_fah
+            lines = [
+                "[bold green]✅ All targets met — your model is ready to deploy![/bold green]",
+                "",
+                f"  Detection:    [bold green]{best_recall * 100:.1f}%[/bold green]  (needed {self.target_recall * 100:.0f}%, you're {recall_margin:.1f}% above target)",
+                f"  False alarms: [bold green]{best_fah:.2f}/hr[/bold green]  (limit {self.target_fah:.1f}/hr, you're {fah_margin:.2f} under the limit)",
+                "",
+            ]
+            if cutoff is not None:
+                lines += [
+                    "[bold]── ESPHome Configuration ──[/bold]",
+                    f"  Set [bold cyan]probability_cutoff: {cutoff:.4f}[/bold cyan]  (= {cutoff_u8}/255)  in your ESPHome YAML.",
+                    "  Higher value → fewer false alarms.  Lower value → catches more wake words.",
+                    "",
+                ]
+            lines += [
+                f"  [bold]Tuned checkpoint:[/bold] [dim]{best_checkpoint}[/dim]",
+                f"  [dim]Finished in {minutes:.1f} min  ·  {total_steps:,} gradient steps[/dim]",
+            ]
+            border = "green"
+        else:
+            recall_gap = (self.target_recall - best_recall) * 100
+            fah_ok_status = best_fah <= self.target_fah
+            fah_line = (
+                f"  False alarms: [bold green]{best_fah:.2f}/hr[/bold green]  ✅ within limit"
+                if fah_ok_status
+                else f"  False alarms: [bold red]{best_fah:.2f}/hr[/bold red]  ❌  {best_fah - self.target_fah:.2f}/hr over limit"
+            )
+            lines = [
+                "[bold red]❌ Targets not fully met yet[/bold red]",
+                "",
+                f"  Detection: [bold red]{best_recall * 100:.1f}%[/bold red]  (need {self.target_recall * 100:.0f}% — still {recall_gap:.1f}% short)",
+                fah_line,
+                "",
+            ]
+            if recall_gap < 2.0:
+                lines += [
+                    f"  [yellow]💡 Very close! Only {recall_gap:.1f}% short.[/yellow]",
+                    f"  [yellow]   Try running again with more steps: --max-gradient-steps {self.max_gradient_steps * 2}[/yellow]",
+                    "",
+                ]
+            elif recall_gap < 6.0:
+                lines += [
+                    "  [yellow]💡 Good progress. Options to improve:[/yellow]",
+                    "  [yellow]   • Add more wake word recordings (more speaker diversity helps)[/yellow]",
+                    f"  [yellow]   • Run again with more steps: --max-gradient-steps {self.max_gradient_steps * 2}[/yellow]",
+                    "",
+                ]
+            else:
+                lines += [
+                    "  [yellow]💡 Suggestions:[/yellow]",
+                    "  [yellow]   • Record more wake word samples from different speakers and environments[/yellow]",
+                    "  [yellow]   • Consider re-training the base model with more data[/yellow]",
+                    f"  [yellow]   • Try more steps: --max-gradient-steps {self.max_gradient_steps * 2}[/yellow]",
+                    "",
+                ]
+            if cutoff is not None:
+                lines += [
+                    f"  [bold]Best operating point:[/bold] probability_cutoff = {cutoff:.4f}  ({cutoff_u8}/255)",
+                    "  [dim]Use this in ESPHome even though targets aren't fully met.[/dim]",
+                    "",
+                ]
+            lines += [
+                f"  [bold]Best checkpoint:[/bold] [dim]{best_checkpoint}[/dim]",
+                f"  [dim]Finished in {minutes:.1f} min  ·  {total_steps:,} gradient steps[/dim]",
+            ]
+            border = "red"
+
+        self.console.print(Panel("\n".join(lines), title="📋 Tuning Result", border_style=border))
+
+        # ── INT8 shadow diagnostics (technical, shown if available) ───────
+        int8_fah = result.get("int8_diagnostic_fah")
+        int8_recall = result.get("int8_diagnostic_recall")
+        if int8_fah is not None and int8_recall is not None:
+            self.console.print(f"  [dim]INT8 shadow (hardware simulation): detection={int8_recall * 100:.1f}%,  false-alarms={int8_fah:.2f}/hr[/dim]")
+            self.console.print()
+
+        # ── Pareto frontier (abbreviated, useful for advanced users) ──────
         if frontier:
-            table = Table(title="🏔️ Pareto Frontier")
-            table.add_column("ID", style="cyan")
-            table.add_column("FAH", justify="right")
-            table.add_column("Recall", justify="right")
-            table.add_column("AUC-PR", justify="right")
-            table.add_column("Threshold", justify="right")
-            table.add_column("Arm", style="yellow")
-            table.add_column("Iter", justify="right")
-
-            for p in frontier:
-                table.add_row(
-                    p["id"],
-                    f"{p['fah']:.4f}",
-                    f"{p['recall']:.4f}",
-                    f"{p['auc_pr']:.4f}",
-                    f"{p['threshold']:.4f}",
+            ftable = Table(
+                title="🏔️ Best Candidates Found (Pareto Frontier)",
+                title_style="dim",
+                border_style="bright_black",
+                show_header=True,
+            )
+            ftable.add_column("#", style="dim", justify="right")
+            ftable.add_column("Detection", justify="right")
+            ftable.add_column("False Alarms", justify="right")
+            ftable.add_column("Quality", justify="right")
+            ftable.add_column("Strategy", style="yellow")
+            ftable.add_column("Round", justify="right", style="dim")
+            for i, p in enumerate(frontier, 1):
+                det_c = "green" if p["recall"] >= self.target_recall else "red"
+                fah_c = "green" if p["fah"] <= self.target_fah else "yellow"
+                ftable.add_row(
+                    str(i),
+                    f"[{det_c}]{p['recall'] * 100:.1f}%[/{det_c}]",
+                    f"[{fah_c}]{p['fah']:.2f}/hr[/{fah_c}]",
+                    f"{p['auc_pr'] * 100:.1f}%",
                     p["arm"],
                     str(p["iteration"]),
                 )
-            self.console.print(table)
+            self.console.print(ftable)
+            self.console.print()
 
     # ------------------------------------------------------------------
     # Main loop
@@ -2516,7 +3083,10 @@ class AutoTuner:
             l2_regularization=model_cfg.get("l2_regularization", 0.00003),
         )
         # Build model by running a forward pass before loading weights
-        model(tf.zeros((1, num_time_frames, mel_bins), dtype=tf.float32), training=False)
+        model(
+            tf.zeros((1, num_time_frames, mel_bins), dtype=tf.float32),
+            training=False,
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             model.load_weights(str(self.checkpoint_path))
@@ -2576,6 +3146,12 @@ class AutoTuner:
             )
 
         self.file_logger.info(f"Search sub-partitions: train={len(search_train_labels)} ({search_train_fraction:.1%}), eval={len(search_eval_labels)} ({search_eval_fraction:.1%})")
+        self._log_data_loaded(
+            len(search_train_labels),
+            len(search_eval_labels),
+            len(confirm_data[1]),
+            len(labels),
+        )
 
         # 3. Create optimizer
         optimizer = tf.keras.optimizers.Adam(learning_rate=self.default_lr)
@@ -2599,7 +3175,8 @@ class AutoTuner:
         )
 
         self.file_logger.info(f"Base model: FAH={base_metrics.fah:.4f}, Recall={base_metrics.recall:.4f}, AUC-PR={base_metrics.auc_pr:.4f}, Temperature={base_temperature:.4f}")
-        self.console.print(f"  [bold]Base model[/bold]: FAH={base_metrics.fah:.4f}, Recall={base_metrics.recall:.4f}, AUC-PR={base_metrics.auc_pr:.4f}")
+        self._log_base_model(base_metrics)
+        self._base_metrics = base_metrics
 
         # 5. Create initial candidate
         initial_candidate = CandidateState(
@@ -2664,6 +3241,8 @@ class AutoTuner:
                 remaining = self.max_gradient_steps - self.total_gradient_steps
                 n_steps = min(n_steps, remaining)
 
+                self._log_burst_start(iteration, arm, regime, n_steps, parent.eval_results)
+
                 # f. Check and apply stir
                 stir_level = self.stir.get_stir_level(parent.stagnation_count)
                 use_sam = arm.use_sam or stir_level >= 2
@@ -2674,7 +3253,12 @@ class AutoTuner:
                     optimizer,
                     parent,
                     stir_level,
-                    FocusedSampler(search_train_features, search_train_labels, search_train_weights, self.error_memory),
+                    FocusedSampler(
+                        search_train_features,
+                        search_train_labels,
+                        search_train_weights,
+                        self.error_memory,
+                    ),
                     recent_scores,
                 )
 
@@ -2781,7 +3365,7 @@ class AutoTuner:
 
                 # p. Update Thompson sampling
                 assert parent.eval_results is not None, "parent.eval_results should not be None"
-                improvement = eval_metrics.dominates(parent.eval_results)
+                improvement = self._is_meaningful_improvement(eval_metrics, parent.eval_results)
                 self.thompson.update(arm_idx, improvement)
 
                 # q. Update error memory on eval data
@@ -2796,7 +3380,9 @@ class AutoTuner:
 
                 # r. Manage active pool and archive
                 if accepted:
-                    new_candidate.stagnation_count = 0
+                    # Do not reset stagnation on accepted-but-flat candidates.
+                    # This allows stir escalation to kick in when tuning plateaus.
+                    new_candidate.stagnation_count = 0 if improvement else parent.stagnation_count + 1
                     # Replace parent in active pool
                     for i, c in enumerate(active_pool):
                         if c.id == parent.id:
@@ -2830,7 +3416,14 @@ class AutoTuner:
                     consecutive_target_met = 0
 
                 # u. Log iteration
-                self._log_iteration(iteration, arm, eval_metrics, accepted, stir_level, burst_info)
+                self._log_iteration(
+                    iteration,
+                    arm,
+                    eval_metrics,
+                    accepted,
+                    stir_level,
+                    burst_info,
+                )
 
                 # v. Early termination: stable target met
                 if consecutive_target_met >= 3:
@@ -2875,12 +3468,12 @@ class AutoTuner:
             target_met = best is not None and best.eval_results is not None and best.eval_results.meets_target(self.target_fah, self.target_recall)
 
         result = {
-            "best_fah": best.eval_results.fah if best and best.eval_results else float("inf"),
-            "best_recall": best.eval_results.recall if best and best.eval_results else 0.0,
-            "final_fah": best.eval_results.fah if best and best.eval_results else float("inf"),
-            "final_recall": best.eval_results.recall if best and best.eval_results else 0.0,
-            "recommended_probability_cutoff": best.eval_results.threshold if best and best.eval_results else None,
-            "recommended_probability_cutoff_uint8": best.eval_results.threshold_uint8 if best and best.eval_results else None,
+            "best_fah": (best.eval_results.fah if best and best.eval_results else float("inf")),
+            "best_recall": (best.eval_results.recall if best and best.eval_results else 0.0),
+            "final_fah": (best.eval_results.fah if best and best.eval_results else float("inf")),
+            "final_recall": (best.eval_results.recall if best and best.eval_results else 0.0),
+            "recommended_probability_cutoff": (best.eval_results.threshold if best and best.eval_results else None),
+            "recommended_probability_cutoff_uint8": (best.eval_results.threshold_uint8 if best and best.eval_results else None),
             "iterations": last_iteration,
             "best_checkpoint": self.best_checkpoint_path or "",
             "target_met": target_met,
@@ -2888,16 +3481,16 @@ class AutoTuner:
             "elapsed_seconds": elapsed,
             "total_gradient_steps": self.total_gradient_steps,
             "confirmation_attempted": self.require_confirmation and len(self.archive) > 0,
-            "confirmation_best_fah": best_attempt_metrics.fah if best_attempt_metrics else None,
-            "confirmation_best_recall": best_attempt_metrics.recall if best_attempt_metrics else None,
-            "confirmation_best_cutoff": best_attempt_metrics.threshold if best_attempt_metrics else None,
-            "confirmation_best_cutoff_uint8": best_attempt_metrics.threshold_uint8 if best_attempt_metrics else None,
-            "confirmation_best_candidate_id": self._last_confirmation_best_attempt.id if self._last_confirmation_best_attempt else None,
-            "search_best_fah": search_best.eval_results.fah if search_best and search_best.eval_results else None,
-            "search_best_recall": search_best.eval_results.recall if search_best and search_best.eval_results else None,
-            "search_best_cutoff": search_best.eval_results.threshold if search_best and search_best.eval_results else None,
-            "search_best_cutoff_uint8": search_best.eval_results.threshold_uint8 if search_best and search_best.eval_results else None,
-            "search_best_candidate_id": search_best.id if search_best else None,
+            "confirmation_best_fah": (best_attempt_metrics.fah if best_attempt_metrics else None),
+            "confirmation_best_recall": (best_attempt_metrics.recall if best_attempt_metrics else None),
+            "confirmation_best_cutoff": (best_attempt_metrics.threshold if best_attempt_metrics else None),
+            "confirmation_best_cutoff_uint8": (best_attempt_metrics.threshold_uint8 if best_attempt_metrics else None),
+            "confirmation_best_candidate_id": (self._last_confirmation_best_attempt.id if self._last_confirmation_best_attempt else None),
+            "search_best_fah": (search_best.eval_results.fah if search_best and search_best.eval_results else None),
+            "search_best_recall": (search_best.eval_results.recall if search_best and search_best.eval_results else None),
+            "search_best_cutoff": (search_best.eval_results.threshold if search_best and search_best.eval_results else None),
+            "search_best_cutoff_uint8": (search_best.eval_results.threshold_uint8 if search_best and search_best.eval_results else None),
+            "search_best_candidate_id": (search_best.id if search_best else None),
             "min_resolvable_fah_search_eval": min_resolvable_fah_search_eval,
             "min_resolvable_fah_confirm": min_resolvable_fah_confirm,
         }

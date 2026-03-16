@@ -23,7 +23,12 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-def scale_learning_rates(learning_rates: List[float], from_batch: int, to_batch: int, scaling_method: str = "sqrt") -> List[float]:
+def scale_learning_rates(
+    learning_rates: List[float],
+    from_batch: int,
+    to_batch: int,
+    scaling_method: str = "sqrt",
+) -> List[float]:
     """
     Scale learning rates when changing batch size.
 
@@ -51,7 +56,13 @@ def scale_learning_rates(learning_rates: List[float], from_batch: int, to_batch:
     return scaled
 
 
-def validate_lr_scaling(learning_rates: List[float], batch_size: int, base_batch_size: int = 128, base_learning_rates: List[float] | None = None, tolerance: float = 0.05) -> bool:
+def validate_lr_scaling(
+    learning_rates: List[float],
+    batch_size: int,
+    base_batch_size: int = 128,
+    base_learning_rates: List[float] | None = None,
+    tolerance: float = 0.05,
+) -> bool:
     """
     Check if learning rates match expected sqrt scaling from base.
 
@@ -196,7 +207,12 @@ class TrainingConfig:
             raise ValueError(f"training.phase_stagger_steps must be an integer >= 0, got {self.phase_stagger_steps}")
         # Auto-scale learning rates if not explicitly set
         if self.learning_rates is None:
-            self.learning_rates = scale_learning_rates(self.base_learning_rates, from_batch=self.base_batch_size, to_batch=self.batch_size, scaling_method=self.auto_lr_scale_method)
+            self.learning_rates = scale_learning_rates(
+                self.base_learning_rates,
+                from_batch=self.base_batch_size,
+                to_batch=self.batch_size,
+                scaling_method=self.auto_lr_scale_method,
+            )
         if len(self.training_steps) != len(self.learning_rates):
             raise ValueError("training.training_steps and learning_rates must have same length")
 
@@ -552,52 +568,27 @@ class AutoTuningConfig:
 
 @dataclass
 class AutoTuningExpertConfig:
-    """Expert-level auto-tuning parameters. Most users should use defaults."""
+    """Expert-level auto-tuning parameters. Reworked for micro-autotuner redesign."""
 
-    # Burst step bounds
-    min_burst_steps: int = 200
-    max_burst_steps: int = 25000
-    default_burst_steps: int = 750
+    # New, simplified/defaulted configuration with micro-autotuner fields
+    population_size: int = 4
+    micro_burst_steps: int = 50
+    knob_cycle: list = field(default_factory=lambda: ["lr", "threshold", "temperature", "sampling_mix", "weight_perturbation", "label_smoothing"])
+    exploit_explore_interval: int = 6
+    weight_perturbation_scale: float = 0.01
+    label_smoothing_range: tuple = (0.0, 0.15)
+    lr_range: tuple = (1e-7, 1e-4)
+    hypervolume_reference: tuple = (10.0, 0.0)
 
-    # Learning rate bounds
-    min_lr: float = 1e-7
-    max_lr: float = 1e-4
-    default_lr: float = 1e-5
-
-    # SAM / SWA
-    sam_rho: float = 0.05
-    swa_collection_interval: int = 100
-
-    # Simulated annealing
-    initial_temperature: float = 0.5
-    cooling_rate: float = 0.97
-    reheat_after: int = 5
-    reheat_factor: float = 1.3
-
-    # Pool / archive sizes
-    active_pool_size: int = 16
-    pareto_archive_size: int = 32
-
-    # Stir level thresholds (stagnation counts)
-    stir_level_1: int = 3
-    stir_level_2: int = 5
-    stir_level_3: int = 7
-    stir_level_4: int = 9
-    stir_level_5: int = 12
-
-    # Curriculum
-    curriculum_advance_threshold: float = 0.3
+    # Optional legacy field kept for compatibility in older calls (no behavior change)
+    # (All deprecated fields were removed from operational use by the redesign.)
 
     def __post_init__(self):
         """Validate expert configuration."""
-        if self.min_burst_steps >= self.max_burst_steps:
-            raise ValueError("AutoTuningExpertConfig: min_burst_steps must be < max_burst_steps")
-        if self.min_lr >= self.max_lr:
-            raise ValueError("AutoTuningExpertConfig: min_lr must be < max_lr")
-        if not 0.0 < self.sam_rho < 1.0:
-            raise ValueError("AutoTuningExpertConfig: sam_rho must be between 0 and 1")
-        if not 0.0 < self.cooling_rate < 1.0:
-            raise ValueError("AutoTuningExpertConfig: cooling_rate must be between 0 and 1")
+        if self.population_size < 2:
+            raise ValueError("AutoTuningExpertConfig: population_size must be >= 2")
+        if self.micro_burst_steps < 1:
+            raise ValueError("AutoTuningExpertConfig: micro_burst_steps must be >= 1")
 
 
 @dataclass
@@ -638,7 +629,14 @@ class ConfigLoader:
     """
 
     # Valid preset names
-    VALID_PRESETS = {"fast_test", "standard", "max_quality", "test", "standart", "high_quality"}
+    VALID_PRESETS = {
+        "fast_test",
+        "standard",
+        "max_quality",
+        "test",
+        "standart",
+        "high_quality",
+    }
     PRESET_ALIASES = {
         "test": "fast_test",
         "standart": "standard",
@@ -756,7 +754,11 @@ class ConfigLoader:
 
         return result
 
-    def load_and_merge(self, preset_name: str, override_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+    def load_and_merge(
+        self,
+        preset_name: str,
+        override_path: Optional[Union[str, Path]] = None,
+    ) -> Dict[str, Any]:
         """
         Load preset and optionally merge with override config.
 
@@ -1114,7 +1116,10 @@ def load_preset(name: str) -> Dict[str, Any]:
     return get_default_loader().load_preset(name)
 
 
-def load_full_config(preset_name: str = "standard", override_path: Optional[Union[str, Path]] = None) -> FullConfig:
+def load_full_config(
+    preset_name: str = "standard",
+    override_path: Optional[Union[str, Path]] = None,
+) -> FullConfig:
     """
     Load complete configuration as dataclass.
 

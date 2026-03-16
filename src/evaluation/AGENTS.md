@@ -34,6 +34,7 @@ metrics = calc.compute_all_metrics(ambient_duration_hours=hours, threshold=0.5)
 - **ROC-AUC**: Area under ROC curve
 - **PR-AUC**: Area under precision-recall curve
 - **Recall@target_fah**: Recall at target false activation rate
+- **Adaptive Thresholding**: Evaluation metrics (accuracy, precision, recall, F1) are re-computed at an optimized threshold derived from `target_fah` (or median fallback) for production-relevant reporting.
 
 ## Related Documentation
 

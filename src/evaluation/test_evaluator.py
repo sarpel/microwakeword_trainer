@@ -82,7 +82,11 @@ class TestEvaluator:
         self.default_threshold = float(threshold)
         self.n_thresholds = int(evaluation_config.get("n_thresholds", 101) or 101)
 
-    def evaluate(self, test_data_factory: Callable, test_feature_store_path: str | None = None) -> dict[str, Any] | None:
+    def evaluate(
+        self,
+        test_data_factory: Callable,
+        test_feature_store_path: str | None = None,
+    ) -> dict[str, Any] | None:
         """Run comprehensive test evaluation."""
         logger.info("Starting test evaluation...")
         self.console.print("\n[bold cyan]Running Comprehensive Test Evaluation...[/bold cyan]\n")
@@ -198,7 +202,7 @@ class TestEvaluator:
             return None
 
     def _compute_basic_metrics(self, y_true: np.ndarray, y_score: np.ndarray) -> dict:
-        """Compute basic classification metrics at threshold 0.5."""
+        """Compute basic classification metrics at the configured default threshold."""
         threshold = self.default_threshold
         y_pred = (y_score >= threshold).astype(np.int32)
 
@@ -302,10 +306,22 @@ class TestEvaluator:
         fahs_arr: np.ndarray = np.array(fahs)
 
         return {
-            "recall_ci": [float(np.percentile(recalls_arr, 2.5)), float(np.percentile(recalls_arr, 97.5))],
-            "precision_ci": [float(np.percentile(precisions_arr, 2.5)), float(np.percentile(precisions_arr, 97.5))],
-            "f1_ci": [float(np.percentile(f1s_arr, 2.5)), float(np.percentile(f1s_arr, 97.5))],
-            "fah_ci": [float(np.percentile(fahs_arr, 2.5)), float(np.percentile(fahs_arr, 97.5))],
+            "recall_ci": [
+                float(np.percentile(recalls_arr, 2.5)),
+                float(np.percentile(recalls_arr, 97.5)),
+            ],
+            "precision_ci": [
+                float(np.percentile(precisions_arr, 2.5)),
+                float(np.percentile(precisions_arr, 97.5)),
+            ],
+            "f1_ci": [
+                float(np.percentile(f1s_arr, 2.5)),
+                float(np.percentile(f1s_arr, 97.5)),
+            ],
+            "fah_ci": [
+                float(np.percentile(fahs_arr, 2.5)),
+                float(np.percentile(fahs_arr, 97.5)),
+            ],
         }
 
     def _compute_calibration(self, y_true: np.ndarray, y_score: np.ndarray) -> dict:
@@ -323,7 +339,12 @@ class TestEvaluator:
             },
         }
 
-    def _compute_per_category(self, y_true: np.ndarray, y_score: np.ndarray, raw_labels: np.ndarray | None) -> dict:
+    def _compute_per_category(
+        self,
+        y_true: np.ndarray,
+        y_score: np.ndarray,
+        raw_labels: np.ndarray | None,
+    ) -> dict:
         """Compute per-category breakdown."""
         if raw_labels is None:
             return {"available": False}
@@ -338,7 +359,10 @@ class TestEvaluator:
             pos_tp = np.sum((y_true[pos_mask] == 1) & (y_pred[pos_mask] == 1))
             pos_fn = np.sum((y_true[pos_mask] == 1) & (y_pred[pos_mask] == 0))
             pos_tpr = pos_tp / (pos_tp + pos_fn) if (pos_tp + pos_fn) > 0 else 0.0
-            results["positive"] = {"count": int(np.sum(pos_mask)), "true_positive_rate": float(pos_tpr)}
+            results["positive"] = {
+                "count": int(np.sum(pos_mask)),
+                "true_positive_rate": float(pos_tpr),
+            }
 
         neg_mask = raw_labels == 0
         if np.sum(neg_mask) > 0:
@@ -438,25 +462,30 @@ class TestEvaluator:
 
         return results
 
-    def _compute_score_distributions(self, y_true: np.ndarray, y_score: np.ndarray, raw_labels: np.ndarray | None) -> dict:
+    def _compute_score_distributions(
+        self,
+        y_true: np.ndarray,
+        y_score: np.ndarray,
+        raw_labels: np.ndarray | None,
+    ) -> dict:
         """Compute score distribution statistics."""
         pos_scores = y_score[y_true == 1]
         neg_scores = y_score[y_true == 0]
 
         results = {
             "positive": {
-                "mean": float(np.mean(pos_scores)) if len(pos_scores) > 0 else 0.0,
-                "std": float(np.std(pos_scores)) if len(pos_scores) > 0 else 0.0,
-                "median": float(np.median(pos_scores)) if len(pos_scores) > 0 else 0.0,
-                "min": float(np.min(pos_scores)) if len(pos_scores) > 0 else 0.0,
-                "max": float(np.max(pos_scores)) if len(pos_scores) > 0 else 0.0,
+                "mean": (float(np.mean(pos_scores)) if len(pos_scores) > 0 else 0.0),
+                "std": (float(np.std(pos_scores)) if len(pos_scores) > 0 else 0.0),
+                "median": (float(np.median(pos_scores)) if len(pos_scores) > 0 else 0.0),
+                "min": (float(np.min(pos_scores)) if len(pos_scores) > 0 else 0.0),
+                "max": (float(np.max(pos_scores)) if len(pos_scores) > 0 else 0.0),
             },
             "negative": {
-                "mean": float(np.mean(neg_scores)) if len(neg_scores) > 0 else 0.0,
-                "std": float(np.std(neg_scores)) if len(neg_scores) > 0 else 0.0,
-                "median": float(np.median(neg_scores)) if len(neg_scores) > 0 else 0.0,
-                "min": float(np.min(neg_scores)) if len(neg_scores) > 0 else 0.0,
-                "max": float(np.max(neg_scores)) if len(neg_scores) > 0 else 0.0,
+                "mean": (float(np.mean(neg_scores)) if len(neg_scores) > 0 else 0.0),
+                "std": (float(np.std(neg_scores)) if len(neg_scores) > 0 else 0.0),
+                "median": (float(np.median(neg_scores)) if len(neg_scores) > 0 else 0.0),
+                "min": (float(np.min(neg_scores)) if len(neg_scores) > 0 else 0.0),
+                "max": (float(np.max(neg_scores)) if len(neg_scores) > 0 else 0.0),
             },
         }
 
@@ -474,7 +503,7 @@ class TestEvaluator:
         return results
 
     def _compute_confusion_matrix(self, y_true: np.ndarray, y_score: np.ndarray) -> dict:
-        """Compute confusion matrix at threshold 0.5."""
+        """Compute confusion matrix at the configured default threshold."""
         threshold = self.default_threshold
         y_pred = (y_score >= threshold).astype(np.int32)
 
@@ -487,7 +516,12 @@ class TestEvaluator:
 
     def _display_results(self, results: dict, has_both_classes: bool):
         """Display results with Rich console."""
-        self.console.print(Panel.fit("[bold cyan]Test Evaluation Results[/bold cyan]", border_style="cyan"))
+        self.console.print(
+            Panel.fit(
+                "[bold cyan]Test Evaluation Results[/bold cyan]",
+                border_style="cyan",
+            )
+        )
 
         basic = results["basic_metrics"]
         basic_table = Table(title="Basic Metrics", show_header=True)
@@ -515,7 +549,10 @@ class TestEvaluator:
         self.console.print(adv_table)
 
         cm = results["confusion_matrix"]
-        cm_table = Table(title=f"Confusion Matrix (threshold={self.default_threshold:.2f})", show_header=True)
+        cm_table = Table(
+            title=f"Confusion Matrix (threshold={self.default_threshold:.2f})",
+            show_header=True,
+        )
         cm_table.add_column("", style="cyan")
         cm_table.add_column("Pred: Negative", style="red")
         cm_table.add_column("Pred: Positive", style="green")
@@ -533,7 +570,11 @@ class TestEvaluator:
                 if cat_name in per_cat:
                     cat = per_cat[cat_name]
                     rate = cat.get("true_positive_rate") or cat.get("true_negative_rate")
-                    cat_table.add_row(cat_name, str(cat["count"]), f"{rate:.4f}" if rate else "N/A")
+                    cat_table.add_row(
+                        cat_name,
+                        str(cat["count"]),
+                        f"{rate:.4f}" if rate else "N/A",
+                    )
             self.console.print(cat_table)
 
         cis = results.get("confidence_intervals", {})
@@ -575,7 +616,12 @@ class TestEvaluator:
 
         logger.info(f"JSON report saved to {json_path}")
 
-    def _generate_plots(self, y_true: np.ndarray, y_score: np.ndarray, raw_labels: np.ndarray | None):
+    def _generate_plots(
+        self,
+        y_true: np.ndarray,
+        y_score: np.ndarray,
+        raw_labels: np.ndarray | None,
+    ):
         """Generate 6 matplotlib plots."""
         import matplotlib.pyplot as plt
         from scipy.stats import norm
@@ -598,7 +644,13 @@ class TestEvaluator:
         plt.close()
 
         plt.figure(figsize=(8, 6))
-        plt.plot(curves["recall"], curves["precision"], "b-", linewidth=2, label="PR")
+        plt.plot(
+            curves["recall"],
+            curves["precision"],
+            "b-",
+            linewidth=2,
+            label="PR",
+        )
         plt.xlabel("Recall")
         plt.ylabel("Precision")
         plt.title("Precision-Recall Curve")
@@ -632,7 +684,13 @@ class TestEvaluator:
         if raw_labels is not None:
             hn_scores = y_score[raw_labels == 2]
             if len(hn_scores) > 0:
-                plt.hist(hn_scores, bins=30, alpha=0.5, label="Hard Negative", color="red")
+                plt.hist(
+                    hn_scores,
+                    bins=30,
+                    alpha=0.5,
+                    label="Hard Negative",
+                    color="red",
+                )
         plt.xlabel("Model Score")
         plt.ylabel("Count")
         plt.title("Score Distribution")
@@ -644,7 +702,12 @@ class TestEvaluator:
 
         cal_curve = compute_calibration_curve(y_true, y_score, n_bins=10)
         plt.figure(figsize=(8, 6))
-        plt.plot(cal_curve["prob_pred"], cal_curve["prob_true"], "bo-", label="Model")
+        plt.plot(
+            cal_curve["prob_pred"],
+            cal_curve["prob_true"],
+            "bo-",
+            label="Model",
+        )
         plt.plot([0, 1], [0, 1], "k--", label="Perfect")
         plt.xlabel("Mean Predicted Probability")
         plt.ylabel("Fraction of Positives")

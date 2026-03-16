@@ -4,7 +4,14 @@ from .autotuner import AutoTuner
 from .autotuner import autotune as _autotune
 
 
-def autotune(checkpoint_path: str, config: dict, output_dir: str, target_fah: float, target_recall: float, max_iterations: int) -> dict:
+def autotune(
+    checkpoint_path: str,
+    config: dict,
+    output_dir: str,
+    target_fah: float,
+    target_recall: float,
+    max_iterations: int,
+) -> dict:
     """Convenience function to run auto-tuning.
 
     Args:

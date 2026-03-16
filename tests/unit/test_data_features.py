@@ -371,7 +371,7 @@ class TestSpectrogramGeneration:
                     gen = SpectrogramGeneration()
                     wav_path = tmp_path / "test.wav"
                     wav_path.touch()
-                    result = gen.generate_from_file(str(wav_path), target_length=16000)  # noqa: F841
+                    _ = gen.generate_from_file(str(wav_path), target_length=16000)
 
                     mock_load.assert_called_once()
                     mock_compute.assert_called_once()
@@ -386,7 +386,7 @@ class TestSpectrogramGeneration:
                     gen = SpectrogramGeneration()
                     wav_path = tmp_path / "test.wav"
                     wav_path.touch()
-                    result = gen.generate_from_file(str(wav_path), target_length=16000)  # noqa: F841
+                    _ = gen.generate_from_file(str(wav_path), target_length=16000)
 
                     mock_compute.assert_called_once()
                     # Should pad to target length
@@ -439,7 +439,11 @@ class TestSpectrogramGeneration:
                 else:
                     return np.zeros((15, 40))  # Different length
 
-            with patch.object(MicroFrontend, "compute_mel_spectrogram", side_effect=mock_compute):
+            with patch.object(
+                MicroFrontend,
+                "compute_mel_spectrogram",
+                side_effect=mock_compute,
+            ):
                 gen = SpectrogramGeneration()
                 batch = np.random.randn(2, 16000).astype(np.float32)
                 result = gen.process_batch(batch)

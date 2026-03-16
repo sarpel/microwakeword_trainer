@@ -89,7 +89,7 @@ class TestESPHomeOpWhitelist:
 
         from src.export.verification import verify_tflite_model
 
-        sig = inspect.signature(verify_tflite_model)
+        _ = inspect.signature(verify_tflite_model)
 
         # The function should exist and be callable
         assert callable(verify_tflite_model)

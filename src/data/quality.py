@@ -4,12 +4,12 @@ import csv
 import os
 import shutil
 import threading
-from urllib.request import urlopen
 import wave
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.request import urlopen
 
 import numpy as np
 

@@ -3,7 +3,7 @@
 import os
 
 # Suppress verbose TF/XLA logs before importing tensorflow (via autotuner)
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
@@ -271,90 +271,34 @@ def main() -> int:
             console=console,
             users_hard_negs_dir=args.users_hard_negs,
         )
-        result = tuner.tune()
+        results = tuner.tune()
 
-        # Print final results
-        console.print("\n" + "=" * 80)
-        console.print("[bold]TUNING COMPLETE[/]")
-        console.print("=" * 80)
+        # Display final results summary
+        if results:
+            console.print()
+            from rich.panel import Panel
+            from rich.rule import Rule
 
-        result_table = Table(title="Final Results")
-        result_table.add_column("Metric", style="bold")
-        result_table.add_column("Value")
+            console.print(Rule("[bold]Final Results[/bold]", style="cyan"))
 
-        # If confirmation was attempted and failed, surface confirmation metrics
-        conf_attempted = bool(result.get("confirmation_attempted"))
-        target_met = bool(result.get("target_met"))
-        if conf_attempted and not target_met:
-            conf_fah = result.get("confirmation_best_fah")
-            conf_recall = result.get("confirmation_best_recall")
-            conf_cutoff = result.get("confirmation_best_cutoff")
-            conf_cutoff_u8 = result.get("confirmation_best_cutoff_uint8")
-            search_fah = result.get("search_best_fah", result.get("best_fah"))
-            search_recall = result.get("search_best_recall", result.get("best_recall"))
-            search_cutoff = result.get("search_best_cutoff", result.get("recommended_probability_cutoff"))
-            search_cutoff_u8 = result.get("search_best_cutoff_uint8", result.get("recommended_probability_cutoff_uint8"))
-            search_id = result.get("search_best_candidate_id")
-            confirm_id = result.get("confirmation_best_candidate_id")
+            # Extract final metrics
+            best_recall = results.get("best_recall", 0.0)
+            best_fah = results.get("best_fah", 0.0)
+            threshold = results.get("recommended_probability_cutoff", 0.5)
+            checkpoint = results.get("best_checkpoint", "N/A")
 
-            if conf_fah is not None and conf_recall is not None:
-                result_table.add_row("Best FAH (confirm)", f"{float(conf_fah):.4f}")
-                result_table.add_row("Best Recall (confirm)", f"{float(conf_recall):.4f}")
-            if conf_cutoff is not None:
-                result_table.add_row(
-                    "Best Cutoff (confirm)",
-                    f"{float(conf_cutoff):.4f} ({conf_cutoff_u8 if conf_cutoff_u8 is not None else 'N/A'})",
+            console.print(
+                Panel(
+                    f"[bold]Best Metrics:[/bold]\n"
+                    f"  Detection: {best_recall * 100:.1f}%\n"
+                    f"  False Alarms/hr: {best_fah:.2f}\n"
+                    f"  Probability Cutoff: {threshold:.4f}\n"
+                    f"  Best Checkpoint: {checkpoint}",
+                    title="Configuration",
+                    border_style="cyan",
                 )
-            result_table.add_row("Best FAH (search)", f"{float(search_fah):.4f}" if search_fah is not None else "N/A")
-            result_table.add_row("Best Recall (search)", f"{float(search_recall):.4f}" if search_recall is not None else "N/A")
-            if search_cutoff is not None:
-                result_table.add_row(
-                    "Best Cutoff (search)",
-                    f"{float(search_cutoff):.4f} ({search_cutoff_u8 if search_cutoff_u8 is not None else 'N/A'})",
-                )
-            if search_id:
-                result_table.add_row("Search Candidate", str(search_id))
-            if confirm_id:
-                result_table.add_row("Confirm Candidate", str(confirm_id))
+            )
 
-            cutoff = result.get("recommended_probability_cutoff")
-            cutoff_u8 = result.get("recommended_probability_cutoff_uint8")
-            if cutoff is not None:
-                result_table.add_row(
-                    "Recommended Cutoff",
-                    f"{float(cutoff):.4f} ({cutoff_u8 if cutoff_u8 is not None else 'N/A'})",
-                )
-            int8_fah = result.get("int8_diagnostic_fah")
-            int8_recall = result.get("int8_diagnostic_recall")
-            if int8_fah is not None and int8_recall is not None:
-                result_table.add_row("INT8 FAH (diag)", f"{float(int8_fah):.4f}")
-                result_table.add_row("INT8 Recall (diag)", f"{float(int8_recall):.4f}")
-            result_table.add_row("Iterations", str(result["iterations"]))
-            result_table.add_row("Notes", "confirmation failed; showing both confirm and search metrics")
-            result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
-            result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
-            result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))
-        else:
-            result_table.add_row("Best FAH", f"{result['best_fah']:.4f}")
-            result_table.add_row("Best Recall", f"{result['best_recall']:.4f}")
-            cutoff = result.get("recommended_probability_cutoff")
-            cutoff_u8 = result.get("recommended_probability_cutoff_uint8")
-            if cutoff is not None:
-                result_table.add_row(
-                    "Recommended Cutoff",
-                    f"{float(cutoff):.4f} ({cutoff_u8 if cutoff_u8 is not None else 'N/A'})",
-                )
-            int8_fah = result.get("int8_diagnostic_fah")
-            int8_recall = result.get("int8_diagnostic_recall")
-            if int8_fah is not None and int8_recall is not None:
-                result_table.add_row("INT8 FAH (diag)", f"{float(int8_fah):.4f}")
-                result_table.add_row("INT8 Recall (diag)", f"{float(int8_recall):.4f}")
-            result_table.add_row("Iterations", str(result["iterations"]))
-            result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
-            result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
-            result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))
-
-        console.print(result_table)
         return 0  # Success even if target not met
 
     except KeyboardInterrupt:

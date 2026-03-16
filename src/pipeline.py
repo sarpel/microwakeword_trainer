@@ -73,7 +73,14 @@ def step_train(config: str, override: str | None) -> Path:
     return best
 
 
-def step_autotune(checkpoint: Path, config: str, override: str | None, target_fah: float, target_recall: float, output_dir: Path) -> Path:
+def step_autotune(
+    checkpoint: Path,
+    config: str,
+    override: str | None,
+    target_fah: float,
+    target_recall: float,
+    output_dir: Path,
+) -> Path:
     """Run mww-autotune and return the tuned checkpoint path."""
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -98,7 +105,11 @@ def step_autotune(checkpoint: Path, config: str, override: str | None, target_fa
     # Find tuned checkpoint - AutoTuner writes under output_dir/checkpoints/
     # so search recursively and support both .weights.h5 and .ckpt formats.
     candidates = sorted(
-        [*output_dir.rglob("*.weights.h5"), *output_dir.rglob("*.ckpt"), *output_dir.rglob("*.h5")],
+        [
+            *output_dir.rglob("*.weights.h5"),
+            *output_dir.rglob("*.ckpt"),
+            *output_dir.rglob("*.h5"),
+        ],
         key=lambda p: p.stat().st_mtime,
     )
     if not candidates:
@@ -109,7 +120,13 @@ def step_autotune(checkpoint: Path, config: str, override: str | None, target_fa
     return tuned
 
 
-def step_export(checkpoint: Path, config: str, output_dir: Path, model_name: str, data_dir: str | None) -> Path:
+def step_export(
+    checkpoint: Path,
+    config: str,
+    output_dir: Path,
+    model_name: str,
+    data_dir: str | None,
+) -> Path:
     """Export the model to TFLite and return the .tflite path."""
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -164,7 +181,10 @@ def step_verify_esphome(tflite_path: Path) -> dict[str, Any]:
         if isinstance(loaded, dict):
             data = cast(dict[str, Any], loaded)
         else:
-            data = {"compatible": False, "errors": ["JSON output is not an object"]}
+            data = {
+                "compatible": False,
+                "errors": ["JSON output is not an object"],
+            }
     except (json.JSONDecodeError, ValueError):
         print(f"✗ Could not parse verify_esphome output:\n{result.stdout}")
         # Treat non-zero returncode as failure
@@ -245,7 +265,12 @@ def step_evaluate(tflite_path: Path, config: str, override: str | None) -> dict[
         return {}
 
 
-def step_gate(metrics: dict, target_fah: float, target_recall: float, strict_gate: bool = False) -> bool:
+def step_gate(
+    metrics: dict,
+    target_fah: float,
+    target_recall: float,
+    strict_gate: bool = False,
+) -> bool:
     """Quality gate.  Returns True if model meets targets, False otherwise.
 
     Args:
@@ -314,19 +339,76 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    parser.add_argument("--config", type=str, default="standard", help="Config preset name or path (default: standard)")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="standard",
+        help="Config preset name or path (default: standard)",
+    )
     parser.add_argument("--override", type=str, default=None, help="Override config YAML path")
-    parser.add_argument("--model-name", type=str, default="wake_word", help="Output model name (default: wake_word)")
-    parser.add_argument("--export-dir", type=str, default="./models/exported", help="Directory for exported TFLite model (default: ./models/exported)")
-    parser.add_argument("--promote-dir", type=str, default="./models/promoted", help="Directory to copy model to if gate passes (default: ./models/promoted)")
-    parser.add_argument("--target-fah", type=float, default=0.5, help="Max FAH for quality gate (default: 0.5)")
-    parser.add_argument("--target-recall", type=float, default=0.90, help="Min recall for quality gate (default: 0.90)")
-    parser.add_argument("--data-dir", type=str, default=None, help="Data directory for representative dataset during export")
-    parser.add_argument("--strict-gate", action="store_true", help="Fail quality gate when metrics are missing (default: skip gate)")
-    parser.add_argument("--skip-train", action="store_true", help="Skip training (use --checkpoint instead)")
-    parser.add_argument("--checkpoint", type=str, default=None, help="Existing checkpoint to use (requires --skip-train)")
-    parser.add_argument("--autotune", action="store_true", help="Run mww-autotune after training")
-    parser.add_argument("--autotune-output-dir", type=str, default="./checkpoints/tuned", help="Output directory for tuned checkpoint (default: ./checkpoints/tuned)")
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default="wake_word",
+        help="Output model name (default: wake_word)",
+    )
+    parser.add_argument(
+        "--export-dir",
+        type=str,
+        default="./models/exported",
+        help="Directory for exported TFLite model (default: ./models/exported)",
+    )
+    parser.add_argument(
+        "--promote-dir",
+        type=str,
+        default="./models/promoted",
+        help="Directory to copy model to if gate passes (default: ./models/promoted)",
+    )
+    parser.add_argument(
+        "--target-fah",
+        type=float,
+        default=0.5,
+        help="Max FAH for quality gate (default: 0.5)",
+    )
+    parser.add_argument(
+        "--target-recall",
+        type=float,
+        default=0.90,
+        help="Min recall for quality gate (default: 0.90)",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=None,
+        help="Data directory for representative dataset during export",
+    )
+    parser.add_argument(
+        "--strict-gate",
+        action="store_true",
+        help="Fail quality gate when metrics are missing (default: skip gate)",
+    )
+    parser.add_argument(
+        "--skip-train",
+        action="store_true",
+        help="Skip training (use --checkpoint instead)",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Existing checkpoint to use (requires --skip-train)",
+    )
+    parser.add_argument(
+        "--autotune",
+        action="store_true",
+        help="Run mww-autotune after training",
+    )
+    parser.add_argument(
+        "--autotune-output-dir",
+        type=str,
+        default="./checkpoints/tuned",
+        help="Output directory for tuned checkpoint (default: ./checkpoints/tuned)",
+    )
 
     return parser
 
@@ -383,7 +465,12 @@ def main() -> None:  # noqa: C901
     metrics = step_evaluate(tflite_path, args.config, args.override)
 
     # ── 7. Quality gate ────────────────────────────────────────────────────
-    gate_passed = step_gate(metrics, args.target_fah, args.target_recall, strict_gate=args.strict_gate)
+    gate_passed = step_gate(
+        metrics,
+        args.target_fah,
+        args.target_recall,
+        strict_gate=args.strict_gate,
+    )
 
     elapsed = time.time() - start_time
     print(f"\n  Total pipeline time: {elapsed / 60:.1f} min")

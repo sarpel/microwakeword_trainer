@@ -13,13 +13,7 @@ import logging
 import tensorflow as tf
 
 # Import from our own streaming module
-from src.model.streaming import (
-    ChannelSplit,
-    Modes,
-    Stream,
-    StridedDrop,
-    StridedKeep,
-)
+from src.model.streaming import ChannelSplit, Modes, Stream, StridedDrop, StridedKeep
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +139,13 @@ class MixConvBlock(tf.keras.layers.Layer):
         mode: Inference mode (TRAINING, NON_STREAM, STREAM_INTERNAL, STREAM_EXTERNAL)
     """
 
-    def __init__(self, kernel_sizes, filters=None, mode=Modes.NON_STREAM_INFERENCE, **kwargs):
+    def __init__(
+        self,
+        kernel_sizes,
+        filters=None,
+        mode=Modes.NON_STREAM_INFERENCE,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.kernel_sizes = kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
         self.filters = filters
@@ -204,7 +204,11 @@ class MixConvBlock(tf.keras.layers.Layer):
             if self.mode in (Modes.TRAINING, Modes.NON_STREAM_INFERENCE):
                 pad_amount = self.kernel_sizes[0] - 1
                 if pad_amount > 0:
-                    net = tf.pad(net, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
+                    net = tf.pad(
+                        net,
+                        [[0, 0], [pad_amount, 0], [0, 0], [0, 0]],
+                        "constant",
+                    )
             else:
                 net = StridedKeep(self.kernel_sizes[0], mode=self.mode)(net)
             net = self.depthwise_convs[0](net)
@@ -223,7 +227,11 @@ class MixConvBlock(tf.keras.layers.Layer):
                     # the same time dimension (= input time dimension)
                     pad_amount = ks - 1
                     if pad_amount > 0:
-                        x = tf.pad(x, [[0, 0], [pad_amount, 0], [0, 0], [0, 0]], "constant")
+                        x = tf.pad(
+                            x,
+                            [[0, 0], [pad_amount, 0], [0, 0], [0, 0]],
+                            "constant",
+                        )
                 else:
                     # Streaming: StridedKeep trims ring buffer for this kernel
                     x = StridedKeep(ks, mode=self.mode)(x)
@@ -635,7 +643,7 @@ class MixedNet(tf.keras.Model):
         self.blocks = [cfg["residual_block"] for cfg in core_layers["blocks"]]
         for block in self.blocks:
             block.mode = self.mode
-            for mixconv in block.mixconvs if hasattr(block, "mixconvs") else []:
+            for mixconv in (block.mixconvs if hasattr(block, "mixconvs") else []):
                 mixconv.mode = self.mode
 
         # Streaming for temporal pooling

@@ -235,7 +235,10 @@ def compute_phonetic_similarity(ipa1: str, ipa2: str, distance_obj: Any | None =
     jellyfish = _lazy_import("jellyfish")
     if jellyfish is not None:
         try:
-            return max(0.0, min(1.0, float(jellyfish.jaro_winkler_similarity(ipa1, ipa2))))
+            return max(
+                0.0,
+                min(1.0, float(jellyfish.jaro_winkler_similarity(ipa1, ipa2))),
+            )
         except Exception as e:
             logger.debug(f"Jellyfish similarity calculation failed: {e}")
             return 0.0
@@ -412,7 +415,13 @@ def print_rich_summary(
 ) -> None:
     """Print grouped summary table (grouped by unique text)."""
     if not results:
-        console.print(Panel("No files matched for scoring.", title="Phonetic Similarity", border_style="yellow"))
+        console.print(
+            Panel(
+                "No files matched for scoring.",
+                title="Phonetic Similarity",
+                border_style="yellow",
+            )
+        )
         return
 
     grouped: dict[str, list[PhoneticScore]] = {}
@@ -431,10 +440,20 @@ def print_rich_summary(
     aggregate_rows.sort(key=lambda x: x[2], reverse=True)
 
     if not aggregate_rows:
-        console.print(Panel("No rows matched display filters.", title="Phonetic Similarity", border_style="yellow"))
+        console.print(
+            Panel(
+                "No rows matched display filters.",
+                title="Phonetic Similarity",
+                border_style="yellow",
+            )
+        )
         return
 
-    table = Table(title="Phonetic Similarity Scores", show_header=True, header_style="bold magenta")
+    table = Table(
+        title="Phonetic Similarity Scores",
+        show_header=True,
+        header_style="bold magenta",
+    )
     table.add_column("Text", style="cyan", max_width=28, overflow="fold")
     table.add_column("IPA", style="white", max_width=28, overflow="fold")
     table.add_column("Score", justify="right", min_width=5)
@@ -479,19 +498,37 @@ def move_flagged_files(
     console = console or Console()
 
     if not report_path.exists():
-        console.print(Panel(f"Report file not found: {report_path}", title="Move Error", border_style="red"))
+        console.print(
+            Panel(
+                f"Report file not found: {report_path}",
+                title="Move Error",
+                border_style="red",
+            )
+        )
         return 1
 
     try:
         with report_path.open("r", encoding="utf-8") as f:
             report = json.load(f)
     except json.JSONDecodeError as exc:
-        console.print(Panel(f"Invalid JSON report: {exc}", title="Move Error", border_style="red"))
+        console.print(
+            Panel(
+                f"Invalid JSON report: {exc}",
+                title="Move Error",
+                border_style="red",
+            )
+        )
         return 1
 
     rows = report.get("results", [])
     if not rows:
-        console.print(Panel("Report contains no results to move.", title="Move", border_style="yellow"))
+        console.print(
+            Panel(
+                "Report contains no results to move.",
+                title="Move",
+                border_style="yellow",
+            )
+        )
         return 0
 
     scan_root_raw = report.get("scan_root")
@@ -499,7 +536,13 @@ def move_flagged_files(
 
     candidates = [row for row in rows if str(row.get("risk", "")).upper() in set(risk_levels)]
     if not candidates:
-        console.print(Panel("No rows matched selected risk levels.", title="Move", border_style="yellow"))
+        console.print(
+            Panel(
+                "No rows matched selected risk levels.",
+                title="Move",
+                border_style="yellow",
+            )
+        )
         return 0
 
     action = "WOULD MOVE" if dry_run else "MOVED"
@@ -594,23 +637,66 @@ def build_parser() -> argparse.ArgumentParser:
 
     score_parser = subparsers.add_parser("score", help="Score files by phonetic similarity")
     score_parser.add_argument("path", type=Path, help="Directory or file to score")
-    score_parser.add_argument("--wake-word", type=str, default=DEFAULT_WAKE_WORD, help='Wake word phrase (default: "Hey Katya")')
-    score_parser.add_argument("--language", type=str, default=DEFAULT_LANGUAGE, help="epitran language code or alias (default: tur-Latn). Aliases: en, tr, de, fr, es, it, nl, pt")
-    score_parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="JSON report output path")
-    score_parser.add_argument("--recursive", action="store_true", default=False, help="Scan directories recursively (default: False)")
-    score_parser.add_argument("--min-score", type=float, default=0.0, help="Only show results above this score")
-    score_parser.add_argument("--verbose", action="store_true", help="Show all results, not just flagged")
+    score_parser.add_argument(
+        "--wake-word",
+        type=str,
+        default=DEFAULT_WAKE_WORD,
+        help='Wake word phrase (default: "Hey Katya")',
+    )
+    score_parser.add_argument(
+        "--language",
+        type=str,
+        default=DEFAULT_LANGUAGE,
+        help="epitran language code or alias (default: tur-Latn). Aliases: en, tr, de, fr, es, it, nl, pt",
+    )
+    score_parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT_PATH,
+        help="JSON report output path",
+    )
+    score_parser.add_argument(
+        "--recursive",
+        action="store_true",
+        default=False,
+        help="Scan directories recursively (default: False)",
+    )
+    score_parser.add_argument(
+        "--min-score",
+        type=float,
+        default=0.0,
+        help="Only show results above this score",
+    )
+    score_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show all results, not just flagged",
+    )
 
     move_parser = subparsers.add_parser("move", help="Move flagged files from a score report")
-    move_parser.add_argument("--report", type=Path, required=True, help="Path to JSON report from score command")
-    move_parser.add_argument("--quarantine-dir", type=Path, default=DEFAULT_QUARANTINE_DIR, help="Where to move files")
+    move_parser.add_argument(
+        "--report",
+        type=Path,
+        required=True,
+        help="Path to JSON report from score command",
+    )
+    move_parser.add_argument(
+        "--quarantine-dir",
+        type=Path,
+        default=DEFAULT_QUARANTINE_DIR,
+        help="Where to move files",
+    )
     move_parser.add_argument(
         "--risk-levels",
         type=str,
         default="HIGH",
         help="Comma-separated risk levels to move (HIGH,MEDIUM,LOW)",
     )
-    move_parser.add_argument("--dry-run", action="store_true", help="Preview moves without executing")
+    move_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview moves without executing",
+    )
 
     return parser
 
@@ -630,13 +716,25 @@ def main() -> int:
 
         target_path: Path = args.path
         if not target_path.exists():
-            console.print(Panel(f"Path not found: {target_path}", title="Score Error", border_style="red"))
+            console.print(
+                Panel(
+                    f"Path not found: {target_path}",
+                    title="Score Error",
+                    border_style="red",
+                )
+            )
             return 1
 
         try:
             wake_variants = _get_wake_word_ipa_variants(args.wake_word, args.language, console)
             if not wake_variants:
-                console.print(Panel("Could not build IPA variants for wake word.", title="Score Error", border_style="red"))
+                console.print(
+                    Panel(
+                        "Could not build IPA variants for wake word.",
+                        title="Score Error",
+                        border_style="red",
+                    )
+                )
                 return 1
 
             results = score_directory(
@@ -647,8 +745,19 @@ def main() -> int:
             )
 
             scan_root = str(target_path.resolve() if target_path.is_dir() else target_path.resolve().parent)
-            write_json_report(results, args.output, args.wake_word, wake_variants, scan_root=scan_root)
-            print_rich_summary(results, console, min_score=args.min_score, verbose=args.verbose)
+            write_json_report(
+                results,
+                args.output,
+                args.wake_word,
+                wake_variants,
+                scan_root=scan_root,
+            )
+            print_rich_summary(
+                results,
+                console,
+                min_score=args.min_score,
+                verbose=args.verbose,
+            )
 
             console.print(
                 Panel(
@@ -677,7 +786,13 @@ def main() -> int:
             console=console,
         )
 
-    console.print(Panel(f"Unknown command: {args.command}", title="Error", border_style="red"))
+    console.print(
+        Panel(
+            f"Unknown command: {args.command}",
+            title="Error",
+            border_style="red",
+        )
+    )
     return 1
 
 

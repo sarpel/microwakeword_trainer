@@ -11,9 +11,15 @@ import numpy as np
 from src.export import manifest as manifest_mod
 
 
-def test_generate_manifest_uses_defaults_when_no_tflite(tmp_path: Path) -> None:
+def test_generate_manifest_uses_defaults_when_no_tflite(
+    tmp_path: Path,
+) -> None:
     cfg = {"export": {}, "hardware": {}}
-    out = manifest_mod.generate_manifest(model_path="wake_word.tflite", config=cfg, tflite_path=str(tmp_path / "missing.tflite"))
+    out = manifest_mod.generate_manifest(
+        model_path="wake_word.tflite",
+        config=cfg,
+        tflite_path=str(tmp_path / "missing.tflite"),
+    )
 
     assert out["type"] == "micro"
     assert out["version"] == 2
@@ -27,7 +33,11 @@ def test_generate_manifest_uses_calculated_arena_when_tflite_exists(tmp_path: Pa
     tflite = tmp_path / "m.tflite"
     tflite.write_bytes(b"x")
 
-    monkeypatch.setattr(manifest_mod, "calculate_tensor_arena_size", lambda *_args, **_kwargs: 54321)
+    monkeypatch.setattr(
+        manifest_mod,
+        "calculate_tensor_arena_size",
+        lambda *_args, **_kwargs: 54321,
+    )
     cfg = {
         "export": {"arena_size_margin": 1.5, "wake_word": "Hi"},
         "hardware": {"window_step_ms": 10},
@@ -39,7 +49,9 @@ def test_generate_manifest_uses_calculated_arena_when_tflite_exists(tmp_path: Pa
     assert out["micro"]["tensor_arena_size"] == 54321
 
 
-def test_resolve_tensor_arena_size_prefers_explicit_override(tmp_path: Path) -> None:
+def test_resolve_tensor_arena_size_prefers_explicit_override(
+    tmp_path: Path,
+) -> None:
     tflite = tmp_path / "x.tflite"
     tflite.write_bytes(b"1")
 
@@ -54,7 +66,11 @@ def test_resolve_tensor_arena_size_prefers_explicit_override(tmp_path: Path) -> 
 def test_resolve_tensor_arena_size_zero_means_auto(tmp_path: Path, monkeypatch) -> None:
     tflite = tmp_path / "x.tflite"
     tflite.write_bytes(b"1")
-    monkeypatch.setattr(manifest_mod, "calculate_tensor_arena_size", lambda *_args, **_kwargs: 33333)
+    monkeypatch.setattr(
+        manifest_mod,
+        "calculate_tensor_arena_size",
+        lambda *_args, **_kwargs: 33333,
+    )
 
     size = manifest_mod.resolve_tensor_arena_size(
         tflite_path=str(tflite),
@@ -99,7 +115,9 @@ def test_calculate_tensor_arena_size_happy_path(monkeypatch, tmp_path: Path) -> 
     assert size >= manifest_mod.DEFAULT_TENSOR_ARENA_SIZE
 
 
-def test_calculate_tensor_arena_size_fallback_on_exception(monkeypatch) -> None:
+def test_calculate_tensor_arena_size_fallback_on_exception(
+    monkeypatch,
+) -> None:
     class ExplodingInterpreter:
         def __init__(self, *_args, **_kwargs):
             raise RuntimeError("boom")
@@ -155,7 +173,11 @@ def test_create_esphome_package_includes_metadata_and_saves_manifest(tmp_path: P
         return output_path
 
     monkeypatch.setattr(manifest_mod, "save_manifest", fake_save)
-    monkeypatch.setattr(manifest_mod, "generate_manifest", lambda **_kwargs: {"micro": {"tensor_arena_size": 777}})
+    monkeypatch.setattr(
+        manifest_mod,
+        "generate_manifest",
+        lambda **_kwargs: {"micro": {"tensor_arena_size": 777}},
+    )
 
     res = manifest_mod.create_esphome_package(
         model=None,
@@ -165,9 +187,21 @@ def test_create_esphome_package_includes_metadata_and_saves_manifest(tmp_path: P
         tflite_path=str(tmp_path / "hello.tflite"),
         analysis_results={
             "model_valid": True,
-            "validation_results": {"errors": [], "warnings": [], "info": {"k": "v"}},
-            "performance_estimation": {"model_size_kb": 1.2, "estimated_latency_ms": 3.4, "tensor_arena_estimate_kb": 50.0},
-            "architecture_analysis": {"layer_count": 10, "operators": ["CONV_2D"], "has_quantization": True},
+            "validation_results": {
+                "errors": [],
+                "warnings": [],
+                "info": {"k": "v"},
+            },
+            "performance_estimation": {
+                "model_size_kb": 1.2,
+                "estimated_latency_ms": 3.4,
+                "tensor_arena_estimate_kb": 50.0,
+            },
+            "architecture_analysis": {
+                "layer_count": 10,
+                "operators": ["CONV_2D"],
+                "has_quantization": True,
+            },
         },
     )
 

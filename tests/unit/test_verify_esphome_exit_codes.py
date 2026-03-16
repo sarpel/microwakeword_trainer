@@ -15,7 +15,7 @@ import pytest
 
 # Skip all tests if TensorFlow is not available
 try:
-    import tensorflow as tf
+    import tensorflow  # noqa: F401
 
     HAS_TF = True
 except ImportError:
@@ -88,14 +88,22 @@ class TestVerifyEsphomeExitCodes:
             # Should have expected fields
             assert "compatible" in output or "valid" in output or "error" in output
         except json.JSONDecodeError:
-            # If stdout isn't JSON, check that the attempt was made
-            # (some errors may print to stderr instead)
-            pass
+            # If stdout isn't JSON, verify that something went wrong
+            # Non-zero return code or error in stderr should be present
+            assert result.returncode != 0 or result.stderr, "When --json output is not valid JSON, either returncode should be non-zero " "or stderr should contain error details"
+            # If stderr exists, check it contains error-related content
+            if result.stderr:
+                assert "error" in result.stderr.lower(), "stderr should contain error-related messaging when JSON output fails"
 
     def test_verbose_flag(self, verify_script):
         """Test that --verbose flag is accepted."""
         result = subprocess.run(
-            [sys.executable, str(verify_script), "--verbose", "/nonexistent/model.tflite"],
+            [
+                sys.executable,
+                str(verify_script),
+                "--verbose",
+                "/nonexistent/model.tflite",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
@@ -108,7 +116,12 @@ class TestVerifyEsphomeExitCodes:
     def test_strict_flag(self, verify_script):
         """Test that --strict flag is accepted."""
         result = subprocess.run(
-            [sys.executable, str(verify_script), "--strict", "/nonexistent/model.tflite"],
+            [
+                sys.executable,
+                str(verify_script),
+                "--strict",
+                "/nonexistent/model.tflite",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
