@@ -552,53 +552,34 @@ class AutoTuningConfig:
 
 @dataclass
 class AutoTuningExpertConfig:
-    """Expert-level auto-tuning parameters. Most users should use defaults."""
+    """Expert-level micro-autotuner parameters. Most users should use defaults."""
 
-    # Burst step bounds
-    min_burst_steps: int = 200
-    max_burst_steps: int = 25000
-    default_burst_steps: int = 750
+    # Population
+    population_size: int = 4
+    micro_burst_steps: int = 50
+    knob_cycle: list = field(default_factory=lambda: [
+        "lr", "threshold", "temperature", "sampling_mix",
+        "weight_perturbation", "label_smoothing",
+    ])
+    exploit_explore_interval: int = 6
 
-    # Learning rate bounds
-    min_lr: float = 1e-7
-    max_lr: float = 1e-4
-    default_lr: float = 1e-5
+    # Knob parameter ranges
+    weight_perturbation_scale: float = 0.01
+    label_smoothing_range: tuple = (0.0, 0.15)
+    lr_range: tuple = (1e-7, 1e-4)
+    hypervolume_reference: tuple = (10.0, 0.0)
 
-    # SAM / SWA
-    sam_rho: float = 0.05
-    swa_collection_interval: int = 100
-
-    # Simulated annealing
-    initial_temperature: float = 0.5
-    cooling_rate: float = 0.97
-    reheat_after: int = 5
-    reheat_factor: float = 1.3
-
-    # Pool / archive sizes
-    active_pool_size: int = 16
+    # Archive
     pareto_archive_size: int = 32
-
-    # Stir level thresholds (stagnation counts)
-    stir_level_1: int = 3
-    stir_level_2: int = 5
-    stir_level_3: int = 7
-    stir_level_4: int = 9
-    stir_level_5: int = 12
-
-    # Curriculum
-    curriculum_advance_threshold: float = 0.3
 
     def __post_init__(self):
         """Validate expert configuration."""
-        if self.min_burst_steps >= self.max_burst_steps:
-            raise ValueError("AutoTuningExpertConfig: min_burst_steps must be < max_burst_steps")
-        if self.min_lr >= self.max_lr:
-            raise ValueError("AutoTuningExpertConfig: min_lr must be < max_lr")
-        if not 0.0 < self.sam_rho < 1.0:
-            raise ValueError("AutoTuningExpertConfig: sam_rho must be between 0 and 1")
-        if not 0.0 < self.cooling_rate < 1.0:
-            raise ValueError("AutoTuningExpertConfig: cooling_rate must be between 0 and 1")
-
+        if self.population_size < 2:
+            raise ValueError(f"AutoTuningExpertConfig: population_size must be >= 2, got {self.population_size}")
+        if self.micro_burst_steps < 1:
+            raise ValueError(f"AutoTuningExpertConfig: micro_burst_steps must be >= 1, got {self.micro_burst_steps}")
+        if len(self.knob_cycle) < 1:
+            raise ValueError("AutoTuningExpertConfig: knob_cycle must have at least 1 knob")
 
 @dataclass
 class FullConfig:
