@@ -2,7 +2,7 @@
 
 import os
 
-# Suppress verbose TF/XLA logs before importing tensorflow (via autotuner)
+# Suppress verbose TF/XLA logs before importing tensorflow
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
@@ -18,6 +18,7 @@ from rich.table import Table
 
 from src.tuning.orchestrator import MicroAutoTuner
 from src.utils.logging_config import setup_rich_logging
+
 # Backward compatibility alias for tests
 AutoTuner = MicroAutoTuner
 
@@ -263,10 +264,10 @@ def main() -> int:
         at["cv_folds"] = args.cv_folds
     if args.no_confirmation:
         at["require_confirmation"] = False
-    if getattr(args, 'population_size', None) is not None:
-        at['population_size'] = args.population_size
-    if getattr(args, 'micro_burst_steps', None) is not None:
-        at['micro_burst_steps'] = args.micro_burst_steps
+    if getattr(args, "population_size", None) is not None:
+        at["population_size"] = args.population_size
+    if getattr(args, "micro_burst_steps", None) is not None:
+        at["micro_burst_steps"] = args.micro_burst_steps
 
     # Print summary
     print_config_summary(args, config_dict)
@@ -351,7 +352,7 @@ def main() -> int:
             if int8_fah is not None and int8_recall is not None:
                 result_table.add_row("INT8 FAH (diag)", f"{float(int8_fah):.4f}")
                 result_table.add_row("INT8 Recall (diag)", f"{float(int8_recall):.4f}")
-            result_table.add_row("Iterations", str(result.get('iterations_completed', result.get('iterations', 0))))
+            result_table.add_row("Iterations", str(result.get("iterations_completed", result.get("iterations", 0))))
             result_table.add_row("Notes", "confirmation failed; showing both confirm and search metrics")
             result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
             result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
@@ -371,7 +372,7 @@ def main() -> int:
             if int8_fah is not None and int8_recall is not None:
                 result_table.add_row("INT8 FAH (diag)", f"{float(int8_fah):.4f}")
                 result_table.add_row("INT8 Recall (diag)", f"{float(int8_recall):.4f}")
-            result_table.add_row("Iterations", str(result.get('iterations_completed', result.get('iterations', 0))))
+            result_table.add_row("Iterations", str(result.get("iterations_completed", result.get("iterations", 0))))
             result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
             result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
             result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))

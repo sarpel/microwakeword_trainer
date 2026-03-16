@@ -18,7 +18,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src"
 ARCH_PATH = SRC_ROOT / "model" / "architecture.py"
 TFLITE_PATH = SRC_ROOT / "export" / "tflite.py"
-AUTOTUNER_PATH = SRC_ROOT / "tuning" / "autotuner.py"
 LOADER_PATH = REPO_ROOT / "config" / "loader.py"
 PRESETS_DIR = REPO_ROOT / "config" / "presets"
 
@@ -138,9 +137,8 @@ def test_create_okay_nabu_model_residual_connections_literal() -> None:
 @pytest.mark.integration
 def test_no_int8_shadow_artifacts_in_tuning() -> None:
     """Guardrail 7: remove legacy INT8 shadow evaluation artifacts from tuning."""
-    content = _read(AUTOTUNER_PATH)
     for forbidden in ("_evaluate_int8", "int8_shadow", "eval_results_int8"):
-        assert forbidden not in content
+        _assert_token_absent_in_python_files(SRC_ROOT / "tuning", forbidden)
 
 
 @pytest.mark.integration
