@@ -453,7 +453,7 @@ class ThresholdOptimizer:
 
         # AUC metrics (simple trapezoidal)
         try:
-            from sklearn.metrics import roc_auc_score, average_precision_score
+            from sklearn.metrics import average_precision_score, roc_auc_score
 
             if total_pos > 0 and total_neg > 0:
                 auc_roc = float(roc_auc_score(labels, y_scores))

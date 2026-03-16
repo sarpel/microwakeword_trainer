@@ -1,23 +1,23 @@
 """Auto-tuning module for wake word models."""
 
-from src.tuning.orchestrator import MicroAutoTuner
-from src.tuning.metrics import (
-    TuneMetrics,
-    ParetoArchive,
-    ErrorMemory,
-    compute_hypervolume,
-)
-from src.tuning.population import Candidate, Population, partition_data
+from src.tuning.dashboard import TuningDashboard, save_artifacts
 from src.tuning.knobs import (
     KnobCycle,
-    LRKnob,
-    ThresholdKnob,
-    TemperatureKnob,
-    SamplingMixKnob,
-    WeightPerturbationKnob,
     LabelSmoothingKnob,
+    LRKnob,
+    SamplingMixKnob,
+    TemperatureKnob,
+    ThresholdKnob,
+    WeightPerturbationKnob,
 )
-from src.tuning.dashboard import TuningDashboard, save_artifacts
+from src.tuning.metrics import (
+    ErrorMemory,
+    ParetoArchive,
+    TuneMetrics,
+    compute_hypervolume,
+)
+from src.tuning.orchestrator import MicroAutoTuner
+from src.tuning.population import Candidate, Population, partition_data
 
 
 def autotune(checkpoint_path, config, auto_tuning_config=None, **kwargs) -> dict:
