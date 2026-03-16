@@ -167,7 +167,7 @@ def validate_args(args: argparse.Namespace) -> bool:
     console = Console()
 
     # Check checkpoint exists
-    if not Path(args.checkpoint).exists():
+    if not getattr(args, "dry_run", False) and not Path(args.checkpoint).exists():
         console.print(f"[red]Error: Checkpoint not found: {args.checkpoint}[/]")
         return False
 
