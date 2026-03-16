@@ -3,7 +3,7 @@
 Provides progress bars, metric tables, confusion matrices, and formatted logging.
 """
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -155,10 +155,12 @@ class RichTrainingLogger:
 
     def log_validation_results(self, metrics: dict, step: int, total_steps: int) -> None:
         """Display a validation results table with all available metrics."""
+        from rich import box
         table = Table(
             title=f"📊 Validation Results — Step {step}/{total_steps}",
             show_header=True,
             header_style="bold magenta",
+            box=box.ASCII
         )
         table.add_column("Metric", style="bold")
         table.add_column("Value", justify="right")
@@ -236,10 +238,12 @@ class RichTrainingLogger:
 
     def log_confusion_matrix(self, tp: int, fp: int, tn: int, fn: int, threshold: float = 0.5) -> None:
         """Display a confusion matrix table."""
+        from rich import box
         table = Table(
             title=f"Confusion Matrix (threshold={threshold:.2f})",
             show_header=True,
             header_style="bold",
+            box=box.ASCII
         )
         table.add_column("", style="bold")
         table.add_column("Predicted Positive", justify="right")
@@ -271,10 +275,12 @@ class RichTrainingLogger:
         pos_miss_rate = fn / pos_total if pos_total > 0 else 0.0
         neg_fa_rate = fp / neg_total if neg_total > 0 else 0.0
 
+        from rich import box
         table = Table(
             title=f"Per-Class Analysis (threshold={threshold:.2f})",
             show_header=True,
             header_style="bold",
+            box=box.ASCII
         )
         table.add_column("Class", style="bold")
         table.add_column("Metric", justify="left")
@@ -324,7 +330,8 @@ class RichTrainingLogger:
         seconds = int(total_time % 60)
         time_str = f"{hours}h {minutes}m {seconds}s"
 
-        table = Table(show_header=False, box=None, padding=(0, 2))
+        from rich import box
+        table = Table(show_header=False, box=box.ASCII, padding=(0, 2))
         table.add_column("Key", style="bold")
         table.add_column("Value")
 
@@ -355,3 +362,131 @@ class RichTrainingLogger:
     def log_info(self, message: str) -> None:
         """Log an informational message."""
         self.console.print(f"[blue]ℹ️  {message}[/]")
+
+    def log_next_steps(self, best_path: str, config_preset: str) -> None:
+        """Display a 'What\'s Next?' panel with a clean, heavily-iconed, compartmentalized layout."""
+        from rich.console import Group
+
+        P = best_path
+        C = config_preset
+
+        def _cmd(raw: str) -> str:
+            """Cyan command; substituted checkpoint/config values highlighted in bold yellow."""
+            colored = raw
+            if P and P in colored:
+                colored = colored.replace(P, f"[/cyan][bold yellow]{P}[/bold yellow][cyan]")
+            config_token = f"--config {C}"
+            if C and config_token in colored:
+                colored = colored.replace(config_token, f"--config [/cyan][bold yellow]{C}[/bold yellow][cyan]")
+            return f"[cyan]{colored}[/cyan]"
+
+        def _section(title: str, style: str, entries: list[tuple[str, str, str | None]]) -> Panel:
+            t = Table(show_header=False, box=None, padding=(0, 2, 0, 2), expand=False, show_edge=False)
+            t.add_column("Content", justify="left", overflow="fold")
+            
+            for i, (cmd_raw, desc, args) in enumerate(entries):
+                cmd_str = _cmd(cmd_raw)
+                desc_str = f"  [bold white]{desc}[/bold white]"
+                
+                row_content = f"✨ {desc_str}\n  💻 {cmd_str}"
+                if args:
+                    args_str = f"    [dim]↳[/dim] [bright_black]{args}[/bright_black]"
+                    row_content += f"\n{args_str}"
+                    
+                # Add an extra newline for all except the last item
+                if i < len(entries) - 1:
+                    row_content += "\n"
+                    
+                t.add_row(row_content)
+                
+            return Panel(t, title=f"[{style}]{title}[/{style}]", border_style=style, padding=(1, 2), expand=False)
+
+        panels: list = []
+
+        # ── Improve Model Quality ──────────────────────────────────────
+        panels.append(_section("🔨  Improve Model Quality", "bold yellow", [
+            (
+                f"mww-mine-hard-negatives extract-top-fps --config {C}",
+                "Run model over negative set, extract highest-confidence false positives",
+                "--checkpoint PATH(auto-detect) · --top-percent FLOAT · --threshold FLOAT · --move-now(move files immediately) · --dry-run"
+            ),
+            (
+                "mww-mine-hard-negatives mine --prediction-log logs/false_predictions.json",
+                "Copy top mined FPs → dataset/hard_negative/mined/",
+                "--output-dir PATH(./dataset/hard_negative/mined) · --min-epoch INT(10) · --top-k INT(100) · --deduplicate · --dry-run · --verbose"
+            ),
+            (
+                f"mww-mine-hard-negatives consolidate-logs --config {C}",
+                "Aggregate per-epoch FP logs → consolidated JSON + stats report",
+                "--log-dir PATH(logs/) · --output PATH(logs/false_predictions.json) · --top-n INT(5) · --move-to PATH · --dry-run"
+            ),
+            (
+                f"mww-autotune --checkpoint {P} --config {C}",
+                "Tune FAH/recall without full retraining (~5-10 min) — Pareto archive + simulated annealing",
+                "--target-fah FLOAT · --target-recall FLOAT · --output-dir PATH · --users-hard-negs DIR · --max-iterations INT · --patience INT · --cv-folds INT · --no-confirmation"
+            ),
+        ]))
+
+        # ── Evaluate Checkpoint ───────────────────────────────────────────
+        panels.append(_section("📊  Evaluate Checkpoint", "bold magenta", [
+            (
+                f"python scripts/evaluate_model.py --model {P} --config {C} --output-dir logs/",
+                "Full eval: ROC, PR, DET, calibration, confusion matrix + executive HTML report",
+                "--split train|val|test(test) · --analyze(quality warnings) · --no-plots(JSON-only) · --bootstrap-iterations INT(400) · --fp-cost FLOAT(20) · --fn-cost FLOAT(1) · --json"
+            ),
+            (
+                f"python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json",
+                "Build interactive HTML dashboard from evaluation report",
+                "--output PATH  (default: <report_dir>/interactive_dashboard.html)"
+            ),
+            (
+                f"python scripts/compare_models.py <other_model> {P} --config {C}",
+                "Side-by-side FAH/recall delta  (accepts .weights.h5 or .tflite for both args)",
+                "--json(stdout) · --output PATH(save JSON) · --override YAML"
+            ),
+        ]))
+
+        # ── Export to TFLite ───────────────────────────────────────────────
+        panels.append(_section("📦  Export to TFLite", "bold blue", [
+            (
+                f"mww-export --checkpoint {P} --output models/exported/",
+                "Convert to ESPHome streaming TFLite with INT8 quantization and dual subgraphs",
+                "--model-name NAME(wake_word) · --config PATH(max_quality.yaml) · --data-dir PATH(real-data INT8 calibration — better quantization accuracy)"
+            ),
+        ]))
+
+        # ── Verify & Evaluate TFLite ───────────────────────────────────────
+        panels.append(_section("✅  Verify & Evaluate TFLite", "bold green", [
+            (
+                "python scripts/verify_esphome.py models/exported/wake_word.tflite",
+                "ESPHome compatibility: shapes, dtypes, op set  —  exit 0=pass · 2=fail · 1=error",
+                "--verbose · --strict(READ_VARIABLE payload-shape validation) · --json(CI/CD machine-readable)"
+            ),
+            (
+                "python scripts/check_esphome_compat.py models/exported/wake_word.tflite",
+                "Deep architecture + streaming state variable analysis  —  exit 0=pass · 4=incompatible · 1=error",
+                "--verbose · --manifest PATH(cross-validate with manifest.json) · --json"
+            ),
+            (
+                "python scripts/verify_streaming.py models/exported/wake_word.tflite",
+                "Streaming inference correctness: determinism, state mutation per frame, boundary conditions",
+                "--frames INT(15) · --seed INT(42) · --verbose · --json"
+            ),
+            (
+                f"python scripts/evaluate_model.py --tflite models/exported/wake_word.tflite --config {C} --output-dir logs/",
+                "Evaluate exported TFLite model metrics  (same args as checkpoint evaluation above)",
+                None
+            ),
+            (
+                f"python scripts/compare_models.py {P} models/exported/wake_word.tflite --config {C}",
+                "Compare checkpoint vs TFLite — detect quantization drift",
+                None
+            ),
+        ]))
+
+        self.console.print()
+        
+        # Display as a clean list of separated panels, with a top header
+        self.console.print("[bold]🚀 What's Next? (Post-Training Actions)[/bold]\n")
+        for panel in panels:
+            self.console.print(panel)
