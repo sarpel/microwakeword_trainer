@@ -242,9 +242,6 @@ class HardExampleMiner:
                     heapq.heappush(hard_negative_heap, heap_entry)
                 elif pred_score > hard_negative_heap[0][0]:
                     # This hard negative has higher score than the lowest in heap
-                    heapq.heapreplace(hard_negative_heap, heap_entry)
-                    # Note: batch cache eviction deferred until after materialization
-                    # to prevent dropping valid top-K entries whose batches were prematurely freed
                     evicted = heapq.heapreplace(hard_negative_heap, heap_entry)
                     # Note: batch cache eviction deferred until after materialization
                     # to prevent dropping valid top-K entries whose batches were prematurely freed

@@ -271,15 +271,61 @@ def compute_roc_pr_curves(
     }
 
 
+def _compute_thresholds(y_scores: np.ndarray, n_thresholds: int | None = None) -> np.ndarray:
+    """Compute threshold sweep values.
+
+    Args:
+        y_scores: Prediction scores.
+        n_thresholds: If provided, use fixed linspace for backward compatibility.
+            If None, use score-adaptive thresholds derived from unique score values.
+
+    Returns:
+        Sorted threshold array in [0, 1].
+    """
+    if n_thresholds is not None:
+        return np.linspace(0, 1, n_thresholds)
+
+    scores = np.asarray(y_scores, dtype=float).reshape(-1)
+    if scores.size == 0:
+        return np.array([0.0, 1.0], dtype=float)
+
+    unique_scores = np.unique(np.clip(scores, 0.0, 1.0))
+
+    # Keep adaptive mode bounded for dense float outputs:
+    # 333 unique values * 3 offsets + 2 boundaries = 1001 (pre-dedup).
+    max_unique_values = 333
+    if unique_scores.size > max_unique_values:
+        sample_idx = np.linspace(0, unique_scores.size - 1, max_unique_values).astype(int)
+        unique_scores = unique_scores[np.unique(sample_idx)]
+
+    eps = 1e-7
+    thresholds = np.concatenate(
+        [
+            np.array([0.0, 1.0], dtype=float),
+            unique_scores - eps,
+            unique_scores,
+            unique_scores + eps,
+        ]
+    )
+    thresholds = np.unique(np.clip(thresholds, 0.0, 1.0))
+
+    max_thresholds = 1000
+    if thresholds.size > max_thresholds:
+        sample_idx = np.linspace(0, thresholds.size - 1, max_thresholds).astype(int)
+        thresholds = thresholds[np.unique(sample_idx)]
+
+    return thresholds
+
+
 def compute_recall_at_no_faph(
     y_true: np.ndarray,
     y_scores: np.ndarray,
-    n_thresholds: int = 101,
+    n_thresholds: int | None = None,
     sliding_window_size: int = 1,
     clip_ids: np.ndarray | None = None,
 ) -> tuple[float, float]:
     """Compute recall at the lowest threshold yielding zero false positives."""
-    thresholds = np.linspace(0, 1, n_thresholds)
+    thresholds = _compute_thresholds(y_scores, n_thresholds=n_thresholds)
 
     y_pred_curr = np.array([], dtype=int)
 
@@ -326,7 +372,7 @@ def compute_recall_at_target_fah(
     y_scores: np.ndarray,
     ambient_duration_hours: float,
     target_fah: float,
-    n_thresholds: int = 101,
+    n_thresholds: int | None = None,
     sliding_window_size: int = 1,
     clip_ids: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
@@ -335,7 +381,7 @@ def compute_recall_at_target_fah(
     This selects the operating point with maximum recall among all thresholds
     satisfying ``fah <= target_fah``.
     """
-    thresholds = np.linspace(0, 1, n_thresholds)
+    thresholds = _compute_thresholds(y_scores, n_thresholds=n_thresholds)
     neg_mask = y_true == 0
     pos_mask = y_true == 1
     pos_total = np.sum(pos_mask)
@@ -440,12 +486,12 @@ def compute_average_viable_recall(
     y_scores: np.ndarray,
     ambient_duration_hours: float,
     max_fah: float = 10.0,
-    n_thresholds: int = 101,
+    n_thresholds: int | None = None,
     sliding_window_size: int = 1,
     clip_ids: np.ndarray | None = None,
 ) -> float:
     """Compute average viable recall (AUC of recall vs normalized FAH)."""
-    thresholds = np.linspace(0, 1, n_thresholds)
+    thresholds = _compute_thresholds(y_scores, n_thresholds=n_thresholds)
 
     recalls = []
     fahs = []
@@ -546,7 +592,7 @@ class MetricsCalculator:
         self,
         ambient_duration_hours: float,
         max_fah: float = 10.0,
-        n_thresholds: int = 101,
+        n_thresholds: int | None = None,
     ) -> float:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_average_viable_recall requires y_score")
@@ -560,7 +606,7 @@ class MetricsCalculator:
             clip_ids=self.clip_ids,
         )
 
-    def compute_recall_at_no_faph(self, n_thresholds: int = 101) -> tuple[float, float]:
+    def compute_recall_at_no_faph(self, n_thresholds: int | None = None) -> tuple[float, float]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_recall_at_no_faph requires y_score")
         return compute_recall_at_no_faph(
@@ -575,7 +621,7 @@ class MetricsCalculator:
         self,
         ambient_duration_hours: float,
         target_fah: float,
-        n_thresholds: int = 101,
+        n_thresholds: int | None = None,
     ) -> tuple[float, float, float]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_recall_at_target_fah requires y_score")

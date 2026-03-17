@@ -760,7 +760,9 @@ def create_representative_dataset_from_data(
             avg_chunks_per_spec = 10  # Reasonable default
 
         # Calculate how many spectrograms we need
-        target_positive_chunks = int(target_chunks * 0.3)
+        # Read representative fraction from export config with safe fallback
+        rep_frac = export_cfg.get('representative_positive_fraction', 0.3) if isinstance(export_cfg, dict) else getattr(export_cfg, 'representative_positive_fraction', 0.3)
+        target_positive_chunks = int(target_chunks * rep_frac)
         target_negative_chunks = target_chunks - target_positive_chunks
 
         n_positive_specs = min(
