@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 import numpy as np
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -332,6 +333,11 @@ class TestEvaluator:
 
     def _compute_calibration(self, y_true: np.ndarray, y_score: np.ndarray) -> dict:
         """Compute calibration metrics."""
+        # Binarize labels: treat hard negatives (2) as negatives (0)
+        y_true_binary = (y_true == 1).astype(np.int32)
+        brier = compute_brier_score(y_true_binary, y_score)
+        curve = compute_calibration_curve(y_true_binary, y_score, n_bins=10)
+        """Compute calibration metrics."""
         brier = compute_brier_score(y_true, y_score)
         curve = compute_calibration_curve(y_true, y_score, n_bins=10)
 
@@ -536,7 +542,7 @@ class TestEvaluator:
         )
 
         basic = results["basic_metrics"]
-        basic_table = Table(title="Basic Metrics", show_header=True)
+        basic_table = Table(title="Basic Metrics", show_header=True, box=box.ASCII)
         basic_table.add_column("Metric", style="cyan")
         basic_table.add_column("Value", style="green")
         for key, value in basic.items():
@@ -545,7 +551,7 @@ class TestEvaluator:
         self.console.print(basic_table)
 
         advanced = results["advanced_metrics"]
-        adv_table = Table(title="Advanced Metrics", show_header=True)
+        adv_table = Table(title="Advanced Metrics", show_header=True, box=box.ASCII)
         adv_table.add_column("Metric", style="cyan")
         adv_table.add_column("Value", style="yellow")
 
@@ -564,6 +570,7 @@ class TestEvaluator:
         cm_table = Table(
             title=f"Confusion Matrix (threshold={self.default_threshold:.2f})",
             show_header=True,
+            box=box.ASCII,
         )
         cm_table.add_column("", style="cyan")
         cm_table.add_column("Pred: Negative", style="red")
@@ -574,7 +581,7 @@ class TestEvaluator:
 
         per_cat = results.get("per_category", {})
         if per_cat.get("available"):
-            cat_table = Table(title="Per-Category Breakdown", show_header=True)
+            cat_table = Table(title="Per-Category Breakdown", show_header=True, box=box.ASCII)
             cat_table.add_column("Category", style="cyan")
             cat_table.add_column("Count", style="yellow")
             cat_table.add_column("TNR/TPR", style="green")
@@ -593,7 +600,7 @@ class TestEvaluator:
 
         cis = results.get("confidence_intervals", {})
         if cis:
-            ci_table = Table(title="Bootstrap 95% Confidence Intervals", show_header=True)
+            ci_table = Table(title="Bootstrap 95% Confidence Intervals", show_header=True, box=box.ASCII)
             ci_table.add_column("Metric", style="cyan")
             ci_table.add_column("CI Range", style="yellow")
             for metric in ["recall", "precision", "f1", "fah"]:
@@ -714,7 +721,9 @@ class TestEvaluator:
         plt.savefig(os.path.join(self.log_dir, "test_scores.png"), dpi=150)
         plt.close()
 
-        cal_curve = compute_calibration_curve(y_true, y_score, n_bins=10)
+        # Binarize labels for calibration: treat hard negatives (2) as negatives (0)
+        y_true_binary = (y_true == 1).astype(np.int32)
+        cal_curve = compute_calibration_curve(y_true_binary, y_score, n_bins=10)
         plt.figure(figsize=(8, 6))
         plt.plot(
             cal_curve["prob_pred"],

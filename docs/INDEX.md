@@ -1,7 +1,7 @@
 # microwakeword_trainer — Project Index
 
 > GPU-accelerated wake word training framework for ESPHome.
-> Version 2.0.0 | Branch: `consolidation`
+> Version 2.1.0 | Branch: `consolidation`
 
 ---
 
@@ -79,7 +79,7 @@ All registered in `setup.py` / `pyproject.toml`:
 |---------|--------|---------|
 | `mww-train` | `src.training.trainer:main` | Full training pipeline |
 | `mww-export` | `src.export.tflite:main` | Export checkpoint -> TFLite |
-| `mww-autotune` | `src.pipeline:main` (step_autotune) | Post-training FAH/recall tuning |
+| `mww-autotune` | `src.tuning.cli:main` | Post-training FAH/recall tuning |
 | `mww-cluster-analyze` | `src.tools.cluster_analyze:main` | Speaker clustering analysis |
 | `mww-cluster-apply` | `src.tools.cluster_apply:main` | Apply cluster file organization |
 | `mww-mine` | `src.tools.mine_hard_negatives:main` | Mine hard negatives from logs |

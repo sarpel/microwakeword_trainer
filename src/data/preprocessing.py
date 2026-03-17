@@ -291,7 +291,12 @@ def _split_raw_frames(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def trim_speech_file(path: Path, config: SpeechPreprocessConfig, discarded_root: Path) -> PreprocessResult:
+def trim_speech_file(
+    path: Path,
+    config: SpeechPreprocessConfig,
+    discarded_root: Path,
+    root: Path | None = None,
+) -> PreprocessResult:
     """VAD-trim a speech file. Move to discarded/ if outside configured range."""
     if "_part" in path.stem:
         return PreprocessResult(path=path, action="skip", old_duration_ms=0.0, new_duration_ms=0.0, reason="already a split part")
@@ -317,7 +322,12 @@ def trim_speech_file(path: Path, config: SpeechPreprocessConfig, discarded_root:
 
     in_range = (trimmed is not None) and (config.min_duration_ms <= new_ms <= config.max_duration_ms)
     if not in_range:
-        dest = discarded_root / path.name
+        # Preserve relative path structure if root is provided
+        if root is not None:
+            rel = path.relative_to(root)
+            dest = discarded_root / rel
+        else:
+            dest = discarded_root / path.name
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(path), str(dest))
         if not reason:

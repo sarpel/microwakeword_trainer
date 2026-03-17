@@ -514,6 +514,7 @@ def create_optimized_dataset(
     config: dict,
     split: str = "train",
     use_mixed_precision: bool = False,
+    max_time_frames: int | None = None,
 ) -> tf.data.Dataset:
     """Convenience function to create optimized dataset.
 
@@ -522,18 +523,19 @@ def create_optimized_dataset(
         config: Training configuration
         split: 'train' or 'val'
         use_mixed_precision: Whether to use float16
+        max_time_frames: Max time frames for padding
 
     Returns:
         Optimized tf.data.Dataset
     """
-    pipeline = OptimizedDataPipeline(dataset, config)
+    pipeline = OptimizedDataPipeline(dataset, config, max_time_frames=max_time_frames)
 
     if use_mixed_precision and split == "train":
         return pipeline.create_mixed_precision_pipeline()
     elif split == "train":
         return pipeline.create_training_pipeline()
     elif split == "test":
-        return pipeline.create_validation_pipeline()  # same processing as val
+        return pipeline.create_test_pipeline()
     else:
         return pipeline.create_validation_pipeline()
 

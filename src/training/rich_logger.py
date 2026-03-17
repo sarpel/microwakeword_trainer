@@ -13,7 +13,6 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
-    TimeRemainingColumn,
 )
 from rich.rule import Rule
 from rich.table import Table
@@ -109,6 +108,37 @@ class RichTrainingLogger:
         )
         self.console.print(panel)
 
+    @staticmethod
+    def _format_eta(seconds: float) -> str:
+        """Format seconds as H:MM:SS string."""
+        total_seconds = max(0, int(seconds))
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        secs = total_seconds % 60
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+
+    def _compute_eta(self, progress: Progress, task_id: TaskID, completed: int) -> str:
+        """Compute ETA from elapsed wall-clock time and completed steps.
+
+        Rich's TimeRemainingColumn needs a speed estimate and typically requires
+        at least two progress samples, so it can show unknown ETA (`-:--:--`) on
+        the first update. This computes ETA from elapsed/completed so we can show
+        an estimate from the first visible training update.
+        """
+        task = progress.tasks[task_id]
+        total = task.total
+        elapsed = task.elapsed
+        if total is None or elapsed is None or elapsed <= 0 or completed <= 0:
+            return "--:--:--"
+        remaining = float(total) - float(completed)
+        if remaining <= 0:
+            return "0:00:00"
+        speed = float(completed) / elapsed
+        if speed <= 0:
+            return "--:--:--"
+        eta_seconds = remaining / speed
+        return self._format_eta(eta_seconds)
+
     def create_progress(self, total_steps: int) -> tuple[Progress, TaskID]:
         """Create a Rich Progress bar with custom columns.
 
@@ -122,13 +152,13 @@ class RichTrainingLogger:
             TextColumn("•"),
             TimeElapsedColumn(),
             TextColumn("•"),
-            TimeRemainingColumn(),
+            TextColumn("{task.fields[eta]}"),
             TextColumn("•"),
             TextColumn("{task.fields[metrics]}"),
             console=self.console,
             disable=not self.console.is_terminal,
         )
-        task_id = progress.add_task("Phase 1", total=total_steps, metrics="")
+        task_id = progress.add_task("Phase 1", total=total_steps, eta="--:--:--", metrics="")
         return progress, task_id
 
     def update_step(
@@ -150,6 +180,7 @@ class RichTrainingLogger:
             task_id,
             completed=step,
             description=f"Phase {phase + 1}",
+            eta=self._compute_eta(progress, task_id, step),
             metrics=f"epoch={epoch} loss={loss:.4f} acc={accuracy:.4f} lr={lr:.6f}",
         )
 

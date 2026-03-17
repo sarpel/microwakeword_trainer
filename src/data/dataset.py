@@ -129,12 +129,28 @@ class RaggedMmap:
                 length_data = f.read()
             self._lengths = np.frombuffer(length_data, dtype=np.int64)
 
-            self._num_arrays = len(self._lengths)
-            self._total_bytes = int(self._lengths.sum())
+            # Validate/repair index files if there is a single trailing orphan entry.
+            # This can happen after an interrupted write while updating index files.
+            offsets_len = len(self._offsets)
+            lengths_len = len(self._lengths)
+            if offsets_len != lengths_len:
+                diff = abs(offsets_len - lengths_len)
+                if diff == 1:
+                    min_len = min(offsets_len, lengths_len)
+                    logger.warning(
+                        "RaggedMmap index mismatch detected for '%s' at %s: offsets=%d, lengths=%d. Using the first %d aligned entries and ignoring one trailing orphan entry.",
+                        self.name,
+                        self.base_dir,
+                        offsets_len,
+                        lengths_len,
+                        min_len,
+                    )
+                    self._offsets = self._offsets[:min_len]
+                    self._lengths = self._lengths[:min_len]
+                else:
+                    raise ValueError(f"Offsets ({offsets_len}) and lengths ({lengths_len}) mismatch")
 
-            # Validate offsets and lengths have the same length
-            if len(self._offsets) != len(self._lengths):
-                raise ValueError(f"Offsets ({len(self._offsets)}) and lengths ({len(self._lengths)}) mismatch")
+            self._num_arrays = len(self._lengths)
             self._total_bytes = int(self._lengths.sum())
 
     def open(self, mode: str = "r", disable_mmap: bool = False):
@@ -535,6 +551,7 @@ class FeatureStore:
             self.features.clear_cache()
         if self.labels is not None:
             self.labels.clear_cache()
+
 
 # =============================================================================
 # WAKE WORD DATASET (PyTorch-compatible)
@@ -968,7 +985,12 @@ class WakeWordDataset:
         dirs = ensure_processed_directory(processed_dir)
 
         # Check if valid cache exists
+        # Check if valid cache exists
         if self._is_cache_valid(processed_dir, paths_cfg, hardware_cfg, training_cfg):
+            logger.info("[CACHE] Valid feature cache found — skipping feature extraction")
+            self._load_store()
+            self._is_built = True
+            return self
             logger.info("[CACHE] Valid feature cache found — skipping feature extraction")
             self._load_store()
             return self
@@ -1241,6 +1263,27 @@ class WakeWordDataset:
                     continue  # Skip empty batches to avoid yielding empty data
 
                 if not infinite:
+                    # Yield remaining partial batch before exiting
+                    batch = (
+                        batch_buffer["features"][:batch_idx].copy(),
+                        batch_buffer["labels"][:batch_idx].copy(),
+                        batch_buffer["weights"][:batch_idx].copy(),
+                        batch_buffer["is_hard_neg"][:batch_idx].copy(),
+                    )
+                    fingerprints, ground_truth, sample_weights, is_hard_neg = batch
+                    if include_hard_negative_flag:
+                        yield (
+                            fingerprints,
+                            ground_truth.astype(np.int32, copy=False),
+                            sample_weights,
+                            is_hard_neg,
+                        )
+                    else:
+                        yield (
+                            fingerprints,
+                            ground_truth.astype(np.int32, copy=False),
+                            sample_weights,
+                        )
                     break
         finally:
             try:

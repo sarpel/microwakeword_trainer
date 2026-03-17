@@ -155,6 +155,8 @@ def verify_wav_file(filepath: Path) -> dict:
 
 def main(args: argparse.Namespace | None = None) -> int:
     """Main entry point with CLI argument parsing."""
+    # Declare globals at function start before any use
+    global DATASET_DIR, POSITIVE_DIR, NEGATIVE_DIR, HARD_NEGATIVE_DIR
     parser = argparse.ArgumentParser(description="Generate synthetic test dataset for microwakeword training pipeline.")
     parser.add_argument(
         "--output-dir",
@@ -185,7 +187,6 @@ def main(args: argparse.Namespace | None = None) -> int:
         sys.exit(2)
 
     # Update globals based on args
-    global DATASET_DIR, POSITIVE_DIR, NEGATIVE_DIR, HARD_NEGATIVE_DIR
     DATASET_DIR = out_path
     POSITIVE_DIR = DATASET_DIR / "positive" / "speaker_001"
     NEGATIVE_DIR = DATASET_DIR / "negative" / "speech"

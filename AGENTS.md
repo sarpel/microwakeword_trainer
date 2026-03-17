@@ -130,6 +130,8 @@ python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_r
 - `evaluate_model.py` writes `evaluation_report.json`, PNG plots, and executive reports (`executive_report.md` / `.html`) under `evaluation_artifacts/`
 - `eval_dashboard.py` builds `interactive_dashboard.html` from `evaluation_report.json` (keep dashboard in same folder as report/images)
 - `DELEGATE` visibility is runtime/delegate-path dependent in analyzers; compatibility checks should focus on static-graph invariants and ESPHome-registered op set
+- `RaggedMmap` may emit a warning when it detects a single trailing orphan index entry (`offsets/lengths` mismatch by 1). This is recovered in-memory by aligned-prefix truncation to keep evaluation/comparison workflows running; larger mismatches still fail fast.
+- `evaluate_model.py` datetime shadowing bug is fixed (2026-03-17): timestamp generation now uses module-scope import and no longer crashes with `UnboundLocalError`.
 - **Audit Compliance**: All 11 CRITICAL issues from the 2026-03-16 comprehensive audit (EMA BatchNorm stats, hard neg labeling, CuPy memory leaks, etc.) have been resolved.
 
 ### Module AGENTS.md Files

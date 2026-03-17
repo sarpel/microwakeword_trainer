@@ -529,6 +529,9 @@ class Trainer:
         self._ema_enabled = False
         if ema_decay is not None:
             self._ema_enabled = True
+        self._saved_training_weights: list[np.ndarray] | None = None  # For EMA weight swap
+        if ema_decay is not None:
+            self._ema_enabled = True
 
         # Pre-compute phase boundaries for fast lookup
         self._phase_boundaries: list[int] = []
@@ -1729,18 +1732,27 @@ class Trainer:
                     self._last_mined_epoch = approx_epoch
                 elif collection_mode == "mine_immediately":
                     if self.async_mining and self._async_miner is not None:
-                        if not self._async_miner.is_mining():
-                            self.logger.log_mining(f"Starting async mining at epoch {approx_epoch}...")
-                            mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
-                            self._async_miner.start_mining(self.model, mining_source_factory, approx_epoch)
-                        else:
+                        if self._async_miner.is_mining():
+                            # Miner is still running — try to collect result
                             mining_result = self._async_miner.get_result()
                             if mining_result is not None:
                                 self.logger.log_mining(
                                     f"Completed async mining at epoch {approx_epoch}",
                                     count=mining_result["num_hard_negatives"],
                                 )
-                                self._last_mined_epoch = approx_epoch
+                                self._last_mined_epoch = mining_result.get("epoch", approx_epoch)
+                        else:
+                            # Miner is idle — collect any lingering result, then start new mining
+                            mining_result = self._async_miner.get_result()
+                            if mining_result is not None:
+                                self.logger.log_mining(
+                                    f"Collected async mining result from epoch {mining_result.get('epoch', '?')}",
+                                    count=mining_result["num_hard_negatives"],
+                                )
+                                self._last_mined_epoch = mining_result.get("epoch", approx_epoch)
+                            self.logger.log_mining(f"Starting async mining at epoch {approx_epoch}...")
+                            mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
+                            self._async_miner.start_mining(self.model, mining_source_factory, approx_epoch)
                     elif self.hard_negative_miner is not None:
                         self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
                         try:

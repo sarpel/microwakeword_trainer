@@ -838,6 +838,22 @@ python scripts/verify_esphome.py model.tflite --verbose
 # - Missing quantization
 ```
 
+### RaggedMmap Index Mismatch Warning
+
+If you see a warning like:
+
+`RaggedMmap index mismatch detected ... Using the first N aligned entries and ignoring one trailing orphan entry.`
+
+this indicates a recoverable single-entry trailing index mismatch in processed feature-store files. The loader now recovers in-memory for `abs(len(offsets)-len(lengths)) == 1` so evaluation/comparison workflows can continue; larger mismatches still fail fast and require regenerating processed data.
+
+### evaluate_model datetime error (resolved)
+
+If you previously hit:
+
+`UnboundLocalError: cannot access local variable 'datetime' where it is not associated with a value`
+
+in `scripts/evaluate_model.py`, this is fixed in current code. Update to latest and re-run the command.
+
 ---
 
 ## Performance Tips

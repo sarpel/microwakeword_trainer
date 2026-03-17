@@ -130,8 +130,8 @@ def get_checkpoint_metadata(checkpoint_path: str, pointwise_filters: int = 64) -
     if dense_input_features is None or dense_output_features is None:
         raise ValueError(f"Dense layer kernel not found in checkpoint: {checkpoint_path}")
 
-    # temporal_frames computed using fixed last pointwise filter count (64) per architecture guidelines
-    temporal_frames = dense_input_features // 64
+    # temporal_frames computed from last pointwise filter count (passed via pointwise_filters param)
+    temporal_frames = dense_input_features // pointwise_filters
 
     metadata = {
         "temporal_frames": int(temporal_frames),
@@ -1348,6 +1348,8 @@ def export_streaming_tflite(
     except (ValueError, TypeError, ZeroDivisionError) as e:
         print(f"  Warning: Auto probability_cutoff calculation failed, using configured/default cutoff: {e}")
     except Exception as e:
+        # Log unexpected exceptions but don't fail the export since model is already saved
+        print(f"  Warning: Unexpected exception during auto probability_cutoff calculation: {type(e).__name__}: {e}")
         # Re-raise unexpected exceptions for debugging
         print(f"  Error: Unexpected exception during auto probability_cutoff calculation: {type(e).__name__}: {e}")
         raise

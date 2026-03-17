@@ -1,7 +1,6 @@
 # Implementation Status Report
-**Last Updated**: 2026-03-16 (Post-Audit Fixes, Adaptive Thresholding)
 **Project Version**: 2.1.0
-**Project Version**: 2.0.1
+**Last Updated**: 2026-03-17 (Docs Sync, Evaluation Stability Fixes)
 **Branch**: consolidation
 
 ## Executive Summary
@@ -88,6 +87,41 @@ microwakeword_trainer is a **production-ready** GPU-accelerated wake word traini
 - **Status**: ✅ Complete
 - **Feature**: Enhanced various scripts (`scripts/evaluate_model.py`, `scripts/verify_esphome.py`, etc.) for improved error handling, logging, and functionality. Fixed generator exhaustion and model building bugs.
 - **Files modified**: `scripts/*.py`
+
+### Phase 9: Evaluation Stability & Index Recovery (2026-03-17)
+
+#### 9.1 RaggedMmap Single-Entry Index Mismatch Recovery
+- **Status**: ✅ Complete
+- **Issue**: Runtime failures in dataset loading when index files had one trailing orphan entry (`Offsets (N) and lengths (N+1) mismatch`).
+- **Fix**: `RaggedMmap._load_index()` now performs in-memory recovery for `abs(len(offsets)-len(lengths)) == 1` by truncating both to aligned prefix and logging a warning; larger mismatches still fail fast.
+- **File modified**: `src/data/dataset.py`
+
+#### 9.2 evaluate_model datetime shadowing fix
+- **Status**: ✅ Complete
+- **Issue**: `UnboundLocalError: cannot access local variable 'datetime'` in `_compute_metrics` due to conditional local import shadowing.
+- **Fix**: Promoted `from datetime import datetime` to module scope and removed conditional in-function import.
+- **File modified**: `scripts/evaluate_model.py`
+
+#### 9.3 Runtime verification after fixes
+- **Status**: ✅ Complete
+- **Validated commands**:
+  - `python scripts/evaluate_model.py --model models/checkpoints/best_weights.weights.h5 --config max_quality`
+  - `python scripts/compare_models.py ./models/checkpoints/best_weights.weights.h5 ./tuning_output/best_tuned.weights.h5 --config max_quality`
+- **Outcome**: Both commands now complete successfully.
+
+### Phase 10: Documentation & AGENTS Synchronization (2026-03-17)
+
+- **Status**: ✅ Complete
+- **Scope**: README/docs/specs/AGENTS synchronization after runtime fixes and constitution-based compatibility review.
+- **Files updated**:
+  - `README.md`
+  - `docs/INDEX.md`
+  - `AGENTS.md`
+  - `src/data/AGENTS.md`
+  - `src/evaluation/AGENTS.md`
+  - `specs/testing_plan.md`
+  - `specs/implementation_status.md`
+- **Constitution handling**: `ARCHITECTURAL_CONSTITUTION.md` intentionally unchanged (no verified architectural drift found).
 
 #### 8.3 Config Simplification
 - **Status**: ✅ Complete
@@ -642,8 +676,7 @@ pytest --cov=src --cov=config tests/
 | `docs/CONFIGURATION.md` | ✅ Complete | 498 | Complete config reference |
 | `docs/TRAINING.md` | ✅ Complete | 328 | Training workflow, optimization |
 | `docs/EXPORT.md` | ✅ Complete | 304 | TFLite export, ESPHome deployment |
-| `docs/TROUBLESHOOTING.md` | ✅ Complete | TBD | Common issues and solutions |
-| `docs/USER_ADDITIONS.md` | ✅ Complete | 126 | Project profile for "Hey Katya" |
+| `docs/TROUBLESHOOTING.md` | ✅ Complete | 1799 | Common issues and solutions |
 | `ARCHITECTURAL_CONSTITUTION.md` | ✅ Complete | 530 | Immutable architectural truth |
 
 ### Per-Module Documentation
@@ -658,7 +691,7 @@ pytest --cov=src --cov=config tests/
 | Document | Status | Purpose |
 |----------|--------|----------|
 | `specs/implementation_status.md` | ✅ Created | This document - implementation tracking |
-| `specs/phase1_complete.yaml` | 🔄 To Be Created | Phase 1 completion summary |
+| `specs/phase1_complete.yaml` | ✅ Complete | Phase 1 completion summary |
 | `specs/testing_plan.md` | ✅ Complete | Testing strategy |
 
 ---

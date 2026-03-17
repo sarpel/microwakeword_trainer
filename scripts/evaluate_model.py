@@ -23,6 +23,7 @@ import json
 import math
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -32,6 +33,7 @@ import numpy as np
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 import tensorflow as tf
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
@@ -1235,8 +1237,6 @@ def _compute_metrics(
             artifact_dir / "executive_report.html",
         ]
         if any(f.exists() for f in existing_artifacts):
-            from datetime import datetime
-
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             artifact_dir = output_root / f"evaluation_artifacts_{timestamp}"
             console.print(f"[yellow]Existing artifacts found, writing to new directory:[/] {artifact_dir}")
@@ -1375,7 +1375,7 @@ def _compute_metrics(
         encoding="utf-8",
     )
 
-    table = Table(title="Evaluation Results")
+    table = Table(title="Evaluation Results", box=box.ASCII)
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
     table.add_row("Samples", f"{len(y_true)}")

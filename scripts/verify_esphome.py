@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -150,22 +152,37 @@ def main():
         return 1
 
     try:
-        from config.loader import load_full_config
+        from src.export.tflite import get_checkpoint_metadata
         from src.export.verification import (
             compute_expected_state_shapes,
             verify_tflite_model,
         )
 
-        # Load config to compute expected state shapes for the model
-        config = load_full_config("standard")
+        config_path = os.getenv("MWW_VERIFY_CONFIG", "config/presets/standard.yaml")
+        with open(config_path, "r", encoding="utf-8") as cfg_handle:
+            yaml_cfg = yaml.safe_load(cfg_handle) or {}
+
+        model_cfg = yaml_cfg.get("model", {})
+        pointwise_filters_str = str(model_cfg.get("pointwise_filters", "64,64,64,64"))
+        pointwise_filters = cast(list[int], [int(x.strip()) for x in pointwise_filters_str.split(",") if x.strip()])
+        if not pointwise_filters:
+            pointwise_filters = [64, 64, 64, 64]
+
+        mixconv_str = str(model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"))
+        mixconv_kernel_sizes = cast(list[list[int]], yaml.safe_load(f"[{mixconv_str}]") or [[5], [7, 11], [9, 15], [23]])
+
+        checkpoint_path = os.getenv("MWW_VERIFY_CHECKPOINT", "models/checkpoints/best_weights.weights.h5")
+        metadata = get_checkpoint_metadata(checkpoint_path, pointwise_filters=pointwise_filters[-1])
+        temporal_frames = int(metadata.get("temporal_frames", 6))
+
         expected_shapes = compute_expected_state_shapes(
-            first_conv_kernel=config.model.first_conv_kernel_size,
-            stride=config.model.stride,
-            mel_bins=config.hardware.mel_bins,
-            first_conv_filters=config.model.first_conv_filters,
-            mixconv_kernel_sizes=config.model.mixconv_kernel_sizes,
-            pointwise_filters=config.model.pointwise_filters,
-            temporal_frames=config.model.temporal_frames,
+            first_conv_kernel=int(model_cfg.get("first_conv_kernel_size", 5)),
+            stride=int(model_cfg.get("stride", 3)),
+            mel_bins=int(yaml_cfg.get("hardware", {}).get("mel_bins", 40)),
+            first_conv_filters=int(model_cfg.get("first_conv_filters", 32)),
+            mixconv_kernel_sizes=mixconv_kernel_sizes,
+            pointwise_filters=pointwise_filters,
+            temporal_frames=temporal_frames,
         )
 
         verification = verify_tflite_model(str(model_path), expected_state_shapes=expected_shapes)

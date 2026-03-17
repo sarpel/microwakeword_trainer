@@ -203,7 +203,6 @@ class HardExampleMiner:
         # Cache batch features keyed by batch_counter; only entries still referenced
         # in the heap need to be retained (cleaned up after heap is finalized)
         batch_features_cache: dict[int, np.ndarray] = {}
-        evicted_batch_ids: set[int] = set()  # Track which batches were evicted from cache
 
         # Handle both generator factories and direct generators
         if callable(data_generator):
@@ -243,12 +242,12 @@ class HardExampleMiner:
                     heapq.heappush(hard_negative_heap, heap_entry)
                 elif pred_score > hard_negative_heap[0][0]:
                     # This hard negative has higher score than the lowest in heap
+                    heapq.heapreplace(hard_negative_heap, heap_entry)
+                    # Note: batch cache eviction deferred until after materialization
+                    # to prevent dropping valid top-K entries whose batches were prematurely freed
                     evicted = heapq.heapreplace(hard_negative_heap, heap_entry)
-                    # Check if evicted entry's batch can be freed
-                    evicted_batch_id = evicted[2]
-                    if not any(e[2] == evicted_batch_id for e in hard_negative_heap):
-                        batch_features_cache.pop(evicted_batch_id, None)
-                        evicted_batch_ids.add(evicted_batch_id)  # Track evicted batch
+                    # Note: batch cache eviction deferred until after materialization
+                    # to prevent dropping valid top-K entries whose batches were prematurely freed
 
             global_offset += len(features)
             batch_counter += 1
@@ -287,11 +286,6 @@ class HardExampleMiner:
         if len(self.mining_history) > self._max_history_size:
             self.mining_history = self.mining_history[-self._max_history_size :]
 
-            # Track any entries with missing batch cache that were NOT legitimately evicted
-        missing_batch_entries = [entry for entry in sorted_hard if entry[2] not in batch_features_cache and entry[2] not in evicted_batch_ids]
-        if missing_batch_entries:
-            logger.warning(f"Mining: {len(missing_batch_entries)} entries had missing batch cache references. This may indicate a bug in cache eviction logic.")
-
         # Create hard negative records - fetch features from batch cache using batch_id + local_idx
         hard_negative_records = [
             {
@@ -301,7 +295,6 @@ class HardExampleMiner:
                 "prediction": entry[5],
             }
             for entry in sorted_hard
-            if entry[2] in batch_features_cache
         ]
 
         # Free the batch cache now that records have been materialized
@@ -654,7 +647,11 @@ def log_false_predictions_to_json(
     with open(log_path, "w") as f:
         json.dump(log_data, f, indent=2)
 
-    _log.info(f"Logged {len(false_predictions)} false predictions for epoch {epoch} to {log_file}")
+    msg = f"Logged {len(false_predictions)} false predictions for epoch {epoch} to {log_file}"
+    if hasattr(_log, "info"):
+        _log.info(msg)
+    else:
+        _log.log_info(msg)
 
     return epoch_entry
 

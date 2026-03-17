@@ -46,16 +46,19 @@ class LRKnob(Knob):
     name = "lr"
 
     def apply(self, model: Any, candidate: Any, config: Any) -> None:
-        expert_config = getattr(config, "auto_tuning_expert", config)
-        lr_min, lr_max = getattr(expert_config, "lr_range", (1e-7, 1e-4))
+        if isinstance(config, dict):
+            expert_config = config.get("auto_tuning_expert", config)
+            if isinstance(expert_config, dict):
+                lr_min, lr_max = expert_config.get("lr_range", (1e-7, 1e-4))
+            else:
+                lr_min, lr_max = getattr(expert_config, "lr_range", (1e-7, 1e-4))
+        else:
+            expert_config = getattr(config, "auto_tuning_expert", config)
+            lr_min, lr_max = getattr(expert_config, "lr_range", (1e-7, 1e-4))
         lr = float(np.exp(np.random.uniform(np.log(lr_min), np.log(lr_max))))
 
-        if hasattr(model, "optimizer") and model.optimizer is not None:
-            opt = model.optimizer
-            if hasattr(opt, "learning_rate") and hasattr(opt.learning_rate, "assign"):
-                opt.learning_rate.assign(lr)
-            elif hasattr(opt, "lr") and hasattr(opt.lr, "assign"):
-                opt.lr.assign(lr)
+        # Store sampled LR on candidate for _run_burst to use as bounds
+        candidate._sampled_lr = lr
 
         if hasattr(candidate, "knob_history"):
             candidate.knob_history.append(f"lr={lr:.2e}")
@@ -97,30 +100,42 @@ class SamplingMixKnob(Knob):
     name = "sampling_mix"
 
     def apply(self, model: Any, candidate: Any, config: Any) -> None:
-        sampler = getattr(candidate, "sampler", None)
-        if sampler is not None and hasattr(sampler, "advance_arm"):
-            sampler.advance_arm()
+        current_arm = int(getattr(candidate, "_sampling_mix_arm", 0))
+        next_arm = (current_arm + 1) % 7
+        candidate._sampling_mix_arm = next_arm
         if hasattr(candidate, "knob_history"):
-            candidate.knob_history.append("sampling_mix=rotated")
+            candidate.knob_history.append(f"sampling_mix=arm{next_arm}")
 
 
 class WeightPerturbationKnob(Knob):
     name = "weight_perturbation"
 
     def apply(self, model: Any, candidate: Any, config: Any) -> None:
-        expert_config = getattr(config, "auto_tuning_expert", config)
-        scale = float(getattr(expert_config, "weight_perturbation_scale", 0.01))
-
-        all_weights = [np.asarray(w) for w in model.get_weights()]
-        model_weights = list(getattr(model, "weights", []) or [])
-
-        if model_weights and len(model_weights) == len(all_weights):
-            for i, w_var in enumerate(model_weights):
-                if bool(getattr(w_var, "trainable", False)):
-                    noise = np.random.normal(0.0, scale, size=all_weights[i].shape)
-                    all_weights[i] = all_weights[i] + noise
+        if isinstance(config, dict):
+            expert_config = config.get("auto_tuning_expert", config)
+            if isinstance(expert_config, dict):
+                scale = float(expert_config.get("weight_perturbation_scale", 0.01))
+            else:
+                scale = float(getattr(expert_config, "weight_perturbation_scale", 0.01))
         else:
-            for i in range(len(all_weights)):
+            expert_config = getattr(config, "auto_tuning_expert", config)
+            scale = float(getattr(expert_config, "weight_perturbation_scale", 0.01))
+
+        # Only perturb trainable weights — never touch BatchNorm moving stats
+        trainable_vars = list(model.trainable_weights)
+        all_weights = [np.asarray(w) for w in model.get_weights()]
+        trainable_names = {v.name for v in trainable_vars}
+
+        for i, w_var in enumerate(model.weights):
+            if w_var.name in trainable_names:
+                noise = np.random.normal(0.0, scale, size=all_weights[i].shape)
+                all_weights[i] = all_weights[i] + noise
+        trainable_vars = list(model.trainable_weights)
+        all_weights = [np.asarray(w) for w in model.get_weights()]
+        trainable_set = {id(v) for v in trainable_vars}
+
+        for i, w_var in enumerate(model.weights):
+            if id(w_var) in trainable_set:
                 noise = np.random.normal(0.0, scale, size=all_weights[i].shape)
                 all_weights[i] = all_weights[i] + noise
 
@@ -133,12 +148,19 @@ class LabelSmoothingKnob(Knob):
     name = "label_smoothing"
 
     def apply(self, model: Any, candidate: Any, config: Any) -> None:
-        expert_config = getattr(config, "auto_tuning_expert", config)
-        ls_min, ls_max = getattr(expert_config, "label_smoothing_range", (0.0, 0.15))
+        if isinstance(config, dict):
+            expert_config = config.get("auto_tuning_expert", config)
+            if isinstance(expert_config, dict):
+                ls_min, ls_max = expert_config.get("label_smoothing_range", (0.0, 0.15))
+            else:
+                ls_min, ls_max = getattr(expert_config, "label_smoothing_range", (0.0, 0.15))
+        else:
+            expert_config = getattr(config, "auto_tuning_expert", config)
+            ls_min, ls_max = getattr(expert_config, "label_smoothing_range", (0.0, 0.15))
         smoothing = float(np.random.uniform(ls_min, ls_max))
 
-        if hasattr(model, "_label_smoothing_var") and hasattr(model._label_smoothing_var, "assign"):
-            model._label_smoothing_var.assign(smoothing)
+        # Store smoothing on candidate so orchestrator can pass it to _run_burst
+        candidate._label_smoothing = smoothing
 
         if hasattr(candidate, "knob_history"):
             candidate.knob_history.append(f"label_smoothing={smoothing:.4f}")

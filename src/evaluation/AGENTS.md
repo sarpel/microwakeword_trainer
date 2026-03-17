@@ -60,3 +60,7 @@ Optional interactive dashboard generation:
 ```bash
 python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json
 ```
+
+## Script Reliability Notes
+
+- `scripts/evaluate_model.py` timestamp generation uses module-scope `datetime` import. A prior conditional local import caused `UnboundLocalError` in `_compute_metrics`; this is fixed as of 2026-03-17.

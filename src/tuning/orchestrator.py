@@ -150,7 +150,16 @@ class MicroAutoTuner:
             if isinstance(layer, tf.keras.layers.BatchNormalization):
                 layer.trainable = True
 
-    def _run_burst(self, model, optimizer, sampler, n_steps, label_smoothing_var=None) -> dict:
+    def _run_burst(
+        self,
+        model,
+        optimizer,
+        search_train_partition,
+        n_steps,
+        label_smoothing_var=None,
+        sampling_mix_arm: int | None = None,
+        lr_override: float | None = None,
+    ) -> dict:
         """Simplified gradient burst (no SAM/SWA/Thompson/curriculum)."""
         import math
 
@@ -159,7 +168,11 @@ class MicroAutoTuner:
         lr_min, lr_max = self._get_cfg("lr_range", (1e-7, 1e-4))
 
         for step in range(int(n_steps)):
-            cosine_lr = float(lr_min) + 0.5 * (float(lr_max) - float(lr_min)) * (1 + math.cos(math.pi * step / max(int(n_steps), 1)))
+            # Use candidate-specific LR if provided, otherwise use cosine schedule
+            if lr_override is not None:
+                cosine_lr = lr_override
+            else:
+                cosine_lr = float(lr_min) + 0.5 * (float(lr_max) - float(lr_min)) * (1 + math.cos(math.pi * step / max(int(n_steps), 1)))
             if hasattr(optimizer, "learning_rate") and hasattr(optimizer.learning_rate, "assign"):
                 optimizer.learning_rate.assign(cosine_lr)
 
@@ -172,7 +185,6 @@ class MicroAutoTuner:
             "final_loss": float(losses[-1]) if losses else 0.0,
             "mean_loss": float(np.mean(losses)) if losses else 0.0,
         }
-
     def tune(self) -> dict:
         """Main orchestration loop.
 
@@ -219,13 +231,22 @@ class MicroAutoTuner:
 
         for iteration in range(max_iterations):
             current_knob_name = knob_cycle.current()
-            knob = self._make_knob(current_knob_name)
-
             for candidate in population.candidates:
                 candidate.restore_state(model)
                 knob.apply(model, candidate, self.auto_tuning_config)
-                self._run_burst(model, optimizer, sampler=None, n_steps=burst_steps, label_smoothing_var=label_smoothing_var)
 
+                # Get candidate-specific LR if set by LR knob
+                candidate_lr = getattr(candidate, "_sampled_lr", None)
+
+                self._run_burst(
+                    model,
+                    optimizer,
+                    search_train_partition=partition["search_train"],
+                    n_steps=burst_steps,
+                    label_smoothing_var=label_smoothing_var,
+                    sampling_mix_arm=getattr(candidate, "_sampling_mix_arm", None),
+                    lr_override=candidate_lr,
+                )
                 # Must evaluate on search_eval (not search_train)
                 metrics = self._ensure_tune_metrics(self._evaluate_candidate(model, partition["search_eval"]))
                 candidate.metrics = metrics

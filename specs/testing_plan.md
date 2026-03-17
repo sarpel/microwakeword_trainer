@@ -1,8 +1,13 @@
 # Testing Plan for microwakeword_trainer
 
 **Last Updated**: 2026-03-16 (Post-Audit Test Expansion)
-**Last Updated**: 2026-03-16 (Post-Audit Test Expansion)
 **Project Version**: 2.1.0
+
+## Recent Maintenance Updates (2026-03-17)
+
+- ✅ Fixed `scripts/evaluate_model.py` `UnboundLocalError` caused by conditional local `datetime` import shadowing.
+- ✅ Added/validated resilient RaggedMmap index-load recovery for single trailing orphan index entry (`offsets/lengths` mismatch by exactly 1) to prevent pipeline crashes in evaluation/comparison workflows.
+- ✅ Re-validated evaluation and comparison script runtime behavior after fixes.
 
 ## Overview
 

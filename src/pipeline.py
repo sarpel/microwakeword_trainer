@@ -115,7 +115,6 @@ def step_autotune(
         [
             *output_dir.rglob("*.weights.h5"),
             *output_dir.rglob("*.ckpt.index"),
-            *output_dir.rglob("*.ckpt.data-*-of-*"),
             *output_dir.rglob("*.h5"),
         ],
         key=lambda p: p.stat().st_mtime,
