@@ -24,7 +24,7 @@ def test_dry_run_exits_cleanly() -> None:
         ],
         capture_output=True,
         text=True,
-        cwd="/home/sarpel/microwakeword_trainer-micro-autotuner-redesign",
+        cwd=str(Path(__file__).resolve().parents[2]),
     )
     assert result.returncode == 0, f"Exit code {result.returncode}. stderr: {result.stderr}"
     assert "Traceback" not in result.stdout
