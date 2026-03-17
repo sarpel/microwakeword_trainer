@@ -349,18 +349,8 @@ class StreamingExportModel(tf.keras.Model):
         # Export model call() expects list[dict] with depthwise/pointwise/bn/relu/residual* keys
         self.mixconv_layers = [cfg["export_layers"] for cfg in core_layers["blocks"]]
 
-        # Output dense layer — create WITHOUT sigmoid so we can insert logit
-        # clipping before the activation. This constrains the pre-sigmoid logit
-        # range to [-6, +6], forcing the INT8 quantizer to allocate its 256 levels
-        # over a 12-unit span (scale ~0.047) instead of the raw logit range which
-        # can span [-64, +28] (scale ~0.36). The critical decision boundary at
-        # probability 0.90-0.97 gets ~28 quantization levels instead of ~3.
-        # Mathematically lossless: sigmoid(-6)=0.0025, sigmoid(6)=0.9975.
-        self._original_dense = core_layers["dense"]  # Keep reference for weight loading
-        self.dense_no_sigmoid = tf.keras.layers.Dense(
-            1, activation=None, name="layers_dense_linear", dtype=tf.float32
-        )
-        self._logit_clip = 6.0  # Clip logits to [-6, +6] before sigmoid
+        # Output dense layer (with fused sigmoid activation)
+        self.dense = core_layers["dense"]
 
         # State variables will be created in build()
         self.state_vars: list[tf.Variable] = []
@@ -620,10 +610,7 @@ class StreamingExportModel(tf.keras.Model):
         # Flatten full concat: [1, temporal_frames, 1, 64] → [1, temporal_frames*64]
         x = tf.reshape(x, [1, -1])
 
-        # Dense output with logit clipping for quantization-friendly output
-        logits = self.dense_no_sigmoid(x)
-        logits = tf.clip_by_value(logits, -self._logit_clip, self._logit_clip)
-        return tf.sigmoid(logits)
+        return self.dense(x)
 
 
 # =============================================================================
