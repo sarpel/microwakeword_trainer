@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +74,11 @@ def generate_manifest(
     return manifest
 
 
-def resolve_probability_cutoff(tflite_path: str | None, export_config: dict[str, Any], evaluation_default: float = 0.5) -> float:
+def resolve_probability_cutoff(
+    tflite_path: str | None,
+    export_config: dict[str, Any],
+    evaluation_default: float = 0.5,
+) -> float:
     """Resolve manifest probability_cutoff using a single canonical policy.
 
     Policy:
@@ -101,27 +106,52 @@ def resolve_probability_cutoff(tflite_path: str | None, export_config: dict[str,
         # Look for metadata sidecar next to the checkpoint (same stem, .metadata.json)
         # The export pipeline writes tuned_probability_cutoff to the .weights.h5 sidecar.
         # Search common locations: same dir as tflite, parent dir (checkpoint dir).
+        # Filter to ensure we select the metadata that corresponds to the tflite_p model.
         candidate_dirs = [tflite_p.parent, tflite_p.parent.parent]
+        tflite_stem = tflite_p.stem
+
         for candidate_dir in candidate_dirs:
+            matching_files = []
+            # Filter metadata files that match the TFLite model/checkpoint identifier
             for meta_file in candidate_dir.glob("*.metadata.json"):
-                try:
-                    with open(meta_file, "r") as f:
-                        meta = json.load(f)
-                    tuned = meta.get("tuned_probability_cutoff") or meta.get("probability_cutoff")
-                    if tuned is not None:
-                        cutoff = float(tuned)
-                        if 0.0 < cutoff <= 1.0:
-                            logger.info(
-                                "Auto probability_cutoff: %.4f from checkpoint metadata %s",
-                                cutoff,
-                                meta_file,
-                            )
-                            return cutoff
-                except Exception as exc:
-                    logger.debug("Could not read metadata file %s: %s", meta_file, exc)
+                meta_stem = meta_file.stem.replace(".metadata", "")
+                # Use common prefix to find matching metadata files
+                common_prefix = os.path.commonprefix([tflite_stem, meta_stem])
+                # Only match if there's a meaningful common prefix
+                if len(common_prefix) > 0:
+                    matching_files.append(meta_file)
+
+            # Deterministically select single matching file
+            if len(matching_files) == 1:
+                meta_file = matching_files[0]
+            elif len(matching_files) > 1:
+                # Multiple matches: prefer the one with largest common prefix overlap
+                meta_file = max(matching_files, key=lambda f: len(os.path.commonprefix([tflite_stem, f.stem.replace(".metadata", "")])))
+            else:
+                # No match in this dir, continue to next candidate
+                continue
+
+            try:
+                with open(meta_file, "r") as f:
+                    meta = json.load(f)
+                tuned = meta.get("tuned_probability_cutoff") or meta.get("probability_cutoff")
+                if tuned is not None:
+                    cutoff = float(tuned)
+                    if 0.0 < cutoff <= 1.0:
+                        logger.info(
+                            "Auto probability_cutoff: %.4f from checkpoint metadata %s",
+                            cutoff,
+                            meta_file,
+                        )
+                        return cutoff
+            except Exception as exc:
+                logger.debug("Could not read metadata file %s: %s", meta_file, exc)
 
     # Final fallback: use 0.5 so model can still detect
-    logger.warning("Auto probability_cutoff: no checkpoint metadata found; using fallback %.2f. Run mww-export with --data-dir to compute optimal cutoff from test split.", evaluation_default)
+    logger.warning(
+        "Auto probability_cutoff: no checkpoint metadata found; using fallback %.2f. Run mww-export with --data-dir to compute optimal cutoff from test split.",
+        evaluation_default,
+    )
     return evaluation_default
 
 

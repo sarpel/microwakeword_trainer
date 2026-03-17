@@ -35,7 +35,10 @@ def _strict_payload_shape_check(tflite_path: str, verification: dict | None = No
         observed = [tuple(int(v) for v in d.get("shape", [])) for d in payloads]
 
     if len(observed) != 6:
-        return False, f"Strict: expected 6 READ_VARIABLE payload tensors, found {len(observed)}"
+        return (
+            False,
+            f"Strict: expected 6 READ_VARIABLE payload tensors, found {len(observed)}",
+        )
 
     observed_sorted = sorted(observed)
     canonical_first_five = sorted(
@@ -56,13 +59,22 @@ def _strict_payload_shape_check(tflite_path: str, verification: dict | None = No
 
     dynamic_shapes = [shape for shape in observed_sorted if shape not in canonical_first_five]
     if len(dynamic_shapes) != 1:
-        return False, f"Strict payload shape mismatch: expected exactly one dynamic stream_5 shape, observed={observed_sorted}"
+        return (
+            False,
+            f"Strict payload shape mismatch: expected exactly one dynamic stream_5 shape, observed={observed_sorted}",
+        )
 
     stream_5 = dynamic_shapes[0]
     if len(stream_5) != 4 or stream_5[0] != 1 or stream_5[2] != 1 or stream_5[3] != 64 or stream_5[1] < 1:
-        return False, f"Strict payload shape mismatch: dynamic stream_5 shape invalid: {stream_5}"
+        return (
+            False,
+            f"Strict payload shape mismatch: dynamic stream_5 shape invalid: {stream_5}",
+        )
 
-    return True, f"Strict: READ_VARIABLE payload tensor shapes are valid (dynamic stream_5 accepted: {stream_5})."
+    return (
+        True,
+        f"Strict: READ_VARIABLE payload tensor shapes are valid (dynamic stream_5 accepted: {stream_5}).",
+    )
 
 
 def _build_output(verification: dict, strict_result: tuple[bool, str] | None = None) -> dict:
@@ -111,9 +123,17 @@ def _to_json_safe(obj: Any) -> Any:
 def main():
     parser = argparse.ArgumentParser(description="ESPHome verification utility with optional strict mode.")
     parser.add_argument("tflite_path", nargs="?", help="Path to the TFLite model to verify.")
-    parser.add_argument("--strict", action="store_true", help="Enable strict payload-shape validation for READ_VARIABLE tensors")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Enable strict payload-shape validation for READ_VARIABLE tensors",
+    )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON output")
-    parser.add_argument("--verbose", action="store_true", help="Print detailed checks and model details")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed checks and model details",
+    )
     args = parser.parse_args()
 
     evidence_dir = _ensure_evidence_dir()
@@ -131,7 +151,10 @@ def main():
 
     try:
         from config.loader import load_full_config
-        from src.export.verification import compute_expected_state_shapes, verify_tflite_model
+        from src.export.verification import (
+            compute_expected_state_shapes,
+            verify_tflite_model,
+        )
 
         # Load config to compute expected state shapes for the model
         config = load_full_config("standard")

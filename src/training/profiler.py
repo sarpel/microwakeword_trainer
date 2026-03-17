@@ -189,7 +189,12 @@ class TFProfiler:
         >>> tf_profiler.stop_trace()
     """
 
-    def __init__(self, log_dir: str = "./logs", warmup_steps: int = 2, active_steps: int = 5):
+    def __init__(
+        self,
+        log_dir: str = "./logs",
+        warmup_steps: int = 2,
+        active_steps: int = 5,
+    ):
         """Initialize TF Profiler.
 
         Args:

@@ -81,7 +81,10 @@ def spec_augment_gpu(
     # Transfer back to CPU
     spec_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(spec_gpu))
     del spec_gpu
-    cp.get_default_memory_pool().free_all_blocks()  # Free GPU memory to prevent fragmentation
+    # Removed per-iteration pool clearing to avoid performance degradation
+    # with MemoryAsyncPool. Use periodic cleanup or pressure-based clearing instead.
+    # cp.get_default_memory_pool().free_all_blocks()
+    # cp.get_default_pinned_memory_pool().free_all_blocks()
 
     return spec_cpu
 
@@ -156,6 +159,9 @@ def batch_spec_augment_gpu(
     # Transfer back to CPU using synchronous call (async requires pinned memory)
     batch_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(batch_gpu))
     del batch_gpu
-    cp.get_default_memory_pool().free_all_blocks()  # Free GPU memory to prevent fragmentation
+    # Batch calls are infrequent, so we perform cleanup here to prevent memory fragmentation
+    # and free pinned host memory accumulated from CPU<->GPU transfers.
+    cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
 
     return batch_cpu

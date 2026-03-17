@@ -6,7 +6,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from src.data.quality import QualityScoreConfig, apply_discard, print_summary, score_directory, write_csv
+from src.data.quality import (
+    QualityScoreConfig,
+    apply_discard,
+    print_summary,
+    score_directory,
+    write_csv,
+)
 
 
 def main() -> None:
@@ -14,13 +20,53 @@ def main() -> None:
         description="Fast audio quality scoring (WADA-SNR + clipping). No new deps.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--dirs", nargs="+", required=True, metavar="DIR", help="Directories to score (e.g. dataset/negative dataset/positive)")
-    parser.add_argument("--apply", action="store_true", help="Move discarded files. Default is dry-run.")
-    parser.add_argument("--discard-bottom", type=float, default=5.0, metavar="PCT", help="Discard bottom N%% by WQI within each dir (default: 5.0)")
-    parser.add_argument("--min-wqi", type=float, default=0.0, metavar="SCORE", help="Absolute WQI floor — discard any file below this (default: 0.0 = off)")
-    parser.add_argument("--clip-threshold", type=float, default=0.001, metavar="RATIO", help="Clipping ratio hard gate (default: 0.001 = 0.1%%)")
-    parser.add_argument("--discarded-dir", type=str, default="discarded/quality", metavar="DIR", help="Root dir for discarded files (default: discarded/quality)")
-    parser.add_argument("--csv", type=str, default="", metavar="FILE", help="Write scores CSV to this path (optional)")
+    parser.add_argument(
+        "--dirs",
+        nargs="+",
+        required=True,
+        metavar="DIR",
+        help="Directories to score (e.g. dataset/negative dataset/positive)",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Move discarded files. Default is dry-run.",
+    )
+    parser.add_argument(
+        "--discard-bottom",
+        type=float,
+        default=5.0,
+        metavar="PCT",
+        help="Discard bottom N%% by WQI within each dir (default: 5.0)",
+    )
+    parser.add_argument(
+        "--min-wqi",
+        type=float,
+        default=0.0,
+        metavar="SCORE",
+        help="Absolute WQI floor — discard any file below this (default: 0.0 = off)",
+    )
+    parser.add_argument(
+        "--clip-threshold",
+        type=float,
+        default=0.001,
+        metavar="RATIO",
+        help="Clipping ratio hard gate (default: 0.001 = 0.1%%)",
+    )
+    parser.add_argument(
+        "--discarded-dir",
+        type=str,
+        default="discarded/quality",
+        metavar="DIR",
+        help="Root dir for discarded files (default: discarded/quality)",
+    )
+    parser.add_argument(
+        "--csv",
+        type=str,
+        default="",
+        metavar="FILE",
+        help="Write scores CSV to this path (optional)",
+    )
     parser.add_argument("--verbose", action="store_true", help="Print per-file scores")
 
     args = parser.parse_args()

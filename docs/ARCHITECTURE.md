@@ -34,7 +34,7 @@
 - TFLite flatbuffer analysis: `okay_nabu.tflite` (58.85 KB, 55 ops)
 - ESPHome C++ runtime: `micro_wake_word.cpp` — op registration list
 - Official microWakeWord training notebook (Google Colab)
-- Last verified: 2026-03-06
+- Last verified: 2026-03-16 (Comprehensive Codebase Audit)
 
 ---
 

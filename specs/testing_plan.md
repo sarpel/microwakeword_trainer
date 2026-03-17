@@ -1,7 +1,8 @@
 # Testing Plan for microwakeword_trainer
 
-**Last Updated**: 2026-03-08
-**Project Version**: 2.0.0
+**Last Updated**: 2026-03-16 (Post-Audit Test Expansion)
+**Last Updated**: 2026-03-16 (Post-Audit Test Expansion)
+**Project Version**: 2.1.0
 
 ## Overview
 
@@ -28,7 +29,9 @@ tests/
 │   ├── test_test_evaluator.py        # TestEvaluator
 │   ├── test_vectorized_metrics.py    # MetricsCalculator
 │   ├── test_spec_augment_tf.py       # TF SpecAugment
-│   └── test_tuning_autotuner_components.py  # Auto-tuner components (8 tests)
+│   ├── test_tuning_autotuner_components.py  # Auto-tuner components (8 tests)
+│   ├── test_export_op_whitelist.py   # ESPHome op registration (20 ops) (NEW)
+│   └── test_scripts_exit_codes.py     # Verify script exit code contract (NEW)
 └── integration/                       # Integration tests (slow, end-to-end)
     └── test_training.py              # Full training pipeline
 ```
@@ -741,7 +744,7 @@ Before marking issue as resolved, verify:
 
 This testing plan provides comprehensive coverage for microwakeword_trainer:
 
-**Unit Tests**: 6 test modules, 453 tests passing
+**Unit Tests**: 8 test modules, 475+ tests passing
 **Integration Tests**: Full training pipeline validation
 **Manual Testing**: ESPHome compatibility, performance, auto-tuning
 **Continuous Testing**: CI/CD pipeline, nightly builds

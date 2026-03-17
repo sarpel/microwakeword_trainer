@@ -96,9 +96,10 @@ def test_pipeline_build_save_export_verify(tmp_path: Path) -> None:
         timeout=30,
     )
     # Script verifies ESPHome compatibility; a non-quantized (float32) model will
-    # fail dtype/quantization checks (returncode 2). JSON-serialization issues yield
-    # returncode 5. All structural checks were already validated directly above.
-    if proc.returncode not in (0, 2, 5):
+    # fail dtype/quantization checks (returncode 2). JSON-serialization issues
+    # yield returncode 5, which should be treated as a failure. All structural
+    # checks were already validated directly above.
+    if proc.returncode not in (0, 2):
         pytest.fail(f"verify_esphome.py exited unexpectedly with code {proc.returncode}: {proc.stderr}")
 
     assert (time.monotonic() - start) < 60.0

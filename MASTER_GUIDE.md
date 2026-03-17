@@ -101,7 +101,7 @@ Output: [1, 1]  (uint8)  ← Wake word probability
 | Python | 3.10 or 3.11 | 3.12 NOT supported |
 | CUDA | 12.x | Required for CuPy |
 | GPU | NVIDIA (Volta+) | No CPU fallback for SpecAugment |
-| RAM | 16GB+ | For standard training |
+| RAM | 16GB+ | For max_quality training |
 | Storage | 10GB+ | Datasets + checkpoints |
 
 ### System Dependencies
@@ -253,20 +253,20 @@ huggingface-cli login
 
 ```bash
 # Cluster positive dataset (default)
-mww-cluster-analyze --config standard
+mww-cluster-analyze --config max_quality
 
 # Cluster all datasets at once
-mww-cluster-analyze --config standard --dataset all
+mww-cluster-analyze --config max_quality --dataset all
 
 # Cluster specific dataset
-mww-cluster-analyze --config standard --dataset negative
+mww-cluster-analyze --config max_quality --dataset negative
 
 # Use explicit speaker count (RECOMMENDED for short clips 1-3s)
 # Threshold-based clustering over-fragments short wake word clips
-mww-cluster-analyze --config standard --n-clusters 200
+mww-cluster-analyze --config max_quality --n-clusters 200
 
 # Combine options
-mww-cluster-analyze --config standard --dataset all --n-clusters 200 --threshold 0.65
+mww-cluster-analyze --config max_quality --dataset all --n-clusters 200 --threshold 0.65
 ```
 
 **Output per dataset:**
@@ -331,20 +331,20 @@ mww-cluster-apply --undo cluster_output/positive_backup_manifest.json
 | Preset | Training Steps | Batch Size | Augmentation | Time | Use Case |
 |--------|---------------|------------|--------------|------|----------|
 | `fast_test` | 3000 (2k+1k) | 32 | Disabled | ~1 hour | Quick iteration |
-| `standard` | 30000 (20k+10k) | 128 | Standard | ~8 hours | Production |
+| `standard` | 30000 (20k+10k) | 128 | standard | ~8 hours | Production |
 | `max_quality` | 70000 (50k+20k) | 128 | Full | ~24 hours | Best accuracy |
 
 ### Loading Configurations
 
 ```bash
 # Use preset by name
-mww-train --config standard
+mww-train --config max_quality
 
 # Use preset file path
-mww-train --config config/presets/standard.yaml
+mww-train --config config/presets/max_quality.yaml
 
 # Use preset + override file
-mww-train --config standard --override my_config.yaml
+mww-train --config max_quality --override my_config.yaml
 
 # Full custom config
 mww-train --config my_full_config.yaml
@@ -354,8 +354,8 @@ mww-train --config my_full_config.yaml
 # Programmatic loading
 from config.loader import load_full_config, load_preset
 
-config = load_preset("standard")
-config = load_full_config("standard", "my_override.yaml")
+config = load_preset("max_quality")
+config = load_full_config("max_quality", "my_override.yaml")
 config = load_full_config("/path/to/my_config.yaml")
 ```
 
@@ -530,7 +530,7 @@ export:
 Create `my_override.yaml`:
 
 ```yaml
-# Override standard preset with your settings
+# Override max_quality preset with your settings
 export:
   wake_word: "Hey Jarvis"
   author: "Your Name"
@@ -545,7 +545,7 @@ model:
 
 Run:
 ```bash
-mww-train --config standard --override my_override.yaml
+mww-train --config max_quality --override my_override.yaml
 ```
 
 ---
@@ -567,7 +567,7 @@ mww-train [OPTIONS]
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--config` | string | `standard` | Preset name or path to YAML config |
+| `--config` | string | `max_quality` | Preset name or path to YAML config |
 | `--override` | string | None | Override config file (merged with base) |
 
 ### Training Examples
@@ -576,14 +576,14 @@ mww-train [OPTIONS]
 # Quick test (validates pipeline, ~1 hour)
 mww-train --config fast_test
 
-# Standard production training (~8 hours)
-mww-train --config standard
+# max_quality production training (~8 hours)
+mww-train --config max_quality
 
 # Best quality training (~24 hours)
 mww-train --config max_quality
 
 # Custom wake word with override
-mww-train --config standard --override my_config.yaml
+mww-train --config max_quality --override my_config.yaml
 
 # Full custom config
 mww-train --config /path/to/my_full_config.yaml
@@ -716,7 +716,7 @@ mww-export [OPTIONS]
 | Argument | Type | Default | Required | Description |
 |----------|------|---------|----------|-------------|
 | `--checkpoint` | string | None | **Yes** | Path to checkpoint (.h5 or .ckpt) |
-| `--config` | string | `config/presets/standard.yaml` | No | Config file path |
+| `--config` | string | `config/presets/max_quality.yaml` | No | Config file path |
 | `--output` | string | `./models/exported` | No | Output directory |
 | `--model-name` | string | `wake_word` | No | Model filename (without extension) |
 
@@ -734,7 +734,7 @@ mww-export --checkpoint models/checkpoints/best_weights.weights.h5 --output mode
 mww-export --checkpoint checkpoints/best.ckpt --output /path/to/output
 
 # Export with explicit preset path
-mww-export --checkpoint checkpoints/best.ckpt --config config/presets/standard.yaml
+mww-export --checkpoint checkpoints/best.ckpt --config config/presets/max_quality.yaml
 
 # Full custom export
 mww-export \
@@ -819,7 +819,7 @@ converter.inference_output_type = tf.uint8    # UINT8. ALWAYS. NOT int8.
 converter.representative_dataset = tf.lite.RepresentativeDataset(representative_dataset_gen)
 ```
 
-> ⛔ **Use `tf.lite.TFLiteConverter` from standard `tensorflow`. Do NOT use `ai_edge_litert` for export.** `ai_edge_litert` is only for inference/testing.
+> ⛔ **Use `tf.lite.TFLiteConverter` from TensorFlow. Do NOT use `ai_edge_litert` for export.** `ai_edge_litert` is only for inference/testing.
 
 ### Representative Dataset Requirements
 
@@ -836,7 +836,7 @@ Without the boundary anchors, the quantizer may choose a different scale that co
 from src.export.tflite import convert_model_saved
 from config.loader import load_full_config
 
-config = load_full_config("standard")
+config = load_full_config("max_quality")
 convert_model_saved(
     checkpoint_path="checkpoints/best.ckpt",
     output_dir="models/exported/",
@@ -909,7 +909,7 @@ If your metrics look suspiciously perfect (accuracy > 0.999, FA/Hour = 0.00):
 
 ```bash
 # Check speaker overlap between splits
-mww-cluster-analyze --config standard --dataset all
+mww-cluster-analyze --config max_quality --dataset all
 # Review cluster_output/*_cluster_report.txt
 
 # Check file overlap
@@ -937,7 +937,7 @@ mww-autotune [OPTIONS]
 Argument | Type | Default | Description
 ----------|------|---------|-------------
 | `--checkpoint` | string | **required** | Path to trained checkpoint (.weights.h5) |
-| `--config` | string | `standard` | Config preset or path |
+| `--config` | string | `max_quality` | Config preset or path |
 | `--override` | string | None | Override config file |
 | `--target-fah` | float | 0.3 | Target FAH value |
 | `--target-recall` | float | 0.92 | Target recall value |
@@ -980,7 +980,7 @@ mww-autotune \
 from src.tuning.autotuner import AutoTuner, TuningTarget
 from config.loader import load_full_config
 
-config = load_full_config("standard")
+config = load_full_config("max_quality")
 target = TuningTarget(max_fah=0.2, min_recall=0.95, max_iterations=50)
 
 tuner = AutoTuner(config=config, target=target)
@@ -1247,7 +1247,7 @@ If accuracy > 0.999 or FA/Hour = 0.00:
 
 ```bash
 # Check for data leakage
-mww-cluster-analyze --config standard --dataset all
+mww-cluster-analyze --config max_quality --dataset all
 # Review cluster_output/*_cluster_report.txt
 ```
 
@@ -1287,7 +1287,7 @@ from src.training.trainer import Trainer, train, main
 from config.loader import load_full_config
 
 # Load config
-config = load_full_config("standard", "my_override.yaml")
+config = load_full_config("max_quality", "my_override.yaml")
 
 # Create trainer
 trainer = Trainer(config)
@@ -1307,7 +1307,7 @@ from src.data.dataset import WakeWordDataset, load_dataset
 from src.data.ingestion import load_clips, Split, Label
 
 # Load clips (discovers audio files)
-clips = load_clips("config/presets/standard.yaml")
+clips = load_clips("config/presets/max_quality.yaml")
 train_clips = clips.get_split(Split.TRAIN)
 val_clips = clips.get_split(Split.VAL)
 
@@ -1344,7 +1344,7 @@ spectrogram = gen.generate_from_file("audio.wav")  # Shape: [time_frames, 40]
 from src.model.architecture import build_model
 from config.loader import load_full_config
 
-config = load_full_config("standard")
+config = load_full_config("max_quality")
 
 # Build model
 model = build_model(config.model, input_shape=(49, 40))
@@ -1404,10 +1404,10 @@ results = analyze_model_architecture("models/exported/hey_computer.tflite")
 from config.loader import load_full_config, load_preset, ConfigLoader
 
 # Load preset
-config = load_preset("standard")
+config = load_preset("max_quality")
 
 # Load with override
-config = load_full_config("standard", "my_override.yaml")
+config = load_full_config("max_quality", "my_override.yaml")
 
 # Access config sections
 print(config.training.batch_size)
@@ -1599,7 +1599,7 @@ mkdir -p dataset/{positive,negative,hard_negative,background,rirs}
 # STEP 2: Speaker Clustering (PyTorch env, optional)
 # ═══════════════════════════════════════════════════════
 mww-torch
-mww-cluster-analyze --config standard --dataset all --n-clusters 200
+mww-cluster-analyze --config max_quality --dataset all --n-clusters 200
 # Review cluster_output/*_cluster_report.txt
 mww-cluster-apply --namelist-dir cluster_output --dry-run
 mww-cluster-apply --namelist-dir cluster_output
@@ -1613,7 +1613,7 @@ mww-cluster-apply --namelist-dir cluster_output
 # STEP 4: Train (TF env)
 # ═══════════════════════════════════════════════════════
 mww-tf
-mww-train --config standard --override my_config.yaml
+mww-train --config max_quality --override my_config.yaml
 # Monitor: tensorboard --logdir ./logs
 
 # ═══════════════════════════════════════════════════════
@@ -1621,12 +1621,12 @@ mww-train --config standard --override my_config.yaml
 # ═══════════════════════════════════════════════════════
 python scripts/evaluate_model.py \
     --checkpoint checkpoints/best_weights.weights.h5 \
-    --config standard --split test --analyze
+    --config max_quality --split test --analyze
 
 # ═══════════════════════════════════════════════════════
 # STEP 6: Auto-Tune (if needed)
 # ═══════════════════════════════════════════════════════
-mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config standard
+mww-autotune --checkpoint checkpoints/best_weights.weights.h5 --config max_quality
 
 # ═══════════════════════════════════════════════════════
 # STEP 7: Export

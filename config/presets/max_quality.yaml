@@ -64,7 +64,7 @@ training:
 
   # Checkpoint selection
   minimization_metric: "ambient_false_positives_per_hour"  # Metric to minimize for checkpoint selection
-  target_minimization: 5.0  # Target value for minimization metric
+  target_minimization: 10.0  # Target value for minimization metric
   maximization_metric: "average_viable_recall"  # Metric to maximize for checkpoint selection
 
   # 42.02h of ambient audio (negative + background + hard_negative) for FAH calculation
@@ -237,11 +237,11 @@ mining:
   enabled: true  # Enable hard negative mining
   async_mining: true  # Use async (non-blocking background) mining for better throughput
 
-  fp_threshold: 0.5  # False positive probability threshold for mining
+  fp_threshold: 0.8  # False positive probability threshold for mining
   max_samples: 500  # Lower mining memory/CPU overhead per mining run
-  mining_interval_epochs: 3  # Mine less frequently to reduce overhead
+  mining_interval_epochs: 1  # Mine less frequently to reduce overhead
   collection_mode: "log_only"  # Mining collection mode
-  log_predictions: false  # Disable per-epoch FP logging to reduce I/O and RAM pressure
+  log_predictions: true  # Enable per-epoch FP logging
   log_file: "logs/false_predictions.json"  # Log file path
   enable_post_training_mining: true  # Enable mining after training ends
   mined_subdirectory: "mined"  # Subdirectory for mined samples
@@ -323,7 +323,7 @@ evaluation:
   max_fah: 10.0  # Maximum false alarms per hour for evaluation
   warmup_runs: 10  # Number of warmup runs before latency measurement
   n_latency_runs: 100  # Number of inference runs for latency stats
-  target_fah: 1.0  # Target false alarms per hour
+  target_fah: 2.0  # Target false alarms per hour
   target_recall: 0.90  # Target recall score
   gain_window_steps: 1000  # Window size for gain metrics
   plateau_window_evals: 5  # Window size for plateau detection
@@ -335,14 +335,14 @@ evaluation:
 # ─────────────────────────────────────────────────────────────────
 auto_tuning:
   enabled: true  # Enable post-training auto-tuning
-  target_fah: 0.2  # Target false alarms per hour for auto-tuning
+  target_fah: 2.0  # Target false alarms per hour for auto-tuning
   target_recall: 0.92  # Target recall score for auto-tuning
-  max_iterations: 30  # Maximum auto-tuning iterations
-  max_gradient_steps: 5000  # Total gradient steps budget for tuning
-  patience: 10  # Consecutive non-improvements before stopping
+  max_iterations: 50  # Maximum auto-tuning iterations
+  max_gradient_steps: 50000  # Total gradient steps budget for tuning
+  patience: 15  # Consecutive non-improvements before stopping
   cv_folds: 5  # Cross-validation folds for threshold optimization
   confirmation_fraction: 0.30  # Fraction of data for final confirmation
-  search_eval_fraction: 0.15  # Fraction of search data for evaluation
+  search_eval_fraction: 0.30  # Fraction of search data for evaluation
   bootstrap_samples: 2000  # Bootstrap samples for confidence intervals
   require_confirmation: true  # Require final confirmation phase
   group_key: speaker_id  # Group key for speaker-aware splits

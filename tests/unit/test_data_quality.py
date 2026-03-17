@@ -263,7 +263,12 @@ class TestApplyDiscard:
             scores = [
                 FileScore(path=Path("a.wav"), dir_label="pos", discard=True),
                 FileScore(path=Path("b.wav"), dir_label="pos", discard=False),
-                FileScore(path=Path("c.wav"), dir_label="pos", discard=True, error="unreadable"),
+                FileScore(
+                    path=Path("c.wav"),
+                    dir_label="pos",
+                    discard=True,
+                    error="unreadable",
+                ),
             ]
             count = apply_discard(scores, discarded_dir, dry_run=True)
             assert count == 1  # Only 1 with discard=True and no error
@@ -301,7 +306,12 @@ class TestApplyDiscard:
         with tempfile.TemporaryDirectory() as tmpdir:
             discarded_dir = Path(tmpdir) / "discarded"
             scores = [
-                FileScore(path=Path("a.wav"), dir_label="pos", discard=True, error="unreadable"),
+                FileScore(
+                    path=Path("a.wav"),
+                    dir_label="pos",
+                    discard=True,
+                    error="unreadable",
+                ),
             ]
             count = apply_discard(scores, discarded_dir, dry_run=True)
             assert count == 0  # Not counted because of error

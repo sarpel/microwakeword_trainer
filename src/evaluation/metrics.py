@@ -102,10 +102,18 @@ def compute_accuracy(
     return float(np.sum(correct * weights) / total_weight)
 
 
+def _binarize_labels(y_true: np.ndarray) -> np.ndarray:
+    """Binarize labels: treat label==1 as positive, everything else as negative.
+
+    This ensures consistent handling of hard-negative label 2 across all metrics.
+    """
+    return (y_true == 1).astype(np.int32)
+
+
 def compute_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
     """Compute ROC AUC score."""
-    # Defensive binarization: treat any label > 1 (e.g. hard_neg=2) as negative (0)
-    y_true = (y_true == 1).astype(np.int32)
+    # Use helper for consistent binarization
+    y_true = _binarize_labels(y_true)
     if len(np.unique(y_true)) < 2:
         return 0.5
 
@@ -626,16 +634,19 @@ class MetricsCalculator:
         auc_roc = compute_roc_auc(self.y_true, self.y_score)
 
         auc_pr: float | None = None
-        unique_classes = np.unique(self.y_true)
-        if len(unique_classes) >= 2:
+        valid_mask = self.y_true != 2
+        y_true_pr = _binarize_labels(self.y_true[valid_mask])
+        y_score_pr = self.y_score[valid_mask]
+
+        if len(np.unique(y_true_pr)) >= 2:
             try:
                 from sklearn.metrics import average_precision_score
 
-                auc_pr = float(average_precision_score(self.y_true, self.y_score))
+                auc_pr = float(average_precision_score(y_true_pr, y_score_pr))
             except ImportError:
                 logger.warning("sklearn not available; setting auc_pr=None in compute_all_metrics")
         else:
-            logger.warning("Only one class present in y_true; auc_pr is undefined and set to None")
+            logger.warning("Only one class present in PR-AUC labels; auc_pr is undefined and set to None")
 
         metrics: dict[str, Any] = {
             "accuracy": accuracy,
@@ -648,7 +659,12 @@ class MetricsCalculator:
 
         if ambient_duration_hours > 0:
             # Pass ambient_duration_hours explicitly instead of mutating estimator state
-            metrics.update(self.compute_fah_metrics(threshold=threshold, ambient_duration_hours=ambient_duration_hours))
+            metrics.update(
+                self.compute_fah_metrics(
+                    threshold=threshold,
+                    ambient_duration_hours=ambient_duration_hours,
+                )
+            )
 
             recall_no_faph, thresh_no_faph = self.compute_recall_at_no_faph()
             metrics["recall_at_no_faph"] = recall_no_faph

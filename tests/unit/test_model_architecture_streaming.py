@@ -29,7 +29,18 @@ def test_parse_model_param_and_helpers() -> None:
         stride = 3
 
     assert arch.spectrogram_slices_dropped(Flags()) > 0
-    assert arch.spectrogram_slices_dropped({"first_conv_filters": 32, "first_conv_kernel_size": 5, "repeat_in_block": "1,1", "mixconv_kernel_sizes": "[5],[7]", "stride": 3}) > 0
+    assert (
+        arch.spectrogram_slices_dropped(
+            {
+                "first_conv_filters": 32,
+                "first_conv_kernel_size": 5,
+                "repeat_in_block": "1,1",
+                "mixconv_kernel_sizes": "[5],[7]",
+                "stride": 3,
+            }
+        )
+        > 0
+    )
     assert arch._split_channels(10, 3) == [4, 3, 3]
 
 
@@ -43,7 +54,13 @@ def test_mixconv_and_residual_block_forward() -> None:
     y2 = multi(x, training=False)
     assert y2.shape[-1] == 8
 
-    rb = arch.ResidualBlock(filters=8, kernel_sizes=[5], repeat=1, use_residual=True, mode=sm.Modes.NON_STREAM_INFERENCE)
+    rb = arch.ResidualBlock(
+        filters=8,
+        kernel_sizes=[5],
+        repeat=1,
+        use_residual=True,
+        mode=sm.Modes.NON_STREAM_INFERENCE,
+    )
     y3 = rb(x, training=False)
     assert y3.shape[-1] == 8
 
@@ -65,7 +82,14 @@ def test_mixednet_build_and_factory_functions() -> None:
     cfg = model.get_config()
     assert cfg["stride"] == 3
 
-    built = arch.build_model(input_shape=(12, 40), pointwise_filters="8,8", mixconv_kernel_sizes="[3],[5]", repeat_in_block="1,1", residual_connection="0,1", mode="unknown-mode")
+    built = arch.build_model(
+        input_shape=(12, 40),
+        pointwise_filters="8,8",
+        mixconv_kernel_sizes="[3],[5]",
+        repeat_in_block="1,1",
+        residual_connection="0,1",
+        mode="unknown-mode",
+    )
     out2 = built(tf.zeros((1, 12, 40), dtype=tf.float32), training=False)
     assert tuple(out2.shape) == (1, 1)
 
@@ -83,11 +107,21 @@ def test_streaming_layers_and_helpers() -> None:
     with pytest.raises(ValueError):
         rb.update(tf.ones((1, 2, 1, 4), dtype=tf.float32))
 
-    s = sm.Stream(cell=tf.keras.layers.Conv2D(4, (3, 1), padding="valid", use_bias=False), mode=sm.Modes.NON_STREAM_INFERENCE, pad_time_dim="causal", use_one_step=False)
+    s = sm.Stream(
+        cell=tf.keras.layers.Conv2D(4, (3, 1), padding="valid", use_bias=False),
+        mode=sm.Modes.NON_STREAM_INFERENCE,
+        pad_time_dim="causal",
+        use_one_step=False,
+    )
     y = s(tf.zeros((1, 5, 1, 4), dtype=tf.float32), training=False)
     assert y.shape[-1] == 4
 
-    s_same = sm.Stream(cell=tf.keras.layers.Conv2D(4, (3, 1), padding="valid", use_bias=False), mode=sm.Modes.TRAINING, pad_time_dim="same", use_one_step=False)
+    s_same = sm.Stream(
+        cell=tf.keras.layers.Conv2D(4, (3, 1), padding="valid", use_bias=False),
+        mode=sm.Modes.TRAINING,
+        pad_time_dim="same",
+        use_one_step=False,
+    )
     _ = s_same(tf.zeros((1, 5, 1, 4), dtype=tf.float32), training=True)
 
     s_bad = sm.Stream(
@@ -117,7 +151,11 @@ def test_streaming_layers_and_helpers() -> None:
 
     # MixConv streaming path should remain one-step even with mixed kernels
     # when only a short startup context is available.
-    mix_stream = arch.MixConvBlock(kernel_sizes=[3, 5], filters=8, mode=sm.Modes.STREAM_INTERNAL_STATE_INFERENCE)
+    mix_stream = arch.MixConvBlock(
+        kernel_sizes=[3, 5],
+        filters=8,
+        mode=sm.Modes.STREAM_INTERNAL_STATE_INFERENCE,
+    )
     y_stream = mix_stream(tf.ones((1, 1, 1, 8), dtype=tf.float32), training=False)
     assert y_stream.shape[1] == 1
     assert y_stream.shape[-1] == 8
@@ -127,11 +165,28 @@ def test_streaming_layers_and_helpers() -> None:
     assert len(parts) == 2
 
     with pytest.raises(ValueError):
-        _ = sm.frequency_pad(tf.zeros((1, 2), dtype=tf.float32), dilation=1, stride=1, kernel_size=3)
-    padded = sm.frequency_pad(tf.zeros((1, 3, 10, 1), dtype=tf.float32), dilation=1, stride=1, kernel_size=3)
+        _ = sm.frequency_pad(
+            tf.zeros((1, 2), dtype=tf.float32),
+            dilation=1,
+            stride=1,
+            kernel_size=3,
+        )
+    padded = sm.frequency_pad(
+        tf.zeros((1, 3, 10, 1), dtype=tf.float32),
+        dilation=1,
+        stride=1,
+        kernel_size=3,
+    )
     assert int(tf.shape(padded)[2]) >= 10
 
-    assert sm.get_streaming_state_names() == ["stream", "stream_1", "stream_2", "stream_3", "stream_4", "stream_5"]
+    assert sm.get_streaming_state_names() == [
+        "stream",
+        "stream_1",
+        "stream_2",
+        "stream_3",
+        "stream_4",
+        "stream_5",
+    ]
     init_fn = sm.create_state_initializer((1, 2, 1, 4))
     assert tuple(init_fn().shape) == (1, 2, 1, 4)
 
@@ -143,7 +198,10 @@ def test_streaming_mixednet_wrapper_predict_clip(monkeypatch) -> None:
             return tf.ones((batch, 1), dtype=tf.float32) * 0.5
 
     wrapper = sm.StreamingMixedNet(model=DummyModel(), stride=3)
-    assert wrapper.predict(tf.zeros((1, 3, 40), dtype=tf.float32)).shape == (1, 1)
+    assert wrapper.predict(tf.zeros((1, 3, 40), dtype=tf.float32)).shape == (
+        1,
+        1,
+    )
     wrapper.reset()  # state warnings are acceptable
 
     fake_mod = types.ModuleType("src.data.features")

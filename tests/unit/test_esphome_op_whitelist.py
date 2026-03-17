@@ -89,7 +89,7 @@ class TestESPHomeOpWhitelist:
 
         from src.export.verification import verify_tflite_model
 
-        sig = inspect.signature(verify_tflite_model)
+        _ = inspect.signature(verify_tflite_model)
 
         # The function should exist and be callable
         assert callable(verify_tflite_model)
@@ -132,7 +132,7 @@ class TestESPHomeCompatibilityScripts:
         content = agents_md.read_text()
 
         # Should mention ESPHome op validation
-        assert "ESPHome" in content or "op" in content.lower(), "AGENTS.md should document ESPHome operation validation"
+        assert "ESPHome" in content and ("operation" in content.lower() or "allowed" in content.lower() or "whitelist" in content.lower()), "AGENTS.md should document ESPHome operation validation"
 
     def test_verify_esphome_has_strict_mode(self):
         """Test that verify_esphome.py has strict validation mode."""

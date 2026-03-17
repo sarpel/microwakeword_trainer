@@ -11,7 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
 
-from src.data.quality import QualityScoreConfig, apply_discard, print_summary, score_directory, write_csv
+from src.data.quality import (
+    QualityScoreConfig,
+    apply_discard,
+    print_summary,
+    score_directory,
+    write_csv,
+)
 
 
 def main() -> None:
@@ -19,17 +25,75 @@ def main() -> None:
         description="Full audio quality scoring (DNSMOS + Silero + WADA-SNR + clipping).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--dirs", nargs="+", required=True, metavar="DIR", help="Directories to score")
-    parser.add_argument("--apply", action="store_true", help="Move discarded files. Default is dry-run.")
-    parser.add_argument("--discard-bottom", type=float, default=5.0, metavar="PCT", help="Discard bottom N%% by WQI within each dir (default: 5.0)")
-    parser.add_argument("--min-wqi", type=float, default=0.0, metavar="SCORE", help="Absolute WQI floor (default: 0.0 = off)")
-    parser.add_argument("--clip-threshold", type=float, default=0.001, metavar="RATIO", help="Clipping hard gate (default: 0.001 = 0.1%%)")
-    parser.add_argument("--vad-threshold", type=float, default=0.0, metavar="CONF", help="Silero VAD confidence hard gate (default: 0.0 = off)")
-    parser.add_argument("--discarded-dir", type=str, default="discarded/quality", metavar="DIR", help="Root dir for discarded files (default: discarded/quality)")
-    parser.add_argument("--dnsmos-cache", type=str, default=str(Path.home() / ".cache" / "dnsmos"), metavar="DIR", help="Directory to cache DNSMOS ONNX model")
-    parser.add_argument("--csv", type=str, default="", metavar="FILE", help="Write scores CSV to this path (optional)")
+    parser.add_argument(
+        "--dirs",
+        nargs="+",
+        required=True,
+        metavar="DIR",
+        help="Directories to score",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Move discarded files. Default is dry-run.",
+    )
+    parser.add_argument(
+        "--discard-bottom",
+        type=float,
+        default=5.0,
+        metavar="PCT",
+        help="Discard bottom N%% by WQI within each dir (default: 5.0)",
+    )
+    parser.add_argument(
+        "--min-wqi",
+        type=float,
+        default=0.0,
+        metavar="SCORE",
+        help="Absolute WQI floor (default: 0.0 = off)",
+    )
+    parser.add_argument(
+        "--clip-threshold",
+        type=float,
+        default=0.001,
+        metavar="RATIO",
+        help="Clipping hard gate (default: 0.001 = 0.1%%)",
+    )
+    parser.add_argument(
+        "--vad-threshold",
+        type=float,
+        default=0.0,
+        metavar="CONF",
+        help="Silero VAD confidence hard gate (default: 0.0 = off)",
+    )
+    parser.add_argument(
+        "--discarded-dir",
+        type=str,
+        default="discarded/quality",
+        metavar="DIR",
+        help="Root dir for discarded files (default: discarded/quality)",
+    )
+    parser.add_argument(
+        "--dnsmos-cache",
+        type=str,
+        default=str(Path.home() / ".cache" / "dnsmos"),
+        metavar="DIR",
+        help="Directory to cache DNSMOS ONNX model",
+    )
+    parser.add_argument(
+        "--csv",
+        type=str,
+        default="",
+        metavar="FILE",
+        help="Write scores CSV to this path (optional)",
+    )
     parser.add_argument("--verbose", action="store_true", help="Print per-file scores")
-    parser.add_argument("--workers", type=int, default=0, metavar="N", help="Parallel worker threads (default: auto = min(16, cpu_count))")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Parallel worker threads (default: auto = min(16, cpu_count))",
+    )
 
     args = parser.parse_args()
     discarded_root = Path(args.discarded_dir)
@@ -64,11 +128,20 @@ def main() -> None:
         if not d.exists():
             print(f"[WARN] Not found, skipping: {d}")
             continue
-        all_results.extend(score_directory(d, config, mode="full", num_workers=args.workers))
+        try:
+            all_results.extend(score_directory(d, config, mode="full", num_workers=args.workers))
+        except Exception as e:
+            print(f"[ERROR] Failed to score directory {d}: {e}")
+            print("[ERROR] Use --verbose for more details")
+            sys.exit(2)
 
     if args.csv:
-        write_csv(all_results, Path(args.csv))
-        print(f"\nCSV written: {args.csv}  ({len(all_results):,} rows)")
+        try:
+            write_csv(all_results, Path(args.csv))
+            print(f"\nCSV written: {args.csv}  ({len(all_results):,} rows)")
+        except (IOError, OSError) as e:
+            print(f"[ERROR] Failed to write CSV: {e}")
+            sys.exit(1)
 
     dry_run = not args.apply
     print_summary(all_results, config, dry_run=dry_run, mode="full")

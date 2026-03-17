@@ -75,7 +75,10 @@ ESPHOME_FEATURE_SIZE = 40  # mel bins
 
 # streaming_model.cpp L65-L75 — input[0] dtype=int8, shape=[1, stride, 40]
 ESPHOME_INPUT_DTYPE = np.int8
-ESPHOME_INPUT_SHAPE_FIXED_DIMS = {0: 1, 2: 40}  # dims that must be exact; dim[1]=stride is flexible
+ESPHOME_INPUT_SHAPE_FIXED_DIMS = {
+    0: 1,
+    2: 40,
+}  # dims that must be exact; dim[1]=stride is flexible
 
 # streaming_model.cpp L78-L86 — output[0] dtype=uint8, shape=[1,1]
 ESPHOME_OUTPUT_DTYPE = np.uint8
@@ -309,7 +312,10 @@ def check_model(tflite_path: str, manifest_path: str | None = None) -> dict[str,
             if not checks["output_zero_point"]:
                 errors.append(f"Output zero_point={out_zp_val}, must be 0 for uint8 probability output. Non-zero zero_point shifts the probability space, causing wrong threshold comparisons.")
             # canonical scales: 1/256 or 1/255
-            canonical_out_scales = {round(1.0 / 255.0, 9), round(1.0 / 256.0, 9)}
+            canonical_out_scales = {
+                round(1.0 / 255.0, 9),
+                round(1.0 / 256.0, 9),
+            }
             out_scale_rounded = round(out_scale_val, 9)
             checks["output_scale_canonical"] = out_scale_rounded in canonical_out_scales
             if not checks["output_scale_canonical"]:
@@ -645,9 +651,17 @@ def main() -> int:
         epilog=__doc__,
     )
     parser.add_argument("tflite_path", help="Path to .tflite model file")
-    parser.add_argument("--manifest", metavar="PATH", help="Optional path to manifest.json for additional checks")
+    parser.add_argument(
+        "--manifest",
+        metavar="PATH",
+        help="Optional path to manifest.json for additional checks",
+    )
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
-    parser.add_argument("--verbose", action="store_true", help="Show all check results and raw details")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show all check results and raw details",
+    )
     args = parser.parse_args()
 
     tflite_path = Path(args.tflite_path)

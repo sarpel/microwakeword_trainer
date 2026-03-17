@@ -33,6 +33,7 @@ mww-cluster-analyze = "src.tools.cluster_analyze:main"
 mww-cluster-apply = "src.tools.cluster_apply:main"
 mww-mine-hard-negatives = "src.training.mining:main"
 mww-pipeline = "src.pipeline:main"
+mww-help = "src.tools.help_panel:main"
 
 [project.optional-dependencies]
 dev = [
@@ -280,3 +281,13 @@ module = [
     "psutil.*",
 ]
 ignore_missing_imports = true
+
+# =============================================================================
+# ISORT CONFIGURATION
+# =============================================================================
+[tool.isort]
+profile = "black"
+line_length = 200
+known_first_party = ["src", "config"]
+skip_glob = ["checkpoints/*", "models/*", "dataset/*", "data/*", "logs/*", "profiles/*", "notebooks/*", ".venv/*", "venv/*"]
+

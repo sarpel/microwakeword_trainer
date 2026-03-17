@@ -352,6 +352,7 @@ Adjust `probability_cutoff` based on your environment:
 **Cause**: Shape checks must be config-aware. `stream_5` depends on `temporal_frames` inferred from the Dense kernel shape, so it is not universally `[1, 5, 1, 64]`.
 
 **Current behavior**: Verification computes expected state shapes with `compute_expected_state_shapes()` and validates against model-derived dimensions.
+**Status**: ✅ All 2026-03-16 audit findings regarding hardcoded state shapes have been resolved in the latest verification pipeline.
 
 **Fix**: Re-export with your intended config and re-run:
 

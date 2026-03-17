@@ -15,10 +15,13 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
+
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 import tensorflow as tf
 
 # Add project root to path
@@ -29,7 +32,9 @@ from src.export.tflite import StreamingExportModel, load_weights_from_keras3_che
 from src.model.architecture import build_model
 
 
-def parse_kernel_sizes(s: str | list[str] | list[list[int]] | list[int]) -> list[list[int]]:
+def parse_kernel_sizes(
+    s: str | list[str] | list[list[int]] | list[int],
+) -> list[list[int]]:
     """Parse mixconv_kernel_sizes string like '[5],[7,11],[9,15],[23]' or already-parsed list."""
     import ast
 
@@ -50,7 +55,6 @@ def parse_kernel_sizes(s: str | list[str] | list[list[int]] | list[int]) -> list
             elif isinstance(item, list):
                 result.append(item)
         return result
-    return [[int(s)]]  # Single int fallback
 
 
 def parse_int_list(s: str | list[int] | list[str] | int) -> list[int]:
@@ -61,7 +65,6 @@ def parse_int_list(s: str | list[int] | list[str] | int) -> list[int]:
         return [s]
     elif isinstance(s, list):
         return [int(x) for x in s]
-    return []  # Fallback
 
 
 def build_training_model(config, checkpoint_path: str):
@@ -230,7 +233,11 @@ def compare_models(config, checkpoint_path: str, n_samples: int = 50):
 def main():
     parser = argparse.ArgumentParser(description="Debug streaming vs training model gap")
     parser.add_argument("--checkpoint", required=True, help="Path to .weights.h5 checkpoint")
-    parser.add_argument("--config", default="config/presets/max_quality.yaml", help="Config YAML")
+    parser.add_argument(
+        "--config",
+        default="config/presets/max_quality.yaml",
+        help="Config YAML",
+    )
     parser.add_argument("--n-samples", type=int, default=50, help="Number of test samples")
     args = parser.parse_args()
 

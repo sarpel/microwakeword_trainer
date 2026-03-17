@@ -460,7 +460,14 @@ class TestSplitRawFrames:
         """Test that chunks below minimum duration are filtered."""
         # 2 seconds of audio
         frames = b"\x00" * 64000
-        chunks = _split_raw_frames(frames, 16000, 1, 2, target_duration_ms=500.0, min_duration_ms=400.0)
+        chunks = _split_raw_frames(
+            frames,
+            16000,
+            1,
+            2,
+            target_duration_ms=500.0,
+            min_duration_ms=400.0,
+        )
 
         # Should produce 4 chunks (500ms each)
         assert len(chunks) == 4
@@ -469,7 +476,14 @@ class TestSplitRawFrames:
         """Test discarding final chunk if too short."""
         # 1.2 seconds
         frames = b"\x00" * 38400
-        chunks = _split_raw_frames(frames, 16000, 1, 2, target_duration_ms=500.0, min_duration_ms=400.0)
+        chunks = _split_raw_frames(
+            frames,
+            16000,
+            1,
+            2,
+            target_duration_ms=500.0,
+            min_duration_ms=400.0,
+        )
 
         # 2 full chunks, final 200ms chunk discarded
         assert len(chunks) == 2
@@ -617,7 +631,12 @@ class TestProcessBackgroundDirectory:
         """Test processing empty directory."""
         discarded_root = tmp_path / "discarded"
 
-        results = process_background_directory(tmp_path, max_duration_ms=5000.0, discarded_root=discarded_root, dry_run=True)
+        results = process_background_directory(
+            tmp_path,
+            max_duration_ms=5000.0,
+            discarded_root=discarded_root,
+            dry_run=True,
+        )
 
         assert results == []
 
@@ -632,7 +651,12 @@ class TestProcessBackgroundDirectory:
 
         discarded_root = tmp_path / "discarded"
 
-        results = process_background_directory(tmp_path, max_duration_ms=5000.0, discarded_root=discarded_root, dry_run=True)
+        results = process_background_directory(
+            tmp_path,
+            max_duration_ms=5000.0,
+            discarded_root=discarded_root,
+            dry_run=True,
+        )
 
         assert len(results) == 0
 
@@ -672,7 +696,10 @@ class TestFindSpeechBoundaries:
         mock_vad_instance.is_speech.return_value = False
         mock_vad_module.Vad.return_value = mock_vad_instance
 
-        with patch("src.utils.optional_deps.require_optional", return_value=mock_vad_module):
+        with patch(
+            "src.utils.optional_deps.require_optional",
+            return_value=mock_vad_module,
+        ):
             # Create enough frames for VAD
             pcm = b"\x00" * 9600
             result = find_speech_boundaries(pcm)

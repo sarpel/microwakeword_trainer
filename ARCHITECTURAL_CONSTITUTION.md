@@ -10,7 +10,7 @@ This file is the **single, authoritative source of architectural truth** for thi
 
 Where different interpreter implementations expose different **runtime scratch/workspace tensors**, this document states the project's **canonical counting convention** explicitly. Those runtime-only scratch tensors are not treated as architectural signals unless stated otherwise.
 
-**Verification date:** 2026-03-13
+*This document is append-only with respect to verified facts. No value may be changed without re-running flatbuffer extraction against the reference model and cross-verifying against current ESPHome source code. Adding unverified values is prohibited — mark any new entry as `UNVERIFIED` and include the expected verification method. Last full verification: 2026-03-16.*
 
 ### THE GOVERNING RULE
 
@@ -496,18 +496,23 @@ When EMA is enabled (default in `max_quality.yaml` with `ema_decay: 0.999`):
 
 | Checkpoint File Type | When Saved | EMA Weights? | Purpose |
 |---------------------|------------|------------|---------|
-| `final_weights.weights.h5` | End of training (after EMA swap) | ✅ Yes | Export/inference - has smoothed EMA weights |
-| `best_weights.weights.h5` | During training (best model found) | ✅ Yes | Resume training - has EMA weights |
-| `checkpoint_step_NNNN.weights.h5` | Periodic checkpoints | ✅ Yes | Recovery/checkpointing - has EMA weights |
+| `best_weights.weights.h5` | During training (best validated model) | ✅ Yes | **Export/inference (preferred)** — validated best EMA weights |
+| `final_weights.weights.h5` | End of training (after EMA swap) | ✅ Yes | Fallback — EMA weights but not validated |
+| `checkpoint_step_NNNN.weights.h5` | Periodic checkpoints | ✅ Yes | Recovery/checkpointing — has EMA weights |
+
 
 ### CRITICAL RULE: Final Checkpoint Loading
 
-**Do NOT load `best_weights.weights.h5` at end of training.** 
+**Do NOT reload `best_weights.weights.h5` into model at end of training (internal implementation detail).**
+
+**User guidance:** Use `best_weights.weights.h5` for export/inference — it has validated EMA-smoothed weights.
+
+**Internal technical reason for not reloading:**
 
 **Why:**
 1. Training is complete - no further gradient updates needed
 2. Model already contains correct weights in memory (either training or EMA from last checkpoint)
-3. `final_weights.weights.h5` already has EMA-smoothed weights (preferred for inference)
+3. `best_weights.weights.h5` has validated EMA-smoothed weights (**preferred for inference**) — it was validated and proven to be the best checkpoint
 4. Loading `best_weights` after EMA finalize triggers optimizer state mismatch warnings:
    - Saved checkpoint has full optimizer state (momentum + variance for each trainable variable)
    - By end of training, EMA finalize may have cleared/reset optimizer state
@@ -545,7 +550,8 @@ Example with 46 trainable weights (typical MixedNet):
 1. **Never reload `best_weights` after training completion** - Training is done; final_weights has correct EMA-smoothed weights
 2. **Never load checkpoint into finalized optimizer state** - Only reload if resuming training from interruption
 3. **Don't recompile optimizer after training** - Optimizer is not used after training completes
-4. **Use `final_weights` for export/inference** - Already has smoothed weights that were just validated
+4. **Use `best_weights` for export/inference** — Validated best checkpoint with proven EMA-smoothed weights
+5. **Use `final_weights` as fallback** — Only if `best_weights` is missing or corrupted
 
 ---
 
@@ -778,4 +784,4 @@ You may change `mixconv_kernel_sizes`, `pointwise_filters`, `repeat_in_block`, a
 
 ---
 
-*This document is append-only with respect to verified facts. No value may be changed without re-running flatbuffer extraction against the reference model and cross-verifying against current ESPHome source code. Adding unverified values is prohibited — mark any new entry as `UNVERIFIED` and include the expected verification method. Last full verification: 2026-03-13.*
+*This document is append-only with respect to verified facts. No value may be changed without re-running flatbuffer extraction against the reference model and cross-verifying against current ESPHome source code. Adding unverified values is prohibited — mark any new entry as `UNVERIFIED` and include the expected verification method. Last full verification: 2026-03-16.*

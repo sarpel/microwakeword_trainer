@@ -21,14 +21,16 @@ import dataclasses
 import html
 import json
 import math
+import os
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import matplotlib
 import numpy as np
+
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 import tensorflow as tf
 from rich.console import Console
 from rich.table import Table
@@ -133,7 +135,9 @@ def _resolve_eval_threshold(model_path: str, config: dict) -> tuple[float, str]:
             return manifest_cutoff, "manifest.micro.probability_cutoff"
 
     export_cutoff = config.get("export", {}).get("probability_cutoff")
-    if isinstance(export_cutoff, (int, float)):
+    # Skip sentinel value 0.0 — in this config system, probability_cutoff=0 means
+    # "auto-calculate from checkpoint metadata", not a literal threshold of 0.
+    if isinstance(export_cutoff, (int, float)) and float(export_cutoff) > 0:
         return float(export_cutoff), "config.export.probability_cutoff"
 
     eval_cutoff = config.get("evaluation", {}).get("default_threshold")
@@ -215,18 +219,18 @@ def _evaluate_checkpoint(
     gen_factory = _get_generator_factory(dataset, split, max_time_frames, console)
 
     # Collect predictions
-    y_true = []
-    y_scores = []
+    _y_true_list: list[Any] = []
+    _y_scores_list: list[Any] = []
 
     gen = gen_factory()
     for batch in gen:
         batch_features = batch[0]
         batch_labels = batch[1]
         predictions = model.predict(batch_features, verbose=0)
-        y_true.extend(batch_labels.flatten().tolist())
-        y_scores.extend(predictions.flatten().tolist())
-    y_true = np.array(y_true)
-    y_scores = np.array(y_scores)
+        _y_true_list.extend(batch_labels.flatten().tolist())
+        _y_scores_list.extend(predictions.flatten().tolist())
+    y_true: np.ndarray = np.array(_y_true_list)
+    y_scores: np.ndarray = np.array(_y_scores_list)
 
     # Debug: Print prediction distribution
     console.print(f"\n[dim]Debug: y_true unique values: {np.unique(y_true)}[/]")
@@ -366,8 +370,8 @@ def _evaluate_tflite(
     gen_factory = _get_generator_factory(dataset, split, max_time_frames, console)
 
     # Collect predictions
-    y_true = []
-    y_scores = []
+    _y_true_list2: list[Any] = []
+    _y_scores_list2: list[float] = []
     sample_count = 0
 
     gen = gen_factory()
@@ -407,16 +411,16 @@ def _evaluate_tflite(
                 else:
                     prediction = raw_out.flatten()[0]
 
-            y_true.append(label)
-            y_scores.append(prediction)
+            _y_true_list2.append(label)
+            _y_scores_list2.append(prediction)
             sample_count += 1
 
             if sample_count % 200 == 0:
                 console.print(f"  Processed {sample_count} samples...")
 
     console.print(f"  Total: {sample_count} samples")
-    y_true = np.array(y_true)
-    y_scores = np.array(y_scores)
+    y_true: np.ndarray = np.array(_y_true_list2)
+    y_scores: np.ndarray = np.array(_y_scores_list2)
 
     # Debug: Print prediction distribution
     console.print(f"\n[dim]Debug: y_true unique values: {np.unique(y_true)}[/]")
@@ -522,7 +526,10 @@ def _bootstrap_confidence_intervals(
         cis[name] = {
             "mean": float(np.mean(arr)),
             "std": float(np.std(arr)),
-            "ci_95": [float(np.percentile(arr, 2.5)), float(np.percentile(arr, 97.5))],
+            "ci_95": [
+                float(np.percentile(arr, 2.5)),
+                float(np.percentile(arr, 97.5)),
+            ],
         }
 
     return cis
@@ -630,7 +637,10 @@ def _threshold_sweep(
 
     return {
         "points": points,
-        "best_by_f1": {"f1": float(best_f1[0]), "threshold": float(best_f1[1])},
+        "best_by_f1": {
+            "f1": float(best_f1[0]),
+            "threshold": float(best_f1[1]),
+        },
         "best_by_balanced_accuracy": {
             "balanced_accuracy": float(best_bal_acc[0]),
             "threshold": float(best_bal_acc[1]),
@@ -666,7 +676,7 @@ def _plot_and_save_all(
     # 1) Confusion matrix (raw + normalized)
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     raw = np.asarray(confusion["raw"], dtype=float)
-    norm = np.asarray(confusion["normalized"], dtype=float)
+    norm_matrix = np.asarray(confusion["normalized"], dtype=float)
     im0 = axes[0].imshow(raw, cmap="Blues")
     axes[0].set_title("Confusion Matrix (Raw)")
     axes[0].set_xticks([0, 1], ["Pred Neg", "Pred Pos"])
@@ -676,13 +686,13 @@ def _plot_and_save_all(
             axes[0].text(j, i, f"{int(raw[i, j])}", ha="center", va="center")
     fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
 
-    im1 = axes[1].imshow(norm, cmap="Greens", vmin=0.0, vmax=1.0)
+    im1 = axes[1].imshow(norm_matrix, cmap="Greens", vmin=0.0, vmax=1.0)
     axes[1].set_title("Confusion Matrix (Normalized)")
     axes[1].set_xticks([0, 1], ["Pred Neg", "Pred Pos"])
     axes[1].set_yticks([0, 1], ["True Neg", "True Pos"])
     for i in range(2):
         for j in range(2):
-            axes[1].text(j, i, f"{norm[i, j]:.3f}", ha="center", va="center")
+            axes[1].text(j, i, f"{norm_matrix[i, j]:.3f}", ha="center", va="center")
     fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
     fig.tight_layout()
     p = output_dir / "eval_confusion_matrix.png"
@@ -750,10 +760,30 @@ def _plot_and_save_all(
     pos_scores = y_scores[y_true == 1]
     neg_scores = y_scores[y_true == 0]
     if len(pos_scores) > 0:
-        plt.hist(pos_scores, bins=40, alpha=0.55, density=True, label="Positive", color="tab:blue")
+        plt.hist(
+            pos_scores,
+            bins=40,
+            alpha=0.55,
+            density=True,
+            label="Positive",
+            color="tab:blue",
+        )
     if len(neg_scores) > 0:
-        plt.hist(neg_scores, bins=40, alpha=0.55, density=True, label="Negative", color="tab:orange")
-    plt.axvline(x=threshold_used, linestyle="--", linewidth=1.8, color="tab:red", label=f"threshold={threshold_used:.3f}")
+        plt.hist(
+            neg_scores,
+            bins=40,
+            alpha=0.55,
+            density=True,
+            label="Negative",
+            color="tab:orange",
+        )
+    plt.axvline(
+        x=threshold_used,
+        linestyle="--",
+        linewidth=1.8,
+        color="tab:red",
+        label=f"threshold={threshold_used:.3f}",
+    )
     plt.yscale("log")
     plt.xlabel("Model score")
     plt.ylabel("Density (log)")
@@ -815,7 +845,10 @@ def _plot_and_save_all(
         artifacts.append(str(p))
 
         # 8) FAH-Recall operating curve
-        fahs = np.array([pnt["ambient_false_positives_per_hour"] for pnt in points], dtype=float)
+        fahs = np.array(
+            [pnt["ambient_false_positives_per_hour"] for pnt in points],
+            dtype=float,
+        )
         fig = plt.figure(figsize=(8, 6))
         plt.plot(fahs, rcs, linewidth=2, label="Operating curve")
         plt.xlabel("False Activations per Hour")
@@ -846,7 +879,13 @@ def _plot_and_save_all(
     return artifacts
 
 
-def _metric_status_line(name: str, value: float | None, good: float | None = None, bad: float | None = None, higher_is_better: bool = True) -> str:
+def _metric_status_line(
+    name: str,
+    value: float | None,
+    good: float | None = None,
+    bad: float | None = None,
+    higher_is_better: bool = True,
+) -> str:
     if value is None:
         return f"- {name}: N/A"
     icon = "🟢"
@@ -906,7 +945,13 @@ def _compose_executive_summary(report: dict[str, Any]) -> dict[str, str]:
         _metric_status_line("FAH", fah, good=0.5, bad=2.0, higher_is_better=False),
         _metric_status_line("AUC-ROC", auc_roc, good=0.98, bad=0.90, higher_is_better=True),
         _metric_status_line("AUC-PR", auc_pr, good=0.95, bad=0.80, higher_is_better=True),
-        _metric_status_line("Specificity", specificity, good=0.97, bad=0.90, higher_is_better=True),
+        _metric_status_line(
+            "Specificity",
+            specificity,
+            good=0.97,
+            bad=0.90,
+            higher_is_better=True,
+        ),
         _metric_status_line("Calibration ECE", ece, good=0.05, bad=0.12, higher_is_better=False),
         _metric_status_line("Brier Score", brier, good=0.08, bad=0.20, higher_is_better=False),
         "",
@@ -1117,7 +1162,10 @@ def _compute_metrics(
     mcc = _safe_div((tp * tn) - (fp * fn), mcc_den)
 
     po = _safe_div(tp + tn, len(y_true))
-    pe = _safe_div((tp + fp) * (tp + fn) + (fn + tn) * (fp + tn), len(y_true) * len(y_true))
+    pe = _safe_div(
+        (tp + fp) * (tp + fn) + (fn + tn) * (fp + tn),
+        len(y_true) * len(y_true),
+    )
     cohens_kappa = _safe_div(po - pe, 1.0 - pe) if pe < 1.0 else 1.0
 
     informedness = float(basic.get("recall", 0.0)) + specificity - 1.0
@@ -1178,6 +1226,21 @@ def _compute_metrics(
 
     output_root = Path(output_dir) if output_dir else Path(config.get("performance", {}).get("tensorboard_log_dir", "./logs"))
     artifact_dir = output_root / "evaluation_artifacts"
+
+    # Check for existing artifacts to prevent silent overwrite
+    if artifact_dir.exists():
+        existing_artifacts = [
+            artifact_dir / "evaluation_report.json",
+            artifact_dir / "executive_report.md",
+            artifact_dir / "executive_report.html",
+        ]
+        if any(f.exists() for f in existing_artifacts):
+            from datetime import datetime
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            artifact_dir = output_root / f"evaluation_artifacts_{timestamp}"
+            console.print(f"[yellow]Existing artifacts found, writing to new directory:[/] {artifact_dir}")
+
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     artifacts: list[str] = []
@@ -1186,7 +1249,12 @@ def _compute_metrics(
             y_true=y_true,
             y_scores=y_scores,
             confusion=cm,
-            calibration={"calibration_curve": cal_curve, "brier_score": brier, "ece": cal_err["ece"], "mce": cal_err["mce"]},
+            calibration={
+                "calibration_curve": cal_curve,
+                "brier_score": brier,
+                "ece": cal_err["ece"],
+                "mce": cal_err["mce"],
+            },
             threshold_sweep=sweep,
             output_dir=artifact_dir,
             threshold_used=threshold,
@@ -1302,7 +1370,10 @@ def _compute_metrics(
     report["artifacts"]["executive_report_html"] = executive_paths["html"]
 
     report_path = artifact_dir / "evaluation_report.json"
-    report_path.write_text(json.dumps(_to_json_safe(report), indent=2, allow_nan=False), encoding="utf-8")
+    report_path.write_text(
+        json.dumps(_to_json_safe(report), indent=2, allow_nan=False),
+        encoding="utf-8",
+    )
 
     table = Table(title="Evaluation Results")
     table.add_column("Metric", style="bold")
@@ -1316,7 +1387,10 @@ def _compute_metrics(
     table.add_row("AUC-ROC", f"{float(report.get('auc_roc', 0.0)):.4f}")
     auc_pr = report.get("auc_pr")
     table.add_row("AUC-PR", f"{float(auc_pr):.4f}" if auc_pr is not None else "N/A")
-    table.add_row("FA/Hour", f"{float(report.get('ambient_false_positives_per_hour', 0.0)):.4f}")
+    table.add_row(
+        "FA/Hour",
+        f"{float(report.get('ambient_false_positives_per_hour', 0.0)):.4f}",
+    )
     table.add_row("Specificity", f"{specificity:.4f}")
     table.add_row("MCC", f"{mcc:.4f}")
     table.add_row("EER", f"{eer:.4f}")

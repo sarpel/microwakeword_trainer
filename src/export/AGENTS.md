@@ -62,6 +62,7 @@ temporal_frames = dense_input_features // 64  # 64 = last pointwise filter count
 - **20 op resolvers** registered in ESPHome
 - **6 state variables**: stream [1,2,1,40], stream_1 [1,4,1,32], stream_2 [1,10,1,64], stream_3 [1,14,1,64], stream_4 [1,22,1,64], stream_5 [1,5,1,64]
   - **Note**: stream_5 shape depends on `temporal_frames` (derived from `clip_duration_ms`). The shape is `(1, temporal_frames - 1, 1, pointwise_filters[3])`, NOT always `(1, 5, 1, 64)`.
+- **Resolved**: All verification scripts now use config-aware state shape computation, resolving previous hardcoding issues.
 
 ## Related Documentation
 

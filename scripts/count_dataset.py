@@ -2,18 +2,36 @@
 """Count and analyze dataset statistics."""
 
 import concurrent.futures
+import logging
 import os
 import subprocess
 from collections import defaultdict
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 
 def get_audio_duration(file_path: str) -> float:
     """Get audio duration in seconds using ffprobe."""
     try:
-        result = subprocess.run(["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", str(file_path)], capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(file_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
         return float(result.stdout.strip())
-    except (subprocess.CalledProcessError, ValueError, FileNotFoundError):
+    except (subprocess.CalledProcessError, ValueError, FileNotFoundError) as e:
+        logger.warning(f"Failed to get audio duration for {file_path}: {e}")
         return 0.0
 
 
@@ -66,7 +84,13 @@ def main():
     dataset_root = Path("dataset")
 
     # Category definitions
-    categories = {"Positive": "positive", "Negative": "negative", "Hard Negative": "hard_negative", "Background": "background", "RIRs": "rirs"}
+    categories = {
+        "Positive": "positive",
+        "Negative": "negative",
+        "Hard Negative": "hard_negative",
+        "Background": "background",
+        "RIRs": "rirs",
+    }
 
     results = defaultdict(lambda: {"count": 0, "duration": 0.0})
 

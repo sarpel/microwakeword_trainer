@@ -111,7 +111,7 @@ def get_audio_duration(file_path: str) -> float:
     try:
         # Önce soundfile ile hızlı metadata okuma
         info = sf.info(file_path)
-        return info.duration
+        return float(info.duration)
     except Exception:
         try:
             # soundfile başarısız olursa librosa dene
@@ -181,7 +181,13 @@ def analyze_directory(directory: str, show_details: bool = False) -> Dict:
     audio_files = find_audio_files(directory, audio_extensions)
 
     if not audio_files:
-        return {"directory": directory, "total_files": 0, "total_size": 0, "total_duration": 0, "files": []}
+        return {
+            "directory": directory,
+            "total_files": 0,
+            "total_size": 0,
+            "total_duration": 0,
+            "files": [],
+        }
 
     total_size = 0.0
     total_duration = 0.0
@@ -202,7 +208,13 @@ def analyze_directory(directory: str, show_details: bool = False) -> Dict:
             total_duration += duration
 
             # Dosya bilgilerini kaydet
-            file_info = {"path": file_path, "name": os.path.basename(file_path), "size": file_size, "duration": duration, "extension": os.path.splitext(file_path)[1].lower()}
+            file_info = {
+                "path": file_path,
+                "name": os.path.basename(file_path),
+                "size": file_size,
+                "duration": duration,
+                "extension": os.path.splitext(file_path)[1].lower(),
+            }
             analyzed_files.append(file_info)
 
             # Progress göster (her 50 dosyada bir)
@@ -228,7 +240,14 @@ def analyze_directory(directory: str, show_details: bool = False) -> Dict:
                 print(f"   ... ve {len(errors) - 5} hata daha")
         print()
 
-    return {"directory": directory, "total_files": len(analyzed_files), "total_size": total_size, "total_duration": total_duration, "files": analyzed_files, "errors": errors}
+    return {
+        "directory": directory,
+        "total_files": len(analyzed_files),
+        "total_size": total_size,
+        "total_duration": total_duration,
+        "files": analyzed_files,
+        "errors": errors,
+    }
 
 
 def print_statistics(analysis_result: Dict, show_file_list: bool = False):
@@ -316,11 +335,26 @@ def main():
         """,
     )
 
-    parser.add_argument("directories", nargs="*", default=["D:/MCP/Precise-Community-Data"], help="Analiz edilecek dizin(ler) (varsayılan: D:/MCP/Precise-Community-Data)")
+    parser.add_argument(
+        "directories",
+        nargs="*",
+        default=["D:/MCP/Precise-Community-Data"],
+        help="Analiz edilecek dizin(ler) (varsayılan: D:/MCP/Precise-Community-Data)",
+    )
 
-    parser.add_argument("-d", "--details", action="store_true", help="Detaylı dosya listesi ve hata mesajlarını göster")
+    parser.add_argument(
+        "-d",
+        "--details",
+        action="store_true",
+        help="Detaylı dosya listesi ve hata mesajlarını göster",
+    )
 
-    parser.add_argument("-m", "--multiple", action="store_true", help="Birden fazla dizini ayrı ayrı analiz et")
+    parser.add_argument(
+        "-m",
+        "--multiple",
+        action="store_true",
+        help="Birden fazla dizini ayrı ayrı analiz et",
+    )
 
     args = parser.parse_args()
 
@@ -331,7 +365,12 @@ def main():
         print("Süre hesaplama için: pip install librosa soundfile")
         print()
 
-    total_results = {"total_files": 0, "total_size": 0, "total_duration": 0, "directories_analyzed": 0}
+    total_results = {
+        "total_files": 0,
+        "total_size": 0,
+        "total_duration": 0,
+        "directories_analyzed": 0,
+    }
 
     # Başlangıç zamanı
     start_time = time.time()

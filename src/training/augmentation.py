@@ -226,7 +226,11 @@ class AudioAugmentationPipeline:
         self.augmentations.append(
             (
                 "Gain",
-                Gain(p=gain_prob, min_gain_db=self.gain_min_db, max_gain_db=self.gain_max_db),
+                Gain(
+                    p=gain_prob,
+                    min_gain_db=self.gain_min_db,
+                    max_gain_db=self.gain_max_db,
+                ),
             )
         )
 

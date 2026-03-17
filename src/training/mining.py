@@ -36,6 +36,7 @@ __all__ = [
 ]
 
 import argparse
+import gc
 import hashlib
 import heapq
 import json
@@ -229,7 +230,14 @@ class HardExampleMiner:
                 global_idx = global_offset + int(local_idx)
                 pred_score = float(scores[local_idx])
                 # Store (pred_score, global_idx, batch_id, local_idx, label, prediction)
-                heap_entry = (pred_score, global_idx, batch_counter, int(local_idx), int(labels[local_idx]), pred_score)
+                heap_entry = (
+                    pred_score,
+                    global_idx,
+                    batch_counter,
+                    int(local_idx),
+                    int(labels[local_idx]),
+                    pred_score,
+                )
 
                 if len(hard_negative_heap) < self.max_samples:
                     heapq.heappush(hard_negative_heap, heap_entry)
@@ -330,7 +338,10 @@ class HardExampleMiner:
             return None
 
         if filepath is None:
-            filepath = os.path.join(self.output_dir, f"hard_negatives_step_{len(self.mining_history)}.npz")
+            filepath = os.path.join(
+                self.output_dir,
+                f"hard_negatives_step_{len(self.mining_history)}.npz",
+            )
 
         np.savez(
             filepath,
@@ -439,6 +450,7 @@ class AsyncHardExampleMiner:
             # Clean up model to free memory
             try:
                 del model
+                gc.collect()
             except (NameError, UnboundLocalError):
                 pass
             with self._lock:
@@ -634,7 +646,7 @@ def log_false_predictions_to_json(
         log_data["metadata"] = {
             "fp_threshold": float(fp_threshold),
             "top_k_per_epoch": int(top_k),
-            "model_checkpoint": str(best_weights_path) if best_weights_path else None,
+            "model_checkpoint": (str(best_weights_path) if best_weights_path else None),
         }
 
     log_data["epochs"][str(epoch)] = epoch_entry
@@ -690,19 +702,23 @@ def _resolve_checkpoint(config: dict[str, Any], checkpoint_path: str | None) -> 
 
 
 def _build_model(config: dict[str, Any], input_shape: tuple[int, ...]):
-    """Build the model architecture (matches Trainer._build_model).
+    """Build the model architecture for inference (matches Trainer._build_model).
+
+    Note: model is NOT compiled here because run_top_fp_extraction only does
+    forward-pass inference — no optimizer needed. Compiling would create a fresh
+    Adam with 2 variables, causing a spurious mismatch warning when load_weights()
+    tries to restore the 92-variable optimizer from a fully-trained checkpoint.
 
     Args:
         config: Full config dict.
         input_shape: Model input shape (time_frames, mel_bins).
 
     Returns:
-        Compiled Keras model.
+        Uncompiled Keras model (weights only, no optimizer).
     """
     from src.model.architecture import build_model
 
     model_cfg = config.get("model", {})
-    training_cfg = config.get("training", {})
 
     model = build_model(
         input_shape=input_shape,
@@ -715,12 +731,6 @@ def _build_model(config: dict[str, Any], input_shape: tuple[int, ...]):
         residual_connection=model_cfg.get("residual_connection", "0,1,1,1"),
         dropout_rate=model_cfg.get("dropout_rate", 0.08),
         l2_regularization=model_cfg.get("l2_regularization", 0.00003),
-    )
-
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(training_cfg.get("learning_rates", [0.0017])[0]),
-        loss=tf.keras.losses.BinaryCrossentropy(),
-        metrics=["accuracy"],
     )
 
     return model
@@ -739,7 +749,10 @@ def _pad_or_truncate(features: np.ndarray, max_time_frames: int) -> np.ndarray:
     if features.shape[0] >= max_time_frames:
         return features[:max_time_frames]
     else:
-        padding = np.zeros((max_time_frames - features.shape[0], features.shape[1]), dtype=features.dtype)
+        padding = np.zeros(
+            (max_time_frames - features.shape[0], features.shape[1]),
+            dtype=features.dtype,
+        )
         return np.concatenate([features, padding], axis=0)
 
 
@@ -770,8 +783,8 @@ def run_top_fp_extraction(
 
     # ── Config ────────────────────────────────────────────────────────────
     mining_cfg = config.get("mining", {})
-    top_percent = top_percent_override or mining_cfg.get("top_fp_percent", 5.0)
-    confidence_threshold = threshold_override or mining_cfg.get("extraction_confidence_threshold", 0.8)
+    top_percent = mining_cfg.get("top_fp_percent", 5.0) if top_percent_override is None else top_percent_override
+    confidence_threshold = mining_cfg.get("extraction_confidence_threshold", 0.8) if threshold_override is None else threshold_override
     log_file = log_file_override or mining_cfg.get("extraction_log_file", "logs/top_fp_extraction.json")
     batch_size = mining_cfg.get("extraction_batch_size", 128)
 
@@ -792,7 +805,10 @@ def run_top_fp_extraction(
 
     model = _build_model(config, input_shape=(max_time_frames, mel_bins))
     # Build model by calling it on dummy data before loading weights
-    _ = model(tf.zeros((1, max_time_frames, mel_bins), dtype=tf.float32), training=False)
+    _ = model(
+        tf.zeros((1, max_time_frames, mel_bins), dtype=tf.float32),
+        training=False,
+    )
     model.load_weights(checkpoint_path)
 
     # ── Feature extractor ─────────────────────────────────────────────────
@@ -853,17 +869,21 @@ def run_top_fp_extraction(
 
     logger.info(f"Inference complete. Processed {len(all_scores)} files.")
 
-    # ── Filter false positives (score >= threshold) ───────────────────────
+    # ── Count true false positives (score >= threshold) for reporting ────
     false_positives = [(p, s) for p, s in all_scores if s >= confidence_threshold]
-    false_positives.sort(key=lambda x: x[1], reverse=True)
-
     logger.info(f"Found {len(false_positives)} false positives (score >= {confidence_threshold}) out of {len(all_scores)} files")
 
-    # ── Take top N% ──────────────────────────────────────────────────────
-    top_count = max(1, int(len(false_positives) * top_percent / 100.0))
+    # ── Take top N% of confirmed FPs, but always include all FPs when the set is small ─
+    # Using only 5% of a small FP set (e.g. 35) collapses to 1 via int(35*0.05)=1.
+    # Fix: compute a ceiling from 5% of ALL files; take the minimum of that ceiling
+    # and the full FP count so we always log all confirmed FPs for small datasets,
+    # while throttling to the most challenging ones when FPs number in the thousands.
+    false_positives.sort(key=lambda x: x[1], reverse=True)
+    ceiling = max(1, int(len(all_scores) * top_percent / 100.0))
+    top_count = min(len(false_positives), ceiling)
     top_fps = false_positives[:top_count]
 
-    logger.info(f"Selected top {top_percent}%: {len(top_fps)} files")
+    logger.info(f"Selected {len(top_fps)} false positives (top {top_percent}% ceiling = {ceiling} of {len(all_scores)} total files)")
 
     # ── Build result ──────────────────────────────────────────────────────
     result = {
@@ -1014,7 +1034,9 @@ def load_all_epoch_logs(log_dir: Path) -> dict[int, dict]:
     return epoch_logs
 
 
-def get_all_negative_hard_negative_files(config_dict: dict[str, Any]) -> list[str]:
+def get_all_negative_hard_negative_files(
+    config_dict: dict[str, Any],
+) -> list[str]:
     """Get all file paths from negative and hard_negative directories.
 
     Args:
@@ -1066,7 +1088,10 @@ def consolidate_prediction_logs(
             if pred.get("file_path"):
                 file_path = pred["file_path"]
             elif all_files:
-                logger.warning("File path not recorded at write time; file attribution for index %d is unknown", idx)
+                logger.warning(
+                    "File path not recorded at write time; file attribution for index %d is unknown",
+                    idx,
+                )
                 file_path = f"unknown_file_index_{idx}"
             else:
                 file_path = f"unknown_file_index_{idx}"
@@ -1102,9 +1127,9 @@ def consolidate_prediction_logs(
     return {
         "epochs": epochs_dict,
         "metadata": {
-            "created_at": all_false_positives[0].get("timestamp", "") if all_false_positives else "",
+            "created_at": (all_false_positives[0].get("timestamp", "") if all_false_positives else ""),
             "model_checkpoint": "consolidated",
-            "fp_threshold": epoch_logs[min(epoch_logs.keys())]["fp_threshold"] if epoch_logs else 0.8,
+            "fp_threshold": (epoch_logs[min(epoch_logs.keys())]["fp_threshold"] if epoch_logs else 0.8),
         },
         "total_epochs": len(epoch_logs),
         "total_false_positives": len(all_false_positives),

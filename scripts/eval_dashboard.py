@@ -26,7 +26,7 @@ def _read_report(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Report not found: {path}")
     with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+        return dict(json.load(f))
 
 
 def _json_for_js(value: Any) -> str:
@@ -406,7 +406,12 @@ def build_dashboard(report_path: Path, output_path: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build interactive dashboard from evaluation_report.json")
-    parser.add_argument("--report", type=str, required=True, help="Path to evaluation_report.json")
+    parser.add_argument(
+        "--report",
+        type=str,
+        required=True,
+        help="Path to evaluation_report.json",
+    )
     parser.add_argument(
         "--output",
         type=str,

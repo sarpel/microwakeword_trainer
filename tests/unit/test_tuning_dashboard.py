@@ -7,10 +7,9 @@ import os
 import tempfile
 from dataclasses import dataclass
 
-import pytest
+from src.tuning.dashboard import TuningDashboard, save_artifacts
 
 # These imports will ALL FAIL (ImportError) until dashboard.py is created — that's the RED phase.
-from src.tuning.dashboard import TuningDashboard, save_artifacts
 
 
 # ---------------------------------------------------------------------------
@@ -74,19 +73,15 @@ def test_render_population_table_returns_rich_table() -> None:
 
 
 def test_render_population_table_has_required_columns() -> None:
-    from rich.table import Table
-
     dash = TuningDashboard()
     candidates = [_make_candidate("c1", 0.5, 0.90)]
     table = dash.render_population_table(candidates)
-    column_names = [col.header for col in table.columns]
+    column_names = [str(col.header) for col in table.columns]
     for required in ("ID", "FAH", "Recall"):
         assert any(required.lower() in name.lower() for name in column_names), f"Column '{required}' missing from population table. Got: {column_names}"
 
 
 def test_render_population_table_has_rows() -> None:
-    from rich.table import Table
-
     dash = TuningDashboard()
     candidates = [_make_candidate("c1", 0.5, 0.90), _make_candidate("c2", 0.3, 0.95)]
     table = dash.render_population_table(candidates)
@@ -120,12 +115,10 @@ def test_render_pareto_table_returns_rich_table() -> None:
 
 
 def test_render_pareto_table_has_fah_recall_columns() -> None:
-    from rich.table import Table
-
     dash = TuningDashboard()
     frontier = [{"fah": 0.3, "recall": 0.95, "auc_pr": 0.98, "id": "c1"}]
     table = dash.render_pareto_table(frontier)
-    column_names = [col.header for col in table.columns]
+    column_names = [str(col.header) for col in table.columns]
     assert any("fah" in name.lower() for name in column_names)
     assert any("recall" in name.lower() for name in column_names)
 

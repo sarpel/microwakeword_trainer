@@ -598,7 +598,11 @@ def generate_model_report(model_path: str, stride: int = 3, mel_bins: int = 40) 
         architecture = analyze_model_architecture(model_path)
     except Exception as e:
         _log.warning("analyze_model_architecture failed for '%s': %s", model_path, e)
-        architecture = {"error": str(e), "layer_count": 0, "has_quantization": False}
+        architecture = {
+            "error": str(e),
+            "layer_count": 0,
+            "has_quantization": False,
+        }
 
     validation = validate_model_quality(model_path, stride=stride, mel_bins=mel_bins)
     performance = estimate_performance(model_path, stride=stride, mel_bins=mel_bins)

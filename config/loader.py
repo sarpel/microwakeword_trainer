@@ -23,7 +23,12 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-def scale_learning_rates(learning_rates: List[float], from_batch: int, to_batch: int, scaling_method: str = "sqrt") -> List[float]:
+def scale_learning_rates(
+    learning_rates: List[float],
+    from_batch: int,
+    to_batch: int,
+    scaling_method: str = "sqrt",
+) -> List[float]:
     """
     Scale learning rates when changing batch size.
 
@@ -51,7 +56,13 @@ def scale_learning_rates(learning_rates: List[float], from_batch: int, to_batch:
     return scaled
 
 
-def validate_lr_scaling(learning_rates: List[float], batch_size: int, base_batch_size: int = 128, base_learning_rates: List[float] | None = None, tolerance: float = 0.05) -> bool:
+def validate_lr_scaling(
+    learning_rates: List[float],
+    batch_size: int,
+    base_batch_size: int = 128,
+    base_learning_rates: List[float] | None = None,
+    tolerance: float = 0.05,
+) -> bool:
     """
     Check if learning rates match expected sqrt scaling from base.
 
@@ -196,7 +207,12 @@ class TrainingConfig:
             raise ValueError(f"training.phase_stagger_steps must be an integer >= 0, got {self.phase_stagger_steps}")
         # Auto-scale learning rates if not explicitly set
         if self.learning_rates is None:
-            self.learning_rates = scale_learning_rates(self.base_learning_rates, from_batch=self.base_batch_size, to_batch=self.batch_size, scaling_method=self.auto_lr_scale_method)
+            self.learning_rates = scale_learning_rates(
+                self.base_learning_rates,
+                from_batch=self.base_batch_size,
+                to_batch=self.batch_size,
+                scaling_method=self.auto_lr_scale_method,
+            )
         if len(self.training_steps) != len(self.learning_rates):
             raise ValueError("training.training_steps and learning_rates must have same length")
 
@@ -552,34 +568,99 @@ class AutoTuningConfig:
 
 @dataclass
 class AutoTuningExpertConfig:
-    """Expert-level micro-autotuner parameters. Most users should use defaults."""
+    """Expert-level auto-tuning parameters.
 
-    # Population
-    population_size: int = 4
-    micro_burst_steps: int = 50
-    knob_cycle: list = field(default_factory=lambda: [
-        "lr", "threshold", "temperature", "sampling_mix",
-        "weight_perturbation", "label_smoothing",
-    ])
+    Backward compatibility policy:
+    - Canonical burst fields remain ``min_burst_steps``, ``max_burst_steps``,
+      ``default_burst_steps`` (used by presets and autotuner runtime).
+    - Newer ``micro_burst_steps`` is accepted as an alias and normalized to
+      all three canonical burst fields.
+    """
+
+    # Canonical burst schema (used by presets/runtime)
+    min_burst_steps: int = 200
+    max_burst_steps: int = 25000
+    default_burst_steps: int = 750
+
+    # Learning-rate search bounds
+    min_lr: float = 1e-7
+    max_lr: float = 1e-4
+    default_lr: float = 1e-5
+
+    # Optional newer aliases/fields (accepted for compatibility)
+    population_size: Optional[int] = None
+    micro_burst_steps: Optional[int] = None
+    knob_cycle: list = field(default_factory=lambda: ["lr", "threshold", "temperature", "sampling_mix", "weight_perturbation", "label_smoothing"])
     exploit_explore_interval: int = 6
-
-    # Knob parameter ranges
     weight_perturbation_scale: float = 0.01
     label_smoothing_range: tuple = (0.0, 0.15)
     lr_range: tuple = (1e-7, 1e-4)
     hypervolume_reference: tuple = (10.0, 0.0)
-
-    # Archive
-    pareto_archive_size: int = 32
+    pareto_archive_size: Optional[int] = None
 
     def __post_init__(self):
         """Validate expert configuration."""
-        if self.population_size < 2:
-            raise ValueError(f"AutoTuningExpertConfig: population_size must be >= 2, got {self.population_size}")
-        if self.micro_burst_steps < 1:
-            raise ValueError(f"AutoTuningExpertConfig: micro_burst_steps must be >= 1, got {self.micro_burst_steps}")
-        if len(self.knob_cycle) < 1:
-            raise ValueError("AutoTuningExpertConfig: knob_cycle must have at least 1 knob")
+        # Normalize alias schema first.
+        if self.micro_burst_steps is not None:
+            if not isinstance(self.micro_burst_steps, int):
+                raise ValueError("AutoTuningExpertConfig: micro_burst_steps must be an integer")
+            if self.micro_burst_steps < 1:
+                raise ValueError("AutoTuningExpertConfig: micro_burst_steps must be >= 1")
+
+            # If legacy burst fields were explicitly set and conflict, fail clearly.
+            # Only raise if (a) at least one legacy key was explicitly provided
+            # (differs from its default) AND (b) at least one provided legacy value
+            # differs from micro_burst_steps.
+            legacy_values = (self.min_burst_steps, self.max_burst_steps, self.default_burst_steps)
+            legacy_defaults = (200, 25000, 750)
+            if any(legacy != default for legacy, default in zip(legacy_values, legacy_defaults, strict=False)) and any(v != self.micro_burst_steps for v in legacy_values):
+                raise ValueError(
+                    "auto_tuning_expert schema mismatch: 'micro_burst_steps' conflicts with "
+                    "'min_burst_steps'/'max_burst_steps'/'default_burst_steps'. "
+                    "Use either legacy burst range keys or a single matching micro_burst_steps value."
+                )
+
+            self.min_burst_steps = self.micro_burst_steps
+            self.max_burst_steps = self.micro_burst_steps
+            self.default_burst_steps = self.micro_burst_steps
+
+        if self.population_size is not None:
+            if not isinstance(self.population_size, int):
+                raise ValueError("AutoTuningExpertConfig: population_size must be an integer")
+            if self.population_size < 2:
+                raise ValueError("AutoTuningExpertConfig: population_size must be >= 2")
+
+        if self.pareto_archive_size is not None:
+            if not isinstance(self.pareto_archive_size, int):
+                raise ValueError("AutoTuningExpertConfig: pareto_archive_size must be an integer")
+            if self.pareto_archive_size < 1:
+                raise ValueError("AutoTuningExpertConfig: pareto_archive_size must be >= 1")
+
+        if not isinstance(self.min_burst_steps, int):
+            raise ValueError("AutoTuningExpertConfig: min_burst_steps must be an integer")
+        if not isinstance(self.max_burst_steps, int):
+            raise ValueError("AutoTuningExpertConfig: max_burst_steps must be an integer")
+        if not isinstance(self.default_burst_steps, int):
+            raise ValueError("AutoTuningExpertConfig: default_burst_steps must be an integer")
+
+        if self.min_burst_steps < 1:
+            raise ValueError("AutoTuningExpertConfig: min_burst_steps must be >= 1")
+        if self.max_burst_steps < self.min_burst_steps:
+            raise ValueError(f"AutoTuningExpertConfig: max_burst_steps must be >= min_burst_steps (got min_burst_steps={self.min_burst_steps}, max_burst_steps={self.max_burst_steps})")
+        if not (self.min_burst_steps <= self.default_burst_steps <= self.max_burst_steps):
+            raise ValueError(
+                "AutoTuningExpertConfig: default_burst_steps must be within "
+                f"[min_burst_steps, max_burst_steps] (got min={self.min_burst_steps}, "
+                f"default={self.default_burst_steps}, max={self.max_burst_steps})"
+            )
+
+        if self.min_lr <= 0 or self.max_lr <= 0 or self.default_lr <= 0:
+            raise ValueError("AutoTuningExpertConfig: min_lr, max_lr, and default_lr must all be > 0")
+        if self.max_lr < self.min_lr:
+            raise ValueError(f"AutoTuningExpertConfig: max_lr must be >= min_lr (got min_lr={self.min_lr}, max_lr={self.max_lr})")
+        if not (self.min_lr <= self.default_lr <= self.max_lr):
+            raise ValueError(f"AutoTuningExpertConfig: default_lr must be within [min_lr, max_lr] (got min_lr={self.min_lr}, default_lr={self.default_lr}, max_lr={self.max_lr})")
+
 
 @dataclass
 class FullConfig:
@@ -619,7 +700,14 @@ class ConfigLoader:
     """
 
     # Valid preset names
-    VALID_PRESETS = {"fast_test", "standard", "max_quality", "test", "standart", "high_quality"}
+    VALID_PRESETS = {
+        "fast_test",
+        "standard",
+        "max_quality",
+        "test",
+        "standart",
+        "high_quality",
+    }
     PRESET_ALIASES = {
         "test": "fast_test",
         "standart": "standard",
@@ -737,7 +825,11 @@ class ConfigLoader:
 
         return result
 
-    def load_and_merge(self, preset_name: str, override_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+    def load_and_merge(
+        self,
+        preset_name: str,
+        override_path: Optional[Union[str, Path]] = None,
+    ) -> Dict[str, Any]:
         """
         Load preset and optionally merge with override config.
 
@@ -882,6 +974,15 @@ class ConfigLoader:
                 filtered = {k: v for k, v in section_data.items() if k in valid_fields}
                 if len(filtered) < len(section_data):
                     unknown = set(section_data) - valid_fields
+                    if section_name == "auto_tuning_expert":
+                        supported = ", ".join(sorted(valid_fields))
+                        unknown_list = ", ".join(sorted(unknown))
+                        raise ValueError(
+                            "Config section 'auto_tuning_expert' has unsupported field(s): "
+                            f"{unknown_list}. Supported fields: {supported}. "
+                            "For burst-step tuning use min_burst_steps/max_burst_steps/default_burst_steps "
+                            "(or micro_burst_steps as alias)."
+                        )
                     logger.warning(f"Config section '{section_name}' has unknown fields (ignored): {unknown}")
                 result[section_name] = section_class(**filtered)
         full_config = FullConfig(**result)
@@ -918,10 +1019,11 @@ class ConfigLoader:
     # PRIVATE METHODS
     # =========================================================================
 
-    def _process_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def _process_config(self, config: Any) -> Dict[str, Any]:
         """Process configuration: env vars, path resolution, defaults."""
         if not isinstance(config, dict):
-            return config  # type: ignore[unreachable]
+            actual_type = type(config).__name__
+            raise ValueError(f"Invalid YAML root: expected a mapping/object at the top level, got {actual_type}.")
 
         result = {}
         for key, value in config.items():
@@ -1095,7 +1197,10 @@ def load_preset(name: str) -> Dict[str, Any]:
     return get_default_loader().load_preset(name)
 
 
-def load_full_config(preset_name: str = "standard", override_path: Optional[Union[str, Path]] = None) -> FullConfig:
+def load_full_config(
+    preset_name: str = "standard",
+    override_path: Optional[Union[str, Path]] = None,
+) -> FullConfig:
     """
     Load complete configuration as dataclass.
 

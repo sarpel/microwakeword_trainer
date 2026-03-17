@@ -308,7 +308,7 @@ Key metrics to watch:
 - Validation accuracy
 - False Acceptance per Hour (FAH)
 - False Rejection Rate (FRR)
-
+- Adaptive Evaluation Threshold (derived from target FAH)
 ### Configuration Validation
 
 Always validate config before training:
@@ -398,6 +398,8 @@ The composite `quality_score = (0.7 × operating_recall + 0.3 × AVR) × Lorentz
 
 ### Configuration
 The FAH budget comes from `evaluation.target_fah` in your config preset. A 10% tolerance (`× 1.1`) is applied to avoid rejecting epochs that are marginally over budget.
+
+Evaluation metrics (accuracy, recall, etc.) are re-computed at an **adaptive threshold** derived from the model's operating point at this target FAH.
 
 ```yaml
 # In your config preset or override:

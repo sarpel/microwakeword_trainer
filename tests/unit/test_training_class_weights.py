@@ -32,7 +32,10 @@ def test_apply_class_weights_rejects_mismatched_lengths() -> None:
     y_true = tf.constant([1, 0, 1], dtype=tf.int32)
     sample_weights = tf.constant([1.0, 1.0], dtype=tf.float32)
 
-    with pytest.raises(tf.errors.InvalidArgumentError, match="sample_weights size must match labels size"):
+    with pytest.raises(
+        tf.errors.InvalidArgumentError,
+        match="sample_weights size must match labels size",
+    ):
         trainer._apply_class_weights(
             y_true=y_true,
             sample_weights=sample_weights,

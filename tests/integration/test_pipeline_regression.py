@@ -72,7 +72,10 @@ def test_mixednet_default_residual_connections() -> None:
     init_fn: ast.FunctionDef | None = None
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == "MixedNet":
-            init_fn = next((item for item in node.body if isinstance(item, ast.FunctionDef) and item.name == "__init__"), None)
+            init_fn = next(
+                (item for item in node.body if isinstance(item, ast.FunctionDef) and item.name == "__init__"),
+                None,
+            )
             break
 
     assert init_fn is not None, "MixedNet.__init__ not found"
@@ -125,7 +128,10 @@ def test_create_okay_nabu_model_residual_connections_literal() -> None:
                     break
 
     assert target_call is not None, "Could not find MixedNet(...) call in create_okay_nabu_model"
-    residual_kw = next((kw for kw in target_call.keywords if kw.arg == "residual_connections"), None)
+    residual_kw = next(
+        (kw for kw in target_call.keywords if kw.arg == "residual_connections"),
+        None,
+    )
     assert residual_kw is not None, "Missing residual_connections keyword in create_okay_nabu_model"
 
     value = residual_kw.value
