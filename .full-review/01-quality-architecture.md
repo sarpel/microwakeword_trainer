@@ -4,97 +4,145 @@
 
 ### Critical
 
-#### CQ-C1: Double `heapq.heapreplace` Call — Data Corruption Bug
-- **File:** `src/training/mining.py`, lines 243-250
-- When the heap is full, `heapq.heapreplace` is called twice on the same `heap_entry`. The second call evicts a valid top-K entry and replaces it with a duplicate, silently corrupting the hard-negative mining results.
-- **Fix:** Remove the second `heapq.heapreplace` call.
+#### CQ-C1: Duplicate Weight Perturbation Logic in `knobs.py`
+- **File:** `src/tuning/knobs.py`, `WeightPerturbationKnob.apply()`, lines 113-144
+- The same 8-line logic block appears twice with only variable name differences (`trainable_names` vs `trainable_set`). Both blocks do identical weight perturbation.
+- **Fix:** Remove the duplicate code block (lines 133-140).
 
-#### CQ-C2: Dead Code After `return self` in `WakeWordDataset.build()`
-- **File:** `src/data/dataset.py`, lines 990-996
-- Three lines (`logger.info(...)`, `self._load_store()`, `return self`) are unreachable after an earlier `return self`. Indicates a bad merge; `_is_built = True` is only set in the live branch.
-- **Fix:** Delete lines 994-996.
+#### CQ-C2: Duplicate EMA Enable Check in `trainer.py`
+- **File:** `src/training/trainer.py`, lines 530-534
+- The EMA enable check is performed twice with identical conditionals.
+- **Fix:** Remove the second `if ema_decay is not None: self._ema_enabled = True` block.
 
-#### CQ-C3: Duplicate Calibration Computation Overwrites Correct Binary Labels
-- **File:** `src/evaluation/test_evaluator.py`, lines 334-342
-- `_compute_calibration` correctly binarizes labels then a stray docstring string literal appears mid-function, followed by a duplicate computation using raw `y_true` (which may contain label `2` for hard negatives). The second computation silently overwrites the correct Brier score and calibration curve.
-- **Fix:** Remove the stray docstring and duplicate computation (lines 340-342).
+#### CQ-C3: Duplicate Cache Check with Dead Code in `dataset.py`
+- **File:** `src/data/dataset.py`, lines 988-996
+- Duplicate comment and unreachable code after `return self`.
+- **Fix:** Remove lines 994-996.
+
+#### CQ-C4: Extensive Commented-Out Code Blocks
+- **File:** `src/training/trainer.py`, lines 2227-2237
+- Same points duplicated twice with slight variations.
+- **Fix:** Remove or consolidate duplicate comments.
 
 ### High
 
-#### CQ-H1: God-Class — `Trainer.__init__` ~550 Lines, 80+ Instance Variables
-- **File:** `src/training/trainer.py`, lines 236-548
-- The class handles training phases, evaluation metrics, TensorBoard logging, hard-negative mining, EMA, profiling, plateau LR scheduling, and async validation in a single class. Nearly impossible to unit-test in isolation.
-- **Fix:** Extract `CheckpointManager`, `PhaseScheduler`, `EvaluationOrchestrator`, `TensorBoardReporter` collaborators.
+#### CQ-H1: `Trainer` Class God Object — 2,046 Lines
+- **File:** `src/training/trainer.py`, `Trainer` class (lines 236-2282)
+- Violates Single Responsibility Principle. Handles: training loop, validation, checkpointing, TensorBoard logging, mining coordination, LR scheduling, phase management, EMA, async validation.
+- **Fix:** Extract `TrainingOrchestrator`, `MetricsTracker`, `CheckpointManager`, `LearningRateScheduler`, `MiningCoordinator`, `TrainingLogger` collaborators.
 
-#### CQ-H2: Repeated Config-Access Boilerplate in Knobs (3× duplication)
-- **File:** `src/tuning/knobs.py`, lines 48-158
-- `LRKnob`, `WeightPerturbationKnob`, `LabelSmoothingKnob` each contain identical 7-line dict-vs-object config resolution logic (~40 lines of duplication).
-- **Fix:** Extract `_get_expert_cfg(config, key, default)` onto the `Knob` base class.
+#### CQ-H2: Deeply Nested Logic in `train()` Method (7+ Levels)
+- **File:** `src/training/trainer.py`, `train()` method, lines 1942-2183
+- Excessive nesting with try/except, if/else, and nested conditionals.
+- **Fix:** Extract methods: `_fetch_batch()`, `_apply_spec_augment()`, `_execute_train_step()`, `_log_step_metrics()`, `_should_validate()`, `_run_validation()`.
 
-#### CQ-H3: Magic Number `7` Hardcoded for Sampling Mix Arms
-- **Files:** `src/tuning/orchestrator.py` lines 340-348; `src/tuning/knobs.py` line 104
-- Hardcoded 7-arm bandit with `% 7` modulus. Must stay in sync manually with no documentation.
-- **Fix:** Define mix arms as a class constant; derive modulus from `len(mix_arms)`.
+#### CQ-H3: Complex Validation Logic — 213 Lines, ~35 Cyclomatic Complexity
+- **File:** `src/training/trainer.py`, `_validate_with_model()`, lines 1386-1599
+- Multiple nested conditionals for clip ID handling, batch metadata processing, inline metrics computation.
+- **Fix:** Split into `ValidationDataCollector`, `MetricsComputer`, `ClipIDResolver`.
 
-#### CQ-H4: EMA Configuration Checked Three Times Redundantly
-- **File:** `src/training/trainer.py`, lines 526-534
-- Three separate `if ema_decay is not None:` blocks in close succession; third is a complete duplicate of the second.
-- **Fix:** Consolidate into a single conditional block.
+#### CQ-H4: `Trainer.__init__()` — 308 Lines, 80+ Instance Variables
+- **File:** `src/training/trainer.py`, lines 239-547
+- Complex configuration parsing, inline helper function definition (`_pad_or_trim`).
+- **Fix:** Use Builder pattern or dependency injection with `TrainerConfig` dataclass.
 
-#### CQ-H5: `FocusedSampler` is Dead Code
-- **File:** `src/tuning/knobs.py`, lines 161-179
-- No callers. `build_batch()` returns `None` unconditionally.
-- **Fix:** Remove the class.
+#### CQ-H5: Inconsistent Naming Conventions
+- **Files:** Throughout codebase
+- Private methods use both `_method` and `__method`
+- Boolean flags: some use `is_` prefix (`is_hard_negative`), others don't (`_bn_frozen`)
+- **Fix:** Establish naming convention: private methods use single underscore, booleans use `is_`/`has_`/`should_` prefix.
+
+#### CQ-H6: Long Export Function — 300+ Lines
+- **File:** `src/export/tflite.py`, `export_streaming_tflite()`
+- Complex quantization setup with multiple nested contexts.
+- **Fix:** Decompose into `ModelLoader.load_for_export()`, `RepresentativeDatasetBuilder.build()`, `QuantizationConfig.create()`, `TFLiteConverter.convert()`, `ExportVerifier.verify()`.
+
+#### CQ-H7: Similar Pipeline Creation Methods — 80% Code Duplication
+- **File:** `src/data/tfdata_pipeline.py`, lines 196-483
+- `create_training_pipeline()`, `create_validation_pipeline()`, `create_test_pipeline()` share identical patterns.
+- **Fix:** Extract `_create_base_pipeline()` with common logic.
+
+#### CQ-H8: Bare Exception Handling
+- **File:** `src/training/trainer.py`, line 555; `src/training/mining.py`, lines 471-479
+- Catches `Exception` without specificity, masking real issues.
+- **Fix:** Catch specific exceptions; log with context.
+
+#### CQ-H9: Silent Failures in `AsyncHardExampleMiner`
+- **File:** `src/training/mining.py`, lines 471-479
+- Returns silently without notifying caller that mining won't occur.
+- **Fix:** Return `MiningStartResult` with success/error fields.
+
+#### CQ-H10: Magic Numbers Throughout
+- **Files:** Throughout codebase
+- 101 thresholds, 0.90 target recall, 2000 score limit, 1024 cache size, 7 sampling arms — no named constants.
+- **Fix:** Define `Defaults` class with named constants and documentation.
+
+#### CQ-H11: Feature Envy in `EvaluationMetrics`
+- **File:** `src/training/trainer.py`, `EvaluationMetrics.compute_metrics()`
+- Delegates most work to `MetricsCalculator`, suggesting logic belongs there.
+- **Fix:** Move per-threshold computation to `MetricsCalculator` or merge classes.
+
+#### CQ-H12: Open/Closed Principle Violation in Knobs
+- **File:** `src/tuning/knobs.py`
+- Adding new knob requires modifying `MicroAutoTuner._make_knob()`.
+- **Fix:** Use registry pattern with decorator-based registration.
 
 ### Medium
 
-#### CQ-M1: `pipeline.py` Uses `sys.exit()` Instead of Exceptions
-- **File:** `src/pipeline.py`, lines 39-42, 69-70, 161-162, 199, 214, 488
-- Prevents programmatic composition and testing of pipeline steps.
-- **Fix:** Define `PipelineStepFailed`, `QualityGateFailed`, `VerificationFailed` exceptions; translate to `sys.exit()` only in `main()`.
+#### CQ-M1: Complex Phase Settings Logic
+- **File:** `src/training/trainer.py`, `_get_current_phase_settings()`, lines 669-727
+- Stagger logic with nested conditionals.
+- **Fix:** Create `PhaseConfiguration` dataclass with factory method.
 
-#### CQ-M2: Triple `pass` in Exception Handler
-- **File:** `src/utils/performance.py`, lines 42-45
-- Three consecutive `pass` statements with duplicated comments.
-- **Fix:** Reduce to a single `pass`.
+#### CQ-M2: `EvaluationMetrics` Mixed Responsibilities
+- **File:** `src/training/trainer.py`, lines 50-229
+- Accumulates predictions, computes metrics, maintains array and dict views.
+- **Fix:** Separate into `PredictionAccumulator` and `ThresholdMetricsComputer`.
 
-#### CQ-M3: Bare `except Exception` Swallows TF Variable Creation
-- **File:** `src/tuning/orchestrator.py`, lines 456-461
-- Label smoothing silently disabled with no warning if TF variable creation fails.
-- **Fix:** Log a warning; catch only specific exceptions.
+#### CQ-M3: Duplicate Configuration Access Patterns
+- **Files:** Throughout codebase
+- Repeated `config.get("training", {}).get("batch_size", 384)` pattern.
+- **Fix:** Create typed `TrainingConfig` dataclass with `from_dict()` factory.
 
-#### CQ-M4: `_run_burst` is 140 Lines with Deep Nesting
-- **File:** `src/tuning/orchestrator.py`, lines 285-421
-- Handles LR schedule, batch sampling, label smoothing, gradient step, heartbeat, BN freeze/unfreeze in one method.
-- **Fix:** Extract `_sample_minibatch()` and `_gradient_step()`.
+#### CQ-M4: Law of Demeter Violations
+- **File:** `src/training/trainer.py`
+- Deep attribute chains: `self.tensorboard_logger.writer`
+- **Fix:** Use Tell, Don't Ask principle; add encapsulation methods.
 
-#### CQ-M5: Hardcoded `mel_bins=40` in Three `output_signature` Calls
-- **File:** `src/data/tfdata_pipeline.py`, lines 224, 407, 458
-- **Fix:** Replace with `self.config.get("hardware", {}).get("mel_bins", 40)`.
+#### CQ-M5: Stringly-Typed Configuration
+- **Files:** Configuration handling throughout
+- Model architecture uses comma-separated strings instead of structured types.
+- **Fix:** Use `@dataclass` with parsing in `from_dict()` factory.
 
-#### CQ-M6: `batch_features_cache` Grows Unboundedly During Mining
-- **File:** `src/training/mining.py`, lines 205-253
-- Cache defers eviction but could consume gigabytes for large datasets.
-- **Fix:** After heap loop, evict entries not referenced by remaining heap entries.
+#### CQ-M6: Missing Validation in `KnobCycle`
+- **File:** `src/tuning/knobs.py`, lines 29-42
+- No validation that knob names correspond to existing knobs.
+- **Fix:** Validate against `VALID_KNOBS` set at initialization.
 
-#### CQ-M7: `_load_data` Uses Python Loop for All Samples
-- **File:** `src/tuning/orchestrator.py`, lines 120-155
-- Individual `ds[i]` calls in a Python loop; very slow for 50k+ samples.
-- **Fix:** Use vectorized batch loading.
+#### CQ-M7: TODO/FIXME Comments Without Tracking
+- **Files:** Throughout codebase
+- Scattered TODOs without issue references.
+- **Fix:** Create GitHub issues and reference in comments; or use `TODO.md`.
 
-#### CQ-M8: Duplicate stderr-Suppression Context Managers
-- **File:** `src/export/tflite.py`, lines 20-38 and 157-177
-- Two nearly identical context managers for redirecting FD 2.
-- **Fix:** Consolidate into a single utility function.
+#### CQ-M8: Type Hint Inconsistencies
+- **Files:** Throughout codebase
+- Mixed old-style (`Optional`, `List`) and new-style (`|`, `list`) type hints.
+- **Fix:** Standardize on Python 3.10+ syntax.
+
+#### CQ-M9: Unused Imports
+- **Files:** Various modules
+- Several files have potentially unused imports.
+- **Fix:** Run `ruff check --select F401` to identify and remove.
+
+#### CQ-M10: Unclear Error Messages
+- **Files:** Various locations
+- Inconsistent error message quality.
+- **Fix:** Ensure all errors include: what went wrong, received value, expected value, how to fix.
 
 ### Low
 
-- **CQ-L1:** Mixed old/new type annotation styles across modules (`Dict` vs `dict`, `Optional` vs `X | None`)
-- **CQ-L2:** f-strings in logger calls — interpolation overhead when level is disabled
-- **CQ-L3:** `EvaluationMetrics.__init__` docstring placed after first assignment (not a real docstring)
-- **CQ-L4:** `_pad_or_trim` defined as closure inside `__init__` — untestable in isolation
-- **CQ-L5:** `_file_content_hash` uses SHA-1; `compute_file_hash` uses MD5 — inconsistent with SHA-256 used elsewhere
-- **CQ-L6:** `EvaluationMetrics.update()` syncs dict views in Python loop over 101 cutoffs, partially negating vectorization
+- **CQ-L1:** Mutable default arguments pattern — verify none exist
+- **CQ-L2:** Inline helper function `_pad_or_trim` defined in `__init__` — untestable in isolation
 
 ---
 
@@ -102,72 +150,98 @@
 
 ### Critical
 
-#### AR-C1: Untyped `dict[str, Any]` Configuration Threaded Through Entire Codebase
-- **Files:** `src/training/trainer.py`, `src/tuning/orchestrator.py`, `src/data/tfdata_pipeline.py`, `src/model/architecture.py`, and all consumers
-- Every module re-extracts config via `.get("key", default)`, duplicating knowledge of keys and defaults. No central schema. A typo in any key or a mismatched default between modules produces a silently incorrect model.
-- **Constitution risk:** `mel_bins=40` and `window_step_ms=10` are mandated constants, but each module independently defaults them via `.get()` — a config override could silently produce incompatible models.
-- **Fix:** Define a typed `TrainingConfig` schema (dataclasses or Pydantic). Create a single `load_config()` that validates YAML and returns typed objects. Enforce constitution constants via `Final` annotations.
+#### AR-C1: `Trainer` Class God Object
+- **File:** `src/training/trainer.py`, `Trainer` class
+- 2,046 lines handling: training loop, metrics, checkpointing, logging, mining, LR scheduling, phase management, EMA, async validation.
+- **Fix:** Decompose into focused collaborators: `TrainingLoop`, `MetricsTracker`, `CheckpointManager`, `TensorBoardLogger`, `HardNegativeMiner`, `LearningRateScheduler`.
+
+#### AR-C2: Implicit TensorFlow Dependencies
+- **Files:** Throughout codebase
+- TensorFlow imported at module level, causing slow imports and test isolation issues.
+- **Fix:** Use lazy imports for heavy dependencies.
+
+#### AR-C3: No Repository Pattern for Data Access
+- **Files:** `src/data/dataset.py`, `src/data/tfdata_pipeline.py`
+- Data access scattered across: `WakeWordDataset`, `RaggedMmap`, `partition_data()`, `OptimizedDataPipeline`.
+- **Fix:** Introduce `DatasetRepository` abstraction.
 
 ### High
 
-#### AR-H1: Hardware Constants Computed Independently in 4+ Places
-- **Files:** `src/tuning/orchestrator.py` line 104, `src/training/trainer.py` line 362, `src/data/tfdata_pipeline.py` line 90, `src/model/architecture.py` (implicitly)
-- `max_time_frames = clip_duration_ms / window_step_ms` is derived independently by each consumer. A discrepancy would produce incompatible model shapes silently.
-- **Fix:** Compute once in a `HardwareConstants` frozen dataclass; propagate through typed config.
+#### AR-H1: Knob Configuration Duplication
+- **File:** `src/tuning/knobs.py`
+- Each knob duplicates the same 7-line dict-vs-object config resolution logic.
+- **Fix:** Extract `ConfigAccessor` utility with `_get_nested()` method.
 
-#### AR-H2: ARCHITECTURAL_CONSTITUTION Enforcement is Entirely Trust-Based
-- **Files:** `ARCHITECTURAL_CONSTITUTION.md` vs all code
-- No runtime assertions, compile-time checks, or focused integration tests verify that exported models comply with the prescribed op set, streaming state shapes, audio frontend constants, or quantization ranges. Violations propagate silently until final `verify_esphome.py`.
-- **Fix:** Add `constitution_check()` assertions in `build_model()`, at export boundaries, and in CI.
+#### AR-H2: Orchestrator Depends on Concrete Implementations
+- **File:** `src/tuning/orchestrator.py`
+- `MicroAutoTuner._make_knob()` directly instantiates concrete knob classes.
+- **Fix:** Use registry pattern with decorator-based registration.
 
-#### AR-H3: Monolithic `Trainer` Class (duplicates CQ-H1 from architecture perspective)
-- **File:** `src/training/trainer.py`
-- Direct dependency on 12+ internal modules; training loop, evaluation, checkpointing, TensorBoard, and mining are all entangled.
+#### AR-H3: Inconsistent Return Types
+- **File:** `src/tuning/orchestrator.py`, `_evaluate_candidate()`
+- Need for `_ensure_tune_metrics()` indicates API inconsistency.
+- **Fix:** Standardize on `TuneMetrics` as universal metrics exchange format.
+
+#### AR-H4: Dataset Partitioning Logic Complexity
+- **File:** `src/tuning/population.py`, `partition_data()`
+- 150+ lines with multiple strategies, nested conditionals, hardcoded fractions.
+- **Fix:** Extract `DataPartitioner` class with `PartitionStrategy` pattern.
+
+#### AR-H5: No Factory Pattern for Model Creation
+- **Files:** `src/model/architecture.py`, `src/training/trainer.py`, `src/tuning/orchestrator.py`
+- Model creation uses single `build_model()` function with many conditionals; duplicated in multiple places.
+- **Fix:** Create `ModelFactory` with registry pattern.
+
+#### AR-H6: Mixed Concerns in Data Pipeline
+- **File:** `src/data/tfdata_pipeline.py`
+- `OptimizedDataPipeline` mixes cache management, generator factory, SpecAugment integration, mixed precision casting.
+- **Fix:** Split into `CacheManager`, `GeneratorFactory`, `DataPipeline`.
 
 ### Medium
 
-#### AR-M1: `pipeline.py` Orchestrates via Subprocess Instead of Python API
+#### AR-M1: Pipeline Script Lacks Abstraction
 - **File:** `src/pipeline.py`
-- Each step invokes `sys.executable -m ...`, losing type safety, error detail, and adding TF re-import overhead per step. Config passes through CLI args and JSON stdout.
-- **Fix:** Import and invoke `Trainer.train()`, `MicroAutoTuner.tune()`, `export_model()` directly.
+- Procedural orchestration with subprocess calls.
+- **Fix:** Define `PipelineStep` interface; implement step classes.
 
-#### AR-M2: Dual Config Access Patterns in Tuning (same as CQ-H2)
-- `_get_cfg()` helper in orchestrator vs. inline isinstance chains in each knob.
+#### AR-M2: Config Access Patterns Inconsistent
+- **Files:** Throughout codebase
+- Pattern 1: `config["training"]["learning_rate"]`
+- Pattern 2: `config.get("training", {}).get("learning_rate", 0.001)`
+- Pattern 3: `getattr(config, "learning_rate", 0.001)`
+- **Fix:** Standardize on single `Config` class with typed accessors.
 
-#### AR-M3: `Knob.apply()` Parameters Are All `Any` — Candidate Attributes Are Monkey-Patched
-- **File:** `src/tuning/knobs.py`, line 19
-- Knobs access `candidate._sampled_lr`, `candidate._sampling_mix_arm`, etc. — private attributes set by convention, not declared in `Candidate`.
-- **Fix:** Define a `CandidateState` protocol or extend `Candidate` dataclass to declare all knob-writable attributes.
-
-#### AR-M4: `dataset.py` Conflates Three Abstraction Layers
+#### AR-M3: Dataset Module Cross-Cutting Concerns
 - **File:** `src/data/dataset.py`
-- `RaggedMmap` (storage), `FeatureStore` (feature management), `WakeWordDataset` (dataset access) in one file.
-- **Fix:** Split into `ragged_mmap.py`, `feature_store.py`, keep `dataset.py` for `WakeWordDataset`.
+- `WakeWordDataset` has dependencies on ingestion, features, augmentation, quality.
+- **Fix:** Apply dependency inversion; inject dependencies rather than direct imports.
 
-#### AR-M5: Dual SpecAugment Backends Create Maintenance Risk
-- **Files:** `src/data/spec_augment_gpu.py` (CuPy), `src/data/spec_augment_tf.py` (TF)
-- `tfdata_pipeline.py` uses TF backend; `trainer.py` imports GPU backend. `create_training_pipeline_with_spec_augment()` mutates `self.spec_augment_config["enabled"]` (lines 361-370) — thread-safety hazard.
-- **Fix:** Pass SpecAugment config as an immutable parameter; unify backend selection.
+#### AR-M4: Candidate State Serialization (Pickle)
+- **File:** `src/tuning/population.py`
+- Uses `pickle` for weight serialization — not version-safe, no compression, no integrity verification.
+- **Fix:** Use NumPy's `.npz` format with `allow_pickle=False`.
 
-#### AR-M6: Model Construction Duplicated in Trainer and Auto-Tuner
-- **Files:** `src/training/trainer.py`, `src/tuning/orchestrator.py` lines 161-190
-- Both independently extract hardware/model parameters and call `build_model()`.
-- **Fix:** Introduce a `ModelFactory` that centralizes model construction.
+#### AR-M5: Missing Observer Pattern for Training Events
+- **File:** `src/training/trainer.py`
+- Direct calls to logging and checkpointing in training loop.
+- **Fix:** Use event bus pattern: `TrainingEventBus.subscribe("step_complete", handler)`.
 
-#### AR-M7: No Config Loader Module
-- **File:** `src/config/__init__.py` (empty except for version string)
-- YAML loading logic is inlined in `tflite.py` and presumably in the training entrypoint.
-- **Fix:** Create `src/config/loader.py` with `load_config(preset_or_path, override_path)`.
+#### AR-M6: Mixed Error Handling Strategies
+- **Files:** Throughout codebase
+- Some raise exceptions, others silently return defaults, others log warnings.
+- **Fix:** Define error handling policy with custom exception hierarchy.
 
-#### AR-M8: Hardcoded `40` in TensorSpec (duplicates CQ-M5 from architecture perspective)
+#### AR-M7: Inconsistent Naming Conventions
+- **Files:** Throughout codebase
+- `FAH` vs `fah` vs `false_alarms_per_hour`
+- `AUC_PR` vs `auc_pr` vs `average_precision`
+- `step` vs `iteration` vs `epoch`
+- **Fix:** Create project glossary; enforce via code review.
 
 ### Low
 
-- **AR-L1:** Inconsistent lazy TF imports — `orchestrator.py` lazy, `trainer.py` eager; document or unify
+- **AR-L1:** Lazy TF imports in some files but not others — document or unify
 - **AR-L2:** `ThresholdOptimizer.optimize()` annotated as bare `tuple` instead of `tuple[float, int, TuneMetrics]`
-- **AR-L3:** `ErrorMemory` instantiated but never used (`orchestrator.py` line 450-452)
-- **AR-L4:** `build_model()` `num_classes=2` parameter is unused — model always outputs `Dense(1)`
-- **AR-L5:** Mixed `print()` and `logging` — `pipeline.py` and parts of `tflite.py` use `print()`
 
 ---
 
@@ -175,11 +249,11 @@
 
 The following findings are most likely to have security or performance implications:
 
-1. **Unbounded `batch_features_cache`** (CQ-M6) — memory exhaustion risk during large mining runs
-2. **Slow Python loop in `_load_data`** (CQ-M7) — CPU-bound bottleneck before every tuning run
-3. **Subprocess pipeline** (AR-M1) — multiple TF re-imports add significant latency; each subprocess re-initializes GPU
-4. **`_run_burst` 140-line method** (CQ-M4) — gradient computation and sampling interleaved; hard to audit for correctness
-5. **Untyped config system** (AR-C1) — any config key typo silently uses a wrong default, potentially producing a model that passes unit tests but fails on-device
+1. **Implicit TensorFlow Dependencies** (AR-C2) — slow imports, memory overhead, test isolation issues
+2. **Pickle Serialization in Population Module** (AR-M4) — version compatibility, potential security issues
+3. **No Repository Pattern** (AR-C3) — makes data access auditing difficult
+4. **Mixed Error Handling** (AR-M6) — may mask error conditions affecting stability
+5. **God Object Trainer** (AR-C1, CQ-H1) — complexity makes security audit difficult
 
 ---
 
@@ -187,6 +261,23 @@ The following findings are most likely to have security or performance implicati
 
 | Category | Critical | High | Medium | Low | Total |
 |----------|----------|------|--------|-----|-------|
-| Code Quality | 3 | 5 | 8 | 6 | 22 |
-| Architecture | 1 | 3 | 8 | 5 | 17 |
-| **Total** | **4** | **8** | **16** | **11** | **39** |
+| Code Quality | 4 | 12 | 10 | 2 | 28 |
+| Architecture | 3 | 6 | 7 | 2 | 18 |
+| **Total** | **7** | **18** | **17** | **4** | **46** |
+
+---
+
+## Overall Assessment
+
+**Code Quality Grade:** C+
+- Significant duplication (4 critical issues)
+- God object anti-pattern in Trainer
+- Deep nesting and high cyclomatic complexity
+- Inconsistent naming and type hints
+
+**Architecture Grade:** B-
+- Good high-level module separation
+- Well-designed streaming abstraction
+- Good use of Strategy pattern for knobs
+- Missing Repository pattern and Factory pattern
+- Tight coupling in tuning orchestration

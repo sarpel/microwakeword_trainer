@@ -7,16 +7,10 @@
     "strict_mode": false,
     "framework": "TensorFlow/Python ML training pipeline"
   },
-  "current_step": "checkpoint-1",
+  "current_step": 2,
   "current_phase": 2,
-  "completed_steps": [0, "1A", "1B", "2A", "2B"],
-  "files_created": [
-    "00-scope.md",
-    "01a-code-quality-raw.md",
-    "01-quality-architecture.md",
-    "02a-security-raw.md",
-    "02-security-performance.md"
-  ],
-  "started_at": "2026-03-17T00:00:00Z",
-  "last_updated": "2026-03-17T00:10:00Z"
+  "completed_steps": [0, "1A", "1B"],
+  "files_created": ["00-scope.md", "01a-code-quality-raw.md", "01b-architecture-raw.md", "01-quality-architecture.md"],
+  "started_at": "2026-03-18T00:00:00Z",
+  "last_updated": "2026-03-18T00:05:00Z"
 }

@@ -2,38 +2,78 @@
 
 ## Target
 
-Full codebase review of `microwakeword_trainer` — a Python/TensorFlow ML training pipeline for microcontroller wake-word detection models. The project trains TFLite models deployable on ESPHome/ESP32 microcontrollers.
+Comprehensive review of the microwakeword_trainer codebase - a TensorFlow-based wake word training pipeline with auto-tuning capabilities.
 
 ## Files
 
-### Core Source (src/)
-- src/pipeline.py
-- src/data/dataset.py, augmentation.py, clustering.py, features.py, ingestion.py, preprocessing.py, quality.py, spec_augment_gpu.py, spec_augment_tf.py, tfdata_pipeline.py
-- src/evaluation/calibration.py, fah_estimator.py, metrics.py, test_evaluator.py
-- src/export/manifest.py, model_analyzer.py, tflite.py, tflite_utils.py, verification.py
-- src/model/architecture.py, streaming.py
-- src/training/augmentation.py, mining.py, performance_optimizer.py, profiler.py, rich_logger.py, tensorboard_logger.py, trainer.py
-- src/tuning/__init__.py, cli.py, dashboard.py, knobs.py, metrics.py, orchestrator.py, population.py
-- src/utils/logging_config.py, optional_deps.py, performance.py, performance_monitor.py, seed.py, terminal_logger.py
-- src/tools/cluster_analyze.py, cluster_apply.py, help_panel.py
+### Core Source (54 Python files)
+**Training Pipeline:**
+- `src/training/trainer.py` - Main training loop, checkpointing, evaluation
+- `src/training/mining.py` - Hard-negative mining implementation
+- `src/training/profiler.py` - Training performance profiling
+- `src/training/tensorboard_logger.py` - TensorBoard integration
+- `src/training/rich_logger.py` - Rich terminal logging
+- `src/training/augmentation.py` - Training data augmentation
+- `src/training/performance_optimizer.py` - Performance optimizations
 
-### Scripts (scripts/)
-- evaluate_model.py, generate_test_dataset.py, verify_esphome.py, count_audio_hours.py (and ~15 others)
+**Auto-Tuning:**
+- `src/tuning/orchestrator.py` - MicroAutoTuner main orchestration
+- `src/tuning/knobs.py` - Hyperparameter knobs (LR, weight perturbation, label smoothing)
+- `src/tuning/population.py` - Candidate population management
+- `src/tuning/metrics.py` - Threshold optimization
+- `src/tuning/dashboard.py` - Tuning dashboard
+- `src/tuning/cli.py` - Tuning CLI interface
 
-### Tests (tests/)
-- ~45 test files across unit/ and integration/
+**Data Pipeline:**
+- `src/data/dataset.py` - WakeWordDataset, RaggedMmap, FeatureStore
+- `src/data/tfdata_pipeline.py` - TensorFlow data pipeline
+- `src/data/clustering.py` - Audio clustering with embeddings
+- `src/data/ingestion.py` - Data ingestion utilities
+- `src/data/features.py` - Feature extraction
+- `src/data/preprocessing.py` - Audio preprocessing
+- `src/data/augmentation.py` - Data augmentation
+- `src/data/quality.py` - Data quality checks
+- `src/data/spec_augment_tf.py` - TensorFlow SpecAugment
+- `src/data/spec_augment_gpu.py` - CuPy SpecAugment (GPU)
 
-### Config & Docs
-- pyproject.toml, requirements*.txt, setup.py
-- ARCHITECTURAL_CONSTITUTION.md, MASTER_GUIDE.md, README.md, AGENTS.md
-- specs/, docs/
+**Model:**
+- `src/model/architecture.py` - CNN model architecture
+- `src/model/streaming.py` - Streaming inference support
+
+**Evaluation:**
+- `src/evaluation/test_evaluator.py` - Test evaluation logic
+- `src/evaluation/metrics.py` - Metric calculations
+- `src/evaluation/fah_estimator.py` - False Accepts per Hour
+- `src/evaluation/calibration.py` - Model calibration
+
+**Export:**
+- `src/export/tflite.py` - TFLite model export
+- `src/export/tflite_utils.py` - TFLite utilities
+- `src/export/verification.py` - Model verification
+- `src/export/model_analyzer.py` - Model analysis
+- `src/export/manifest.py` - Export manifest
+
+**Orchestration:**
+- `src/pipeline.py` - End-to-end pipeline orchestration
+
+**Utilities:**
+- `src/utils/performance.py` - GPU/performance setup
+- `src/utils/logging_config.py` - Logging configuration
+- `src/utils/terminal_logger.py` - Terminal logging
+- `src/utils/seed.py` - Random seed management
+- `src/utils/optional_deps.py` - Optional dependency handling
+
+**Tools:**
+- `src/tools/cluster_apply.py` - Cluster operations
+- `src/tools/cluster_analyze.py` - Cluster analysis
+- `src/tools/help_panel.py` - Help display
 
 ## Flags
 
-- Security Focus: no
-- Performance Critical: no
-- Strict Mode: no
-- Framework: TensorFlow/Python ML training pipeline
+- Security Focus: No
+- Performance Critical: Yes (ML training pipeline)
+- Strict Mode: No
+- Framework: TensorFlow 2.x, Python 3.10+
 
 ## Review Phases
 

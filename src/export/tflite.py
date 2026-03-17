@@ -349,8 +349,18 @@ class StreamingExportModel(tf.keras.Model):
         # Export model call() expects list[dict] with depthwise/pointwise/bn/relu/residual* keys
         self.mixconv_layers = [cfg["export_layers"] for cfg in core_layers["blocks"]]
 
-        # Output dense layer
-        self.dense = core_layers["dense"]
+        # Output dense layer — create WITHOUT sigmoid so we can insert logit
+        # clipping before the activation. This constrains the pre-sigmoid logit
+        # range to [-6, +6], forcing the INT8 quantizer to allocate its 256 levels
+        # over a 12-unit span (scale ~0.047) instead of the raw logit range which
+        # can span [-64, +28] (scale ~0.36). The critical decision boundary at
+        # probability 0.90-0.97 gets ~28 quantization levels instead of ~3.
+        # Mathematically lossless: sigmoid(-6)=0.0025, sigmoid(6)=0.9975.
+        self._original_dense = core_layers["dense"]  # Keep reference for weight loading
+        self.dense_no_sigmoid = tf.keras.layers.Dense(
+            1, activation=None, name="layers_dense_linear", dtype=tf.float32
+        )
+        self._logit_clip = 6.0  # Clip logits to [-6, +6] before sigmoid
 
         # State variables will be created in build()
         self.state_vars: list[tf.Variable] = []
@@ -610,8 +620,10 @@ class StreamingExportModel(tf.keras.Model):
         # Flatten full concat: [1, temporal_frames, 1, 64] → [1, temporal_frames*64]
         x = tf.reshape(x, [1, -1])
 
-        # Dense output
-        return self.dense(x)
+        # Dense output with logit clipping for quantization-friendly output
+        logits = self.dense_no_sigmoid(x)
+        logits = tf.clip_by_value(logits, -self._logit_clip, self._logit_clip)
+        return tf.sigmoid(logits)
 
 
 # =============================================================================
@@ -1273,6 +1285,7 @@ def export_streaming_tflite(
             # ASSIGN_VARIABLE. VAR_HANDLE resource handles themselves are not
             # quantized payload data.
             converter._experimental_variable_quantization = True
+            converter.experimental_new_quantizer = True
             converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
             converter.inference_input_type = tf.int8
             converter.inference_output_type = tf.uint8
@@ -1606,20 +1619,16 @@ def main():
                     "mel_bins": yaml_config.get("hardware", {}).get("mel_bins", 40),
                 }
                 export_cfg = yaml_config.get("export", {})
-                config["export"] = {
-                    "wake_word": export_cfg.get("wake_word", args.model_name),
-                    "author": export_cfg.get("author", "Sarpel GURAY"),
-                    "website": export_cfg.get(
-                        "website",
-                        "https://github.com/sarpel/microwakeword_trainer",
-                    ),
-                    "trained_languages": export_cfg.get("trained_languages", ["en"]),
-                    "probability_cutoff": export_cfg.get("probability_cutoff", 0.97),
-                    "sliding_window_size": export_cfg.get("sliding_window_size", 5),
-                    "tensor_arena_size": export_cfg.get("tensor_arena_size"),
-                    "minimum_esphome_version": export_cfg.get("minimum_esphome_version", "2024.7.0"),
-                    "arena_size_margin": export_cfg.get("arena_size_margin", 1.3),
-                }
+                config["export"] = dict(export_cfg)  # Pass ALL export config keys
+                # Apply defaults for mandatory keys if missing
+                config["export"].setdefault("wake_word", args.model_name)
+                config["export"].setdefault("author", "Sarpel GURAY")
+                config["export"].setdefault("website", "https://github.com/sarpel/microwakeword_trainer")
+                config["export"].setdefault("trained_languages", ["en"])
+                config["export"].setdefault("probability_cutoff", 0.97)
+                config["export"].setdefault("sliding_window_size", 5)
+                config["export"].setdefault("minimum_esphome_version", "2024.7.0")
+                config["export"].setdefault("arena_size_margin", 1.3)
                 config["hardware"] = {
                     "window_step_ms": yaml_config.get("hardware", {}).get("window_step_ms", 10),
                 }
