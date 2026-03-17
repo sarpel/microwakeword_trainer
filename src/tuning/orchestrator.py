@@ -88,6 +88,14 @@ class MicroAutoTuner:
             dropout_rate=model_cfg.get("dropout_rate", 0.08),
             l2_regularization=model_cfg.get("l2_regularization", 0.00003),
         )
+        # Build the model by running a dummy input through it before loading weights.
+        # This prevents the "model has not yet been built" error when loading weights
+        # from checkpoints that expect a built model.
+        import tensorflow as tf
+
+        dummy_input = tf.zeros((1, num_time_frames, mel_bins), dtype=tf.float32)
+        _ = model(dummy_input, training=False)
+
         model.load_weights(str(self.checkpoint_path))
         return model
 
@@ -185,6 +193,7 @@ class MicroAutoTuner:
             "final_loss": float(losses[-1]) if losses else 0.0,
             "mean_loss": float(np.mean(losses)) if losses else 0.0,
         }
+
     def tune(self) -> dict:
         """Main orchestration loop.
 
@@ -231,6 +240,8 @@ class MicroAutoTuner:
 
         for iteration in range(max_iterations):
             current_knob_name = knob_cycle.current()
+            # Instantiate the knob object for the current knob name
+            knob = self._make_knob(current_knob_name)
             for candidate in population.candidates:
                 candidate.restore_state(model)
                 knob.apply(model, candidate, self.auto_tuning_config)

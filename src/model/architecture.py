@@ -148,6 +148,9 @@ class MixConvBlock(tf.keras.layers.Layer):
     ):
         super().__init__(**kwargs)
         self.kernel_sizes = kernel_sizes if isinstance(kernel_sizes, list) else [kernel_sizes]
+        self.filters = filters
+        self._mode = mode
+
     @property
     def mode(self):
         return getattr(self, "_mode", Modes.NON_STREAM_INFERENCE)
@@ -160,7 +163,6 @@ class MixConvBlock(tf.keras.layers.Layer):
             for conv in self.depthwise_convs:
                 if hasattr(conv, "mode"):
                     conv.mode = value
-        self.mode = mode
         # Ring buffer length is max kernel size - 1
         self.ring_buffer_length = max(self.kernel_sizes) - 1
 
