@@ -132,7 +132,7 @@ class TestESPHomeCompatibilityScripts:
         content = agents_md.read_text()
 
         # Should mention ESPHome op validation
-        assert "ESPHome" in content or "op" in content.lower(), "AGENTS.md should document ESPHome operation validation"
+        assert "ESPHome" in content and ("operation" in content.lower() or "allowed" in content.lower() or "whitelist" in content.lower()), "AGENTS.md should document ESPHome operation validation"
 
     def test_verify_esphome_has_strict_mode(self):
         """Test that verify_esphome.py has strict validation mode."""

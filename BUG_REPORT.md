@@ -10,10 +10,10 @@
 
 | Severity | Count | Status |
 |----------|-------|--------|
-| **CRITICAL** | 6 | Verified |
+| **CRITICAL** | 6 | Partially Verified (4/6) |
 | **HIGH** | 6 | Verified |
 | **MEDIUM** | 6 | Verified |
-| **Total** | 18 | 100% verified |
+| **Total** | 18 | 16 verified (2 critical pending) |
 
 All findings are functional bugs that can cause crashes, broken features, or silently incorrect results.
 
@@ -117,6 +117,16 @@ All findings are functional bugs that can cause crashes, broken features, or sil
 4. **SpecAugment GPU boolean indexing** ✓
    - Tested: `mask_2d[:, None, :]` with `batch_gpu[B,T,F]`
    - Result: `IndexError: boolean index did not match indexed array along dimension 2`
+
+5. **Causal padding wrong side in dynamic-rank path** - Not tested
+   - Bug: Causal padding is applied on right in dynamic-rank path but on left in static-rank path
+   - Note: Manual code review required to verify this issue
+
+6. **Validation metadata fragility** - Not tested
+   - Bug: Validation hard-requires 3-tuples, but tf.data validation path yields `metadata=None`
+   - Note: Requires testing with tf.data validation path to verify
+
+**Note**: Only 4 of the 6 critical bugs were tested through live verification. Bugs #5 (Causal padding) and #6 (Validation metadata fragility) require additional testing or manual code review.
 
 ---
 

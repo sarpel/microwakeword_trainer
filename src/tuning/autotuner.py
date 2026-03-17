@@ -1066,12 +1066,13 @@ class ThresholdOptimizer:
                 best_threshold = t
 
         # INT8 quantization margin: shift by ±1/255
+        base_metrics = self._compute_metrics_at_threshold(y_true, y_scores, best_threshold, ambient_hours)
         uint8_val = self._float_to_uint8(best_threshold)
         # Prefer slightly higher threshold for INT8 safety margin
         adjusted = (uint8_val + 1) / 255.0
         if adjusted <= 1.0:
             test_metrics = self._compute_metrics_at_threshold(y_true, y_scores, adjusted, ambient_hours)
-            if test_metrics.fah <= target_fah:
+            if test_metrics.fah <= target_fah and test_metrics.recall >= base_metrics.recall:
                 best_threshold = adjusted
 
         return float(best_threshold)
@@ -1621,14 +1622,29 @@ class AutoTuner:
             raise ValueError(f"Need at least 2 search samples for train/eval split, got {len(search_idx)}")
 
         # Ensure both partitions have at least 1 sample
-        n_search_eval = max(
+        target_n_search_eval = max(
             1,
             min(
                 len(search_idx) - 1,
                 int(round(len(search_idx) * self.search_eval_fraction)),
             ),
         )
-        n_search_train = len(search_idx) - n_search_eval
+        target_n_search_train = len(search_idx) - target_n_search_eval
+
+        def _random_subsplit_from_indices(current_search_idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            n_current_search = len(current_search_idx)
+            if n_current_search < 2:
+                raise ValueError(f"Need at least 2 search samples for train/eval split, got {n_current_search}")
+            n_current_eval = max(
+                1,
+                min(
+                    n_current_search - 1,
+                    int(round(n_current_search * self.search_eval_fraction)),
+                ),
+            )
+            n_current_train = n_current_search - n_current_eval
+            perm = rng.permutation(n_current_search)
+            return current_search_idx[perm[:n_current_train]], current_search_idx[perm[n_current_train:]]
 
         if use_group_partition and group_ids is not None:
             # Group-aware sub-split of search partition
@@ -1642,7 +1658,7 @@ class AutoTuner:
             search_groups.sort(key=lambda g: len(search_group_to_indices[g]), reverse=True)
 
             search_bins: dict[str, list[int]] = {"train": [], "eval": []}
-            search_targets = {"train": n_search_train, "eval": n_search_eval}
+            search_targets = {"train": target_n_search_train, "eval": target_n_search_eval}
 
             for gid in search_groups:
                 gidx = search_group_to_indices[gid]
@@ -1658,13 +1674,9 @@ class AutoTuner:
 
             if len(search_train_idx) == 0 or len(search_eval_idx) == 0:
                 self.file_logger.warning("Group-aware search sub-split created empty bin; falling back to random")
-                perm = rng.permutation(len(search_idx))
-                search_train_idx = search_idx[perm[:n_search_train]]
-                search_eval_idx = search_idx[perm[n_search_train:]]
+                search_train_idx, search_eval_idx = _random_subsplit_from_indices(search_idx)
         else:
-            perm = rng.permutation(len(search_idx))
-            search_train_idx = search_idx[perm[:n_search_train]]
-            search_eval_idx = search_idx[perm[n_search_train:]]
+            search_train_idx, search_eval_idx = _random_subsplit_from_indices(search_idx)
 
         n_cal = len(cal_idx)
         n_search_train = len(search_train_idx)

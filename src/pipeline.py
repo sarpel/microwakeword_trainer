@@ -64,11 +64,18 @@ def step_train(config: str, override: str | None) -> Path:
     best = checkpoint_dir / "best_weights.weights.h5"
     if not best.exists():
         # Fallback: find the latest checkpoint (support both .weights.h5 and .ckpt formats)
-        candidates = sorted(checkpoint_dir.glob("*.weights.h5")) + sorted(checkpoint_dir.glob("*.ckpt.index"))
+        candidates = list(checkpoint_dir.glob("*.weights.h5")) + list(checkpoint_dir.glob("*.ckpt.index"))
         if not candidates:
             print(f"✗ No checkpoint found in {checkpoint_dir}")
             sys.exit(1)
-        best = candidates[-1].parent / candidates[-1].stem.replace(".index", "") if candidates[-1].suffix == ".index" else candidates[-1]
+        # Sort by modification time to get the globally newest file
+        candidates = sorted(candidates, key=lambda p: p.stat().st_mtime)
+        latest = candidates[-1]
+        # Handle .ckpt.index files by extracting the actual checkpoint name
+        if latest.suffix == ".index":
+            best = latest.parent / latest.stem
+        else:
+            best = latest
     print(f"  Checkpoint: {best}")
     return best
 
@@ -103,11 +110,12 @@ def step_autotune(
     _run(cmd, "Auto-tuning model")
 
     # Find tuned checkpoint - AutoTuner writes under output_dir/checkpoints/
-    # so search recursively and support both .weights.h5 and .ckpt formats.
+    # so search recursively and support both .weights.h5 and TensorFlow .ckpt formats.
     candidates = sorted(
         [
             *output_dir.rglob("*.weights.h5"),
-            *output_dir.rglob("*.ckpt"),
+            *output_dir.rglob("*.ckpt.index"),
+            *output_dir.rglob("*.ckpt.data-*-of-*"),
             *output_dir.rglob("*.h5"),
         ],
         key=lambda p: p.stat().st_mtime,

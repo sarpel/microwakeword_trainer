@@ -47,10 +47,10 @@ Config → Trainer.__init__() → _build_model() → train()
 Two-stage strategy:
 1. **Stage 1 (warm-up)**: Saves by PR-AUC until FAH budget first met
 2. **Stage 2 (operational)**: Saves by recall@target_fah when FAH ≤ target
-Two-stage strategy:
-1. **Stage 1 (warm-up)**: Saves by PR-AUC until FAH budget first met
-2. **Stage 2 (operational)**: Saves by recall@target_fah when FAH ≤ target
-3. **Adaptive Thresholding**: Evaluation metrics are re-computed at an optimized threshold for target FAH during validation.
+
+## Adaptive Thresholding
+
+Evaluation metrics are re-computed at an optimized threshold for target FAH during validation.
 
 ## EMA Weight Management
 
@@ -60,12 +60,9 @@ When EMA is enabled (`training.ema_decay` configured, default in `max_quality.ya
 
 | Checkpoint File | EMA Weights? | Purpose |
 |---------------|-------------|---------|
-| Checkpoint File | EMA Weights? | Purpose |
-|---------------|-------------|---------|
 | `best_weights.weights.h5` | ✅ Yes | **Export/inference (preferred)** — validated best EMA weights |
 | `final_weights.weights.h5` | ✅ Yes | End of training fallback — EMA weights but not validated |
-| `best_weights.weights.h5 (or training checkpoint)` | ✅ Yes | Best model during training, resume training |
-| `checkpoint_step_NNNN.weights.h5` | ✅ Yes | Periodic recovery checkpoints |
+| `checkpoint_step_NNNN.weights.h5` | ✅ Yes | Periodic recovery checkpoints (created at regular intervals for training resume capability) |
 
 
 **Training flow with EMA:**

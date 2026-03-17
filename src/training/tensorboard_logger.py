@@ -316,7 +316,11 @@ class TensorBoardLogger:
             precision = curves["precision"]
             recall = curves["recall"]
             roc_auc = float(np.trapz(tpr, fpr)) if len(fpr) > 1 else 0.0
-            pr_auc = float(np.trapz(precision, recall)) if len(recall) > 1 else 0.0
+            if len(recall) > 1:
+                pr_sort_idx = np.argsort(recall)
+                pr_auc = float(np.trapz(precision[pr_sort_idx], recall[pr_sort_idx]))
+            else:
+                pr_auc = 0.0
 
             # Create figure with two subplots
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -922,7 +926,7 @@ class TensorBoardLogger:
 
             # Per-class metrics
             pos_mask = y_true == 1
-            neg_mask = y_true == 0
+            neg_mask = (y_true == 0) | (y_true == 2)
 
             pos_correct = np.sum((y_pred == 1) & pos_mask) if np.any(pos_mask) else 0
             pos_total = np.sum(pos_mask)

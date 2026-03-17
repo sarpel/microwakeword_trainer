@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from src.data.preprocessing import (
@@ -168,9 +169,9 @@ def main() -> None:
             continue
         try:
             speech_results.extend(process_speech_directory(d, config, discarded_root, dry_run))
-        except Exception as e:
+        except (IOError, OSError, ValueError, RuntimeError) as e:
             print(f"[ERROR] Failed to process speech directory {d}: {e}")
-            continue
+            sys.exit(1)
 
     for raw_dir in args.bg_dirs:
         d = Path(raw_dir)
@@ -179,9 +180,9 @@ def main() -> None:
             continue
         try:
             bg_results.extend(process_background_directory(d, args.max_duration, discarded_root, dry_run))
-        except Exception as e:
+        except (IOError, OSError, ValueError, RuntimeError) as e:
             print(f"[ERROR] Failed to process background directory {d}: {e}")
-            continue
+            sys.exit(1)
 
     _print_summary(
         speech_results,

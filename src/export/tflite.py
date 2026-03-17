@@ -58,6 +58,21 @@ from src.model.architecture import build_core_layers
 logger = logging.getLogger(__name__)
 
 
+def _normalize_pointwise_filters(value: object, default: Optional[list[int]] = None) -> list[int]:
+    """Normalize pointwise_filters config into a list[int]."""
+    if default is None:
+        default = [64, 64, 64, 64]
+
+    if isinstance(value, str):
+        parsed = [int(x.strip()) for x in value.split(",") if x.strip()]
+        return parsed or default
+
+    if isinstance(value, list):
+        return [int(x) for x in value] or default
+
+    return default
+
+
 def get_checkpoint_metadata(checkpoint_path: str, pointwise_filters: int = 64) -> dict:
     """Get checkpoint metadata from cache or scan checkpoint.
 
@@ -1145,12 +1160,11 @@ def export_streaming_tflite(
 
     # First, read checkpoint metadata to infer temporal dimensions
     print("\n[0/5] Analyzing checkpoint architecture...")
-    # Assume 64 pointwise filters in last block (standard architecture)
+    # Normalize pointwise_filters to handle both list and CSV-string config values.
+    pw_filters_list = [64, 64, 64, 64]
     if config is not None:
-        pw_filters_list = config.get("pointwise_filters", [64, 64, 64, 64])
-        pointwise_filters = pw_filters_list[-1] if pw_filters_list else 64
-    else:
-        pointwise_filters = 64  # Standard architecture default
+        pw_filters_list = _normalize_pointwise_filters(config.get("pointwise_filters", [64, 64, 64, 64]))
+    pointwise_filters = pw_filters_list[-1] if pw_filters_list else 64
 
     metadata = get_checkpoint_metadata(checkpoint_path, pointwise_filters=pointwise_filters)
     temporal_frames = metadata["temporal_frames"]
@@ -1188,7 +1202,7 @@ def export_streaming_tflite(
         first_conv_filters=config.get("first_conv_filters", 32),
         first_conv_kernel=config.get("first_conv_kernel", 5),
         stride=config.get("stride", 3),
-        pointwise_filters=config.get("pointwise_filters", [64, 64, 64, 64]),
+        pointwise_filters=pw_filters_list,
         mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
         residual_connections=config.get("residual_connections", [0, 1, 1, 1]),
         mel_bins=config.get("mel_bins", 40),
@@ -1461,8 +1475,8 @@ def convert_model_saved(
 
     # Build streaming export model with state variables
     # Infer temporal_frames from training model to support non-default configs
-    pointwise_filters = config.get("pointwise_filters", [64, 64, 64, 64])
-    last_pw = pointwise_filters[-1] if isinstance(pointwise_filters, list) else 64
+    pointwise_filters = _normalize_pointwise_filters(config.get("pointwise_filters", [64, 64, 64, 64]))
+    last_pw = pointwise_filters[-1] if pointwise_filters else 64
     # Dense kernel shape: (input_features, output_units). Infer temporal frames from input features step
     dense_kernel = model.output_dense.kernel
     temporal_frames = dense_kernel.shape[0] // last_pw
@@ -1471,7 +1485,7 @@ def convert_model_saved(
         first_conv_filters=config.get("first_conv_filters", 32),
         first_conv_kernel=config.get("first_conv_kernel", 5),
         stride=config.get("stride", 3),
-        pointwise_filters=config.get("pointwise_filters", [64, 64, 64, 64]),
+        pointwise_filters=pointwise_filters,
         mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
         residual_connections=config.get("residual_connections", [0, 1, 1, 1]),
         mel_bins=config.get("mel_bins", 40),

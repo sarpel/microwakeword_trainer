@@ -1391,7 +1391,8 @@ class Trainer:
 
         Args:
             model: Model to evaluate.
-            data_generator: Callable or generator yielding (fingerprints, labels, metadata).
+        data_generator: Callable or generator yielding either
+            (fingerprints, labels) or (fingerprints, labels, metadata).
             chunk_size: Samples per metrics update chunk.
             ambient_duration_hours: Override ambient duration for FAH calculation.
                 Defaults to ``self.val_ambient_duration_hours`` (scaled by val_split).
@@ -1418,11 +1419,18 @@ class Trainer:
         last_val_raw_labels: list[int] = []
         clip_ids_accumulator: list[int] = []
         clip_id_counter = 0
+        path_cursor = 0
+        path_clip_id = 0
+        prev_path: str | None = None
 
         for batch in iterator:
-            if not isinstance(batch, tuple) or len(batch) != 3:
-                raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
-            fingerprints, ground_truth, metadata = batch
+            if not isinstance(batch, tuple) or len(batch) < 2:
+                raise ValueError(
+                    f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth) or (fingerprints, ground_truth, metadata). Got: {type(batch).__name__} with value {batch!r}"
+                )
+            fingerprints = batch[0]
+            ground_truth = batch[1]
+            metadata = batch[2] if len(batch) >= 3 else None
             predictions = model(fingerprints, training=False)
 
             if predictions.ndim == 2 and predictions.shape[1] > 1:
@@ -1433,8 +1441,39 @@ class Trainer:
             chunk_scores.append(scores.numpy())
             chunk_labels.append(tf.cast(ground_truth, tf.int32).numpy())
             n_samples_in_batch = len(scores)
-            clip_ids_accumulator.extend(range(clip_id_counter, clip_id_counter + n_samples_in_batch))
-            clip_id_counter += n_samples_in_batch
+
+            # Prefer real clip boundaries for sliding-window semantics.
+            batch_clip_ids: list[int] | None = None
+            if isinstance(metadata, dict):
+                metadata_clip_ids = metadata.get("clip_ids")
+                if metadata_clip_ids is None and "clip_id" in metadata:
+                    metadata_clip_ids = metadata["clip_id"]
+                if metadata_clip_ids is not None:
+                    metadata_clip_ids_np = np.asarray(metadata_clip_ids).reshape(-1)
+                    if metadata_clip_ids_np.size == 1 and n_samples_in_batch > 1:
+                        metadata_clip_ids_np = np.repeat(metadata_clip_ids_np, n_samples_in_batch)
+                    if metadata_clip_ids_np.size == n_samples_in_batch:
+                        batch_clip_ids = metadata_clip_ids_np.astype(np.int64, copy=False).tolist()
+
+            if batch_clip_ids is None and last_val_paths and (path_cursor + n_samples_in_batch) <= len(last_val_paths):
+                batch_clip_ids = []
+                for i in range(n_samples_in_batch):
+                    path = str(last_val_paths[path_cursor + i])
+                    if prev_path is None:
+                        prev_path = path
+                    elif path != prev_path:
+                        path_clip_id += 1
+                        prev_path = path
+                    batch_clip_ids.append(path_clip_id)
+                path_cursor += n_samples_in_batch
+
+            if batch_clip_ids is None:
+                batch_clip_ids = list(range(clip_id_counter, clip_id_counter + n_samples_in_batch))
+                clip_id_counter += n_samples_in_batch
+            elif batch_clip_ids:
+                clip_id_counter = max(clip_id_counter, int(max(batch_clip_ids)) + 1)
+
+            clip_ids_accumulator.extend(batch_clip_ids)
             total_samples += n_samples_in_batch
             if isinstance(metadata, dict) and "raw_labels" in metadata:
                 raw_labels = metadata["raw_labels"]
@@ -1568,9 +1607,9 @@ class Trainer:
             data_generator: Factory callable (invoked to yield batches) or generator.
                 When a callable is provided it is called to get a fresh iterator;
                 this avoids exhausting a one-shot generator.
-                Must yield 3-tuples: (fingerprints, ground_truth, metadata), where
-                fingerprints is a NumPy/Tensor array of model inputs, ground_truth
-                is the label array, and metadata can be any auxiliary batch info.
+                Must yield either 2-tuples ``(fingerprints, ground_truth)`` or
+                3-tuples ``(fingerprints, ground_truth, metadata)`` where metadata
+                can be any auxiliary batch info (including ``None``).
             chunk_size: Number of samples to process before updating metrics incrementally.
                 Smaller values reduce peak memory usage. Default: 2000
             ambient_duration_hours: Override ambient duration for FAH calculation.
@@ -1593,32 +1632,14 @@ class Trainer:
         return metrics
 
     def _compute_metrics_background(self, step: int, weights_snapshot: list[np.ndarray], val_data_factory) -> dict[str, Any]:
-        """Run validation in background on a re-instantiated model with copied weights."""
-        assert self.model is not None, "_compute_metrics_background called before model was built"
-        # Use from_config() instead of clone_model() so that input_shape and
-        # temporal_rb_size are correctly reproduced from the training model's config.
-        # clone_model() on a subclassed model does NOT preserve __init__ kwargs and
-        # produces a model with wrong temporal ring-buffer / Dense layer shapes.
-        eval_model = self.model.__class__.from_config(self.model.get_config())
-        _ = eval_model(tf.zeros((1, *self.input_shape), dtype=tf.float32), training=False)
-        eval_model.set_weights(weights_snapshot)
-        try:
-            metrics, metrics_tracker, last_val_raw_labels, last_val_paths = self._validate_with_model(
-                model=eval_model,
-                data_generator=val_data_factory,
-            )
-            return {
-                "step": step,
-                "metrics": metrics,
-                "metrics_tracker": metrics_tracker,
-                "last_val_raw_labels": last_val_raw_labels,
-                "last_val_paths": last_val_paths,
-                "weights_snapshot": weights_snapshot,
-            }
-        finally:
-            # Explicitly delete the cloned model and weights to free memory
-            del eval_model
-            gc.collect()
+        """Deprecated async validation worker.
+
+        Background validation previously reconstructed a second model instance from
+        config and copied weights into it. That approach is brittle for subclassed
+        and stateful models, so scheduling now falls back to synchronous validation
+        on the live model (see ``_schedule_validation``).
+        """
+        raise RuntimeError("Background validation model reconstruction is disabled; use synchronous validation path.")
 
     def _schedule_validation(
         self,
@@ -1629,38 +1650,17 @@ class Trainer:
         val_data_factory,
         mining_data_factory,
     ) -> bool:
-        """Schedule validation work in background when no job is currently pending."""
+        """Schedule validation work in background when no job is currently pending.
+
+        Returns ``False`` to force synchronous validation on the live model.
+        This avoids brittle background model reconstruction for subclassed/stateful
+        models and prevents making checkpoint decisions from a reconstructed clone.
+        """
         assert self.model is not None, "_schedule_validation called before model was built"
         with self._validation_lock:
-            if self._pending_validation is not None and not self._pending_validation["future"].done():
+            if self._pending_validation is not None:
                 return False
-
-            try:
-                self._swap_to_ema_weights()
-                weights_snapshot = [np.array(w, copy=True) for w in self.model.get_weights()]
-                try:
-                    future = self._validation_executor.submit(
-                        self._compute_metrics_background,
-                        step,
-                        weights_snapshot,
-                        val_data_factory,
-                    )
-                finally:
-                    self._restore_training_weights()
-            except Exception as exc:
-                self.logger.log_warning(f"Async validation scheduling failed during EMA snapshot: {exc}")
-                return False
-
-            self._pending_validation = {
-                "future": future,
-                "step": step,
-                "basic_due": basic_due,
-                "advanced_due": advanced_due,
-                "total_steps": total_steps,
-                "val_data_factory": val_data_factory,
-                "mining_data_factory": mining_data_factory,
-            }
-            return True
+            return False
 
     def _handle_validation_results(
         self,
@@ -2361,9 +2361,17 @@ def train(config: dict) -> tf.keras.Model:
                     yield features, labels_int, sample_weights, is_hard_neg
 
             def val_factory():
+                clip_id_offset = 0
                 for features, labels, _, _ in val_ds:
                     labels_int = tf.cast(labels, tf.int32)
-                    yield features, labels_int, None
+                    batch_size = int(tf.shape(labels_int)[0].numpy())
+                    clip_ids = np.arange(clip_id_offset, clip_id_offset + batch_size, dtype=np.int64)
+                    clip_id_offset += batch_size
+                    metadata = {
+                        "raw_labels": labels_int.numpy().tolist(),
+                        "clip_ids": clip_ids.tolist(),
+                    }
+                    yield features, labels_int, metadata
 
             def test_factory():
                 for features, labels, _, _ in test_ds:

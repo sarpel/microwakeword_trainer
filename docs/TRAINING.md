@@ -307,9 +307,6 @@ Key metrics to watch:
 - Training loss
 - Validation accuracy
 - False Acceptance per Hour (FAH)
- - False Acceptance per Hour (FAH)
- - False Rejection Rate (FRR)
- - Adaptive Evaluation Threshold (derived from target FAH)
 - False Rejection Rate (FRR)
 - Adaptive Evaluation Threshold (derived from target FAH)
 ### Configuration Validation

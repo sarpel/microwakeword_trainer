@@ -255,7 +255,10 @@ class TestEvaluator:
             results["eer"] = None
             results["eer_threshold"] = None
 
-        scaled_duration = self.ambient_duration_hours / self.test_split
+        if self.test_split > 0:
+            scaled_duration = self.ambient_duration_hours / self.test_split
+        else:
+            scaled_duration = self.ambient_duration_hours
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
         fah_metrics = fah_estimator.compute_fah_metrics(y_true, y_score, threshold=self.default_threshold)
         results["fah"] = fah_metrics.get("ambient_false_positives_per_hour", 0.0)
@@ -283,7 +286,10 @@ class TestEvaluator:
             f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
             fp_count = int(fp)
-            scaled_duration = self.ambient_duration_hours / self.test_split
+            if self.test_split > 0:
+                scaled_duration = self.ambient_duration_hours / self.test_split
+            else:
+                scaled_duration = self.ambient_duration_hours
             fah = fp_count / scaled_duration if scaled_duration > 0 else 0.0
 
             return recall, precision, f1, fah
@@ -391,7 +397,10 @@ class TestEvaluator:
     def _compute_operating_points(self, y_true: np.ndarray, y_score: np.ndarray) -> list[dict]:
         """Find optimal thresholds at target FAH rates."""
         target_fahs = [0.1, 0.5, 1.0, 2.0]
-        scaled_duration = self.ambient_duration_hours / self.test_split
+        if self.test_split > 0:
+            scaled_duration = self.ambient_duration_hours / self.test_split
+        else:
+            scaled_duration = self.ambient_duration_hours
 
         thresholds = np.linspace(0.01, 0.99, self.n_thresholds)
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
@@ -432,7 +441,10 @@ class TestEvaluator:
     def _compute_threshold_sweep(self, y_true: np.ndarray, y_score: np.ndarray) -> list[dict]:
         """Sweep thresholds and compute metrics."""
         thresholds = np.arange(0.1, 1.0, 0.1)
-        scaled_duration = self.ambient_duration_hours / self.test_split
+        if self.test_split > 0:
+            scaled_duration = self.ambient_duration_hours / self.test_split
+        else:
+            scaled_duration = self.ambient_duration_hours
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
 
         results = []
@@ -569,11 +581,13 @@ class TestEvaluator:
             for cat_name in ["positive", "negative", "hard_negative"]:
                 if cat_name in per_cat:
                     cat = per_cat[cat_name]
-                    rate = cat.get("true_positive_rate") or cat.get("true_negative_rate")
+                    rate = cat.get("true_positive_rate")
+                    if rate is None:
+                        rate = cat.get("true_negative_rate")
                     cat_table.add_row(
                         cat_name,
                         str(cat["count"]),
-                        f"{rate:.4f}" if rate else "N/A",
+                        f"{rate:.4f}" if rate is not None else "N/A",
                     )
             self.console.print(cat_table)
 
@@ -719,7 +733,10 @@ class TestEvaluator:
         plt.close()
 
         thresholds = np.linspace(0.01, 0.99, 100)
-        scaled_duration = self.ambient_duration_hours / self.test_split
+        if self.test_split > 0:
+            scaled_duration = self.ambient_duration_hours / self.test_split
+        else:
+            scaled_duration = self.ambient_duration_hours
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
 
         recalls, fahs_list = [], []

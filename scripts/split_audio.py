@@ -36,9 +36,9 @@ def main() -> None:
     parser.add_argument(
         "--target-duration",
         type=float,
-        default=2000.0,
+        default=DEFAULT_TARGET_DURATION,
         metavar="MS",
-        help="Target clip length in milliseconds (default: 2000)",
+        help=f"Target clip length in milliseconds (default: {DEFAULT_TARGET_DURATION})",
     )
     parser.add_argument(
         "--min-duration",
@@ -88,8 +88,11 @@ def main() -> None:
         print("\n  NOTE: Original files were NOT deleted.")
         print("  After verifying the splits look correct, you may remove")
         print("  the originals with:")
-        if args.target_duration != DEFAULT_TARGET_DURATION:
-            print(f"\n    python scripts/split_audio.py --dir <DIR> --remove-originals --target-duration {args.target_duration}")
+        if args.target_duration != DEFAULT_TARGET_DURATION or args.max_duration != DEFAULT_MAX_DURATION:
+            max_dur_arg = f"--max-duration {args.max_duration}" if args.max_duration != DEFAULT_MAX_DURATION else ""
+            target_dur_arg = f"--target-duration {args.target_duration}" if args.target_duration != DEFAULT_TARGET_DURATION else ""
+            args_str = f"{max_dur_arg} {target_dur_arg}".strip()
+            print(f"\n    python scripts/split_audio.py --dir <DIR> --remove-originals {args_str}")
         else:
             print("\n    python scripts/split_audio.py --dir <DIR> --remove-originals")
     print("=" * 60)

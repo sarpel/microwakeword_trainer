@@ -331,7 +331,7 @@ mww-cluster-apply --undo cluster_output/positive_backup_manifest.json
 | Preset | Training Steps | Batch Size | Augmentation | Time | Use Case |
 |--------|---------------|------------|--------------|------|----------|
 | `fast_test` | 3000 (2k+1k) | 32 | Disabled | ~1 hour | Quick iteration |
-| `max_quality` | 30000 (20k+10k) | 128 | max_quality | ~8 hours | Production |
+| `standard` | 30000 (20k+10k) | 128 | standard | ~8 hours | Production |
 | `max_quality` | 70000 (50k+20k) | 128 | Full | ~24 hours | Best accuracy |
 
 ### Loading Configurations
@@ -819,7 +819,7 @@ converter.inference_output_type = tf.uint8    # UINT8. ALWAYS. NOT int8.
 converter.representative_dataset = tf.lite.RepresentativeDataset(representative_dataset_gen)
 ```
 
-> ⛔ **Use `tf.lite.TFLiteConverter` from max_quality `tensorflow`. Do NOT use `ai_edge_litert` for export.** `ai_edge_litert` is only for inference/testing.
+> ⛔ **Use `tf.lite.TFLiteConverter` from TensorFlow. Do NOT use `ai_edge_litert` for export.** `ai_edge_litert` is only for inference/testing.
 
 ### Representative Dataset Requirements
 

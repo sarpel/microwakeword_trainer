@@ -400,7 +400,7 @@ class Stream(tf.keras.layers.Layer):
                     pad = tf.fill([n_dims, 2], 0)
                     # Update time dimension (axis 1)
                     if self.pad_time_dim == "causal":
-                        pad = tf.tensor_scatter_nd_update(pad, [[1, 1]], [pad_total])
+                        pad = tf.tensor_scatter_nd_update(pad, [[1, 0]], [pad_total])
                     elif self.pad_time_dim == "same":
                         if self.mode != Modes.TRAINING:
                             raise ValueError("pad_time_dim='same' is not supported in streaming/inference modes. Use 'causal' for streaming-compatible padding.")

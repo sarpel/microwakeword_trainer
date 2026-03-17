@@ -634,16 +634,19 @@ class MetricsCalculator:
         auc_roc = compute_roc_auc(self.y_true, self.y_score)
 
         auc_pr: float | None = None
-        unique_classes = np.unique(self.y_true)
-        if len(unique_classes) >= 2:
+        valid_mask = self.y_true != 2
+        y_true_pr = _binarize_labels(self.y_true[valid_mask])
+        y_score_pr = self.y_score[valid_mask]
+
+        if len(np.unique(y_true_pr)) >= 2:
             try:
                 from sklearn.metrics import average_precision_score
 
-                auc_pr = float(average_precision_score(self.y_true, self.y_score))
+                auc_pr = float(average_precision_score(y_true_pr, y_score_pr))
             except ImportError:
                 logger.warning("sklearn not available; setting auc_pr=None in compute_all_metrics")
         else:
-            logger.warning("Only one class present in y_true; auc_pr is undefined and set to None")
+            logger.warning("Only one class present in PR-AUC labels; auc_pr is undefined and set to None")
 
         metrics: dict[str, Any] = {
             "accuracy": accuracy,

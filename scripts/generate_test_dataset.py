@@ -9,8 +9,10 @@ WARNING: Never change DATASET_DIR to point at dataset/. Synthetic sine waves and
 """
 
 import argparse
+import shutil
 import sys
 import wave
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +30,7 @@ SAMPLE_WIDTH = 2  # 16-bit (2 bytes)
 DATASET_DIR = Path(__file__).resolve().parent.parent / "test_data"
 POSITIVE_DIR = DATASET_DIR / "positive" / "speaker_001"
 NEGATIVE_DIR = DATASET_DIR / "negative" / "speech"
+HARD_NEGATIVE_DIR = DATASET_DIR / "hard_negative" / "similar_sounds"
 
 
 def generate_sine_wave(frequency: float, duration: float, sample_rate: int) -> np.ndarray:
@@ -109,6 +112,32 @@ def create_negative_samples():
     print("  Total: 50 negative samples\n")
 
 
+def create_hard_negative_samples(num_samples: int = 20):
+    """Create synthetic hard negative (almost wake-word) samples."""
+    print(f"Creating hard negative samples in {HARD_NEGATIVE_DIR}")
+    HARD_NEGATIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Frequencies close to positive samples (400-1300 Hz range) to create "almost-wake-word" samples
+    hard_negative_frequencies = [395, 405, 495, 505, 595, 605, 695, 705, 795, 805, 895, 905, 995, 1005, 1095, 1105, 1195, 1205, 1295, 1305]
+    created_count = min(num_samples, len(hard_negative_frequencies))
+
+    for i in range(created_count):
+        # Generate sine wave with slight noise to simulate "almost" wake word
+        freq = hard_negative_frequencies[i]
+        clean_samples = generate_sine_wave(freq, DURATION, SAMPLE_RATE)
+        noise_samples = generate_noise(DURATION, SAMPLE_RATE)
+        # Mix clean signal with slight noise (80/20 ratio)
+        mixed_samples = clean_samples * 0.8 + noise_samples * 0.2
+
+        filepath = HARD_NEGATIVE_DIR / f"sample_{i + 1:03d}.wav"
+        save_wav_file(filepath, mixed_samples, SAMPLE_RATE)
+
+        if (i + 1) % 5 == 0:
+            print(f"  Created {i + 1} hard negative samples...")
+
+    print(f"  Total: {created_count} hard negative samples\n")
+
+
 def verify_wav_file(filepath: Path) -> dict:
     """Verify WAV file properties."""
     try:
@@ -147,11 +176,39 @@ def main(args: argparse.Namespace | None = None) -> int:
     )
     parsed_args = parser.parse_args(args)
 
+    # Protect against using the real dataset directory
+    out_path = Path(parsed_args.output_dir).resolve()
+    dataset_dir = Path("dataset").resolve()
+    if out_path == dataset_dir or out_path.is_relative_to(dataset_dir):
+        print(f"ERROR: Output directory '{out_path}' conflicts with real dataset directory '{dataset_dir}'.")
+        print("This script generates synthetic test data and must not write to the real dataset.")
+        sys.exit(2)
+
     # Update globals based on args
-    global DATASET_DIR, POSITIVE_DIR, NEGATIVE_DIR
-    DATASET_DIR = Path(parsed_args.output_dir)
+    global DATASET_DIR, POSITIVE_DIR, NEGATIVE_DIR, HARD_NEGATIVE_DIR
+    DATASET_DIR = out_path
     POSITIVE_DIR = DATASET_DIR / "positive" / "speaker_001"
     NEGATIVE_DIR = DATASET_DIR / "negative" / "speech"
+    HARD_NEGATIVE_DIR = DATASET_DIR / "hard_negative" / "similar_sounds"
+
+    # Check if output directory exists and handle safely
+    if DATASET_DIR.exists():
+        # Check if we're running interactively (stdin is a tty)
+        if sys.stdin.isatty():
+            print(f"⚠️  Output directory '{DATASET_DIR}' already exists.")
+            response = input("Do you want to back it up and continue? [y/N]: ").strip().lower()
+            if response != "y":
+                print("Aborted.")
+                return 2
+        try:
+            # Create backup with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dir = DATASET_DIR.parent / f"{DATASET_DIR.name}_backup_{timestamp}"
+            print(f"Backing up existing directory to: {backup_dir}")
+            shutil.move(str(DATASET_DIR), str(backup_dir))
+        except Exception as e:
+            print(f"ERROR: Failed to backup existing directory: {e}")
+            return 1
 
     try:
         print("=" * 60)
@@ -168,6 +225,7 @@ def main(args: argparse.Namespace | None = None) -> int:
         # Create samples
         create_positive_samples()
         create_negative_samples()
+        create_hard_negative_samples()
 
         # Verify a few files
         print("Verification (sample files):")
@@ -175,7 +233,7 @@ def main(args: argparse.Namespace | None = None) -> int:
         neg_files = list(NEGATIVE_DIR.glob("*.wav"))
         if not pos_files or not neg_files:
             print("  No WAV files found for verification.")
-            return 1
+            return 2
         pos_sample = pos_files[0]
         neg_sample = neg_files[0]
 

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -114,16 +115,18 @@ def resolve_probability_cutoff(
             # Filter metadata files that match the TFLite model/checkpoint identifier
             for meta_file in candidate_dir.glob("*.metadata.json"):
                 meta_stem = meta_file.stem.replace(".metadata", "")
-                # Match if the metadata stem is a prefix or closely related to tflite stem
-                if tflite_stem.startswith(meta_stem) or meta_stem.startswith(tflite_stem) or meta_stem in tflite_stem or tflite_stem in meta_stem:
+                # Use common prefix to find matching metadata files
+                common_prefix = os.path.commonprefix([tflite_stem, meta_stem])
+                # Only match if there's a meaningful common prefix
+                if len(common_prefix) > 0:
                     matching_files.append(meta_file)
 
             # Deterministically select single matching file
             if len(matching_files) == 1:
                 meta_file = matching_files[0]
             elif len(matching_files) > 1:
-                # Multiple matches: prefer the one with the best match (contains the most overlap)
-                meta_file = max(matching_files, key=lambda f: len(f.stem))
+                # Multiple matches: prefer the one with largest common prefix overlap
+                meta_file = max(matching_files, key=lambda f: len(os.path.commonprefix([tflite_stem, f.stem.replace(".metadata", "")])))
             else:
                 # No match in this dir, continue to next candidate
                 continue

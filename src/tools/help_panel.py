@@ -20,6 +20,20 @@ def _autodetect_checkpoint(
     return "models/checkpoints/best_weights.weights.h5"
 
 
+def _print_fallback_next_steps(best_path: str, config_preset: str) -> None:
+    """Print lightweight next-step guidance when Rich training deps are unavailable."""
+    print("\n🚀 What's Next? (Post-Training Actions)\n")
+    print("Improve model quality:")
+    print(f"  - mww-autotune --checkpoint {best_path} --config {config_preset}")
+    print("\nExport:")
+    print(f"  - mww-export --checkpoint {best_path} --output models/exported/")
+    print("\nVerify ESPHome compatibility:")
+    print("  - python scripts/verify_esphome.py models/exported/wake_word.tflite")
+    print("\nEvaluate:")
+    print(f"  - python scripts/evaluate_model.py --model {best_path} --config {config_preset} --output-dir logs/")
+    print("  - python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_report.json")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Show the post-training command reference panel.",
@@ -48,7 +62,11 @@ def main() -> None:
 
     checkpoint = args.checkpoint or _autodetect_checkpoint(args.checkpoint_dir)
 
-    from src.training.rich_logger import RichTrainingLogger
+    try:
+        from src.training.rich_logger import RichTrainingLogger
+    except ImportError:
+        _print_fallback_next_steps(checkpoint, args.config)
+        return
 
     logger = RichTrainingLogger()
     logger.log_next_steps(checkpoint, args.config)

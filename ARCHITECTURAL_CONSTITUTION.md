@@ -784,4 +784,4 @@ You may change `mixconv_kernel_sizes`, `pointwise_filters`, `repeat_in_block`, a
 
 ---
 
-*This document is append-only with respect to verified facts. No value may be changed without re-running flatbuffer extraction against the reference model and cross-verifying against current ESPHome source code. Adding unverified values is prohibited — mark any new entry as `UNVERIFIED` and include the expected verification method. Last full verification: 2026-03-13.*
+*This document is append-only with respect to verified facts. No value may be changed without re-running flatbuffer extraction against the reference model and cross-verifying against current ESPHome source code. Adding unverified values is prohibited — mark any new entry as `UNVERIFIED` and include the expected verification method. Last full verification: 2026-03-16.*

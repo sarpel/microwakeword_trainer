@@ -643,16 +643,22 @@ class MixedNet(tf.keras.Model):
         self.blocks = [cfg["residual_block"] for cfg in core_layers["blocks"]]
         for block in self.blocks:
             block.mode = self.mode
-            for mixconv in (block.mixconvs if hasattr(block, "mixconvs") else []):
+            for mixconv in block.mixconvs if hasattr(block, "mixconvs") else []:
                 mixconv.mode = self.mode
 
         # Streaming for temporal pooling
-        # Calculate ring_buffer_size based on input shape and stride
-        # After stride 3 conv: time_dim = ceil(input_shape[0] / stride)
-        # ring_buffer_size = time_dim - 1
+        # Compute temporal ring-buffer size from effective pre-flatten time dimension.
+        # This is config-aware: first-conv presence, kernel, and stride all affect time.
         input_shape_list = tf.TensorShape(input_shape).as_list() if input_shape is not None else None
         if input_shape_list and input_shape_list[0] is not None:
-            temporal_rb_size = max(0, (input_shape_list[0] + self.stride - 1) // self.stride - 1)
+            pre_flatten_temporal_frames = int(input_shape_list[0])
+            if self.first_conv_filters > 0:
+                # Conv2D(valid, stride=s): out = floor((T - K) / s) + 1
+                pre_flatten_temporal_frames = max(
+                    1,
+                    (pre_flatten_temporal_frames - self.first_conv_kernel_size) // self.stride + 1,
+                )
+            temporal_rb_size = max(0, pre_flatten_temporal_frames - 1)
         else:
             temporal_rb_size = 0
         self.temporal_stream = Stream(
@@ -666,8 +672,10 @@ class MixedNet(tf.keras.Model):
         # Instead of GlobalAveragePooling2D which averages all frames,
         # Flatten preserves per-frame information for the Dense layer.
         # Dense input = temporal_rb_size_plus_1 * last_pointwise_filters
-        # temporal_rb_size is computed dynamically from input_shape and stride:
-        #   temporal_rb_size = max(0, ceil(input_shape[0] / stride) - 1)
+        # temporal_rb_size is computed from effective pre-flatten frames:
+        #   pre_flatten_temporal_frames = input_time (no first conv)
+        #   pre_flatten_temporal_frames = floor((input_time - first_conv_kernel) / stride) + 1 (with first conv)
+        #   temporal_rb_size = max(0, pre_flatten_temporal_frames - 1)
         # This is time-dependent; actual input dimension varies with input duration
         self.pooling = tf.keras.layers.Flatten(name="global_pool")
 
