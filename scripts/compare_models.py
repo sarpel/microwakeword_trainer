@@ -78,14 +78,12 @@ def _load_keras_model(checkpoint_path: str, config: dict):
 
 def _load_tflite_model(tflite_path: str):
     """Load a TFLite model and return an interpreter."""
-    try:
-        from ai_edge_litert.interpreter import Interpreter
-    except ImportError:
-        import tensorflow as tf
+    import tensorflow as tf
 
-        Interpreter = tf.lite.Interpreter
-
-    interpreter = Interpreter(model_path=tflite_path)
+    # Use tf.lite.Interpreter directly (not ai_edge_litert) because streaming
+    # state reset requires set_tensor on internal ReadVariableOp tensors,
+    # which ai_edge_litert does not support for unallocated variable tensors.
+    interpreter = tf.lite.Interpreter(model_path=tflite_path)
     interpreter.allocate_tensors()
     return interpreter, "tflite"
 
@@ -96,34 +94,77 @@ def _infer_keras(model, batch: np.ndarray) -> np.ndarray:
     return np.array(preds).ravel()
 
 
-def _infer_tflite(interpreter, batch: np.ndarray) -> np.ndarray:
-    """Run inference with a TFLite interpreter (one sample at a time for streaming models)."""
+def _infer_tflite(interpreter, batch: np.ndarray, config: dict) -> np.ndarray:
+    """Run streaming inference with a TFLite interpreter.
+
+    The exported TFLite model is a streaming model with input shape [1, stride, 40].
+    Full spectrograms must be fed in stride-sized chunks, and state variables must
+    be reset between samples to prevent state leakage.
+    """
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
     in_dtype = input_details[0]["dtype"]
     out_dtype = output_details[0]["dtype"]
 
+    # Quantization parameters
+    in_quant = input_details[0].get("quantization_parameters", {})
+    in_scale = in_quant.get("scales", np.array([1.0]))[0]
+    in_zero_point = in_quant.get("zero_points", np.array([0]))[0]
+
+    out_quant = output_details[0].get("quantization_parameters", {})
+    out_scale = out_quant.get("scales", np.array([1.0]))[0]
+    out_zero_point = out_quant.get("zero_points", np.array([0]))[0]
+
+    # Model config for stride and mel_bins
+    model_cfg = config.get("model", {})
+    hardware_cfg = config.get("hardware", {})
+    stride = model_cfg.get("stride", 3)
+    mel_bins = hardware_cfg.get("mel_bins", 40)
+
+    # Discover streaming state tensors (identified by 'ReadVariableOp' in name)
+    input_indices = {d["index"] for d in input_details}
+    output_indices = {d["index"] for d in output_details}
+    state_tensors = []  # list of (index, shape, dtype)
+    for tensor in interpreter.get_tensor_details():
+        idx = tensor["index"]
+        if idx in input_indices or idx in output_indices:
+            continue
+        name = tensor.get("name", "")
+        if "ReadVariableOp" in name:
+            shape = tuple(tensor.get("shape", ()))
+            state_tensors.append((idx, shape, tensor["dtype"]))
+
     preds = []
     for sample in batch:
-        # Reshape to [1, ...] and cast to expected dtype
-        inp = sample[np.newaxis, ...]
-        if in_dtype == np.int8:
-            inp = (inp * 127).clip(-128, 127).astype(np.int8)
-        else:
-            inp = inp.astype(in_dtype)
+        num_frames = sample.shape[0]
 
-        interpreter.set_tensor(input_details[0]["index"], inp)
-        interpreter.invoke()
-        out = interpreter.get_tensor(output_details[0]["index"]).ravel()
+        # Reset all streaming state variables to zero between samples
+        for idx, shape, dtype in state_tensors:
+            interpreter.set_tensor(idx, np.zeros(shape, dtype=dtype))
 
-        # Dequantize uint8/int8 output to [0, 1]
-        if out_dtype == np.uint8:
-            out = out.astype(np.float32) / 255.0
-        elif out_dtype == np.int8:
-            out = (out.astype(np.float32) + 128.0) / 255.0
+        # Streaming inference: slide stride-sized chunks across spectrogram
+        prediction = 0.0
+        for t in range(0, num_frames - stride + 1, stride):
+            chunk = sample[t : t + stride]  # [stride, mel_bins]
+            chunk = chunk.reshape(1, stride, mel_bins)  # [1, stride, mel_bins]
 
-        preds.append(float(out[0]) if len(out) > 0 else 0.0)
+            # Quantize float32 -> int8 using proper scale/zero_point
+            if in_dtype != np.float32:
+                chunk = np.clip(chunk / in_scale + in_zero_point, -128, 127).astype(in_dtype)
+
+            interpreter.set_tensor(input_details[0]["index"], chunk)
+            interpreter.invoke()
+
+            raw_out = interpreter.get_tensor(output_details[0]["index"])
+            # Dequantize output to float [0, 1]
+            if out_dtype != np.float32:
+                prediction = (raw_out.astype(np.float32) - out_zero_point) * out_scale
+                prediction = prediction.flatten()[0]
+            else:
+                prediction = raw_out.flatten()[0]
+
+        preds.append(float(prediction))
 
     return np.array(preds)
 
@@ -157,7 +198,7 @@ def _evaluate_model(model_path: str, config: dict, data_factory) -> dict:
         interpreter, kind = _load_tflite_model(str(path))
 
         def infer_fn(batch):
-            return _infer_tflite(interpreter, batch)
+            return _infer_tflite(interpreter, batch, config)
 
     else:
         console.print(f"[red]✗ Unsupported model format: {suffix}[/]")

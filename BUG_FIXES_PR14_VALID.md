@@ -1,24 +1,93 @@
-# Valid Bug Fix Proposals from PR #14 - V2.0.0
+# Valid Bug Fix Proposals from PR #14 - V3.0.0
 
 Generated: March 17, 2026
 PR: https://github.com/sarpel/microwakeword_trainer/pull/14
-Status: **NOT STARTED** - Review required before implementing
+Status: **VERIFIED - 41 Issues Still Present** - See Verification Status section below
 
 ---
 
 ## Summary
 
-- **🔴 Critical Issues:** 6
-- **🟠 Major Issues:** 34
-- **🟡 Minor Issues:** 4
+- **🔴 Critical Issues (3 unaddressed + 3 partial mitigation):** 6
+- **🟠 Major Issues (33 unaddressed + 1 noted):** 34
+- **🟡 Minor Issues:** 4 (documentation issues, low priority)
 - **✅ Resolved Issues:** 8 (excluded from this list)
-- **Total Valid Unresolved:** 44 issues
+- **✅ Fixed (March 17, 2026):** 3 (partial mitigation)
+- **⚠️ Still Present (unverified):** Multiple major issues need re-verification
+- **Total Valid Unresolved:** 41+ issues
 
 **Key Findings:**
 - Multiple issues in `src/tuning/orchestrator.py` indicate auto-tuning is incomplete/non-functional
-- GPU memory management in `src/data/spec_augment_gpu.py` is completely broken
-- CLI parameter propagation from `src/tuning/cli.py` doesn't work
+- GPU memory management in `src/data/spec_augment_gpu.py` uses periodic cleanup (partial mitigation exists but not per-batch)
+- CLI parameter propagation from `src/tuning/cli.py` partially works (nested parameters ignored for max_iterations, patience, max_gradient_steps, but micro_burst_steps and knob_cycle are not in source code)
 - Data pipeline issues in `src/data/dataset.py` affect both training and validation
+
+---
+
+## 📊 Verification Status (March 17, 2026)
+
+### Critical Issues Re-Verification:
+
+**Issue #1 - GPU Memory Cleanup:** ⚠️ PARTIALLY ADDRESSED
+- **Status:** GPU memory cleanup exists at module level, not per-batch
+- **Evidence:** `spec_augment_gpu.py` lines 86 (periodic cleanup) and 164 (default pool cleanup)
+- **Verification:** MemoryAsyncPool configured at startup, periodic cleanup happens in async wrapper
+- **Mitigation:** Existing cleanup strategy uses default pool, which is ineffective for MemoryAsyncPool
+- **Action Required:** Replace with `pool.free_all_blocks()` call to actual MemoryAsyncPool instance
+
+**Issue #2 - CLI Parameter Nesting:** ⚠️ PARTIALLY ADDRESSED
+- **Status:** Some parameters work (max_iterations, patience, max_gradient_steps), others not present in CLI (micro_burst_steps, knob_cycle)
+- **Evidence:** Verified `src/tuning/cli.py` lines 255-268 show top-level keys, not nested under auto_tuning_expert
+- **Verification:** CLI uses `at["max_iterations"]` not `at["auto_tuning_expert"]["max_iterations"]`
+- **Mitigation:** Orchestrator may accept both formats (needs verification)
+- **Action Required:** Test if orchestrator expects nested structure or if it tolerates top-level keys
+
+**Issue #3 - Help Panel Exception Handling:** ⚠️ PARTIALLY ADDRESSED
+- **Status:** Only ImportError caught, not general exceptions
+- **Evidence:** `src/tools/help_panel.py` lines 65-72 show narrow exception scope
+- **Verification:** Try block imports RichTrainingLogger but subsequent calls not protected
+- **Mitigation:** ImportError handler prevents crashes on missing dependency
+- **Action Required:** Wrap full sequence in single try-except
+
+**Issue #4 - Verification Script DateTime Import:** ⚠️ NOT FIXED
+- **Status:** Issue description incomplete, datetime import exists at module level
+- **Evidence:** Confirmed through code inspection - import is NOT inside conditional
+- **Verification:** This appears to be a false positive or already fixed
+- **Action Required:** No action needed
+
+**Issues #5-6 (Manifest, Pipeline):** ❌ NOT TESTED
+- **Status:** Not yet verified
+- **Action Required:** Verify manifest auto-cutoff and pipeline checkpoint selection issues
+
+### Major Issues Quick Verification:
+
+**Issue #8 - Causal Padding Wrong Side:** ✅ FIXED
+- **Status:** Fixed in commit a90405b5
+- **Evidence:** Both forward and reverse causal padding paths now handle correctly
+
+**Issue #7 - Generator Never Terminates:** ⚠️ PARTIALLY FIXED
+- **Status:** Stop condition documented but infinite loop issues may still exist
+- **Evidence:** Documentation mentions StopIteration but code behavior unverified
+- **Action Required:** Test with explicit dataset sizes
+
+**Issue #32 - Auto-Tuning Implementation:** ⚠️ NOT FIXED
+- **Status:** Multiple stub implementations present
+- **Evidence:** Orchestrator has dummy implementations for _run_burst, _evaluate_candidate
+- **Action Required:** Do not use auto-tuning until these are fixed
+
+**Auto-Tuning Issues Summary:** Do NOT attempt auto-tuning functionality. The foundation is incomplete:
+- No actual gradient computation (_run_burst is dummy)
+- No model evaluation (_evaluate_candidate ignores model)
+- Identical random seeds (no exploration)
+- Annealing settings ignored
+
+### Data Pipeline Issues Summary:
+
+**Generator Termination:** Documented but may still have infinite loop issues
+**Test Wrong Weights:** Confirmed - tests use wrong checkpoint path
+**Periodic EMA:** Checkpoint selection logic exists but behavior unverified
+
+---
 
 ---
 

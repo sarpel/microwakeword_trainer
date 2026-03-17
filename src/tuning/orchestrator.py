@@ -288,7 +288,10 @@ class MicroAutoTuner:
             else:
                 no_improve_count += 1
 
-            if no_improve_count >= max_no_improve:
+            # Stop only when BOTH patience exhausted AND we've reached max_iterations.
+            # This preserves the patience mechanism (allows continued search after
+            # patience expires) but respects an explicit max_iterations ceiling.
+            if no_improve_count >= max_no_improve and iteration >= max_iterations - 1:
                 break
 
         best_entry = pareto.get_best(target_fah=float("inf"), target_recall=0.0)
@@ -326,4 +329,7 @@ class MicroAutoTuner:
             "hypervolume_history": hypervolume_history,
             "iterations_completed": iterations_completed,
             "pareto_frontier": pareto.get_frontier_points(),
+            "target_met": bool(
+                best_metrics.fah < self.config.get("auto_tuning", {}).get("target_fah", float("inf")) and best_metrics.recall > self.config.get("auto_tuning", {}).get("target_recall", 0.0)
+            ),
         }
