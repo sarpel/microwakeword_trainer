@@ -8,10 +8,13 @@ calls and no trainable_weights-based serialization.
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
+from rich.rule import Rule
 
 from src.data.dataset import FeatureStore
 from src.model.architecture import build_model
@@ -123,11 +126,18 @@ class MicroAutoTuner:
             finally:
                 store.close()
 
-        for split_name in ("train", "val"):
-            _load_store_path(processed_dir / split_name)
+        def _load_all_stores() -> None:
+            for split_name in ("train", "val"):
+                _load_store_path(processed_dir / split_name)
 
-        if self.users_hard_negs_dir is not None:
-            _load_store_path(Path(self.users_hard_negs_dir))
+            if self.users_hard_negs_dir is not None:
+                _load_store_path(Path(self.users_hard_negs_dir))
+
+        if self.console:
+            with self.console.status("Loading tuning data..."):
+                _load_all_stores()
+        else:
+            _load_all_stores()
 
         if loaded_features:
             features = np.stack(loaded_features, axis=0).astype(np.float32, copy=False)
@@ -139,6 +149,8 @@ class MicroAutoTuner:
             weights = np.zeros((0,), dtype=np.float32)
 
         logger.info(f"Loaded {len(features)} samples ({pos_count} positive, {neg_count} negative, {hard_neg_count} hard_neg)")
+        if self.console:
+            self.console.print(f"[green]✓[/] Loaded {len(features)} samples ([bold]{pos_count}[/] positive, [bold]{neg_count}[/] negative, [bold]{hard_neg_count}[/] hard_neg)")
         return {"features": features, "labels": labels, "weights": weights}
 
     def _create_model(self):
@@ -194,7 +206,7 @@ class MicroAutoTuner:
             raise ValueError(f"Unknown knob in cycle: {knob_name}")
         return knobs[knob_name]()
 
-    def _evaluate_candidate(self, model, search_eval_partition: tuple) -> TuneMetrics:
+    def _evaluate_candidate(self, model, search_eval_partition: tuple, fold_indices: list | None = None) -> TuneMetrics:
         import tensorflow as tf
 
         features = np.asarray(search_eval_partition[0])
@@ -227,6 +239,7 @@ class MicroAutoTuner:
             target_fah=target_fah,
             target_recall=target_recall,
             cv_folds=int(self.config.get("auto_tuning", {}).get("cv_folds", 5)),
+            fold_indices=fold_indices,
         )
         return metrics
 
@@ -264,8 +277,8 @@ class MicroAutoTuner:
         search_train_partition,
         n_steps,
         label_smoothing_var=None,
-        sampling_mix_arm: int | None = None,
         lr_override: float | None = None,
+        rng_seed: int = 42,
     ) -> dict:
         """Simplified gradient burst (no SAM/SWA/Thompson/curriculum)."""
         import math
@@ -288,7 +301,7 @@ class MicroAutoTuner:
             }
 
         batch_size = 64
-        rng = np.random.RandomState(42)
+        rng = np.random.RandomState(rng_seed)
         indices = np.arange(train_features.shape[0], dtype=np.int64)
         rng.shuffle(indices)
         cursor = 0
@@ -394,63 +407,150 @@ class MicroAutoTuner:
         no_improve_count = 0
         iterations_completed = 0
 
-        for iteration in range(max_iterations):
-            current_knob_name = knob_cycle.current()
-            # Instantiate the knob object for the current knob name
-            knob = self._make_knob(current_knob_name)
-            for candidate in population.candidates:
-                candidate.restore_state(model)
-                knob.apply(model, candidate, self.auto_tuning_config)
-
-                # Get candidate-specific LR if set by LR knob
-                candidate_lr = getattr(candidate, "_sampled_lr", None)
-
-                self._run_burst(
-                    model,
-                    optimizer,
-                    search_train_partition=partition["search_train"],
-                    n_steps=burst_steps,
-                    label_smoothing_var=label_smoothing_var,
-                    sampling_mix_arm=getattr(candidate, "_sampling_mix_arm", None),
-                    lr_override=candidate_lr,
-                )
-                # Must evaluate on search_eval (not search_train)
-                metrics = self._ensure_tune_metrics(self._evaluate_candidate(model, partition["search_eval"]))
-                candidate.metrics = metrics
-                pareto.try_add(metrics, candidate.id)
-                candidate.save_state(model)
-
-            knob_cycle.advance()
-
-            if exploit_every > 0 and (iteration + 1) % exploit_every == 0:
-                population.exploit_explore(model)
-
-            frontier = pareto.get_frontier_points()
-            hv = compute_hypervolume([(p["fah"], p["recall"]) for p in frontier], hyper_ref)
-            hypervolume_history.append(float(hv))
-
-            # Dashboard updates (non-blocking, renderables only)
-            dashboard.render_knob_table(
-                current_knob_name,
-                knob_cycle.position(),
-                list(self._get_cfg("knob_cycle", [current_knob_name])),
+        progress_ctx = (
+            Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(bar_width=40),
+                TaskProgressColumn(),
+                TextColumn("•"),
+                TimeElapsedColumn(),
+                TextColumn("•"),
+                TextColumn("{task.fields[metrics]}"),
+                console=self.console,
+                disable=(not self.console.is_terminal) if self.console else True,
             )
-            dashboard.render_hypervolume_history(hypervolume_history)
+            if self.console
+            else nullcontext(None)
+        )
 
-            iterations_completed = iteration + 1
-            if hv > best_hv:
-                best_hv = hv
-                no_improve_count = 0
-            else:
-                no_improve_count += 1
+        if self.console:
+            self.console.print(Rule(title="Auto-Tuning", style="bold cyan"))
 
-            # Stop only when BOTH patience exhausted AND we've reached max_iterations.
-            # This preserves the patience mechanism (allows continued search after
-            # patience expires) but respects an explicit max_iterations ceiling.
-            if no_improve_count >= max_no_improve and iteration >= max_iterations - 1:
-                break
+        with progress_ctx as progress:
+            task_id = None
+            if progress is not None:
+                task_id = progress.add_task("Iteration 0/0", total=max_iterations, metrics="starting")
 
-        best_entry = pareto.get_best(target_fah=float("inf"), target_recall=0.0)
+            for iteration in range(max_iterations):
+                current_knob_name = knob_cycle.current()
+                # Instantiate the knob object for the current knob name
+                knob = self._make_knob(current_knob_name)
+
+                if progress is not None and task_id is not None:
+                    progress.update(
+                        task_id,
+                        description=f"Iteration {iteration + 1}/{max_iterations} • knob={current_knob_name}",
+                        metrics=f"candidates=0/{len(population.candidates)}",
+                    )
+
+                for candidate_idx, candidate in enumerate(population.candidates, start=1):
+                    if progress is not None and task_id is not None:
+                        progress.update(
+                            task_id,
+                            description=(f"Iteration {iteration + 1}/{max_iterations} • candidate {candidate_idx}/{len(population.candidates)}"),
+                            metrics=f"knob={current_knob_name}",
+                        )
+
+                    candidate.restore_state(model)
+                    knob.apply(model, candidate, self.auto_tuning_config)
+
+                    # Bug 3 fix: Sync label_smoothing_var from candidate._label_smoothing
+                    if label_smoothing_var is not None:
+                        ls_val = float(getattr(candidate, '_label_smoothing', 0.0))
+                        label_smoothing_var.assign(ls_val)
+
+                    # Get candidate-specific LR if set by LR knob
+                    candidate_lr = getattr(candidate, "_sampled_lr", None)
+
+                    burst_result = self._run_burst(
+                        model,
+                        optimizer,
+                        search_train_partition=partition["search_train"],
+                        n_steps=burst_steps,
+                        label_smoothing_var=label_smoothing_var,
+                        lr_override=candidate_lr,
+                        rng_seed=42 + iteration * 100 + candidate_idx,
+                    )
+
+                    if progress is not None and task_id is not None:
+                        progress.update(
+                            task_id,
+                            description=(f"Iteration {iteration + 1}/{max_iterations} • candidate {candidate_idx}/{len(population.candidates)}"),
+                            metrics=f"knob={current_knob_name}",
+                        )
+                        progress.update(
+                            task_id,
+                            description=(
+                                f"Iteration {iteration + 1}/{max_iterations} • candidate {candidate_idx}/{len(population.candidates)} • loss={float(burst_result.get('final_loss', 0.0)):.4f}"
+                            ),
+                            metrics=f"knob={current_knob_name}",
+                        )
+
+                    # Must evaluate on search_eval (not search_train)
+                    metrics = self._ensure_tune_metrics(self._evaluate_candidate(model, partition["search_eval"], fold_indices=partition.get("fold_indices")))
+                    candidate.metrics = metrics
+                    pareto.try_add(metrics, candidate.id)
+                    candidate.save_state(model)
+
+                knob_cycle.advance()
+
+                if exploit_every > 0 and (iteration + 1) % exploit_every == 0:
+                    population.exploit_explore(model)
+
+                frontier = pareto.get_frontier_points()
+                hv = compute_hypervolume([(p["fah"], p["recall"]) for p in frontier], hyper_ref)
+                hypervolume_history.append(float(hv))
+
+                # Dashboard updates — methods now print internally
+                if self.console:
+                    dashboard.render_knob_table(
+                        current_knob_name,
+                        knob_cycle.position(),
+                        list(self._get_cfg("knob_cycle", [current_knob_name])),
+                    )
+                    dashboard.render_hypervolume_history(hypervolume_history)
+
+                iterations_completed = iteration + 1
+                if hv > best_hv:
+                    best_hv = hv
+                    no_improve_count = 0
+                else:
+                    no_improve_count += 1
+
+                iter_best_entry = pareto.get_best(target_fah=float(self.config.get("auto_tuning", {}).get("target_fah", 0.3)), target_recall=float(self.config.get("auto_tuning", {}).get("target_recall", 0.92)))
+                if iter_best_entry is not None:
+                    iter_best_metrics, _ = iter_best_entry
+                else:
+                    iter_best_metrics = TuneMetrics()
+
+                if self.console:
+                    self.console.print(
+                        "[cyan]Iteration {}/{}[/] • hv=[bold]{:.6f}[/] • patience={}/{} • best(fah={:.6f}, recall={:.6f}, auc_pr={:.6f})".format(
+                            iteration + 1,
+                            max_iterations,
+                            float(hv),
+                            int(no_improve_count),
+                            int(max_no_improve),
+                            float(iter_best_metrics.fah),
+                            float(iter_best_metrics.recall),
+                            float(iter_best_metrics.auc_pr),
+                        )
+                    )
+
+                if progress is not None and task_id is not None:
+                    progress.update(
+                        task_id,
+                        completed=iteration + 1,
+                        description=f"Iteration {iteration + 1}/{max_iterations} • knob={current_knob_name}",
+                        metrics=f"hv={float(hv):.6f} patience={int(no_improve_count)}/{int(max_no_improve)}",
+                    )
+
+                # Early stopping: stop when patience is exhausted
+                if no_improve_count >= max_no_improve:
+                    break
+
+        best_entry = pareto.get_best(target_fah=float(self.config.get("auto_tuning", {}).get("target_fah", 0.3)), target_recall=float(self.config.get("auto_tuning", {}).get("target_recall", 0.92)))
         if best_entry is not None:
             best_metrics, _best_id = best_entry
         else:
@@ -465,6 +565,8 @@ class MicroAutoTuner:
         if best_candidate is not None:
             best_candidate.restore_state(model)
 
+        if self.console:
+            self.console.print(Rule(title="Confirmation Phase", style="bold yellow"))
         confirm_metrics = self._ensure_tune_metrics(self._evaluate_candidate(model, partition["confirm"]))
         logger.info(
             "Confirmation metrics: fah=%.6f recall=%.6f auc_pr=%.6f threshold=%.6f (u8=%d)",
@@ -474,11 +576,23 @@ class MicroAutoTuner:
             float(confirm_metrics.threshold),
             int(confirm_metrics.threshold_uint8),
         )
+        if self.console:
+            self.console.print(
+                "[yellow]confirm[/] fah=[bold]{:.6f}[/] recall=[bold]{:.6f}[/] auc_pr=[bold]{:.6f}[/] threshold=[bold]{:.6f}[/] (u8=[bold]{}[/])".format(
+                    float(confirm_metrics.fah),
+                    float(confirm_metrics.recall),
+                    float(confirm_metrics.auc_pr),
+                    float(confirm_metrics.threshold),
+                    int(confirm_metrics.threshold_uint8),
+                )
+            )
 
         output_dir = Path(self._get_cfg("output_dir", self.config.get("auto_tuning", {}).get("output_dir", "./tuning_output")))
         output_dir.mkdir(parents=True, exist_ok=True)
         best_path = output_dir / "tuned_weights.weights.h5"
         model.save_weights(str(best_path))
+        if self.console:
+            self.console.print(f"[green]✓[/] Saved tuned weights → {best_path}")
 
         candidate_payload = [
             {

@@ -121,15 +121,6 @@ class WeightPerturbationKnob(Knob):
             expert_config = getattr(config, "auto_tuning_expert", config)
             scale = float(getattr(expert_config, "weight_perturbation_scale", 0.01))
 
-        # Only perturb trainable weights — never touch BatchNorm moving stats
-        trainable_vars = list(model.trainable_weights)
-        all_weights = [np.asarray(w) for w in model.get_weights()]
-        trainable_names = {v.name for v in trainable_vars}
-
-        for i, w_var in enumerate(model.weights):
-            if w_var.name in trainable_names:
-                noise = np.random.normal(0.0, scale, size=all_weights[i].shape)
-                all_weights[i] = all_weights[i] + noise
         trainable_vars = list(model.trainable_weights)
         all_weights = [np.asarray(w) for w in model.get_weights()]
         trainable_set = {id(v) for v in trainable_vars}

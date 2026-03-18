@@ -175,12 +175,12 @@ def partition_data(dataset, config, expert_config=None):
     if n < 4:
         raise ValueError(f"Dataset too small for partitioning: need at least 4 samples, got {n}")
 
-    confirmation_fraction = float(_get_config_value(config, "auto_tuning", "confirmation_fraction", 0.40))
+    confirmation_fraction = float(_get_config_value(config, "auto_tuning", "confirmation_fraction", 0.25))
     search_eval_fraction = float(_get_config_value(config, "auto_tuning", "search_eval_fraction", 0.30))
     cv_folds = int(_get_config_value(config, "auto_tuning", "cv_folds", 3))
     seed = int(_get_config_value(config, "training", "split_seed", 42))
 
-    n_cal = max(1, int(n * 0.15))
+    n_cal = max(1, int(n * 0.10))
     n_repr = max(1, int(n * 0.05))
     n_confirm = max(1, int(n * confirmation_fraction))
     n_search = n - n_cal - n_repr - n_confirm
