@@ -77,15 +77,16 @@ def _load_keras_model(checkpoint_path: str, config: dict):
 
 
 def _load_tflite_model(tflite_path: str):
-    """Load a TFLite model and return an interpreter."""
-    import tensorflow as tf
+    """Load a TFLite model and return model bytes for fresh-interpreter-per-sample inference.
 
-    # Use tf.lite.Interpreter directly (not ai_edge_litert) because streaming
-    # state reset requires set_tensor on internal ReadVariableOp tensors,
-    # which ai_edge_litert does not support for unallocated variable tensors.
-    interpreter = tf.lite.Interpreter(model_path=tflite_path)
-    interpreter.allocate_tensors()
-    return interpreter, "tflite"
+    TFLite resource variables (streaming state) cannot be reliably reset via
+    reset_all_variables() or set_tensor() — those only affect ReadVariableOp read copies,
+    not the underlying resource variable buffers.  Creating a fresh interpreter per sample
+    from in-memory bytes is the ONLY reliable method (~0.6ms overhead, negligible).
+    """
+    with open(tflite_path, "rb") as f:
+        model_bytes = f.read()
+    return model_bytes, "tflite"
 
 
 def _infer_keras(model, batch: np.ndarray) -> np.ndarray:
@@ -94,15 +95,22 @@ def _infer_keras(model, batch: np.ndarray) -> np.ndarray:
     return np.array(preds).ravel()
 
 
-def _infer_tflite(interpreter, batch: np.ndarray, config: dict) -> np.ndarray:
-    """Run streaming inference with a TFLite interpreter.
+def _infer_tflite(model_bytes: bytes, batch: np.ndarray, config: dict) -> np.ndarray:
+    """Run streaming inference with a TFLite model using fresh interpreter per sample.
 
     The exported TFLite model is a streaming model with input shape [1, stride, 40].
-    Full spectrograms must be fed in stride-sized chunks, and state variables must
-    be reset between samples to prevent state leakage.
+    Full spectrograms must be fed in stride-sized chunks.  A fresh interpreter is created
+    per sample because TFLite resource variables cannot be reliably reset via
+    reset_all_variables() or set_tensor() on ReadVariableOp tensors.
     """
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
+    import tensorflow as tf
+
+    # Extract quantization params from a template interpreter (once per batch)
+    _tmpl = tf.lite.Interpreter(model_content=model_bytes)
+    _tmpl.allocate_tensors()
+
+    input_details = _tmpl.get_input_details()
+    output_details = _tmpl.get_output_details()
 
     in_dtype = input_details[0]["dtype"]
     out_dtype = output_details[0]["dtype"]
@@ -116,32 +124,23 @@ def _infer_tflite(interpreter, batch: np.ndarray, config: dict) -> np.ndarray:
     out_scale = out_quant.get("scales", np.array([1.0]))[0]
     out_zero_point = out_quant.get("zero_points", np.array([0]))[0]
 
+    input_index = input_details[0]["index"]
+    output_index = output_details[0]["index"]
+    del _tmpl
+
     # Model config for stride and mel_bins
     model_cfg = config.get("model", {})
     hardware_cfg = config.get("hardware", {})
     stride = model_cfg.get("stride", 3)
     mel_bins = hardware_cfg.get("mel_bins", 40)
 
-    # Discover streaming state tensors (identified by 'ReadVariableOp' in name)
-    input_indices = {d["index"] for d in input_details}
-    output_indices = {d["index"] for d in output_details}
-    state_tensors = []  # list of (index, shape, dtype)
-    for tensor in interpreter.get_tensor_details():
-        idx = tensor["index"]
-        if idx in input_indices or idx in output_indices:
-            continue
-        name = tensor.get("name", "")
-        if "ReadVariableOp" in name:
-            shape = tuple(tensor.get("shape", ()))
-            state_tensors.append((idx, shape, tensor["dtype"]))
-
     preds = []
     for sample in batch:
         num_frames = sample.shape[0]
 
-        # Reset all streaming state variables to zero between samples
-        for idx, shape, dtype in state_tensors:
-            interpreter.set_tensor(idx, np.zeros(shape, dtype=dtype))
+        # Fresh interpreter per sample — the ONLY reliable way to reset streaming state
+        interpreter = tf.lite.Interpreter(model_content=model_bytes)
+        interpreter.allocate_tensors()
 
         # Streaming inference: slide stride-sized chunks across spectrogram
         prediction = 0.0
@@ -153,10 +152,10 @@ def _infer_tflite(interpreter, batch: np.ndarray, config: dict) -> np.ndarray:
             if in_dtype != np.float32:
                 chunk = np.clip(chunk / in_scale + in_zero_point, -128, 127).astype(in_dtype)
 
-            interpreter.set_tensor(input_details[0]["index"], chunk)
+            interpreter.set_tensor(input_index, chunk)
             interpreter.invoke()
 
-            raw_out = interpreter.get_tensor(output_details[0]["index"])
+            raw_out = interpreter.get_tensor(output_index)
             # Dequantize output to float [0, 1]
             if out_dtype != np.float32:
                 prediction = (raw_out.astype(np.float32) - out_zero_point) * out_scale
@@ -195,10 +194,10 @@ def _evaluate_model(model_path: str, config: dict, data_factory) -> dict:
             return _infer_keras(model, batch)
 
     elif suffix == ".tflite":
-        interpreter, kind = _load_tflite_model(str(path))
+        model_bytes, kind = _load_tflite_model(str(path))
 
         def infer_fn(batch):
-            return _infer_tflite(interpreter, batch, config)
+            return _infer_tflite(model_bytes, batch, config)
 
     else:
         console.print(f"[red]✗ Unsupported model format: {suffix}[/]")

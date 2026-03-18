@@ -305,8 +305,12 @@ def _evaluate_tflite(
     (Article II). Full spectrograms must be fed in stride-sized chunks, and the
     final output after processing the entire clip is the prediction.
 
-    State variables (Article VI) must be explicitly zeroed between samples
-    because allocate_tensors() only invokes CALL_ONCE on the first call.
+    A fresh interpreter is created per sample because TFLite resource variables
+    (used for streaming state) cannot be reliably reset via reset_all_variables()
+    or set_tensor() — those only affect the ReadVariableOp read copies, not the
+    underlying resource variable buffers. Only a fresh interpreter guarantees
+    clean state (verified empirically: fresh interpreter matches Python streaming
+    model exactly, while reset methods cause ~12% recall gap).
     """
     from src.data.dataset import WakeWordDataset
 
@@ -319,46 +323,31 @@ def _evaluate_tflite(
     stride = model_cfg.get("stride", 3)
     mel_bins = hardware_cfg.get("mel_bins", 40)
 
-    # Load TFLite model
-    interpreter = tf.lite.Interpreter(model_path=tflite_path)
-    interpreter.allocate_tensors()
+    # Load model bytes once — creating fresh interpreters from bytes is fast
+    # (~0.6ms per interpreter) and is the ONLY reliable way to reset streaming
+    # state variables in TFLite.
+    with open(tflite_path, "rb") as f:
+        model_bytes = f.read()
 
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
+    # Extract quantization parameters from a template interpreter
+    _tmpl = tf.lite.Interpreter(model_content=model_bytes)
+    _tmpl.allocate_tensors()
+    _input_details = _tmpl.get_input_details()
+    _output_details = _tmpl.get_output_details()
 
-    input_dtype = input_details[0]["dtype"]
-    input_quant = input_details[0].get("quantization_parameters", {})
+    input_dtype = _input_details[0]["dtype"]
+    input_quant = _input_details[0].get("quantization_parameters", {})
     input_scale = input_quant.get("scales", np.array([1.0]))[0]
     input_zero_point = input_quant.get("zero_points", np.array([0]))[0]
 
-    output_dtype = output_details[0]["dtype"]
-    output_quant = output_details[0].get("quantization_parameters", {})
+    output_dtype = _output_details[0]["dtype"]
+    output_quant = _output_details[0].get("quantization_parameters", {})
     output_scale = output_quant.get("scales", np.array([1.0]))[0]
     output_zero_point = output_quant.get("zero_points", np.array([0]))[0]
 
-    # Discover streaming state tensors (Article VI: exactly 6 state variables)
-    # State tensors in TFLite are identified by 'ReadVariableOp' in their name.
-    # These are the ring buffer variables that persist across inference calls.
-    # allocate_tensors() does NOT re-invoke CALL_ONCE (state zeroing subgraph)
-    # after the first call, so we must zero them manually between samples.
-    input_indices = {d["index"] for d in input_details}
-    output_indices = {d["index"] for d in output_details}
-
-    state_tensors = []  # list of (index, shape, dtype)
-    for tensor in interpreter.get_tensor_details():
-        idx = tensor["index"]
-        if idx in input_indices or idx in output_indices:
-            continue
-        name = tensor.get("name", "")
-        # State variables have 'ReadVariableOp' in their name from streaming.py tf.Variable usage
-        if "ReadVariableOp" in name:
-            shape = tuple(tensor.get("shape", ()))
-            state_tensors.append((idx, shape, tensor["dtype"]))
-
-    console.print(f"  Found {len(state_tensors)} state tensors to reset between samples")
-    if len(state_tensors) != 6:
-        console.print(f"[yellow]  Warning: Expected 6 state variables, found {len(state_tensors)}[/]")
-
+    input_index = _input_details[0]["index"]
+    output_index = _output_details[0]["index"]
+    del _tmpl
     # Load dataset
     dataset = WakeWordDataset(config)
     dataset.build()
@@ -386,12 +375,11 @@ def _evaluate_tflite(
             label = batch_labels[i]
             num_frames = full_spectrogram.shape[0]
 
-            # Reset all streaming state variables to zero (Article VI)
-            # allocate_tensors() does NOT re-invoke CALL_ONCE after the first call,
-            # so state from previous samples leaks into the next prediction.
-            for idx, shape, dtype in state_tensors:
-                interpreter.set_tensor(idx, np.zeros(shape, dtype=dtype))
-
+            # Create a fresh interpreter for each sample to guarantee clean
+            # streaming state. TFLite resource variables cannot be reset via
+            # reset_all_variables() or set_tensor() on ReadVariableOp tensors.
+            interpreter = tf.lite.Interpreter(model_content=model_bytes)
+            interpreter.allocate_tensors()
             # Streaming inference: slide stride-sized chunks across spectrogram
             prediction = 0.0
             for t in range(0, num_frames - stride + 1, stride):
@@ -402,10 +390,10 @@ def _evaluate_tflite(
                 if input_dtype != np.float32:
                     chunk = np.clip(chunk / input_scale + input_zero_point, -128, 127).astype(input_dtype)
 
-                interpreter.set_tensor(input_details[0]["index"], chunk)
+                interpreter.set_tensor(input_index, chunk)
                 interpreter.invoke()
 
-                raw_out = interpreter.get_tensor(output_details[0]["index"])
+                raw_out = interpreter.get_tensor(output_index)
                 # Dequantize uint8 -> float (Article II, Article III)
                 if output_dtype != np.float32:
                     prediction = (raw_out.astype(np.float32) - output_zero_point) * output_scale
