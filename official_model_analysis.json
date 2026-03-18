@@ -1,0 +1,4274 @@
+{
+  "official": {
+    "alexa.tflite": {
+      "file": "alexa.tflite",
+      "file_size_bytes": 55856,
+      "num_subgraphs": 2,
+      "main_subgraph": {
+        "num_tensors": 71,
+        "num_inputs": 1,
+        "num_outputs": 1
+      },
+      "inputs": [
+        {
+          "name": "serving_default_input_audio:0",
+          "shape": [
+            1,
+            3,
+            40
+          ],
+          "dtype": "int8",
+          "index": 0,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        }
+      ],
+      "outputs": [
+        {
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 69,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "state_tensors": [
+        {
+          "name": "model_1/stream_6/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 2
+        },
+        {
+          "name": "model_1/stream_6/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 3
+        },
+        {
+          "name": "model_1/stream_11/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 4
+        },
+        {
+          "name": "model_1/stream_11/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 5
+        },
+        {
+          "name": "model_1/stream_7/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 6
+        },
+        {
+          "name": "model_1/stream_8/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 7
+        },
+        {
+          "name": "model_1/stream_11/strided_slice2",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 8
+        },
+        {
+          "name": "model_1/stream_9/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 9
+        },
+        {
+          "name": "model_1/stream_10/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 10
+        },
+        {
+          "name": "model_1/dense_1/BiasAdd/ReadVariableOp",
+          "shape": [
+            1
+          ],
+          "dtype": "int32",
+          "index": 12,
+          "quant_scale": 7.61101400712505e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_7/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 16,
+          "quant_scale": 5.102830255054869e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_6/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 20,
+          "quant_scale": 4.357242141850293e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 24,
+          "quant_scale": 6.201659562066197e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_4/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 28,
+          "quant_scale": 0.0029798389878124,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/stream_6/conv2d_5/Conv2D",
+          "shape": [
+            32,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 31,
+          "quant_scale": 0.003945193253457546,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "stream_10/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 32
+        },
+        {
+          "name": "stream_11/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 33
+        },
+        {
+          "name": "stream_6/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 34
+        },
+        {
+          "name": "stream_7/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 35
+        },
+        {
+          "name": "stream_8/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 36
+        },
+        {
+          "name": "stream_9/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 37
+        },
+        {
+          "name": "model_1/stream_10/concat/ReadVariableOp",
+          "shape": [
+            1,
+            20,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 39,
+          "quant_scale": 0.03718235343694687,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_11/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 40,
+          "quant_scale": 0.019263768568634987,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 41,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 42,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/strided_slice2",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 43,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/activation_5/Relu;model_1/stream_6/conv2d_5/Conv2D",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 44,
+          "quant_scale": 1.541420817375183,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 45,
+          "quant_scale": 1.541420817375183,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 46,
+          "quant_scale": 1.541420817375183,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/strided_slice1",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 47,
+          "quant_scale": 1.541420817375183,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_4/BiasAdd;model_1/depthwise_conv2d_4/depthwise;model_1/depthwise_conv2d_4/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 48,
+          "quant_scale": 1.2776668071746826,
+          "quant_zero_point": 22
+        },
+        {
+          "name": "model_1/stream_8/concat/ReadVariableOp",
+          "shape": [
+            1,
+            8,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 50,
+          "quant_scale": 0.03378843516111374,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_8/concat",
+          "shape": [
+            1,
+            9,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 51,
+          "quant_scale": 0.03378843516111374,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_8/strided_slice1",
+          "shape": [
+            1,
+            8,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 52,
+          "quant_scale": 0.03378843516111374,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_5/BiasAdd;model_1/conv2d_9/Conv2D;model_1/depthwise_conv2d_5/depthwise;model_1/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 53,
+          "quant_scale": 0.0383654348552227,
+          "quant_zero_point": 15
+        },
+        {
+          "name": "model_1/stream_9/concat/ReadVariableOp",
+          "shape": [
+            1,
+            12,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 55,
+          "quant_scale": 0.0355386845767498,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_9/concat",
+          "shape": [
+            1,
+            13,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.0355386845767498,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_9/strided_slice1",
+          "shape": [
+            1,
+            12,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 57,
+          "quant_scale": 0.0355386845767498,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_6/BiasAdd;model_1/conv2d_9/Conv2D;model_1/depthwise_conv2d_6/depthwise;model_1/depthwise_conv2d_6/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 58,
+          "quant_scale": 0.06813932210206985,
+          "quant_zero_point": 7
+        },
+        {
+          "name": "model_1/stream_10/concat",
+          "shape": [
+            1,
+            21,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 60,
+          "quant_scale": 0.03718235343694687,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_10/strided_slice1",
+          "shape": [
+            1,
+            20,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 61,
+          "quant_scale": 0.03718235343694687,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_7/BiasAdd;model_1/conv2d_9/Conv2D;model_1/depthwise_conv2d_7/depthwise;model_1/depthwise_conv2d_7/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 62,
+          "quant_scale": 0.10432238131761551,
+          "quant_zero_point": 8
+        },
+        {
+          "name": "model_1/stream_11/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 64,
+          "quant_scale": 0.019263768568634987,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_11/strided_slice3",
+          "shape": [
+            1,
+            4,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 65,
+          "quant_scale": 0.019263768568634987,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:01",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 68,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 69,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "unique_state_shapes": [
+        {
+          "name": "model_1/stream_6/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 2
+        },
+        {
+          "name": "model_1/dense_1/BiasAdd/ReadVariableOp",
+          "shape": [
+            1
+          ],
+          "dtype": "int32",
+          "index": 12,
+          "quant_scale": 7.61101400712505e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_7/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 16,
+          "quant_scale": 5.102830255054869e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_4/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 28,
+          "quant_scale": 0.0029798389878124,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/stream_6/conv2d_5/Conv2D",
+          "shape": [
+            32,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 31,
+          "quant_scale": 0.003945193253457546,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "stream_10/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 32
+        },
+        {
+          "name": "model_1/stream_10/concat/ReadVariableOp",
+          "shape": [
+            1,
+            20,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 39,
+          "quant_scale": 0.03718235343694687,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_11/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 40,
+          "quant_scale": 0.019263768568634987,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 41,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 42,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/activation_5/Relu;model_1/stream_6/conv2d_5/Conv2D",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 44,
+          "quant_scale": 1.541420817375183,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 45,
+          "quant_scale": 1.541420817375183,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 46,
+          "quant_scale": 1.541420817375183,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_8/concat/ReadVariableOp",
+          "shape": [
+            1,
+            8,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 50,
+          "quant_scale": 0.03378843516111374,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_8/concat",
+          "shape": [
+            1,
+            9,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 51,
+          "quant_scale": 0.03378843516111374,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_5/BiasAdd;model_1/conv2d_9/Conv2D;model_1/depthwise_conv2d_5/depthwise;model_1/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 53,
+          "quant_scale": 0.0383654348552227,
+          "quant_zero_point": 15
+        },
+        {
+          "name": "model_1/stream_9/concat/ReadVariableOp",
+          "shape": [
+            1,
+            12,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 55,
+          "quant_scale": 0.0355386845767498,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_9/concat",
+          "shape": [
+            1,
+            13,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.0355386845767498,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_10/concat",
+          "shape": [
+            1,
+            21,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 60,
+          "quant_scale": 0.03718235343694687,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_11/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 64,
+          "quant_scale": 0.019263768568634987,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:01",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 68,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": -128
+        }
+      ],
+      "unique_ops": [
+        "ASSIGN_VARIABLE",
+        "CALL_ONCE",
+        "CONCATENATION",
+        "CONV_2D",
+        "DELEGATE",
+        "DEPTHWISE_CONV_2D",
+        "FULLY_CONNECTED",
+        "LOGISTIC",
+        "QUANTIZE",
+        "READ_VARIABLE",
+        "RESHAPE",
+        "STRIDED_SLICE",
+        "VAR_HANDLE"
+      ],
+      "num_unique_ops": 13,
+      "total_ops": 49
+    },
+    "hey_jarvis.tflite": {
+      "file": "hey_jarvis.tflite",
+      "file_size_bytes": 52272,
+      "num_subgraphs": 2,
+      "main_subgraph": {
+        "num_tensors": 71,
+        "num_inputs": 1,
+        "num_outputs": 1
+      },
+      "inputs": [
+        {
+          "name": "serving_default_input_audio:0",
+          "shape": [
+            1,
+            3,
+            40
+          ],
+          "dtype": "int8",
+          "index": 0,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        }
+      ],
+      "outputs": [
+        {
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 69,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "state_tensors": [
+        {
+          "name": "model/stream/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 2
+        },
+        {
+          "name": "model/stream/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 3
+        },
+        {
+          "name": "model/stream_5/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 4
+        },
+        {
+          "name": "model/stream_5/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 5
+        },
+        {
+          "name": "model/stream_1/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 6
+        },
+        {
+          "name": "model/stream_2/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 7
+        },
+        {
+          "name": "model/stream_5/strided_slice2",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 8
+        },
+        {
+          "name": "model/stream_3/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 9
+        },
+        {
+          "name": "model/stream_4/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 10
+        },
+        {
+          "name": "model/dense/BiasAdd/ReadVariableOp",
+          "shape": [
+            1
+          ],
+          "dtype": "int32",
+          "index": 12,
+          "quant_scale": 8.816138870315626e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_3/BiasAdd/ReadVariableOp",
+          "shape": [
+            60
+          ],
+          "dtype": "int32",
+          "index": 16,
+          "quant_scale": 9.642622899264097e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_2/BiasAdd/ReadVariableOp",
+          "shape": [
+            60
+          ],
+          "dtype": "int32",
+          "index": 20,
+          "quant_scale": 0.00014675875718239695,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_1/BiasAdd/ReadVariableOp",
+          "shape": [
+            60
+          ],
+          "dtype": "int32",
+          "index": 24,
+          "quant_scale": 8.03952498245053e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d/BiasAdd/ReadVariableOp",
+          "shape": [
+            30
+          ],
+          "dtype": "int32",
+          "index": 28,
+          "quant_scale": 0.002456656889989972,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/stream/conv2d/Conv2D",
+          "shape": [
+            30,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 31,
+          "quant_scale": 0.004258376080542803,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "stream/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 32
+        },
+        {
+          "name": "stream_1/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 33
+        },
+        {
+          "name": "stream_2/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 34
+        },
+        {
+          "name": "stream_3/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 35
+        },
+        {
+          "name": "stream_4/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 36
+        },
+        {
+          "name": "stream_5/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 37
+        },
+        {
+          "name": "model/stream_1/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            30
+          ],
+          "dtype": "int8",
+          "index": 39,
+          "quant_scale": 1.4935686588287354,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_2/concat/ReadVariableOp",
+          "shape": [
+            1,
+            8,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 40,
+          "quant_scale": 0.04090571776032448,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_3/concat/ReadVariableOp",
+          "shape": [
+            1,
+            12,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 41,
+          "quant_scale": 0.04309869930148125,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_4/concat/ReadVariableOp",
+          "shape": [
+            1,
+            20,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 42,
+          "quant_scale": 0.03958584740757942,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_5/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 43,
+          "quant_scale": 0.02834215760231018,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 44,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 45,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/strided_slice2",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 46,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/activation/Relu;model/stream/conv2d/Conv2D",
+          "shape": [
+            1,
+            1,
+            1,
+            30
+          ],
+          "dtype": "int8",
+          "index": 47,
+          "quant_scale": 1.4935686588287354,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_1/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            30
+          ],
+          "dtype": "int8",
+          "index": 48,
+          "quant_scale": 1.4935686588287354,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_1/strided_slice1",
+          "shape": [
+            1,
+            4,
+            1,
+            30
+          ],
+          "dtype": "int8",
+          "index": 49,
+          "quant_scale": 1.4935686588287354,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d/BiasAdd;model/depthwise_conv2d/depthwise;model/depthwise_conv2d/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            30
+          ],
+          "dtype": "int8",
+          "index": 50,
+          "quant_scale": 1.2521613836288452,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "model/stream_2/concat",
+          "shape": [
+            1,
+            9,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 52,
+          "quant_scale": 0.04090571776032448,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_2/strided_slice1",
+          "shape": [
+            1,
+            8,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 53,
+          "quant_scale": 0.04090571776032448,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d_1/BiasAdd;model/conv2d_4/Conv2D;model/depthwise_conv2d_1/depthwise;model/depthwise_conv2d_1/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 54,
+          "quant_scale": 0.046389274299144745,
+          "quant_zero_point": 31
+        },
+        {
+          "name": "model/stream_3/concat",
+          "shape": [
+            1,
+            13,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.04309869930148125,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_3/strided_slice1",
+          "shape": [
+            1,
+            12,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 57,
+          "quant_scale": 0.04309869930148125,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d_2/BiasAdd;model/conv2d_4/Conv2D;model/depthwise_conv2d_2/depthwise;model/depthwise_conv2d_2/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 58,
+          "quant_scale": 0.05681793391704559,
+          "quant_zero_point": 1
+        },
+        {
+          "name": "model/stream_4/concat",
+          "shape": [
+            1,
+            21,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 60,
+          "quant_scale": 0.03958584740757942,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_4/strided_slice1",
+          "shape": [
+            1,
+            20,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 61,
+          "quant_scale": 0.03958584740757942,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d_3/BiasAdd;model/conv2d_4/Conv2D;model/depthwise_conv2d_3/depthwise;model/depthwise_conv2d_3/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 62,
+          "quant_scale": 0.1032278910279274,
+          "quant_zero_point": -36
+        },
+        {
+          "name": "model/stream_5/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 64,
+          "quant_scale": 0.02834215760231018,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_5/strided_slice3",
+          "shape": [
+            1,
+            4,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 65,
+          "quant_scale": 0.02834215760231018,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:01",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 68,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 69,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "unique_state_shapes": [
+        {
+          "name": "model/stream/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 2
+        },
+        {
+          "name": "model/dense/BiasAdd/ReadVariableOp",
+          "shape": [
+            1
+          ],
+          "dtype": "int32",
+          "index": 12,
+          "quant_scale": 8.816138870315626e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_3/BiasAdd/ReadVariableOp",
+          "shape": [
+            60
+          ],
+          "dtype": "int32",
+          "index": 16,
+          "quant_scale": 9.642622899264097e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d/BiasAdd/ReadVariableOp",
+          "shape": [
+            30
+          ],
+          "dtype": "int32",
+          "index": 28,
+          "quant_scale": 0.002456656889989972,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/stream/conv2d/Conv2D",
+          "shape": [
+            30,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 31,
+          "quant_scale": 0.004258376080542803,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "stream/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 32
+        },
+        {
+          "name": "model/stream_1/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            30
+          ],
+          "dtype": "int8",
+          "index": 39,
+          "quant_scale": 1.4935686588287354,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_2/concat/ReadVariableOp",
+          "shape": [
+            1,
+            8,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 40,
+          "quant_scale": 0.04090571776032448,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_3/concat/ReadVariableOp",
+          "shape": [
+            1,
+            12,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 41,
+          "quant_scale": 0.04309869930148125,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_4/concat/ReadVariableOp",
+          "shape": [
+            1,
+            20,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 42,
+          "quant_scale": 0.03958584740757942,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_5/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 43,
+          "quant_scale": 0.02834215760231018,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 44,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 45,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/activation/Relu;model/stream/conv2d/Conv2D",
+          "shape": [
+            1,
+            1,
+            1,
+            30
+          ],
+          "dtype": "int8",
+          "index": 47,
+          "quant_scale": 1.4935686588287354,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_1/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            30
+          ],
+          "dtype": "int8",
+          "index": 48,
+          "quant_scale": 1.4935686588287354,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_2/concat",
+          "shape": [
+            1,
+            9,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 52,
+          "quant_scale": 0.04090571776032448,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d_1/BiasAdd;model/conv2d_4/Conv2D;model/depthwise_conv2d_1/depthwise;model/depthwise_conv2d_1/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 54,
+          "quant_scale": 0.046389274299144745,
+          "quant_zero_point": 31
+        },
+        {
+          "name": "model/stream_3/concat",
+          "shape": [
+            1,
+            13,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.04309869930148125,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_4/concat",
+          "shape": [
+            1,
+            21,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 60,
+          "quant_scale": 0.03958584740757942,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_5/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            60
+          ],
+          "dtype": "int8",
+          "index": 64,
+          "quant_scale": 0.02834215760231018,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:01",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 68,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": -128
+        }
+      ],
+      "unique_ops": [
+        "ASSIGN_VARIABLE",
+        "CALL_ONCE",
+        "CONCATENATION",
+        "CONV_2D",
+        "DELEGATE",
+        "DEPTHWISE_CONV_2D",
+        "FULLY_CONNECTED",
+        "LOGISTIC",
+        "QUANTIZE",
+        "READ_VARIABLE",
+        "RESHAPE",
+        "STRIDED_SLICE",
+        "VAR_HANDLE"
+      ],
+      "num_unique_ops": 13,
+      "total_ops": 46
+    },
+    "hey_mycroft.tflite": {
+      "file": "hey_mycroft.tflite",
+      "file_size_bytes": 57248,
+      "num_subgraphs": 2,
+      "main_subgraph": {
+        "num_tensors": 72,
+        "num_inputs": 1,
+        "num_outputs": 1
+      },
+      "inputs": [
+        {
+          "name": "serving_default_input_audio:0",
+          "shape": [
+            1,
+            3,
+            40
+          ],
+          "dtype": "int8",
+          "index": 0,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        }
+      ],
+      "outputs": [
+        {
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 70,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "state_tensors": [
+        {
+          "name": "model_1/stream_6/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 2
+        },
+        {
+          "name": "model_1/stream_6/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 3
+        },
+        {
+          "name": "model_1/stream_11/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 4
+        },
+        {
+          "name": "model_1/stream_7/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 5
+        },
+        {
+          "name": "model_1/stream_7/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 6
+        },
+        {
+          "name": "model_1/stream_8/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 7
+        },
+        {
+          "name": "model_1/stream_11/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 8
+        },
+        {
+          "name": "model_1/stream_9/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 9
+        },
+        {
+          "name": "model_1/stream_10/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 10
+        },
+        {
+          "name": "model_1/stream_11/strided_slice2",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 11
+        },
+        {
+          "name": "model_1/dense_1/BiasAdd/ReadVariableOp",
+          "shape": [
+            1
+          ],
+          "dtype": "int32",
+          "index": 13,
+          "quant_scale": 0.00013503278023563325,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_7/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 17,
+          "quant_scale": 0.00016792341193649918,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_6/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 21,
+          "quant_scale": 8.782865188550204e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 25,
+          "quant_scale": 8.389986032852903e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_4/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 29,
+          "quant_scale": 0.0034429749939590693,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/stream_6/conv2d_5/Conv2D",
+          "shape": [
+            32,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 32,
+          "quant_scale": 0.00502040283754468,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "stream_10/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 33
+        },
+        {
+          "name": "stream_11/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 34
+        },
+        {
+          "name": "stream_6/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 35
+        },
+        {
+          "name": "stream_7/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 36
+        },
+        {
+          "name": "stream_8/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 37
+        },
+        {
+          "name": "stream_9/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 38
+        },
+        {
+          "name": "model_1/stream_10/concat/ReadVariableOp",
+          "shape": [
+            1,
+            20,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 40,
+          "quant_scale": 0.032039396464824677,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_11/concat/ReadVariableOp",
+          "shape": [
+            1,
+            14,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 41,
+          "quant_scale": 0.023492012172937393,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 42,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 43,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/strided_slice2",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 44,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/activation_5/Relu;model_1/stream_6/conv2d_5/Conv2D",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 45,
+          "quant_scale": 1.2583041191101074,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 46,
+          "quant_scale": 1.2583041191101074,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 47,
+          "quant_scale": 1.2583041191101074,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/strided_slice2",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 48,
+          "quant_scale": 1.2583041191101074,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_4/BiasAdd;model_1/depthwise_conv2d_4/depthwise;model_1/depthwise_conv2d_4/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 49,
+          "quant_scale": 0.964807391166687,
+          "quant_zero_point": -15
+        },
+        {
+          "name": "model_1/stream_8/concat/ReadVariableOp",
+          "shape": [
+            1,
+            8,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 51,
+          "quant_scale": 0.03668966516852379,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_8/concat",
+          "shape": [
+            1,
+            9,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 52,
+          "quant_scale": 0.03668966516852379,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_8/strided_slice1",
+          "shape": [
+            1,
+            8,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 53,
+          "quant_scale": 0.03668966516852379,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_5/BiasAdd;model_1/conv2d_9/Conv2D;model_1/depthwise_conv2d_5/depthwise;model_1/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 54,
+          "quant_scale": 0.042350366711616516,
+          "quant_zero_point": -12
+        },
+        {
+          "name": "model_1/stream_9/concat/ReadVariableOp",
+          "shape": [
+            1,
+            12,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.04227805882692337,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_9/concat",
+          "shape": [
+            1,
+            13,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 57,
+          "quant_scale": 0.04227805882692337,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_9/strided_slice1",
+          "shape": [
+            1,
+            12,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 58,
+          "quant_scale": 0.04227805882692337,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_6/BiasAdd;model_1/conv2d_9/Conv2D;model_1/depthwise_conv2d_6/depthwise;model_1/depthwise_conv2d_6/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 59,
+          "quant_scale": 0.07660122960805893,
+          "quant_zero_point": 6
+        },
+        {
+          "name": "model_1/stream_10/concat",
+          "shape": [
+            1,
+            21,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 61,
+          "quant_scale": 0.032039396464824677,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_10/strided_slice1",
+          "shape": [
+            1,
+            20,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 62,
+          "quant_scale": 0.032039396464824677,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_7/BiasAdd;model_1/conv2d_9/Conv2D;model_1/depthwise_conv2d_7/depthwise;model_1/depthwise_conv2d_7/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 63,
+          "quant_scale": 0.10353537648916245,
+          "quant_zero_point": -2
+        },
+        {
+          "name": "model_1/stream_11/concat",
+          "shape": [
+            1,
+            15,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 65,
+          "quant_scale": 0.023492012172937393,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_11/strided_slice3",
+          "shape": [
+            1,
+            14,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 66,
+          "quant_scale": 0.023492012172937393,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:01",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 69,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 70,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "unique_state_shapes": [
+        {
+          "name": "model_1/stream_6/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 2
+        },
+        {
+          "name": "model_1/dense_1/BiasAdd/ReadVariableOp",
+          "shape": [
+            1
+          ],
+          "dtype": "int32",
+          "index": 13,
+          "quant_scale": 0.00013503278023563325,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_7/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 17,
+          "quant_scale": 0.00016792341193649918,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/depthwise_conv2d_4/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 29,
+          "quant_scale": 0.0034429749939590693,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model_1/stream_6/conv2d_5/Conv2D",
+          "shape": [
+            32,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 32,
+          "quant_scale": 0.00502040283754468,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "stream_10/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 33
+        },
+        {
+          "name": "model_1/stream_10/concat/ReadVariableOp",
+          "shape": [
+            1,
+            20,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 40,
+          "quant_scale": 0.032039396464824677,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_11/concat/ReadVariableOp",
+          "shape": [
+            1,
+            14,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 41,
+          "quant_scale": 0.023492012172937393,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 42,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_6/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 43,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/activation_5/Relu;model_1/stream_6/conv2d_5/Conv2D",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 45,
+          "quant_scale": 1.2583041191101074,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 46,
+          "quant_scale": 1.2583041191101074,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_7/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 47,
+          "quant_scale": 1.2583041191101074,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_8/concat/ReadVariableOp",
+          "shape": [
+            1,
+            8,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 51,
+          "quant_scale": 0.03668966516852379,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_8/concat",
+          "shape": [
+            1,
+            9,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 52,
+          "quant_scale": 0.03668966516852379,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/depthwise_conv2d_5/BiasAdd;model_1/conv2d_9/Conv2D;model_1/depthwise_conv2d_5/depthwise;model_1/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 54,
+          "quant_scale": 0.042350366711616516,
+          "quant_zero_point": -12
+        },
+        {
+          "name": "model_1/stream_9/concat/ReadVariableOp",
+          "shape": [
+            1,
+            12,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.04227805882692337,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_9/concat",
+          "shape": [
+            1,
+            13,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 57,
+          "quant_scale": 0.04227805882692337,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_10/concat",
+          "shape": [
+            1,
+            21,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 61,
+          "quant_scale": 0.032039396464824677,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model_1/stream_11/concat",
+          "shape": [
+            1,
+            15,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 65,
+          "quant_scale": 0.023492012172937393,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:01",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 69,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": -128
+        }
+      ],
+      "unique_ops": [
+        "ASSIGN_VARIABLE",
+        "CALL_ONCE",
+        "CONCATENATION",
+        "CONV_2D",
+        "DELEGATE",
+        "DEPTHWISE_CONV_2D",
+        "FULLY_CONNECTED",
+        "LOGISTIC",
+        "QUANTIZE",
+        "READ_VARIABLE",
+        "RESHAPE",
+        "STRIDED_SLICE",
+        "VAR_HANDLE"
+      ],
+      "num_unique_ops": 13,
+      "total_ops": 49
+    },
+    "okay_nabu.tflite": {
+      "file": "okay_nabu.tflite",
+      "file_size_bytes": 60264,
+      "num_subgraphs": 2,
+      "main_subgraph": {
+        "num_tensors": 95,
+        "num_inputs": 1,
+        "num_outputs": 1
+      },
+      "inputs": [
+        {
+          "name": "serving_default_input_audio:0",
+          "shape": [
+            1,
+            3,
+            40
+          ],
+          "dtype": "int8",
+          "index": 0,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        }
+      ],
+      "outputs": [
+        {
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 93,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "state_tensors": [
+        {
+          "name": "model/stream/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 2
+        },
+        {
+          "name": "model/stream/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 3
+        },
+        {
+          "name": "model/stream_1/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 5
+        },
+        {
+          "name": "model/stream_1/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 6
+        },
+        {
+          "name": "model/stream_2/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 7
+        },
+        {
+          "name": "model/stream_5/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 8
+        },
+        {
+          "name": "model/stream_3/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 14
+        },
+        {
+          "name": "model/stream_4/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 17
+        },
+        {
+          "name": "model/stream_5/strided_slice1",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 18
+        },
+        {
+          "name": "model/dense/BiasAdd/ReadVariableOp",
+          "shape": [
+            1
+          ],
+          "dtype": "int32",
+          "index": 20,
+          "quant_scale": 9.034948016051203e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 24,
+          "quant_scale": 7.40938339731656e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_4/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 28,
+          "quant_scale": 0.00011676892609102651,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_3/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 30,
+          "quant_scale": 0.00013882519851904362,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_2/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 34,
+          "quant_scale": 9.231659350916743e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_1/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 36,
+          "quant_scale": 0.00010458973702043295,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 40,
+          "quant_scale": 0.0037827242631465197,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/stream/conv2d/Conv2D",
+          "shape": [
+            32,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 43,
+          "quant_scale": 0.004633622709661722,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "stream/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 44
+        },
+        {
+          "name": "stream_1/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 45
+        },
+        {
+          "name": "stream_2/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 46
+        },
+        {
+          "name": "stream_3/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 47
+        },
+        {
+          "name": "stream_4/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 48
+        },
+        {
+          "name": "stream_5/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 49
+        },
+        {
+          "name": "model/stream_1/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 51,
+          "quant_scale": 1.2743911743164062,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_2/concat/ReadVariableOp",
+          "shape": [
+            1,
+            10,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 52,
+          "quant_scale": 0.03454568237066269,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_3/concat/ReadVariableOp",
+          "shape": [
+            1,
+            14,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 53,
+          "quant_scale": 0.04087086766958237,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_4/concat/ReadVariableOp",
+          "shape": [
+            1,
+            22,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 54,
+          "quant_scale": 0.031987305730581284,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_5/concat/ReadVariableOp",
+          "shape": [
+            1,
+            5,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 55,
+          "quant_scale": 0.026271779090166092,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 57,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/strided_slice2",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 58,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/activation/Relu;model/stream/conv2d/Conv2D",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 59,
+          "quant_scale": 1.2743911743164062,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_1/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 60,
+          "quant_scale": 1.2743911743164062,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_1/strided_slice2",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 61,
+          "quant_scale": 1.2743911743164062,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d/BiasAdd;model/depthwise_conv2d_4/depthwise;model/depthwise_conv2d/depthwise;model/depthwise_conv2d/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 62,
+          "quant_scale": 1.109315276145935,
+          "quant_zero_point": -28
+        },
+        {
+          "name": "model/stream_2/concat",
+          "shape": [
+            1,
+            11,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 64,
+          "quant_scale": 0.03454568237066269,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_2/strided_slice1",
+          "shape": [
+            1,
+            10,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 65,
+          "quant_scale": 0.03454568237066269,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d_1/BiasAdd;model/depthwise_conv2d_4/depthwise;model/depthwise_conv2d_1/depthwise;model/depthwise_conv2d_1/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 69,
+          "quant_scale": 0.04742724075913429,
+          "quant_zero_point": -18
+        },
+        {
+          "name": "model/depthwise_conv2d_2/BiasAdd;model/depthwise_conv2d_4/depthwise;model/depthwise_conv2d_2/depthwise;model/depthwise_conv2d_2/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 71,
+          "quant_scale": 0.04742724075913429,
+          "quant_zero_point": -18
+        },
+        {
+          "name": "model/stream_3/concat",
+          "shape": [
+            1,
+            15,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 74,
+          "quant_scale": 0.04087086766958237,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_3/strided_slice1",
+          "shape": [
+            1,
+            14,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 75,
+          "quant_scale": 0.04087086766958237,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d_3/BiasAdd;model/depthwise_conv2d_4/depthwise;model/depthwise_conv2d_3/depthwise;model/depthwise_conv2d_3/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 79,
+          "quant_scale": 0.07154210656881332,
+          "quant_zero_point": 4
+        },
+        {
+          "name": "model/depthwise_conv2d_4/BiasAdd;model/depthwise_conv2d_4/depthwise;model/depthwise_conv2d_4/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 81,
+          "quant_scale": 0.07154210656881332,
+          "quant_zero_point": 4
+        },
+        {
+          "name": "model/stream_4/concat",
+          "shape": [
+            1,
+            23,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 84,
+          "quant_scale": 0.031987305730581284,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_4/strided_slice1",
+          "shape": [
+            1,
+            22,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 85,
+          "quant_scale": 0.031987305730581284,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d_5/BiasAdd;model/conv2d_4/Conv2D;model/depthwise_conv2d_5/depthwise;model/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 86,
+          "quant_scale": 0.11352390795946121,
+          "quant_zero_point": 3
+        },
+        {
+          "name": "model/stream_5/concat",
+          "shape": [
+            1,
+            6,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 88,
+          "quant_scale": 0.026271779090166092,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_5/strided_slice2",
+          "shape": [
+            1,
+            5,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 89,
+          "quant_scale": 0.026271779090166092,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:01",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 92,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 93,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "unique_state_shapes": [
+        {
+          "name": "model/stream/strided_slice",
+          "shape": [
+            4
+          ],
+          "dtype": "int32",
+          "index": 2
+        },
+        {
+          "name": "model/dense/BiasAdd/ReadVariableOp",
+          "shape": [
+            1
+          ],
+          "dtype": "int32",
+          "index": 20,
+          "quant_scale": 9.034948016051203e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            64
+          ],
+          "dtype": "int32",
+          "index": 24,
+          "quant_scale": 7.40938339731656e-05,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/depthwise_conv2d_4/BiasAdd/ReadVariableOp",
+          "shape": [
+            32
+          ],
+          "dtype": "int32",
+          "index": 28,
+          "quant_scale": 0.00011676892609102651,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "model/stream/conv2d/Conv2D",
+          "shape": [
+            32,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 43,
+          "quant_scale": 0.004633622709661722,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "stream/states",
+          "shape": [],
+          "dtype": "object_",
+          "index": 44
+        },
+        {
+          "name": "model/stream_1/concat/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 51,
+          "quant_scale": 1.2743911743164062,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_2/concat/ReadVariableOp",
+          "shape": [
+            1,
+            10,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 52,
+          "quant_scale": 0.03454568237066269,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_3/concat/ReadVariableOp",
+          "shape": [
+            1,
+            14,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 53,
+          "quant_scale": 0.04087086766958237,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_4/concat/ReadVariableOp",
+          "shape": [
+            1,
+            22,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 54,
+          "quant_scale": 0.031987305730581284,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_5/concat/ReadVariableOp",
+          "shape": [
+            1,
+            5,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 55,
+          "quant_scale": 0.026271779090166092,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 57,
+          "quant_scale": 0.10196078568696976,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/activation/Relu;model/stream/conv2d/Conv2D",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 59,
+          "quant_scale": 1.2743911743164062,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_1/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 60,
+          "quant_scale": 1.2743911743164062,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_2/concat",
+          "shape": [
+            1,
+            11,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 64,
+          "quant_scale": 0.03454568237066269,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_3/concat",
+          "shape": [
+            1,
+            15,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 74,
+          "quant_scale": 0.04087086766958237,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/stream_4/concat",
+          "shape": [
+            1,
+            23,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 84,
+          "quant_scale": 0.031987305730581284,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "model/depthwise_conv2d_5/BiasAdd;model/conv2d_4/Conv2D;model/depthwise_conv2d_5/depthwise;model/depthwise_conv2d_5/BiasAdd/ReadVariableOp",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 86,
+          "quant_scale": 0.11352390795946121,
+          "quant_zero_point": 3
+        },
+        {
+          "name": "model/stream_5/concat",
+          "shape": [
+            1,
+            6,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 88,
+          "quant_scale": 0.026271779090166092,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall:01",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 92,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": -128
+        }
+      ],
+      "unique_ops": [
+        "ASSIGN_VARIABLE",
+        "CALL_ONCE",
+        "CONCATENATION",
+        "CONV_2D",
+        "DELEGATE",
+        "DEPTHWISE_CONV_2D",
+        "FULLY_CONNECTED",
+        "LOGISTIC",
+        "QUANTIZE",
+        "READ_VARIABLE",
+        "RESHAPE",
+        "SPLIT_V",
+        "STRIDED_SLICE",
+        "VAR_HANDLE"
+      ],
+      "num_unique_ops": 14,
+      "total_ops": 58
+    }
+  },
+  "ours": {
+    "wake_word.tflite": {
+      "file": "wake_word.tflite",
+      "file_size_bytes": 82304,
+      "num_subgraphs": 2,
+      "main_subgraph": {
+        "num_tensors": 102,
+        "num_inputs": 1,
+        "num_outputs": 1
+      },
+      "inputs": [
+        {
+          "name": "serving_default_inputs:0",
+          "shape": [
+            1,
+            3,
+            40
+          ],
+          "dtype": "int8",
+          "index": 0,
+          "quant_scale": 0.10202205926179886,
+          "quant_zero_point": -128
+        }
+      ],
+      "outputs": [
+        {
+          "name": "StatefulPartitionedCall_1:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 100,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "state_tensors": [
+        {
+          "name": "streaming_model/stream_1_1",
+          "shape": [],
+          "dtype": "object_",
+          "index": 44
+        },
+        {
+          "name": "streaming_model/stream_2_1",
+          "shape": [],
+          "dtype": "object_",
+          "index": 45
+        },
+        {
+          "name": "streaming_model/stream_3_1",
+          "shape": [],
+          "dtype": "object_",
+          "index": 46
+        },
+        {
+          "name": "streaming_model/stream_4_1",
+          "shape": [],
+          "dtype": "object_",
+          "index": 47
+        },
+        {
+          "name": "streaming_model/stream_5_1",
+          "shape": [],
+          "dtype": "object_",
+          "index": 48
+        },
+        {
+          "name": "streaming_model/stream_6",
+          "shape": [],
+          "dtype": "object_",
+          "index": 49
+        },
+        {
+          "name": "streaming_model_1/strided_slice",
+          "shape": [
+            1,
+            3,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 50,
+          "quant_scale": 0.10202205926179886,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/strided_slice1",
+          "shape": [
+            1,
+            3,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 51,
+          "quant_scale": 0.10202205926179886,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_1/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 52,
+          "quant_scale": 0.48919984698295593,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_2/ReadVariableOp",
+          "shape": [
+            1,
+            10,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 53,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_4/ReadVariableOp",
+          "shape": [
+            1,
+            14,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 54,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/concat_6/ReadVariableOp",
+          "shape": [
+            1,
+            22,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 55,
+          "quant_scale": 0.04757769778370857,
+          "quant_zero_point": -14
+        },
+        {
+          "name": "streaming_model_1/concat_7/ReadVariableOp",
+          "shape": [
+            1,
+            31,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.03698445111513138,
+          "quant_zero_point": -32
+        },
+        {
+          "name": "streaming_model_1/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 57,
+          "quant_scale": 0.10202205926179886,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 58,
+          "quant_scale": 0.10202205926179886,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/strided_slice_1",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 59,
+          "quant_scale": 0.10202205926179886,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/initial_relu_1/Relu;streaming_model_1/initial_conv_cell_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 60,
+          "quant_scale": 0.48919984698295593,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_1",
+          "shape": [
+            1,
+            5,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 61,
+          "quant_scale": 0.48919984698295593,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/strided_slice_2",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 62,
+          "quant_scale": 0.48919984698295593,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_mixconvs_mix_conv_block_depthwise_convs_depthwise_conv2d_1/depthwise",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 63,
+          "quant_scale": 0.3634490966796875,
+          "quant_zero_point": -13
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_mixconvs_mix_conv_block_activations_re_lu_1/Relu;streaming_model_1/add;streaming_model_1/blocks_residual_block_mixconvs_mix_conv_block_pointwise_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 64,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/add_1;streaming_model_1/blocks_residual_block_1_residual_proj_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 65,
+          "quant_scale": 0.047513265162706375,
+          "quant_zero_point": 8
+        },
+        {
+          "name": "streaming_model_1/concat_2",
+          "shape": [
+            1,
+            11,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 66,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/strided_slice_3",
+          "shape": [
+            1,
+            10,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 67,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/split;streaming_model_1/split1",
+          "shape": [
+            1,
+            11,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 68,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/split;streaming_model_1/split11",
+          "shape": [
+            1,
+            11,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 69,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_1_mixconvs_mix_conv_block_depthwise_convs_depthwise_conv2d_1/depthwise",
+          "shape": [
+            1,
+            5,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 70,
+          "quant_scale": 0.016326619312167168,
+          "quant_zero_point": 16
+        },
+        {
+          "name": "streaming_model_1/strided_slice_4",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 71,
+          "quant_scale": 0.016326619312167168,
+          "quant_zero_point": 16
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_1_mixconvs_mix_conv_block_depthwise_convs_depthwise_conv2d_1_2/depthwise",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 72,
+          "quant_scale": 0.016326619312167168,
+          "quant_zero_point": 16
+        },
+        {
+          "name": "streaming_model_1/strided_slice_5",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 73,
+          "quant_scale": 0.016326619312167168,
+          "quant_zero_point": 16
+        },
+        {
+          "name": "streaming_model_1/concat_3",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 74,
+          "quant_scale": 0.016326619312167168,
+          "quant_zero_point": 16
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_1_mixconvs_mix_conv_block_activations_re_lu_1/Relu;streaming_model_1/add_2;streaming_model_1/blocks_residual_block_1_mixconvs_mix_conv_block_pointwise_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 75,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/add_3",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 76,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/add_4;streaming_model_1/blocks_residual_block_2_residual_proj_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 77,
+          "quant_scale": 0.04355989396572113,
+          "quant_zero_point": -4
+        },
+        {
+          "name": "streaming_model_1/concat_4",
+          "shape": [
+            1,
+            15,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 78,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/strided_slice_6",
+          "shape": [
+            1,
+            14,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 79,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/split_1;streaming_model_1/split_11",
+          "shape": [
+            1,
+            15,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 80,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/split_1;streaming_model_1/split_111",
+          "shape": [
+            1,
+            15,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 81,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_2_mixconvs_mix_conv_block_depthwise_convs_depthwise_conv2d_1/depthwise",
+          "shape": [
+            1,
+            7,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 82,
+          "quant_scale": 0.034466590732336044,
+          "quant_zero_point": -31
+        },
+        {
+          "name": "streaming_model_1/strided_slice_7",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 83,
+          "quant_scale": 0.034466590732336044,
+          "quant_zero_point": -31
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_2_mixconvs_mix_conv_block_depthwise_convs_depthwise_conv2d_1_2/depthwise",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 84,
+          "quant_scale": 0.034466590732336044,
+          "quant_zero_point": -31
+        },
+        {
+          "name": "streaming_model_1/strided_slice_8",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 85,
+          "quant_scale": 0.034466590732336044,
+          "quant_zero_point": -31
+        },
+        {
+          "name": "streaming_model_1/concat_5",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 86,
+          "quant_scale": 0.034466590732336044,
+          "quant_zero_point": -31
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_2_mixconvs_mix_conv_block_activations_re_lu_1/Relu;streaming_model_1/add_5;streaming_model_1/blocks_residual_block_2_mixconvs_mix_conv_block_pointwise_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 87,
+          "quant_scale": 0.04757769778370857,
+          "quant_zero_point": -14
+        },
+        {
+          "name": "streaming_model_1/add_6",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 88,
+          "quant_scale": 0.04757769778370857,
+          "quant_zero_point": -14
+        },
+        {
+          "name": "streaming_model_1/add_7;streaming_model_1/blocks_residual_block_3_residual_proj_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 89,
+          "quant_scale": 0.0320100374519825,
+          "quant_zero_point": 0
+        },
+        {
+          "name": "streaming_model_1/concat_6",
+          "shape": [
+            1,
+            23,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 90,
+          "quant_scale": 0.04757769778370857,
+          "quant_zero_point": -14
+        },
+        {
+          "name": "streaming_model_1/strided_slice_9",
+          "shape": [
+            1,
+            22,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 91,
+          "quant_scale": 0.04757769778370857,
+          "quant_zero_point": -14
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_3_mixconvs_mix_conv_block_depthwise_convs_depthwise_conv2d_1/depthwise",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 92,
+          "quant_scale": 0.03429533913731575,
+          "quant_zero_point": -2
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_3_mixconvs_mix_conv_block_activations_re_lu_1/Relu;streaming_model_1/add_8;streaming_model_1/blocks_residual_block_3_mixconvs_mix_conv_block_pointwise_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 93,
+          "quant_scale": 0.03698445111513138,
+          "quant_zero_point": -32
+        },
+        {
+          "name": "streaming_model_1/add_9",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 94,
+          "quant_scale": 0.03698445111513138,
+          "quant_zero_point": -32
+        },
+        {
+          "name": "streaming_model_1/concat_7",
+          "shape": [
+            1,
+            32,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 95,
+          "quant_scale": 0.03698445111513138,
+          "quant_zero_point": -32
+        },
+        {
+          "name": "streaming_model_1/strided_slice_10",
+          "shape": [
+            1,
+            31,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 96,
+          "quant_scale": 0.03698445111513138,
+          "quant_zero_point": -32
+        },
+        {
+          "name": "streaming_model_1/Reshape_7",
+          "shape": [
+            1,
+            2048
+          ],
+          "dtype": "int8",
+          "index": 97,
+          "quant_scale": 0.03698445111513138,
+          "quant_zero_point": -32
+        },
+        {
+          "name": "streaming_model_1/layers_dense_1/MatMul;streaming_model_1/layers_dense_1/Add",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 98,
+          "quant_scale": 0.29612553119659424,
+          "quant_zero_point": 61
+        },
+        {
+          "name": "StatefulPartitionedCall_1:01",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 99,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "StatefulPartitionedCall_1:0",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "uint8",
+          "index": 100,
+          "quant_scale": 0.00390625,
+          "quant_zero_point": 0
+        }
+      ],
+      "unique_state_shapes": [
+        {
+          "name": "streaming_model/stream_1_1",
+          "shape": [],
+          "dtype": "object_",
+          "index": 44
+        },
+        {
+          "name": "streaming_model_1/strided_slice",
+          "shape": [
+            1,
+            3,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 50,
+          "quant_scale": 0.10202205926179886,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_1/ReadVariableOp",
+          "shape": [
+            1,
+            4,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 52,
+          "quant_scale": 0.48919984698295593,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_2/ReadVariableOp",
+          "shape": [
+            1,
+            10,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 53,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_4/ReadVariableOp",
+          "shape": [
+            1,
+            14,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 54,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/concat_6/ReadVariableOp",
+          "shape": [
+            1,
+            22,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 55,
+          "quant_scale": 0.04757769778370857,
+          "quant_zero_point": -14
+        },
+        {
+          "name": "streaming_model_1/concat_7/ReadVariableOp",
+          "shape": [
+            1,
+            31,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 56,
+          "quant_scale": 0.03698445111513138,
+          "quant_zero_point": -32
+        },
+        {
+          "name": "streaming_model_1/concat/ReadVariableOp",
+          "shape": [
+            1,
+            2,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 57,
+          "quant_scale": 0.10202205926179886,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat",
+          "shape": [
+            1,
+            5,
+            1,
+            40
+          ],
+          "dtype": "int8",
+          "index": 58,
+          "quant_scale": 0.10202205926179886,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/initial_relu_1/Relu;streaming_model_1/initial_conv_cell_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 60,
+          "quant_scale": 0.48919984698295593,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_1",
+          "shape": [
+            1,
+            5,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 61,
+          "quant_scale": 0.48919984698295593,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_mixconvs_mix_conv_block_activations_re_lu_1/Relu;streaming_model_1/add;streaming_model_1/blocks_residual_block_mixconvs_mix_conv_block_pointwise_1/convolution",
+          "shape": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 64,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_2",
+          "shape": [
+            1,
+            11,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 66,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/split;streaming_model_1/split1",
+          "shape": [
+            1,
+            11,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 68,
+          "quant_scale": 0.02031419239938259,
+          "quant_zero_point": -128
+        },
+        {
+          "name": "streaming_model_1/concat_4",
+          "shape": [
+            1,
+            15,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 78,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/split_1;streaming_model_1/split_11",
+          "shape": [
+            1,
+            15,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 80,
+          "quant_scale": 0.055627383291721344,
+          "quant_zero_point": -11
+        },
+        {
+          "name": "streaming_model_1/blocks_residual_block_2_mixconvs_mix_conv_block_depthwise_convs_depthwise_conv2d_1/depthwise",
+          "shape": [
+            1,
+            7,
+            1,
+            32
+          ],
+          "dtype": "int8",
+          "index": 82,
+          "quant_scale": 0.034466590732336044,
+          "quant_zero_point": -31
+        },
+        {
+          "name": "streaming_model_1/concat_6",
+          "shape": [
+            1,
+            23,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 90,
+          "quant_scale": 0.04757769778370857,
+          "quant_zero_point": -14
+        },
+        {
+          "name": "streaming_model_1/concat_7",
+          "shape": [
+            1,
+            32,
+            1,
+            64
+          ],
+          "dtype": "int8",
+          "index": 95,
+          "quant_scale": 0.03698445111513138,
+          "quant_zero_point": -32
+        },
+        {
+          "name": "streaming_model_1/Reshape_7",
+          "shape": [
+            1,
+            2048
+          ],
+          "dtype": "int8",
+          "index": 97,
+          "quant_scale": 0.03698445111513138,
+          "quant_zero_point": -32
+        },
+        {
+          "name": "streaming_model_1/layers_dense_1/MatMul;streaming_model_1/layers_dense_1/Add",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "int8",
+          "index": 98,
+          "quant_scale": 0.29612553119659424,
+          "quant_zero_point": 61
+        }
+      ],
+      "unique_ops": [
+        "ADD",
+        "ASSIGN_VARIABLE",
+        "CALL_ONCE",
+        "CONCATENATION",
+        "CONV_2D",
+        "DELEGATE",
+        "DEPTHWISE_CONV_2D",
+        "FULLY_CONNECTED",
+        "LOGISTIC",
+        "QUANTIZE",
+        "READ_VARIABLE",
+        "RESHAPE",
+        "SPLIT_V",
+        "STRIDED_SLICE",
+        "VAR_HANDLE"
+      ],
+      "num_unique_ops": 15,
+      "total_ops": 65
+    }
+  }
+}

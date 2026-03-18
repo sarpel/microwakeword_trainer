@@ -7,11 +7,13 @@ calls and no trainable_weights-based serialization.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from src.data.dataset import FeatureStore
 from src.model.architecture import build_model
 from src.tuning.dashboard import TuningDashboard, save_artifacts
 from src.tuning.knobs import (
@@ -26,10 +28,13 @@ from src.tuning.knobs import (
 from src.tuning.metrics import (
     ErrorMemory,
     ParetoArchive,
+    ThresholdOptimizer,
     TuneMetrics,
     compute_hypervolume,
 )
 from src.tuning.population import Population, partition_data
+
+logger = logging.getLogger(__name__)
 
 
 class MicroAutoTuner:
@@ -55,15 +60,85 @@ class MicroAutoTuner:
         return getattr(self.auto_tuning_config, name, default)
 
     def _load_data(self) -> dict:
-        """Load dataset dict consumed by partition_data().
+        """Load dataset dict consumed by partition_data()."""
+        paths_cfg = self.config.get("paths", {})
+        hardware_cfg = self.config.get("hardware", {})
+        processed_dir = Path(paths_cfg.get("processed_dir", "./data/processed"))
 
-        Real dataset loading is intentionally abstracted for easy mocking in unit
-        tests. A tiny fallback dataset is provided so tune() can execute in
-        isolation.
-        """
-        features = np.zeros((8, 3, 40), dtype=np.float32)
-        labels = np.array([0, 1, 0, 1, 0, 1, 0, 1], dtype=np.float32)
-        weights = np.ones(8, dtype=np.float32)
+        clip_duration_ms = int(hardware_cfg.get("clip_duration_ms", 1000))
+        window_step_ms = int(hardware_cfg.get("window_step_ms", 10))
+        max_time_frames = int(clip_duration_ms / max(window_step_ms, 1))
+
+        loaded_features: list[np.ndarray] = []
+        loaded_labels: list[float] = []
+        loaded_weights: list[float] = []
+        pos_count = 0
+        neg_count = 0
+        hard_neg_count = 0
+
+        def _pad_or_truncate(feature_2d: np.ndarray) -> np.ndarray:
+            current_frames = int(feature_2d.shape[0])
+            if current_frames > max_time_frames:
+                return feature_2d[:max_time_frames, :]
+            if current_frames < max_time_frames:
+                pad = np.zeros((max_time_frames - current_frames, 40), dtype=np.float32)
+                return np.vstack([feature_2d, pad])
+            return feature_2d
+
+        def _load_store_path(store_path: Path) -> None:
+            nonlocal pos_count, neg_count, hard_neg_count
+            if not store_path.exists():
+                return
+
+            store = FeatureStore(store_path)
+            try:
+                store.open(readonly=True)
+                for idx in range(len(store)):
+                    flat_feature, label_int = store.get(idx)
+                    flat_feature = np.asarray(flat_feature, dtype=np.float32).reshape(-1)
+                    if flat_feature.size == 0:
+                        continue
+                    if flat_feature.size % 40 != 0:
+                        continue
+
+                    feature_2d = flat_feature.reshape(-1, 40)
+                    feature_fixed = _pad_or_truncate(feature_2d)
+
+                    if int(label_int) == 1:
+                        label_bin = 1.0
+                        sample_weight = 1.0
+                        pos_count += 1
+                    elif int(label_int) == 2:
+                        label_bin = 0.0
+                        sample_weight = 2.0
+                        hard_neg_count += 1
+                    else:
+                        label_bin = 0.0
+                        sample_weight = 1.0
+                        neg_count += 1
+
+                    loaded_features.append(feature_fixed.astype(np.float32, copy=False))
+                    loaded_labels.append(float(label_bin))
+                    loaded_weights.append(float(sample_weight))
+            finally:
+                store.close()
+
+        for split_name in ("train", "val"):
+            _load_store_path(processed_dir / split_name)
+
+        if self.users_hard_negs_dir is not None:
+            _load_store_path(Path(self.users_hard_negs_dir))
+
+        if loaded_features:
+            features = np.stack(loaded_features, axis=0).astype(np.float32, copy=False)
+            labels = np.asarray(loaded_labels, dtype=np.float32)
+            weights = np.asarray(loaded_weights, dtype=np.float32)
+        else:
+            features = np.zeros((0, max_time_frames, 40), dtype=np.float32)
+            labels = np.zeros((0,), dtype=np.float32)
+            weights = np.zeros((0,), dtype=np.float32)
+
+        logger.info(f"Loaded {len(features)} samples ({pos_count} positive, {neg_count} negative, {hard_neg_count} hard_neg)")
         return {"features": features, "labels": labels, "weights": weights}
 
     def _create_model(self):
@@ -120,16 +195,40 @@ class MicroAutoTuner:
         return knobs[knob_name]()
 
     def _evaluate_candidate(self, model, search_eval_partition: tuple) -> TuneMetrics:
-        labels = np.asarray(search_eval_partition[1]).reshape(-1)
-        if labels.size == 0:
+        import tensorflow as tf
+
+        features = np.asarray(search_eval_partition[0])
+        labels_np = np.asarray(search_eval_partition[1]).reshape(-1).astype(np.float32, copy=False)
+        if features.size == 0 or labels_np.size == 0:
             return TuneMetrics()
 
-        positives = int(np.sum(labels >= 0.5))
-        negatives = int(labels.size - positives)
-        recall = float(positives / max(labels.size, 1))
-        fah = float(negatives / max(labels.size, 1))
-        auc_pr = float((recall + (1.0 - min(1.0, fah))) * 0.5)
-        return TuneMetrics(fah=fah, recall=recall, auc_pr=auc_pr, threshold=0.5, threshold_uint8=128)
+        batch_size = 512
+        preds: list[np.ndarray] = []
+        n_samples = int(features.shape[0])
+        for start in range(0, n_samples, batch_size):
+            end = min(start + batch_size, n_samples)
+            batch_features = tf.cast(features[start:end], tf.float32)
+            batch_pred = model(batch_features, training=False)
+            preds.append(np.asarray(batch_pred).reshape(-1))
+
+        predictions = np.concatenate(preds, axis=0) if preds else np.zeros((0,), dtype=np.float32)
+
+        clip_duration_ms = float(self.config.get("hardware", {}).get("clip_duration_ms", 1000))
+        negatives = int(np.sum(labels_np < 0.5))
+        ambient_hours = float(negatives * clip_duration_ms / (3600.0 * 1000.0))
+
+        optimizer = ThresholdOptimizer()
+        target_fah = float(self.config.get("auto_tuning", {}).get("target_fah", 0.3))
+        target_recall = float(self.config.get("auto_tuning", {}).get("target_recall", 0.92))
+        _threshold_f32, _threshold_u8, metrics = optimizer.optimize(
+            y_true=labels_np,
+            y_scores=predictions,
+            ambient_duration_hours=ambient_hours,
+            target_fah=target_fah,
+            target_recall=target_recall,
+            cv_folds=int(self.config.get("auto_tuning", {}).get("cv_folds", 5)),
+        )
+        return metrics
 
     @staticmethod
     def _ensure_tune_metrics(metrics: Any) -> TuneMetrics:
@@ -171,23 +270,80 @@ class MicroAutoTuner:
         """Simplified gradient burst (no SAM/SWA/Thompson/curriculum)."""
         import math
 
+        import tensorflow as tf
+
         self._freeze_bn(model)
         losses: list[float] = []
         lr_min, lr_max = self._get_cfg("lr_range", (1e-7, 1e-4))
+        train_features = np.asarray(search_train_partition[0])
+        train_labels = np.asarray(search_train_partition[1]).reshape(-1)
+        train_weights = np.asarray(search_train_partition[2]).reshape(-1)
 
-        for step in range(int(n_steps)):
-            # Use candidate-specific LR if provided, otherwise use cosine schedule
-            if lr_override is not None:
-                cosine_lr = lr_override
-            else:
-                cosine_lr = float(lr_min) + 0.5 * (float(lr_max) - float(lr_min)) * (1 + math.cos(math.pi * step / max(int(n_steps), 1)))
-            if hasattr(optimizer, "learning_rate") and hasattr(optimizer.learning_rate, "assign"):
-                optimizer.learning_rate.assign(cosine_lr)
+        if train_features.shape[0] == 0:
+            self._unfreeze_bn(model)
+            return {
+                "steps": int(n_steps),
+                "final_loss": 0.0,
+                "mean_loss": 0.0,
+            }
 
-            # Keep burst generic and side-effect free for unit tests/mocks.
-            losses.append(0.0)
+        batch_size = 64
+        rng = np.random.RandomState(42)
+        indices = np.arange(train_features.shape[0], dtype=np.int64)
+        rng.shuffle(indices)
+        cursor = 0
 
-        self._unfreeze_bn(model)
+        def _next_batch_indices() -> np.ndarray:
+            nonlocal cursor, indices
+            if cursor >= len(indices):
+                indices = np.arange(train_features.shape[0], dtype=np.int64)
+                rng.shuffle(indices)
+                cursor = 0
+            end = min(cursor + batch_size, len(indices))
+            batch_idx = indices[cursor:end]
+            cursor = end
+            return batch_idx
+
+        try:
+            for step in range(int(n_steps)):
+                # Use candidate-specific LR if provided, otherwise use cosine schedule
+                if lr_override is not None:
+                    cosine_lr = lr_override
+                else:
+                    cosine_lr = float(lr_min) + 0.5 * (float(lr_max) - float(lr_min)) * (1 + math.cos(math.pi * step / max(int(n_steps), 1)))
+                if hasattr(optimizer, "learning_rate") and hasattr(optimizer.learning_rate, "assign"):
+                    optimizer.learning_rate.assign(cosine_lr)
+
+                batch_idx = _next_batch_indices()
+                batch_features_np = train_features[batch_idx]
+                batch_labels_np = train_labels[batch_idx]
+                batch_weights_np = train_weights[batch_idx]
+
+                batch_features = tf.cast(batch_features_np, tf.float32)
+                batch_labels = tf.cast(batch_labels_np, tf.float32)
+                batch_weights = tf.cast(batch_weights_np, tf.float32)
+
+                with tf.GradientTape() as tape:
+                    predictions = model(batch_features, training=True)
+                    predictions = tf.squeeze(predictions, axis=-1)
+
+                    smoothed_labels = batch_labels
+                    if label_smoothing_var is not None:
+                        eps = tf.cast(label_smoothing_var, tf.float32)
+                        smoothed_labels = batch_labels * (1.0 - eps) + 0.5 * eps
+
+                    bce = tf.keras.losses.binary_crossentropy(smoothed_labels, predictions, from_logits=False)
+                    weighted_loss = bce * batch_weights
+                    loss = tf.reduce_mean(weighted_loss)
+
+                grads = tape.gradient(loss, model.trainable_variables)
+                grad_var_pairs = [(g, v) for g, v in zip(grads, model.trainable_variables, strict=False) if g is not None]
+                if grad_var_pairs:
+                    optimizer.apply_gradients(grad_var_pairs)
+                losses.append(float(loss.numpy()))
+        finally:
+            self._unfreeze_bn(model)
+
         return {
             "steps": int(n_steps),
             "final_loss": float(losses[-1]) if losses else 0.0,
@@ -300,6 +456,30 @@ class MicroAutoTuner:
         else:
             best_metrics = TuneMetrics()
 
+        best_candidate = None
+        for c in population.candidates:
+            if c.metrics is best_metrics:
+                best_candidate = c
+                break
+
+        if best_candidate is not None:
+            best_candidate.restore_state(model)
+
+        confirm_metrics = self._ensure_tune_metrics(self._evaluate_candidate(model, partition["confirm"]))
+        logger.info(
+            "Confirmation metrics: fah=%.6f recall=%.6f auc_pr=%.6f threshold=%.6f (u8=%d)",
+            float(confirm_metrics.fah),
+            float(confirm_metrics.recall),
+            float(confirm_metrics.auc_pr),
+            float(confirm_metrics.threshold),
+            int(confirm_metrics.threshold_uint8),
+        )
+
+        output_dir = Path(self._get_cfg("output_dir", self.config.get("auto_tuning", {}).get("output_dir", "./tuning_output")))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        best_path = output_dir / "tuned_weights.weights.h5"
+        model.save_weights(str(best_path))
+
         candidate_payload = [
             {
                 "id": c.id,
@@ -325,11 +505,16 @@ class MicroAutoTuner:
             "best_fah": float(best_metrics.fah),
             "best_recall": float(best_metrics.recall),
             "best_auc_pr": float(best_metrics.auc_pr),
-            "best_checkpoint": str(self.checkpoint_path),
+            "best_checkpoint": str(best_path),
             "hypervolume_history": hypervolume_history,
             "iterations_completed": iterations_completed,
             "pareto_frontier": pareto.get_frontier_points(),
+            "confirm_fah": float(confirm_metrics.fah),
+            "confirm_recall": float(confirm_metrics.recall),
+            "confirm_auc_pr": float(confirm_metrics.auc_pr),
+            "confirm_threshold": float(confirm_metrics.threshold),
+            "confirm_threshold_uint8": int(confirm_metrics.threshold_uint8),
             "target_met": bool(
-                best_metrics.fah < self.config.get("auto_tuning", {}).get("target_fah", float("inf")) and best_metrics.recall > self.config.get("auto_tuning", {}).get("target_recall", 0.0)
+                confirm_metrics.fah < self.config.get("auto_tuning", {}).get("target_fah", float("inf")) and confirm_metrics.recall > self.config.get("auto_tuning", {}).get("target_recall", 0.0)
             ),
         }
