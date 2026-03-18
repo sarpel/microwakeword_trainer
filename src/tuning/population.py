@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import pickle
 from dataclasses import dataclass, field
 from typing import Any, Optional, cast
@@ -24,14 +25,18 @@ class Candidate:
     knob_history: list[str] = field(default_factory=list)
 
     def save_state(self, model) -> None:
-        """Serialize all model weights via get_weights()."""
-        self.weights_bytes = pickle.dumps(model.get_weights())
+        """Serialize all model weights via get_weights() using NumPy for faster serialization."""
+        all_weights = model.get_weights()
+        buffer = io.BytesIO()
+        np.savez(buffer, weights=all_weights)
+        self.weights_bytes = buffer.getvalue()
 
     def restore_state(self, model) -> None:
         """Restore serialized model weights via set_weights()."""
         if self.weights_bytes is None:
             return
-        model.set_weights(pickle.loads(self.weights_bytes))
+        loaded = np.load(io.BytesIO(self.weights_bytes))
+        model.set_weights(loaded["weights"])
 
 
 class Population:

@@ -37,7 +37,6 @@ def run_tflite_streaming(interpreter, spectrogram: np.ndarray, stride: int) -> l
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
-    input_shape = input_details[0]["shape"]  # [1, stride, mel_bins]
     input_dtype = input_details[0]["dtype"]
     output_dtype = output_details[0]["dtype"]
 
@@ -205,9 +204,10 @@ def main():
     # Build config dict for export
     # Build config dict for export (must parse string configs like main() does)
     import ast
+
     pw_raw = config.model.pointwise_filters
     if isinstance(pw_raw, str):
-        pw_list = [int(x.strip()) for x in pw_raw.split(',')]
+        pw_list = [int(x.strip()) for x in pw_raw.split(",")]
     elif isinstance(pw_raw, list):
         pw_list = [int(x) for x in pw_raw]
     else:
@@ -215,7 +215,7 @@ def main():
 
     mc_raw = config.model.mixconv_kernel_sizes
     if isinstance(mc_raw, str):
-        mc_list = ast.literal_eval(f'[{mc_raw}]')
+        mc_list = ast.literal_eval(f"[{mc_raw}]")
     elif isinstance(mc_raw, list):
         mc_list = mc_raw
     else:
@@ -223,7 +223,7 @@ def main():
 
     rc_raw = config.model.residual_connection
     if isinstance(rc_raw, str):
-        rc_list = [int(x.strip()) for x in rc_raw.split(',')]
+        rc_list = [int(x.strip()) for x in rc_raw.split(",")]
     elif isinstance(rc_raw, list):
         rc_list = [int(x) for x in rc_raw]
     else:
@@ -241,7 +241,7 @@ def main():
 
     # Export float32 (unquantized)
     try:
-        float32_result = export_streaming_tflite(
+        export_streaming_tflite(
             checkpoint_path=args.checkpoint,
             output_dir=float32_dir,
             model_name="wake_word_float32",

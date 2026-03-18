@@ -44,26 +44,10 @@ from src.training.mining import (
 from src.training.profiler import TFProfiler, TrainingProfiler
 from src.training.rich_logger import RichTrainingLogger
 from src.training.tensorboard_logger import TensorBoardLogger
-from src.utils.logging_config import setup_rich_logging
-from src.utils.performance import get_system_info
-from src.utils.terminal_logger import TerminalLogger
 from src.utils.checkpoint_validation import (
-    log_validation_result,
     validate_checkpoint_before_loading,
     validate_ema_state_before_swap,
 )
-from src.evaluation.calibration import compute_brier_score
-from src.evaluation.metrics import MetricsCalculator
-from src.model.architecture import build_model
-from src.training.mining import (
-    AsyncHardExampleMiner,
-    HardExampleMiner,
-    log_false_predictions_to_json,
-    run_top_fp_extraction,
-)
-from src.training.profiler import TFProfiler, TrainingProfiler
-from src.training.rich_logger import RichTrainingLogger
-from src.training.tensorboard_logger import TensorBoardLogger
 from src.utils.logging_config import setup_rich_logging
 from src.utils.performance import get_system_info
 from src.utils.terminal_logger import TerminalLogger
@@ -1062,9 +1046,7 @@ class Trainer:
         assert optimizer is not None, "_swap_to_ema_weights called before model optimizer was created"
         optimizer_any: Any = optimizer
         # Validate EMA state before swap
-        is_valid, error_msg = validate_ema_state_before_swap(
-            self.model, self._saved_training_weights, self._ema_enabled
-        )
+        is_valid, error_msg = validate_ema_state_before_swap(self.model, self._saved_training_weights, self._ema_enabled)
         if not is_valid:
             self.logger.log_error(f"EMA state validation failed: {error_msg}")
             raise RuntimeError(f"EMA state inconsistency: {error_msg}")
@@ -1088,9 +1070,7 @@ class Trainer:
             return
         assert self.model is not None, "_restore_training_weights called before model was built"
         # Validate EMA state before restoring
-        is_valid, error_msg = validate_ema_state_before_swap(
-            self.model, self._saved_training_weights, self._ema_enabled
-        )
+        is_valid, error_msg = validate_ema_state_before_swap(self.model, self._saved_training_weights, self._ema_enabled)
         if not is_valid:
             self.logger.log_warning(f"EMA state validation failed during restore: {error_msg}")
             # Log warning but proceed - restoration might still work
@@ -1955,15 +1935,11 @@ class Trainer:
         if weights_path is not None:
             self.logger.log_info(f"Loading weights from: {weights_path}")
             # Validate checkpoint compatibility before loading
-            is_valid, error_msg = validate_checkpoint_before_loading(
-                self.model, weights_path
-            )
+            is_valid, error_msg = validate_checkpoint_before_loading(self.model, weights_path)
             if not is_valid:
                 self.logger.log_error(f"Checkpoint validation failed: {error_msg}")
                 raise ValueError(f"Incompatible checkpoint: {error_msg}")
             self.model.load_weights(weights_path)
-
-
 
         if weights_path is not None:
             self.logger.log_info(f"Loading weights from: {weights_path}")

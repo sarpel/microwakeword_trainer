@@ -14,7 +14,6 @@
 # limitations under the License.
 
 import tensorflow as tf
-
 from microwakeword.layers import modes
 
 
@@ -29,9 +28,7 @@ class StridedDrop(tf.keras.layers.Layer):
         mode: inference mode; e.g., non-streaming, internal streaming
     """
 
-    def __init__(
-        self, time_slices_to_drop, mode=modes.Modes.NON_STREAM_INFERENCE, **kwargs
-    ):
+    def __init__(self, time_slices_to_drop, mode=modes.Modes.NON_STREAM_INFERENCE, **kwargs):
         super(StridedDrop, self).__init__(**kwargs)
         self.time_slices_to_drop = time_slices_to_drop
         self.mode = mode
@@ -69,9 +66,7 @@ class StridedKeep(tf.keras.layers.Layer):
         mode: inference mode; e.g., non-streaming, internal streaming
     """
 
-    def __init__(
-        self, time_slices_to_keep, mode=modes.Modes.NON_STREAM_INFERENCE, **kwargs
-    ):
+    def __init__(self, time_slices_to_keep, mode=modes.Modes.NON_STREAM_INFERENCE, **kwargs):
         super(StridedKeep, self).__init__(**kwargs)
         self.time_slices_to_keep = max(time_slices_to_keep, 1)
         self.mode = mode

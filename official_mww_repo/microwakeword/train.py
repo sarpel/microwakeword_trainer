@@ -14,15 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import platform
 import contextlib
-
-from absl import logging
+import os
 
 import numpy as np
 import tensorflow as tf
-
+from absl import logging
 from tensorflow.python.util import tf_decorator
 
 
@@ -95,9 +92,7 @@ def validate_nonstreaming(config, data_processor, model, test_set):
                 verbose=0,
             )
 
-        duration_of_ambient_set = (
-            data_processor.get_mode_duration("validation_ambient") / 3600.0
-        )
+        duration_of_ambient_set = data_processor.get_mode_duration("validation_ambient") / 3600.0
 
         # Other than the false positive rate, all other metrics are accumulated across
         # both test sets
@@ -108,9 +103,7 @@ def validate_nonstreaming(config, data_processor, model, test_set):
         metrics["auc"] = ambient_predictions["auc"]
         metrics["loss"] = ambient_predictions["loss"]
 
-        recall_at_cutoffs = (
-            all_true_positives / (all_true_positives + all_false_negatives)
-        )
+        recall_at_cutoffs = all_true_positives / (all_true_positives + all_false_negatives)
         faph_at_cutoffs = ambient_false_positives / duration_of_ambient_set
 
         target_faph_cutoff_probability = 1.0
@@ -150,9 +143,7 @@ def validate_nonstreaming(config, data_processor, model, test_set):
                 y_coordinates.append(recall_at_cutoffs[index])
 
         # Use trapezoid rule to estimate the area under the curve, then divide by 2.0 to get the average recall
-        average_viable_recall = (
-            np.trapz(np.flip(y_coordinates), np.flip(x_coordinates)) / 2.0
-        )
+        average_viable_recall = np.trapz(np.flip(y_coordinates), np.flip(x_coordinates)) / 2.0
 
         metrics["recall_at_no_faph"] = recall_at_no_faph
         metrics["cutoff_for_no_faph"] = target_faph_cutoff_probability
@@ -233,12 +224,8 @@ def train(model, config, data_processor):
     checkpoint.restore(tf.train.latest_checkpoint(checkpoint_directory))
 
     # Configure TensorBoard summaries
-    train_writer = tf.summary.create_file_writer(
-        os.path.join(config["summaries_dir"], "train")
-    )
-    validation_writer = tf.summary.create_file_writer(
-        os.path.join(config["summaries_dir"], "validation")
-    )
+    train_writer = tf.summary.create_file_writer(os.path.join(config["summaries_dir"], "train"))
+    validation_writer = tf.summary.create_file_writer(os.path.join(config["summaries_dir"], "validation"))
 
     training_steps_max = np.sum(training_steps_list)
 
@@ -288,9 +275,7 @@ def train(model, config, data_processor):
         train_ground_truth = train_ground_truth.reshape(-1, 1)
 
         class_weights = {0: negative_class_weight, 1: positive_class_weight}
-        combined_weights = train_sample_weights * np.vectorize(class_weights.get)(
-            train_ground_truth
-        )
+        combined_weights = train_sample_weights * np.vectorize(class_weights.get)(train_ground_truth)
 
         result = model.train_on_batch(
             train_fingerprints,
@@ -333,13 +318,9 @@ def train(model, config, data_processor):
                 tf.summary.scalar("auc", result[8], step=training_step)
                 train_writer.flush()
 
-            model.save_weights(
-                os.path.join(config["train_dir"], "last_weights.weights.h5")
-            )
+            model.save_weights(os.path.join(config["train_dir"], "last_weights.weights.h5"))
 
-            nonstreaming_metrics = validate_nonstreaming(
-                config, data_processor, model, "validation"
-            )
+            nonstreaming_metrics = validate_nonstreaming(config, data_processor, model, "validation")
             model.reset_metrics()  # reset metrics for next validation epoch of training
             logging.info(
                 "Step %d (nonstreaming): Validation: recall at no faph = %.3f with cutoff %.2f, accuracy = %.2f%%, recall = %.2f%%, precision = %.2f%%, ambient false positives = %d, estimated false positives per hour = %.5f, loss = %.5f, auc = %.5f, average viable recall = %.9f",
@@ -359,18 +340,10 @@ def train(model, config, data_processor):
             )
 
             with validation_writer.as_default():
-                tf.summary.scalar(
-                    "loss", nonstreaming_metrics["loss"], step=training_step
-                )
-                tf.summary.scalar(
-                    "accuracy", nonstreaming_metrics["accuracy"], step=training_step
-                )
-                tf.summary.scalar(
-                    "recall", nonstreaming_metrics["recall"], step=training_step
-                )
-                tf.summary.scalar(
-                    "precision", nonstreaming_metrics["precision"], step=training_step
-                )
+                tf.summary.scalar("loss", nonstreaming_metrics["loss"], step=training_step)
+                tf.summary.scalar("accuracy", nonstreaming_metrics["accuracy"], step=training_step)
+                tf.summary.scalar("recall", nonstreaming_metrics["recall"], step=training_step)
+                tf.summary.scalar("precision", nonstreaming_metrics["precision"], step=training_step)
                 tf.summary.scalar(
                     "recall_at_no_faph",
                     nonstreaming_metrics["recall_at_no_faph"],
@@ -400,44 +373,26 @@ def train(model, config, data_processor):
 
             current_minimization_quantity = 0.0
             if config["minimization_metric"] is not None:
-                current_minimization_quantity = nonstreaming_metrics[
-                    config["minimization_metric"]
-                ]
-            current_maximization_quantity = nonstreaming_metrics[
-                config["maximization_metric"]
-            ]
+                current_minimization_quantity = nonstreaming_metrics[config["minimization_metric"]]
+            current_maximization_quantity = nonstreaming_metrics[config["maximization_metric"]]
             current_no_faph_cutoff = nonstreaming_metrics["cutoff_for_no_faph"]
 
             # Save model weights if this is a new best model
             if (
                 (
-                    (
-                        current_minimization_quantity <= config["target_minimization"]
-                    )  # achieved target false positive rate
+                    (current_minimization_quantity <= config["target_minimization"])  # achieved target false positive rate
                     and (
-                        (
-                            current_maximization_quantity > best_maximization_quantity
-                        )  # either accuracy improved
-                        or (
-                            best_minimization_quantity > config["target_minimization"]
-                        )  # or this is the first time we met the target
+                        (current_maximization_quantity > best_maximization_quantity)  # either accuracy improved
+                        or (best_minimization_quantity > config["target_minimization"])  # or this is the first time we met the target
                     )
                 )
                 or (
-                    (
-                        current_minimization_quantity > config["target_minimization"]
-                    )  # we haven't achieved our target
-                    and (
-                        current_minimization_quantity < best_minimization_quantity
-                    )  # but we have decreased since the previous best
+                    (current_minimization_quantity > config["target_minimization"])  # we haven't achieved our target
+                    and (current_minimization_quantity < best_minimization_quantity)  # but we have decreased since the previous best
                 )
                 or (
-                    (
-                        current_minimization_quantity == best_minimization_quantity
-                    )  # we tied a previous best
-                    and (
-                        current_maximization_quantity > best_maximization_quantity
-                    )  # and we increased our accuracy
+                    (current_minimization_quantity == best_minimization_quantity)  # we tied a previous best
+                    and (current_maximization_quantity > best_maximization_quantity)  # and we increased our accuracy
                 )
             ):
                 best_minimization_quantity = current_minimization_quantity
@@ -445,9 +400,7 @@ def train(model, config, data_processor):
                 best_no_faph_cutoff = current_no_faph_cutoff
 
                 # overwrite the best model weights
-                model.save_weights(
-                    os.path.join(config["train_dir"], "best_weights.weights.h5")
-                )
+                model.save_weights(os.path.join(config["train_dir"], "best_weights.weights.h5"))
                 checkpoint.save(file_prefix=checkpoint_prefix)
 
             logging.info(

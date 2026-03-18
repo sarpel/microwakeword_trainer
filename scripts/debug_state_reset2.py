@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Debug state reset: test which method works for proper state zeroing."""
 
-import os, sys
+import os
+import sys
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -163,7 +164,7 @@ def main():
         print(f"  [{idx}] nonzero={nz}/{val.size}")
 
     interp5.reset_all_variables()
-    print(f"\nAfter reset_all_variables():")
+    print("\nAfter reset_all_variables():")
     for idx, name, shape, dtype in read_var:
         val = interp5.get_tensor(idx)
         nz = np.count_nonzero(val)
@@ -172,7 +173,7 @@ def main():
     # Manual set_tensor zeros
     for idx, name, shape, dtype in read_var:
         interp5.set_tensor(idx, np.zeros(shape, dtype=dtype))
-    print(f"\nAfter set_tensor zeros:")
+    print("\nAfter set_tensor zeros:")
     for idx, name, shape, dtype in read_var:
         val = interp5.get_tensor(idx)
         nz = np.count_nonzero(val)
@@ -186,7 +187,7 @@ def main():
     chunk = np.clip(np.round(chunk / iq["scales"][0]) + iq["zero_points"][0], -128, 127).astype(np.int8)
     interp5.set_tensor(ind5[0]["index"], chunk)
     interp5.invoke()
-    print(f"\nAfter 1 invoke post-reset:")
+    print("\nAfter 1 invoke post-reset:")
     for idx, name, shape, dtype in read_var:
         val = interp5.get_tensor(idx)
         nz = np.count_nonzero(val)

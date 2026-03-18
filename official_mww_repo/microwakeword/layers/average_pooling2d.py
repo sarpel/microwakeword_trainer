@@ -14,6 +14,7 @@
 # limitations under the License.
 
 """Convolutional AveragePooling2D."""
+
 import numpy as np
 import tensorflow as tf
 
@@ -45,9 +46,7 @@ class AveragePooling2D(tf.keras.layers.Layer):
       **kwargs: additional layer arguments
     """
 
-    def __init__(
-        self, kernel_size, strides=None, padding="valid", dilation_rate=None, **kwargs
-    ):
+    def __init__(self, kernel_size, strides=None, padding="valid", dilation_rate=None, **kwargs):
         super(AveragePooling2D, self).__init__(**kwargs)
         self.kernel_size = kernel_size
         self.strides = strides

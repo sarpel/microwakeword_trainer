@@ -6,12 +6,11 @@ Run after code changes to produce a beautiful terminal output summary.
 """
 
 from pathlib import Path
+
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.rule import Rule
-from rich.syntax import Syntax
-from rich.text import Text
+from rich.table import Table
 
 
 class CodeReviewReporter:
@@ -23,8 +22,7 @@ class CodeReviewReporter:
     def render_header(self) -> None:
         """Display the review header."""
         header = Panel(
-            "[bold cyan]🔍 Codebase Review: microwakeword_trainer v2.1.0[/bold cyan]\n\n"
-            "[dim]GPU-Accelerated Wake Word Training Framework for ESPHome[/dim]",
+            "[bold cyan]🔍 Codebase Review: microwakeword_trainer v2.1.0[/bold cyan]\n\n" "[dim]GPU-Accelerated Wake Word Training Framework for ESPHome[/dim]",
             title="Code Review Report",
             border_style="blue",
             padding=(1, 2),
@@ -90,9 +88,7 @@ class CodeReviewReporter:
             ),
             (
                 "3. Type Safety",
-                "[dim]•[/dim] Excellent use of Python type hints throughout\n"
-                "[dim]•[/dim] Proper use of TypedDict and dataclasses\n"
-                "[dim]•[/dim] Modern Python 3.10+ features",
+                "[dim]•[/dim] Excellent use of Python type hints throughout\n" "[dim]•[/dim] Proper use of TypedDict and dataclasses\n" "[dim]•[/dim] Modern Python 3.10+ features",
             ),
         ]
 
@@ -128,13 +124,12 @@ class CodeReviewReporter:
                 "Features are skipped during data loading without error logging. "
                 "This makes debugging data issues difficult for users.\n\n"
                 "[dim]Suggestion:[/dim] Add logging when features are skipped:\n"
-                "[cyan]logger.debug(f\"Skipping empty feature at index {idx}\")[/cyan]",
+                '[cyan]logger.debug(f"Skipping empty feature at index {idx}")[/cyan]',
             ),
             (
                 "Manual List Management",
                 "src/utils/performance.py:311-313, 333-335",
-                "IOProfiler uses manual list slicing instead of deque for size management.\n\n"
-                "[dim]Suggestion:[/dim] Use collections.deque(maxlen=self._MAX_OPS) for automatic size management.",
+                "IOProfiler uses manual list slicing instead of deque for size management.\n\n" "[dim]Suggestion:[/dim] Use collections.deque(maxlen=self._MAX_OPS) for automatic size management.",
             ),
             (
                 "Long Functions",
@@ -290,7 +285,7 @@ class CodeReviewReporter:
                 class_name = line.split("(")[0].replace("class ", "").replace(":", "")
                 classes.append(class_name)
 
-        self.console.print(f"\n[bold]📦 Structure[/bold]")
+        self.console.print("\n[bold]📦 Structure[/bold]")
         self.console.print(f"  [cyan]Classes:[/cyan] {len(classes)}")
         for cls in classes[:5]:
             self.console.print(f"    [dim]•[/dim] {cls}")
@@ -306,7 +301,7 @@ class CodeReviewReporter:
         # Dependencies
         external_imports = [imp for imp in imports if any(x in imp for x in ("tensorflow", "numpy", "cupy", "rich"))]
         if external_imports:
-            self.console.print(f"\n[bold]📚 Key Dependencies[/bold]")
+            self.console.print("\n[bold]📚 Key Dependencies[/bold]")
             for imp in set(external_imports):
                 self.console.print(f"  [dim]•[/dim] {imp}")
 

@@ -13,12 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import audiomentations
 import warnings
-
-import numpy as np
-
 from typing import List
+
+import audiomentations
+import numpy as np
 
 
 class Augmentation:
@@ -43,19 +42,9 @@ class Augmentation:
     def __init__(
         self,
         augmentation_duration_s: float | None = None,
-        augmentation_probabilities: dict = {
-            "SevenBandParametricEQ": 0.0,
-            "TanhDistortion": 0.0,
-            "PitchShift": 0.0,
-            "BandStopFilter": 0.0,
-            "AddColorNoise": 0.25,
-            "AddBackgroundNoise": 0.75,
-            "Gain": 1.0,
-            "GainTransition": 0.25,
-            "RIR": 0.5,
-        },
-        impulse_paths: List[str] = [],
-        background_paths: List[str] = [],
+        augmentation_probabilities: dict | None = None,
+        impulse_paths: List[str] | None = None,
+        background_paths: List[str] | None = None,
         background_min_snr_db: int = -10,
         background_max_snr_db: int = 10,
         color_min_snr_db: int = 10,
@@ -73,17 +62,33 @@ class Augmentation:
         # Configure audio duration and positioning #
         ############################################
 
+        # Initialize mutable defaults safely
+        if augmentation_probabilities is None:
+            augmentation_probabilities = {
+                "SevenBandParametricEQ": 0.0,
+                "TanhDistortion": 0.0,
+                "PitchShift": 0.0,
+                "BandStopFilter": 0.0,
+                "AddColorNoise": 0.25,
+                "AddBackgroundNoise": 0.75,
+                "Gain": 1.0,
+                "GainTransition": 0.25,
+                "RIR": 0.5,
+            }
+        if impulse_paths is None:
+            impulse_paths = []
+        if background_paths is None:
+            background_paths = []
+
         self.min_jitter_samples = int(min_jitter_s * 16000)
         self.max_jitter_samples = int(max_jitter_s * 16000)
 
         if augmentation_duration_s is not None:
-            self.augmented_samples = int(augmentation_duration_s * 16000)
+            self.augmented_samples: int | None = int(augmentation_duration_s * 16000)
         else:
             self.augmented_samples = None
 
-        assert (
-            self.min_jitter_samples <= self.max_jitter_samples
-        ), "Minimum jitter must be less than or equal to maximum jitter."
+        assert self.min_jitter_samples <= self.max_jitter_samples, "Minimum jitter must be less than or equal to maximum jitter."
 
         #######################
         # Setup augmentations #
@@ -93,9 +98,7 @@ class Augmentation:
         def identity_transform(samples, sample_rate):
             return samples
 
-        background_noise_augment = audiomentations.Lambda(
-            transform=identity_transform, p=0.0
-        )
+        background_noise_augment = audiomentations.Lambda(transform=identity_transform, p=0.0)
         reverb_augment = audiomentations.Lambda(transform=identity_transform, p=0.0)
 
         if len(background_paths):
@@ -150,13 +153,7 @@ class Augmentation:
                     max_gain_db=max_gain_transition_db,
                 ),
                 reverb_augment,
-                audiomentations.Compose(
-                    transforms=[
-                        audiomentations.Normalize(
-                            apply_to="only_too_loud_sounds", p=1.0
-                        )
-                    ]
-                ),  # If the audio is clipped, normalize
+                audiomentations.Compose(transforms=[audiomentations.Normalize(apply_to="only_too_loud_sounds", p=1.0)]),  # If the audio is clipped, normalize
             ],
             shuffle=False,
         )
@@ -171,9 +168,7 @@ class Augmentation:
             numpy.ndarray: Array of audio samples with silence added to the end.
         """
         if self.min_jitter_samples < self.max_jitter_samples:
-            jitter_samples = np.random.randint(
-                self.min_jitter_samples, self.max_jitter_samples
-            )
+            jitter_samples = np.random.randint(self.min_jitter_samples, self.max_jitter_samples)
         else:
             jitter_samples = self.min_jitter_samples
 
@@ -195,12 +190,8 @@ class Augmentation:
         if self.augmented_samples < input_audio.shape[0]:
             # Truncate the too long audio by removing the start of the clip
             if self.truncate_randomly:
-                random_start = np.random.randint(
-                    0, input_audio.shape[0] - self.augmented_samples
-                )
-                input_audio = input_audio[
-                    random_start : random_start + self.augmented_samples
-                ]
+                random_start = np.random.randint(0, input_audio.shape[0] - self.augmented_samples)
+                input_audio = input_audio[random_start : random_start + self.augmented_samples]
             else:
                 input_audio = input_audio[-self.augmented_samples :]
         else:
@@ -224,9 +215,7 @@ class Augmentation:
         input_audio = self.create_fixed_size_clip(input_audio)
 
         with warnings.catch_warnings():
-            warnings.simplefilter(
-                "ignore"
-            )  # Suppresses warning about background clip being too quiet... TODO: find better approach!
+            warnings.simplefilter("ignore")  # Suppresses warning about background clip being too quiet... TODO: find better approach!
             output_audio = self.augment(input_audio, sample_rate=16000)
 
         return output_audio

@@ -418,6 +418,10 @@ class RichTrainingLogger:
         """Log an informational message."""
         self.console.print(f"[blue]ℹ️  {message}[/]")
 
+    def log_error(self, message: str) -> None:
+        """Log an error message."""
+        self.console.print(f"[bold red]❌ Error:[/] {message}")
+
     def log_next_steps(self, best_path: str, config_preset: str) -> None:
         """Display a 'What\'s Next?' panel with a clean, heavily-iconed, compartmentalized layout."""
 

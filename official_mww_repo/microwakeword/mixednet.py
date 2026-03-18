@@ -15,11 +15,11 @@
 
 """Model based on 1D depthwise MixedConvs and 1x1 convolutions in time + residual."""
 
-from microwakeword.layers import stream
-from microwakeword.layers import strided_drop
-
 import ast
+
 import tensorflow as tf
+
+from microwakeword.layers import stream, strided_drop
 
 
 def parse(text):
@@ -164,7 +164,6 @@ class ChannelSplit(tf.keras.layers.Layer):
         return output_shapes
 
 
-
 class MixConv:
     """MixConv with mixed depthwise convolutional kernels.
 
@@ -206,9 +205,7 @@ class MixConv:
         )(inputs)
 
         if len(self.kernel_sizes) == 1:
-            return tf.keras.layers.DepthwiseConv2D(
-                (self.kernel_sizes[0], 1), strides=1, padding="valid"
-            )(net)
+            return tf.keras.layers.DepthwiseConv2D((self.kernel_sizes[0], 1), strides=1, padding="valid")(net)
 
         filters = _get_shape_value(net.shape[self._channel_axis])
         splits = _split_channels(filters, len(self.kernel_sizes))
@@ -217,11 +214,7 @@ class MixConv:
         x_outputs = []
         for x, ks in zip(x_splits, self.kernel_sizes):
             fit = strided_drop.StridedKeep(ks)(x)
-            x_outputs.append(
-                tf.keras.layers.DepthwiseConv2D((ks, 1), strides=1, padding="valid")(
-                    fit
-                )
-            )
+            x_outputs.append(tf.keras.layers.DepthwiseConv2D((ks, 1), strides=1, padding="valid")(fit))
 
         for i, output in enumerate(x_outputs):
             features_drop = output.shape[1] - x_outputs[-1].shape[1]
@@ -245,12 +238,8 @@ class SpatialAttention:
 
     def __call__(self, inputs):
         tranposed = tf.keras.ops.transpose(inputs, axes=[0, 1, 3, 2])
-        channel_avg = tf.keras.layers.AveragePooling2D(
-            pool_size=(1, tranposed.shape[2]), strides=(1, tranposed.shape[2])
-        )(tranposed)
-        channel_max = tf.keras.layers.MaxPooling2D(
-            pool_size=(1, tranposed.shape[2]), strides=(1, tranposed.shape[2])
-        )(tranposed)
+        channel_avg = tf.keras.layers.AveragePooling2D(pool_size=(1, tranposed.shape[2]), strides=(1, tranposed.shape[2]))(tranposed)
+        channel_max = tf.keras.layers.MaxPooling2D(pool_size=(1, tranposed.shape[2]), strides=(1, tranposed.shape[2]))(tranposed)
         pooled = tf.keras.layers.Concatenate(axis=-1)([channel_avg, channel_max])
 
         attention = stream.Stream(
@@ -338,23 +327,17 @@ def model(flags, shape, batch_size):
         residual_connections,
     ):
         if res:
-            residual = tf.keras.layers.Conv2D(
-                filters=filters, kernel_size=1, use_bias=False, padding="same"
-            )(net)
+            residual = tf.keras.layers.Conv2D(filters=filters, kernel_size=1, use_bias=False, padding="same")(net)
             residual = tf.keras.layers.BatchNormalization()(residual)
 
         for _ in range(repeat):
             if max(ksize) > 1:
                 net = MixConv(kernel_size=ksize)(net)
-            net = tf.keras.layers.Conv2D(
-                filters=filters, kernel_size=1, use_bias=False, padding="same"
-            )(net)
+            net = tf.keras.layers.Conv2D(filters=filters, kernel_size=1, use_bias=False, padding="same")(net)
             net = tf.keras.layers.BatchNormalization()(net)
 
             if res:
-                residual = strided_drop.StridedDrop(residual.shape[1] - net.shape[1])(
-                    residual
-                )
+                residual = strided_drop.StridedDrop(residual.shape[1] - net.shape[1])(residual)
                 net = net + residual
 
             net = tf.keras.layers.Activation("relu")(net)

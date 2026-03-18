@@ -52,15 +52,15 @@ training:
   eval_log_every_step: false  # Reduce per-step logging overhead
   steps_per_epoch: 1000  # Number of steps per epoch for progress tracking
 
-  positive_class_weight: [3.0, 4.0, 6.0]  # Weight for positive samples per phase
+  positive_class_weight: [3.0, 5.0, 8.0]  # Weight for positive samples per phase
   negative_class_weight: [2.0, 3.0, 4.0]  # Weight for negative samples per phase
   hard_negative_class_weight: [3.0, 6.0, 8.0]  # Weight for hard negatives per phase
 
   # Progressive SpecAugment: light→moderate→strong
-  time_mask_max_size: [1, 2, 2]  # Max SpecAugment time mask length per phase
-  time_mask_count: [1, 1, 1]  # Number of time masks per phase
-  freq_mask_max_size: [1, 2, 2]  # Max SpecAugment frequency mask length per phase
-  freq_mask_count: [1, 1, 1]  # Number of frequency masks per phase
+  time_mask_max_size: [2, 4, 5]  # Max SpecAugment time mask length per phase
+  time_mask_count: [1, 2, 2]  # Number of time masks per phase
+  freq_mask_max_size: [2, 4, 5]  # Max SpecAugment frequency mask length per phase
+  freq_mask_count: [1, 2, 2]  # Number of frequency masks per phase
 
   # Checkpoint selection
   minimization_metric: "ambient_false_positives_per_hour"  # Metric to minimize for checkpoint selection
@@ -81,11 +81,11 @@ training:
   ema_decay: 0.9995  # EMA smoothing factor (higher = slower decay, half-life ~6900 steps)
   random_seed: 42  # Random seed for reproducible runs
   # Intra-phase cosine LR decay (prevents flat LR stagnation)
-  cosine_decay_alpha: 0.3  # Intra-phase LR decay factor (LR ends at 30% of phase start)
+  cosine_decay_alpha: 0.1  # Intra-phase LR decay factor (LR ends at 30% of phase start)
   # Plateau-based LR reduction and early stopping
   plateau_lr_factor: 0.3  # LR reduction factor on plateau (0.3 = reduce to 30%)
-  plateau_patience: 3  # Consecutive plateau evals before LR reduction
-  plateau_max_reductions: 0  # Max LR reductions before stopping (0 = disabled)
+  plateau_patience: 5  # Consecutive plateau evals before LR reduction
+  plateau_max_reductions: 2  # Max LR reductions before stopping (0 = disabled)
   # Phase transition staggering
   phase_stagger_steps: 2000  # Delay class weights + augmentation after LR phase change
   # BatchNorm freezing
@@ -125,8 +125,8 @@ augmentation:
   # Noise mixing: wider SNR range for robustness
   background_min_snr_db: -8.0  # Minimum SNR for background noise mixing
   background_max_snr_db: 15.0  # Maximum SNR for background noise mixing
-  min_jitter_s: 0.15  # Minimum audio jitter in seconds
-  max_jitter_s: 0.20  # Maximum audio jitter in seconds
+  min_jitter_s: 0.08  # Minimum audio jitter in seconds
+  max_jitter_s: 0.25  # Maximum audio jitter in seconds
 
   # Augmentation magnitude ranges
   eq_min_gain_db: -6.0  # Minimum EQ gain in dB

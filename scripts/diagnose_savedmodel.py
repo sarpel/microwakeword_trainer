@@ -10,10 +10,10 @@ Tests:
 On the same divergent sample to find the exact corruption point.
 """
 
-import sys
 import os
-import tempfile
 import shutil
+import sys
+import tempfile
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -164,7 +164,7 @@ def main():
     # Load a divergent positive sample (known to have Keras>0.9, TFLite<0.5)
     # Load a few positive samples and find one that diverges
     print("Loading test samples...")
-    offsets = np.fromfile(os.path.join(test_dir, "features.offsets"), dtype=np.int64)
+    np.fromfile(os.path.join(test_dir, "features.offsets"), dtype=np.int64)
     labels = np.fromfile(os.path.join(test_dir, "labels.data"), dtype=np.int32)
 
     # Find first 10 positive samples
@@ -277,7 +277,7 @@ def main():
         py_sm_gap = np.abs(py_a - sm_a).mean()
         sm_f32_gap = np.abs(sm_a - f32_a).mean()
 
-        print(f"\n=== Corruption Attribution ===")
+        print("\n=== Corruption Attribution ===")
         print(f"Python → SavedModel:    MAE = {py_sm_gap:.6f}")
         print(f"SavedModel → F32 TFLite: MAE = {sm_f32_gap:.6f}")
 

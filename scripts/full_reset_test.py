@@ -4,13 +4,15 @@
 Key question: Does the 12% gap disappear when we properly reset state between samples?
 """
 
-import os, sys
+import os
+import sys
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import tensorflow as tf
+
 from src.export.tflite import StreamingExportModel, load_weights_from_keras3_checkpoint
 
 

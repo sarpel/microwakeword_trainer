@@ -5,7 +5,6 @@ Uses standard TFLite Interpreter API + flatbuffer parsing for subgraph analysis.
 
 import json
 import os
-import numpy as np
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
@@ -21,7 +20,6 @@ def get_subgraph_count_from_flatbuffer(model_data: bytes) -> int:
     except Exception:
         pass
     try:
-        import flatbuffers
         from tflite.Model import Model
 
         buf = bytearray(model_data)
@@ -199,7 +197,7 @@ def compare_models(official_results, our_results):
             print(f"  {status} {name}: {detail}")
 
         # State variables
-        print(f"\n  State variables:")
+        print("\n  State variables:")
         print(f"    Reference ({ref_name}):")
         for st in ref["unique_state_shapes"]:
             print(f"      {st['name']}: {st['shape']} ({st['dtype']})")
@@ -214,7 +212,7 @@ def compare_models(official_results, our_results):
         missing = ref_ops - our_ops
         unsupported = our_ops - esphome_ops
 
-        print(f"\n  Op compatibility:")
+        print("\n  Op compatibility:")
         print(f"    Common: {len(our_ops & ref_ops)}")
         if extra:
             print(f"    Extra ops (not in ref): {extra}")
@@ -223,18 +221,18 @@ def compare_models(official_results, our_results):
         if unsupported:
             print(f"    ✗ CRITICAL: Ops NOT in ESPHome resolver: {unsupported}")
         else:
-            print(f"    ✓ All our ops are in ESPHome's 20-op resolver set")
+            print("    ✓ All our ops are in ESPHome's 20-op resolver set")
 
         # Verdict
         fails = [c for c in checks if not c[1]]
         if fails or unsupported:
-            print(f"\n  ⚠ COMPATIBILITY ISSUES:")
+            print("\n  ⚠ COMPATIBILITY ISSUES:")
             for name, _, detail in fails:
                 print(f"    ✗ {name}: {detail}")
             if unsupported:
                 print(f"    ✗ Unsupported ops: {unsupported}")
         else:
-            print(f"\n  ✓ ALL CHECKS PASSED — ESPHome compatible")
+            print("\n  ✓ ALL CHECKS PASSED — ESPHome compatible")
 
 
 def main():
@@ -286,7 +284,7 @@ def main():
 
     with open("official_model_analysis.json", "w") as f:
         json.dump({"official": official_results, "ours": our_results}, f, indent=2, default=str)
-    print(f"\nFull JSON: official_model_analysis.json")
+    print("\nFull JSON: official_model_analysis.json")
 
 
 if __name__ == "__main__":

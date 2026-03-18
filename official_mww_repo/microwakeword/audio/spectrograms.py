@@ -14,7 +14,6 @@
 # limitations under the License.
 
 import numpy as np
-
 from microwakeword.audio.audio_utils import generate_features_for_clip
 from microwakeword.audio.augmentation import Augmentation
 from microwakeword.audio.clips import Clips
@@ -86,9 +85,7 @@ class SpectrogramGeneration:
 
             if self.split_spectrogram_duration_s is not None:
                 # Splits the resulting spectrogram into non-overlapping spectrograms. The features from the first 20 feature windows are dropped.
-                desired_spectrogram_length = int(
-                    self.split_spectrogram_duration_s / (self.step_ms / 1000)
-                )
+                desired_spectrogram_length = int(self.split_spectrogram_duration_s / (self.step_ms / 1000))
 
                 if spectrogram.shape[0] > desired_spectrogram_length + 20:
                     slided_spectrograms = np.lib.stride_tricks.sliding_window_view(
@@ -104,9 +101,7 @@ class SpectrogramGeneration:
                 # Generates self.slide_frames spectrograms by shifting over the already generated spectrogram
                 spectrogram_length = spectrogram.shape[0] - self.slide_frames + 1
 
-                slided_spectrograms = np.lib.stride_tricks.sliding_window_view(
-                    spectrogram, window_shape=(spectrogram_length, spectrogram.shape[1])
-                )
+                slided_spectrograms = np.lib.stride_tricks.sliding_window_view(spectrogram, window_shape=(spectrogram_length, spectrogram.shape[1]))
                 for i in range(self.slide_frames):
                     yield np.squeeze(slided_spectrograms[i])
             else:

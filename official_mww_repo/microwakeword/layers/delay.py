@@ -15,8 +15,8 @@
 
 """Dealy layer."""
 
-from microwakeword.layers import modes
 import tensorflow as tf
+from microwakeword.layers import modes
 
 
 class Delay(tf.keras.layers.Layer):
@@ -87,9 +87,7 @@ class Delay(tf.keras.layers.Layer):
         elif self.mode == modes.Modes.STREAM_EXTERNAL_STATE_INFERENCE:
             # in streaming inference mode with external state
             # in addition to the output we return the output state.
-            output, self.output_state = self._streaming_external_state(
-                inputs, self.input_state
-            )
+            output, self.output_state = self._streaming_external_state(inputs, self.input_state)
             return output
 
         elif self.mode in (modes.Modes.TRAINING, modes.Modes.NON_STREAM_INFERENCE):
@@ -128,9 +126,7 @@ class Delay(tf.keras.layers.Layer):
 
     def _non_streaming(self, inputs):
         if self.also_in_non_streaming:
-            return tf.pad(
-                inputs, ((0, 0), (self.delay, 0)) + ((0, 0),) * (inputs.shape.rank - 2)
-            )[:, : -self.delay]
+            return tf.pad(inputs, ((0, 0), (self.delay, 0)) + ((0, 0),) * (inputs.shape.rank - 2))[:, : -self.delay]
         else:
             return inputs
 
@@ -139,17 +135,11 @@ class Delay(tf.keras.layers.Layer):
         if self.mode == modes.Modes.STREAM_EXTERNAL_STATE_INFERENCE:
             return [self.input_state]
         else:
-            raise ValueError(
-                "Expected the layer to be in external streaming mode, "
-                f"not `{self.mode}`."
-            )
+            raise ValueError("Expected the layer to be in external streaming mode, " f"not `{self.mode}`.")
 
     def get_output_state(self):
         # output state will be used only for STREAM_EXTERNAL_STATE_INFERENCE mode
         if self.mode == modes.Modes.STREAM_EXTERNAL_STATE_INFERENCE:
             return [self.output_state]
         else:
-            raise ValueError(
-                "Expected the layer to be in external streaming mode, "
-                f"not `{self.mode}`."
-            )
+            raise ValueError("Expected the layer to be in external streaming mode, " f"not `{self.mode}`.")

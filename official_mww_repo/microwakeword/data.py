@@ -17,15 +17,14 @@
 
 import os
 import random
+from pathlib import Path
 
 import numpy as np
-
 from absl import logging
-from pathlib import Path
 from mmap_ninja.ragged import RaggedMmap
 
-from microwakeword.audio.clips import Clips
 from microwakeword.audio.augmentation import Augmentation
+from microwakeword.audio.clips import Clips
 from microwakeword.audio.spectrograms import SpectrogramGeneration
 
 
@@ -110,9 +109,7 @@ def fixed_length_spectrogram(
     else:
         pad_slices = features_length - data_length
 
-        spectrogram = np.pad(
-            spectrogram, ((pad_slices, 0), (0, 0)), constant_values=(0, 0)
-        )
+        spectrogram = np.pad(spectrogram, ((pad_slices, 0), (0, 0)), constant_values=(0, 0))
         features_offset = 0
 
     return spectrogram[features_offset : (features_offset + features_length)]
@@ -181,10 +178,7 @@ class MmapFeatureGenerator(object):
             count = 0
 
             search_path_directory = os.path.join(path, set_index)
-            search_path = [
-                str(i)
-                for i in Path(os.path.abspath(search_path_directory)).glob("**/*_mmap/")
-            ]
+            search_path = [str(i) for i in Path(os.path.abspath(search_path_directory)).glob("**/*_mmap/")]
 
             for mmap_path in search_path:
                 imported_features = RaggedMmap(mmap_path)
@@ -232,9 +226,7 @@ class MmapFeatureGenerator(object):
         """
         return self.stats[mode]["spectrogram_count"]
 
-    def get_random_spectrogram(
-        self, mode: str, features_length: int, truncation_strategy: str
-    ):
+    def get_random_spectrogram(self, mode: str, features_length: int, truncation_strategy: str):
         """Retrieves a random spectrogram from the specified mode with specified length after truncation.
 
         Args:
@@ -253,9 +245,7 @@ class MmapFeatureGenerator(object):
             right_cutoff = random.choice(self.fixed_right_cutoffs)
 
         feature = random.choice(self.feature_sets[mode])
-        spectrogram = self.loaded_features[feature["loaded_feature_index"]][
-            feature["subindex"]
-        ]
+        spectrogram = self.loaded_features[feature["loaded_feature_index"]][feature["subindex"]]
 
         spectrogram = fixed_length_spectrogram(
             spectrogram,
@@ -290,9 +280,7 @@ class MmapFeatureGenerator(object):
             truncation_strategy = self.truncation_strategy
 
         for feature in self.feature_sets[mode]:
-            spectrogram = self.loaded_features[feature["loaded_feature_index"]][
-                feature["subindex"]
-            ]
+            spectrogram = self.loaded_features[feature["loaded_feature_index"]][feature["subindex"]]
 
             # Spectrograms with type np.uint16 haven't been scaled
             if np.issubdtype(spectrogram.dtype, np.uint16):
@@ -304,9 +292,7 @@ class MmapFeatureGenerator(object):
                     spectrogram.shape[0] - features_length,
                     int(1000 * self.step * self.stride),
                 ):  # 10*2 features corresponds to 200 ms
-                    split_spectrogram = spectrogram[
-                        feature_start_index : feature_start_index + features_length
-                    ]
+                    split_spectrogram = spectrogram[feature_start_index : feature_start_index + features_length]
 
                     yield split_spectrogram
             else:
@@ -346,9 +332,7 @@ class ClipsHandlerWrapperGenerator(object):
         self.penalty_weight = penalty_weight
         self.truncation_strategy = truncation_strategy
 
-        self.augmented_generator = self.spectrogram_generation.spectrogram_generator(
-            random=True
-        )
+        self.augmented_generator = self.spectrogram_generation.spectrogram_generator(random=True)
 
     def get_mode_duration(self, mode):
         """Function to maintain compatability with the MmapFeatureGenerator class."""
@@ -433,9 +417,7 @@ class FeatureHandler(object):
                 )
             elif feature_set["type"] == "clips":
                 clips_handler = Clips(**feature_set["clips_settings"])
-                augmentation_applier = Augmentation(
-                    **feature_set["augmentation_settings"]
-                )
+                augmentation_applier = Augmentation(**feature_set["augmentation_settings"])
                 spectrogram_generator = SpectrogramGeneration(
                     clips_handler,
                     augmentation_applier,
@@ -539,23 +521,13 @@ class FeatureHandler(object):
 
         if mode == "training":
             random_feature_providers = random.choices(
-                [
-                    provider
-                    for provider in self.feature_providers
-                    if provider.get_mode_size("training")
-                ],
-                [
-                    provider.sampling_weight
-                    for provider in self.feature_providers
-                    if provider.get_mode_size("training")
-                ],
+                [provider for provider in self.feature_providers if provider.get_mode_size("training")],
+                [provider.sampling_weight for provider in self.feature_providers if provider.get_mode_size("training")],
                 k=sample_count,
             )
 
             for provider in random_feature_providers:
-                spectrogram = provider.get_random_spectrogram(
-                    "training", features_length, truncation_strategy
-                )
+                spectrogram = provider.get_random_spectrogram("training", features_length, truncation_strategy)
                 spectrogram = spec_augment(
                     spectrogram,
                     augmentation_policy["time_mask_max_size"],
@@ -569,9 +541,7 @@ class FeatureHandler(object):
                 weights.append(float(provider.penalty_weight))
         else:
             for provider in self.feature_providers:
-                generator = provider.get_feature_generator(
-                    mode, features_length, truncation_strategy
-                )
+                generator = provider.get_feature_generator(mode, features_length, truncation_strategy)
 
                 for spectrogram in generator:
                     data.append(spectrogram)

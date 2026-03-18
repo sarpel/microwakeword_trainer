@@ -16,29 +16,23 @@
 
 import argparse
 import os
-import sys
-import yaml
 import platform
-from absl import logging
+import sys
 
 import tensorflow as tf
+import yaml
+from absl import logging
 
 # Disable GPU by default on ARM Macs, it's slower than just using the CPU
-if os.environ.get("CUDA_VISIBLE_DEVICES") == "-1" or (
-    sys.platform == "darwin"
-    and platform.processor() == "arm"
-    and "CUDA_VISIBLE_DEVICES" not in os.environ
-):
+if os.environ.get("CUDA_VISIBLE_DEVICES") == "-1" or (sys.platform == "darwin" and platform.processor() == "arm" and "CUDA_VISIBLE_DEVICES" not in os.environ):
     tf.config.set_visible_devices([], "GPU")
 
 import microwakeword.data as input_data
-import microwakeword.train as train
-import microwakeword.test as test
-import microwakeword.utils as utils
-
 import microwakeword.inception as inception
 import microwakeword.mixednet as mixednet
-
+import microwakeword.test as test
+import microwakeword.train as train
+import microwakeword.utils as utils
 from microwakeword.layers import modes
 
 
@@ -67,31 +61,21 @@ def load_config(flags, model_module):
 
     desired_samples = int(preprocessor_sample_rate * config["clip_duration_ms"] / 1000)
 
-    window_size_samples = int(
-        preprocessor_sample_rate * preprocessor_window_size / 1000
-    )
-    window_step_samples = int(
-        config["stride"] * preprocessor_sample_rate * preprocessor_window_step / 1000
-    )
+    window_size_samples = int(preprocessor_sample_rate * preprocessor_window_size / 1000)
+    window_step_samples = int(config["stride"] * preprocessor_sample_rate * preprocessor_window_step / 1000)
 
     length_minus_window = desired_samples - window_size_samples
 
     if length_minus_window < 0:
         config["spectrogram_length_final_layer"] = 0
     else:
-        config["spectrogram_length_final_layer"] = 1 + int(
-            length_minus_window / window_step_samples
-        )
+        config["spectrogram_length_final_layer"] = 1 + int(length_minus_window / window_step_samples)
 
-    config["spectrogram_length"] = config[
-        "spectrogram_length_final_layer"
-    ] + model_module.spectrogram_slices_dropped(flags)
+    config["spectrogram_length"] = config["spectrogram_length_final_layer"] + model_module.spectrogram_slices_dropped(flags)
 
     config["flags"] = flags.__dict__
 
-    config["training_input_shape"] = modes.get_input_data_shape(
-        config, modes.Modes.TRAINING
-    )
+    config["training_input_shape"] = modes.get_input_data_shape(config, modes.Modes.TRAINING)
 
     return config
 
@@ -115,9 +99,7 @@ def train_model(config, model, data_processor, restore_checkpoint):
         if restore_checkpoint:
             pass
         else:
-            raise ValueError(
-                "model already exists in folder %s" % config["train_dir"]
-            ) from None
+            raise ValueError("model already exists in folder %s" % config["train_dir"]) from None
     config_fname = os.path.join(config["train_dir"], "training_config.yaml")
 
     with open(config_fname, "w") as outfile:
@@ -154,11 +136,7 @@ def evaluate_model(
         test_tflite_streaming_quantized (bool): Convert and evaluate quantized streaming TFLite model
     """
 
-    if (
-        test_tf_nonstreaming
-        or test_tflite_nonstreaming
-        or test_tflite_nonstreaming_quantized
-    ):
+    if test_tf_nonstreaming or test_tflite_nonstreaming or test_tflite_nonstreaming_quantized:
         # Save the nonstreaming model to disk
         logging.info("Saving nonstreaming model")
 
@@ -335,8 +313,7 @@ if __name__ == "__main__":
         "--use_weights",
         type=str,
         default="best_weights",
-        help="Which set of weights to use when creating the model"
-        "One of `best_weights`` or `last_weights`.",
+        help="Which set of weights to use when creating the model" "One of `best_weights`` or `last_weights`.",
     )
 
     # Function used to parse --verbosity argument
@@ -402,28 +379,17 @@ if __name__ == "__main__":
     data_processor = input_data.FeatureHandler(config)
 
     if flags.train:
-        model = model_module.model(
-            flags, config["training_input_shape"], config["batch_size"]
-        )
+        model = model_module.model(flags, config["training_input_shape"], config["batch_size"])
         logging.info(model.summary())
         train_model(config, model, data_processor, flags.restore_checkpoint)
     else:
         if not os.path.isdir(config["train_dir"]):
             raise ValueError('model is not trained set "--train 1" and retrain it')
 
-    if (
-        flags.test_tf_nonstreaming
-        or flags.test_tflite_nonstreaming
-        or flags.test_tflite_streaming
-        or flags.test_tflite_streaming_quantized
-    ):
-        model = model_module.model(
-            flags, shape=config["training_input_shape"], batch_size=1
-        )
+    if flags.test_tf_nonstreaming or flags.test_tflite_nonstreaming or flags.test_tflite_streaming or flags.test_tflite_streaming_quantized:
+        model = model_module.model(flags, shape=config["training_input_shape"], batch_size=1)
 
-        model.load_weights(
-            os.path.join(config["train_dir"], flags.use_weights) + ".weights.h5"
-        )
+        model.load_weights(os.path.join(config["train_dir"], flags.use_weights) + ".weights.h5")
 
         logging.info(model.summary())
 

@@ -8,8 +8,9 @@ from typing import Any
 
 import tensorflow as tf
 
-from .tflite_utils import estimate_tensor_arena_size
 from src.utils.text_utils import to_snake_case
+
+from .tflite_utils import estimate_tensor_arena_size
 
 logger = logging.getLogger(__name__)
 

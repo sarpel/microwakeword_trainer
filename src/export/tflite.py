@@ -761,7 +761,7 @@ def create_representative_dataset_from_data(
 
         # Calculate how many spectrograms we need
         # Read representative fraction from export config with safe fallback
-        rep_frac = export_cfg.get('representative_positive_fraction', 0.3) if isinstance(export_cfg, dict) else getattr(export_cfg, 'representative_positive_fraction', 0.3)
+        rep_frac = export_cfg.get("representative_positive_fraction", 0.3) if isinstance(export_cfg, dict) else getattr(export_cfg, "representative_positive_fraction", 0.3)
         target_positive_chunks = int(target_chunks * rep_frac)
         target_negative_chunks = target_chunks - target_positive_chunks
 
@@ -1298,13 +1298,12 @@ def export_streaming_tflite(
     export_cfg = config.get("export", {}) if config else {}
     wake_word_display = export_cfg.get("wake_word", model_name)
     wake_word_snake = to_snake_case(wake_word_display)
-    
+
     # Save TFLite model with wake_word-based filename
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     tflite_file = output_path / f"{wake_word_snake}.tflite"
     tflite_file.write_bytes(tflite_model)
-
 
     print(f"✓ TFLite model saved to: {tflite_file}")
     print(f"  Size: {len(tflite_model) / 1024:.2f} KB")

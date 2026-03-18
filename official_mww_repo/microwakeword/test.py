@@ -17,14 +17,14 @@
 """Test utility functions for accuracy evaluation."""
 
 import os
+from typing import List
 
 import numpy as np
 import tensorflow as tf
-
 from absl import logging
-from typing import List
-from microwakeword.inference import Model
 from numpy.lib.stride_tricks import sliding_window_view
+
+from microwakeword.inference import Model
 
 
 def compute_metrics(true_positives, true_negatives, false_positives, false_negatives):
@@ -122,12 +122,8 @@ def compute_false_accepts_per_hour(
 
         for wakeword_probability in track_probabilities:
             # Decrease the cooldown cutoff by 1 with a minimum value of 0
-            cooldown_at_cutoffs = np.maximum(
-                cooldown_at_cutoffs - 1, np.zeros(cutoffs_count)
-            )
-            detection_boolean = (
-                wakeword_probability > cutoffs
-            )  # a list of detection states at each cutoff
+            cooldown_at_cutoffs = np.maximum(cooldown_at_cutoffs - 1, np.zeros(cutoffs_count))
+            detection_boolean = wakeword_probability > cutoffs  # a list of detection states at each cutoff
 
             for index in range(cutoffs_count):
                 if cooldown_at_cutoffs[index] == 0 and detection_boolean[index]:
@@ -170,9 +166,7 @@ def generate_roc_curve(
         y1 = false_rejections[index_of_first_viable - 1]
 
         fnr_at_max_faph = (y0 * (x1 - 2.0) + y1 * (2.0 - x0)) / (x1 - x0)
-        cutoff_at_max_faph = (
-            cutoffs[index_of_first_viable] + cutoffs[index_of_first_viable - 1]
-        ) / 2.0
+        cutoff_at_max_faph = (cutoffs[index_of_first_viable] + cutoffs[index_of_first_viable - 1]) / 2.0
     else:
         # Smallest faph is less than max_faph, so assume the false negative rate is constant
         index_of_first_viable = 0
@@ -260,9 +254,7 @@ def tf_model_accuracy(
                 else:
                     false_positives += 1
 
-            metrics = compute_metrics(
-                true_positives, true_negatives, false_positives, false_negatives
-            )
+            metrics = compute_metrics(true_positives, true_negatives, false_positives, false_negatives)
 
             if i % 1000 == 0 and i:
                 logging.info(
@@ -280,9 +272,7 @@ def tf_model_accuracy(
 
     metrics_string = metrics_to_string(metrics)
 
-    logging.info(
-        "Final TensorFlow model on the " + data_set + " set: " + metrics_string
-    )
+    logging.info("Final TensorFlow model on the " + data_set + " set: " + metrics_string)
 
     path = os.path.join(config["train_dir"], folder)
     with open(os.path.join(path, accuracy_name), "wt") as fd:
@@ -319,9 +309,7 @@ def tflite_streaming_model_roc(
         float: The Area under the false accept per hour vs. false rejection curve.
     """
     stride = config["stride"]
-    model = Model(
-        os.path.join(config["train_dir"], folder, tflite_model_name), stride=stride
-    )
+    model = Model(os.path.join(config["train_dir"], folder, tflite_model_name), stride=stride)
 
     test_ambient_fingerprints, _, _ = audio_processor.get_data(
         ambient_set,
@@ -334,9 +322,7 @@ def tflite_streaming_model_roc(
     ambient_streaming_probabilities = []
     for spectrogram_track in test_ambient_fingerprints:
         streaming_probabilities = model.predict_spectrogram(spectrogram_track)
-        sliding_window_probabilities = sliding_window_view(
-            streaming_probabilities, sliding_window_length
-        )
+        sliding_window_probabilities = sliding_window_view(streaming_probabilities, sliding_window_length)
         moving_average = sliding_window_probabilities.mean(axis=-1)
         ambient_streaming_probabilities.append(moving_average)
 
@@ -376,9 +362,7 @@ def tflite_streaming_model_roc(
     false_negative_rate_at_cutoffs = []
     for cutoff in cutoffs:
         true_accepts = sum(i > cutoff for i in positive_sample_streaming_probabilities)
-        false_negative_rate_at_cutoffs.append(
-            1 - true_accepts / len(positive_sample_streaming_probabilities)
-        )
+        false_negative_rate_at_cutoffs.append(1 - true_accepts / len(positive_sample_streaming_probabilities))
 
     x_coordinates, y_coordinates, cutoffs_at_points = generate_roc_curve(
         false_accepts_per_hour=faph,
@@ -394,9 +378,7 @@ def tflite_streaming_model_roc(
         fd.write(auc_string + "\n")
 
         for i in range(0, x_coordinates.shape[0]):
-            cutoff_string = "Cutoff {:.2f}: frr={:.4f}; faph={:.3f}".format(
-                cutoffs_at_points[i], y_coordinates[i], x_coordinates[i]
-            )
+            cutoff_string = "Cutoff {:.2f}: frr={:.4f}; faph={:.3f}".format(cutoffs_at_points[i], y_coordinates[i], x_coordinates[i])
             logging.info(cutoff_string)
             fd.write(cutoff_string + "\n")
 
@@ -475,17 +457,12 @@ def tflite_model_accuracy(
             previous_probability = 0
             last_positive_index = 0
             for index, prob in enumerate(probabilities):
-                if (previous_probability <= 0.5 and prob > 0.5) and (
-                    index - last_positive_index
-                    > config["spectrogram_length_final_layer"]
-                ):
+                if (previous_probability <= 0.5 and prob > 0.5) and (index - last_positive_index > config["spectrogram_length_final_layer"]):
                     false_positives += 1
                     last_positive_index = index
                 previous_probability = prob
 
-        metrics = compute_metrics(
-            true_positives, true_negatives, false_positives, false_negatives
-        )
+        metrics = compute_metrics(true_positives, true_negatives, false_positives, false_negatives)
 
         if i % 1000 == 0 and i:
             logging.info(
@@ -506,8 +483,7 @@ def tflite_model_accuracy(
     else:
         metrics_string = "false accepts = {false_positives}; false accepts per hour = {faph:.4}".format(
             false_positives=false_positives,
-            faph=false_positives
-            / (audio_processor.get_mode_duration(data_set) / 3600.0),
+            faph=false_positives / (audio_processor.get_mode_duration(data_set) / 3600.0),
         )
 
     logging.info("Final TFLite model on the " + data_set + " set: " + metrics_string)

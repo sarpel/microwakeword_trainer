@@ -15,14 +15,12 @@
 # limitations under the License.
 
 """Inception - reduced version of keras/applications/inception_v3.py ."""
+
 import ast
+
 import tensorflow as tf
 
-
-from microwakeword.layers import delay
-from microwakeword.layers import stream
-from microwakeword.layers import strided_drop
-from microwakeword.layers import sub_spectral_normalization
+from microwakeword.layers import delay, stream, strided_drop, sub_spectral_normalization
 
 
 def parse(text):
@@ -80,9 +78,7 @@ def conv2d_bn(
         use_bias=use_bias,
     )(x)
 
-    sub_spectral_normalization_layer = (
-        sub_spectral_normalization.SubSpectralNormalization(subgroups)
-    )
+    sub_spectral_normalization_layer = sub_spectral_normalization.SubSpectralNormalization(subgroups)
     x = sub_spectral_normalization_layer(x)
     x = tf.keras.layers.Activation(activation)(x)
     return x
@@ -134,9 +130,7 @@ def conv2d_bn_delay(
         pad_time_dim=padding,
         pad_freq_dim="same",
     )(x)
-    sub_spectral_normalization_layer = (
-        sub_spectral_normalization.SubSpectralNormalization(subgroups)
-    )
+    sub_spectral_normalization_layer = sub_spectral_normalization.SubSpectralNormalization(subgroups)
     x = sub_spectral_normalization_layer(x)
 
     x = tf.keras.layers.Activation(activation)(x)
@@ -173,15 +167,13 @@ def model_parameters(parser_nn):
         "--cnn2_filters1",
         type=str,
         default="10,10,16",
-        help="Number of filters inside of inception block "
-        "will be multipled by 4 because of concatenation of 4 branches",
+        help="Number of filters inside of inception block " "will be multipled by 4 because of concatenation of 4 branches",
     )
     parser_nn.add_argument(
         "--cnn2_filters2",
         type=str,
         default="10,10,16",
-        help="Number of filters inside of inception block "
-        "it is used to reduce the dim of cnn2_filters1*4",
+        help="Number of filters inside of inception block " "it is used to reduce the dim of cnn2_filters1*4",
     )
     parser_nn.add_argument(
         "--cnn2_kernel_sizes",
@@ -222,9 +214,7 @@ def spectrogram_slices_dropped(flags):
 
     for kernel_size in parse(flags.cnn1_kernel_sizes):
         spectrogram_slices_dropped += kernel_size - 1
-    for kernel_size, dilation in zip(
-        parse(flags.cnn2_kernel_sizes), parse(flags.cnn2_dilation)
-    ):
+    for kernel_size, dilation in zip(parse(flags.cnn2_kernel_sizes), parse(flags.cnn2_dilation)):
         spectrogram_slices_dropped += 2 * dilation * (kernel_size - 1)
 
     return spectrogram_slices_dropped
@@ -260,16 +250,12 @@ def model(flags, shape, batch_size):
     ):
         # Streaming Conv2D with 'valid' padding
         net = stream.Stream(
-            cell=tf.keras.layers.Conv2D(
-                filters, (kernel_size, 1), padding="valid", use_bias=False
-            ),
+            cell=tf.keras.layers.Conv2D(filters, (kernel_size, 1), padding="valid", use_bias=False),
             use_one_step=True,
             pad_time_dim=None,
             pad_freq_dim="same",
         )(net)
-        sub_spectral_normalization_layer = (
-            sub_spectral_normalization.SubSpectralNormalization(subgroups)
-        )
+        sub_spectral_normalization_layer = sub_spectral_normalization.SubSpectralNormalization(subgroups)
         net = sub_spectral_normalization_layer(net)
         net = tf.keras.layers.Activation("relu")(net)
 
@@ -315,14 +301,10 @@ def model(flags, shape, batch_size):
             subgroups=subgroups,
         )
 
-        branch1_drop_layer = strided_drop.StridedDrop(
-            branch1.shape[1] - branch3.shape[1]
-        )
+        branch1_drop_layer = strided_drop.StridedDrop(branch1.shape[1] - branch3.shape[1])
         branch1 = branch1_drop_layer(branch1)
 
-        branch2_drop_layer = strided_drop.StridedDrop(
-            branch2.shape[1] - branch3.shape[1]
-        )
+        branch2_drop_layer = strided_drop.StridedDrop(branch2.shape[1] - branch3.shape[1])
         branch2 = branch2_drop_layer(branch2)
 
         net = tf.keras.layers.concatenate([branch1, branch2, branch3])

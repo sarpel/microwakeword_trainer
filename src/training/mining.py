@@ -242,7 +242,7 @@ class HardExampleMiner:
                     heapq.heappush(hard_negative_heap, heap_entry)
                 elif pred_score > hard_negative_heap[0][0]:
                     # This hard negative has higher score than the lowest in heap
-                    evicted = heapq.heapreplace(hard_negative_heap, heap_entry)
+                    heapq.heapreplace(hard_negative_heap, heap_entry)
                     # Note: batch cache eviction deferred until after materialization
                     # to prevent dropping valid top-K entries whose batches were prematurely freed
 
@@ -648,7 +648,7 @@ def log_false_predictions_to_json(
     if hasattr(_log, "info"):
         _log.info(msg)
     else:
-        _log.log_info(msg)
+        _log.log_info(msg)  # type: ignore[union-attr]
 
     return epoch_entry
 

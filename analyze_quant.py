@@ -1,12 +1,15 @@
-import sys
 import math
+import sys
+
 import tensorflow as tf
+
 
 def logit(p):
     return math.log(p / (1 - p))
 
+
 model_path = sys.argv[1]
-model_name = model_path.split('/')[-1].replace('.tflite', '')
+model_name = model_path.split("/")[-1].replace(".tflite", "")
 
 interpreter = tf.lite.Interpreter(model_path=model_path)
 interpreter.allocate_tensors()
@@ -17,9 +20,9 @@ logit_tensor_index = None
 prob_tensor_index = None
 
 for i, detail in enumerate(tensor_details):
-    if detail['name'] == 'StatefulPartitionedCall:01':
+    if detail["name"] == "StatefulPartitionedCall:01":
         logit_tensor_index = i
-    elif detail['name'] == 'StatefulPartitionedCall:0':
+    elif detail["name"] == "StatefulPartitionedCall:0":
         prob_tensor_index = i
 
 if logit_tensor_index is None or prob_tensor_index is None:
@@ -29,11 +32,11 @@ if logit_tensor_index is None or prob_tensor_index is None:
 details_logit = tensor_details[logit_tensor_index]
 details_prob = tensor_details[prob_tensor_index]
 
-scale_logit = details_logit['quantization_parameters']['scales'][0]
-zp_logit = details_logit['quantization_parameters']['zero_points'][0]
+scale_logit = details_logit["quantization_parameters"]["scales"][0]
+zp_logit = details_logit["quantization_parameters"]["zero_points"][0]
 
-scale_prob = details_prob['quantization_parameters']['scales'][0]
-zp_prob = details_prob['quantization_parameters']['zero_points'][0]
+scale_prob = details_prob["quantization_parameters"]["scales"][0]
+zp_prob = details_prob["quantization_parameters"]["zero_points"][0]
 
 print(f"Model: {model_name}")
 print(f"Logit tensor: scale={scale_logit}, zero_point={zp_logit}")

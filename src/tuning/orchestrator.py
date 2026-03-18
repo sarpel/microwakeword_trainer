@@ -20,6 +20,7 @@ from src.data.dataset import FeatureStore
 from src.model.architecture import build_model
 from src.tuning.dashboard import TuningDashboard, save_artifacts
 from src.tuning.knobs import (
+    Knob,
     KnobCycle,
     LabelSmoothingKnob,
     LRKnob,
@@ -193,8 +194,8 @@ class MicroAutoTuner:
         lr = float((float(lr_min) + float(lr_max)) * 0.5)
         return tf.keras.optimizers.Adam(learning_rate=lr)
 
-    def _make_knob(self, knob_name: str):
-        knobs = {
+    def _make_knob(self, knob_name: str) -> Knob:
+        knobs: dict[str, type[Knob]] = {
             "lr": LRKnob,
             "threshold": ThresholdKnob,
             "temperature": TemperatureKnob,
@@ -457,7 +458,7 @@ class MicroAutoTuner:
 
                     # Bug 3 fix: Sync label_smoothing_var from candidate._label_smoothing
                     if label_smoothing_var is not None:
-                        ls_val = float(getattr(candidate, '_label_smoothing', 0.0))
+                        ls_val = float(getattr(candidate, "_label_smoothing", 0.0))
                         label_smoothing_var.assign(ls_val)
 
                     # Get candidate-specific LR if set by LR knob
@@ -518,7 +519,9 @@ class MicroAutoTuner:
                 else:
                     no_improve_count += 1
 
-                iter_best_entry = pareto.get_best(target_fah=float(self.config.get("auto_tuning", {}).get("target_fah", 0.3)), target_recall=float(self.config.get("auto_tuning", {}).get("target_recall", 0.92)))
+                iter_best_entry = pareto.get_best(
+                    target_fah=float(self.config.get("auto_tuning", {}).get("target_fah", 0.3)), target_recall=float(self.config.get("auto_tuning", {}).get("target_recall", 0.92))
+                )
                 if iter_best_entry is not None:
                     iter_best_metrics, _ = iter_best_entry
                 else:
@@ -605,9 +608,9 @@ class MicroAutoTuner:
             for c in population.candidates
         ]
 
-        output_dir = str(self._get_cfg("output_dir", self.config.get("auto_tuning", {}).get("output_dir", "./tuning_output")))
+        artifacts_output_dir: str = self._get_cfg("output_dir", self.config.get("auto_tuning", {}).get("output_dir", "./tuning_output"))
         save_artifacts(
-            output_dir=output_dir,
+            output_dir=artifacts_output_dir,
             candidates=candidate_payload,
             frontier=pareto.get_frontier_points(),
             hypervolume_history=hypervolume_history,

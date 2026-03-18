@@ -16,18 +16,14 @@
 import numpy as np
 import tensorflow as tf
 import webrtcvad
-
+from pymicro_features import MicroFrontend
+from scipy.io import wavfile
 from tensorflow.lite.experimental.microfrontend.python.ops import (
     audio_microfrontend_op as frontend_op,
 )
-from scipy.io import wavfile
-
-from pymicro_features import MicroFrontend
 
 
-def generate_features_for_clip(
-    audio_samples: np.ndarray, step_ms: int = 20, use_c: bool = True
-):
+def generate_features_for_clip(audio_samples: np.ndarray, step_ms: int = 20, use_c: bool = True):
     """Generates spectrogram features for the given audio data.
 
     Args:
@@ -54,9 +50,7 @@ def generate_features_for_clip(
         audio_idx = 0
         num_audio_bytes = len(audio_samples)
         while audio_idx + 160 * 2 < num_audio_bytes:
-            frontend_result = micro_frontend.process_samples(
-                audio_samples[audio_idx : audio_idx + 160 * 2]
-            )
+            frontend_result = micro_frontend.process_samples(audio_samples[audio_idx : audio_idx + 160 * 2])
             audio_idx += frontend_result.samples_read * 2
             if frontend_result.features:
                 features.append(frontend_result.features)
@@ -125,9 +119,7 @@ def remove_silence_webrtc(
     step_size = int(sample_rate * frame_duration)
 
     for i in range(min_start, audio_data.shape[0] - step_size, step_size):
-        vad_detected = vad.is_speech(
-            audio_data[i : i + step_size].tobytes(), sample_rate
-        )
+        vad_detected = vad.is_speech(audio_data[i : i + step_size].tobytes(), sample_rate)
         if vad_detected:
             # If voice activity is detected, add it to filtered_audio
             filtered_audio.extend(audio_data[i : i + step_size].tolist())

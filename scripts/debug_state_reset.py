@@ -4,7 +4,8 @@
 Tests different reset methods to find the correct one.
 """
 
-import os, sys
+import os
+import sys
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -74,7 +75,6 @@ def main():
 
     input_details = interp.get_input_details()
     output_details = interp.get_output_details()
-    input_dtype = input_details[0]["dtype"]
     in_quant = input_details[0].get("quantization_parameters", {})
     in_scale = in_quant["scales"][0]
     in_zp = in_quant["zero_points"][0]
@@ -149,7 +149,7 @@ def main():
     interp_no = tf.lite.Interpreter(model_path=int8_path)
     interp_no.allocate_tensors()
     for i, spec in enumerate(samples[:5]):
-        p = run_inference(spec)
+        run_inference(spec)
         # This uses the SAME interp, so we need to reassign
 
     # Need separate interpreters for fair test

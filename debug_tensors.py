@@ -1,4 +1,5 @@
 import sys
+
 import tensorflow as tf
 
 model_path = sys.argv[1]

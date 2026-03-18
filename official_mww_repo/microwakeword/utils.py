@@ -15,11 +15,11 @@
 # limitations under the License.
 
 """Utility functions for operations on Model."""
+
 import os.path
+
 import numpy as np
 import tensorflow as tf
-
-from absl import logging
 
 from microwakeword.layers import modes, stream, strided_drop
 
@@ -57,18 +57,10 @@ def _copy_weights(new_model, model):
     def _same_weights(weight, new_weight):
         # Check that weights are the same
         # Note that states should be marked as non trainable
-        return (
-            weight.trainable == new_weight.trainable
-            and weight.shape == new_weight.shape
-            and weight.name[weight.name.rfind("/") : None]
-            == new_weight.name[new_weight.name.rfind("/") : None]
-        )
+        return weight.trainable == new_weight.trainable and weight.shape == new_weight.shape and weight.name[weight.name.rfind("/") : None] == new_weight.name[new_weight.name.rfind("/") : None]
 
     if len(new_model.layers) != len(model.layers):
-        raise ValueError(
-            "number of layers in new_model: %d != to layers number in model: %d "
-            % (len(new_model.layers), len(model.layers))
-        )
+        raise ValueError("number of layers in new_model: %d != to layers number in model: %d " % (len(new_model.layers), len(model.layers)))
 
     for i in range(len(model.layers)):
         layer = model.layers[i]
@@ -93,10 +85,7 @@ def _copy_weights(new_model, model):
                 if k < len(layer.get_weights()):
                     weight = layer.weights[k]
                     weight_values = layer.get_weights()[k]
-                    if (
-                        weight.shape != weight_values.shape
-                        or new_weight.shape != new_weight_values.shape
-                    ):
+                    if weight.shape != weight_values.shape or new_weight.shape != new_weight_values.shape:
                         raise ValueError("weights are not listed in order")
 
                     # if there are weights available for copying and they are the same
@@ -106,9 +95,7 @@ def _copy_weights(new_model, model):
                     else:
                         same_weights = False  # weights are different
                 else:
-                    same_weights = (
-                        False  # all weights are copied, remaining is different
-                    )
+                    same_weights = False  # all weights are copied, remaining is different
 
                 if not same_weights:
                     # weight with index k_new is missing in model,
@@ -117,10 +104,7 @@ def _copy_weights(new_model, model):
 
             # check that all weights from model are copied to a new_model
             if k != len(layer.get_weights()):
-                raise ValueError(
-                    "trained model has: %d weights, but only %d were copied"
-                    % (len(layer.get_weights()), k)
-                )
+                raise ValueError("trained model has: %d weights, but only %d were copied" % (len(layer.get_weights()), k))
 
             # now they should have the same number of weights with matched sizes
             # so we can set weights directly
@@ -138,9 +122,7 @@ def save_model_summary(model, path, file_name="model_summary.txt"):
     """
     with tf.io.gfile.GFile(os.path.join(path, file_name), "w") as fd:
         stringlist = []
-        model.summary(
-            print_fn=lambda x: stringlist.append(x)
-        )  # pylint: disable=unnecessary-lambda
+        model.summary(print_fn=lambda x: stringlist.append(x))  # pylint: disable=unnecessary-lambda
         model_summary = "\n".join(stringlist)
         fd.write(model_summary)
 
@@ -171,14 +153,10 @@ def convert_to_inference_model(model, input_tensors, mode):
 
     with tf.name_scope(scope_name):
         if not isinstance(model, tf.keras.Model):
-            raise ValueError(
-                "Expected `model` argument to be a `Model` instance, got ", model
-            )
+            raise ValueError("Expected `model` argument to be a `Model` instance, got ", model)
         if isinstance(model, tf.keras.Sequential):
             raise ValueError(
-                "Expected `model` argument "
-                "to be a functional `Model` instance, "
-                "got a `Sequential` instance instead:",
+                "Expected `model` argument " "to be a functional `Model` instance, " "got a `Sequential` instance instead:",
                 model,
             )
         model = _set_mode(model, mode)
@@ -215,21 +193,11 @@ def to_streaming_inference(model_non_stream, config, mode):
         dtype = model_non_stream.input.dtype
 
     # For streaming, set the batch size to 1
-    input_tensors = [
-        tf.keras.layers.Input(
-            shape=input_data_shape, batch_size=1, dtype=dtype, name="input_audio"
-        )
-    ]
+    input_tensors = [tf.keras.layers.Input(shape=input_data_shape, batch_size=1, dtype=dtype, name="input_audio")]
 
-    if (
-        isinstance(model_non_stream.input, (tuple, list))
-        and len(model_non_stream.input) > 1
-    ):
+    if isinstance(model_non_stream.input, (tuple, list)) and len(model_non_stream.input) > 1:
         if len(model_non_stream.input) > 2:
-            raise ValueError(
-                "Maximum number of inputs supported is 2 (input_audio and "
-                "cond_features), but got %d inputs" % len(model_non_stream.input)
-            )
+            raise ValueError("Maximum number of inputs supported is 2 (input_audio and " "cond_features), but got %d inputs" % len(model_non_stream.input))
 
         input_tensors.append(
             tf.keras.layers.Input(
@@ -242,13 +210,9 @@ def to_streaming_inference(model_non_stream, config, mode):
 
     # Input tensors must have the same shape as the original
     if isinstance(model_non_stream.input, (tuple, list)):
-        model_inference = convert_to_inference_model(
-            model_non_stream, input_tensors, mode
-        )
+        model_inference = convert_to_inference_model(model_non_stream, input_tensors, mode)
     else:
-        model_inference = convert_to_inference_model(
-            model_non_stream, input_tensors[0], mode
-        )
+        model_inference = convert_to_inference_model(model_non_stream, input_tensors[0], mode)
 
     return model_inference
 
@@ -286,9 +250,7 @@ def model_to_saved(
     return model
 
 
-def convert_saved_model_to_tflite(
-    config, audio_processor, path_to_model, folder, fname, quantize=False
-):
+def convert_saved_model_to_tflite(config, audio_processor, path_to_model, folder, fname, quantize=False):
     """Convert SavedModel to TFLite and optionally quantize it.
 
     Args:
@@ -301,16 +263,10 @@ def convert_saved_model_to_tflite(
     """
 
     def representative_dataset_gen():
-        sample_fingerprints, _, _ = audio_processor.get_data(
-            "training", 500, features_length=config["spectrogram_length"]
-        )
+        sample_fingerprints, _, _ = audio_processor.get_data("training", 500, features_length=config["spectrogram_length"])
 
-        sample_fingerprints[0][
-            0, 0
-        ] = 0.0  # guarantee one pixel is the preprocessor min
-        sample_fingerprints[0][
-            0, 1
-        ] = 26.0  # guarantee one pixel is the preprocessor max
+        sample_fingerprints[0][0, 0] = 0.0  # guarantee one pixel is the preprocessor min
+        sample_fingerprints[0][0, 1] = 26.0  # guarantee one pixel is the preprocessor max
 
         # for spectrogram in sample_fingerprints:
         #     yield spectrogram
@@ -336,9 +292,7 @@ def convert_saved_model_to_tflite(
         converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
         converter.inference_input_type = tf.int8
         converter.inference_output_type = tf.uint8
-        converter.representative_dataset = tf.lite.RepresentativeDataset(
-            representative_dataset_gen
-        )
+        converter.representative_dataset = tf.lite.RepresentativeDataset(representative_dataset_gen)
 
     if not os.path.exists(folder):
         os.makedirs(folder)

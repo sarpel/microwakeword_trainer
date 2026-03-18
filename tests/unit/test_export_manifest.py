@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 
@@ -14,7 +15,7 @@ from src.export import manifest as manifest_mod
 def test_generate_manifest_uses_defaults_when_no_tflite(
     tmp_path: Path,
 ) -> None:
-    cfg = {"export": {}, "hardware": {}}
+    cfg: dict[str, Any] = {"export": {}, "hardware": {}}
     out = manifest_mod.generate_manifest(
         model_path="wake_word.tflite",
         config=cfg,
@@ -163,7 +164,7 @@ def test_verify_esphome_compatibility_rejects_invalid_micro_and_fields() -> None
 
 
 def test_create_esphome_package_includes_metadata_and_saves_manifest(tmp_path: Path, monkeypatch) -> None:
-    saved = {}
+    saved: dict[str, Any] = {}
 
     def fake_save(manifest: dict, output_path: str) -> str:
         saved["manifest"] = manifest

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Benchmark: fresh interpreter per sample vs reuse."""
 
-import os, sys, time
+import os
+import time
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 

@@ -16,7 +16,6 @@
 # limitations under the License.
 
 """Sub spectral normalization layer."""
-from typing import Any, Dict
 
 import tensorflow as tf
 
@@ -42,10 +41,7 @@ class SubSpectralNormalization(tf.keras.layers.Layer):
 
         input_shape = inputs.shape.as_list()
         if input_shape[3] % self.sub_groups:
-            raise ValueError(
-                "input_shape[3]: %d must be divisible by "
-                "self.sub_groups %d " % (input_shape[3], self.sub_groups)
-            )
+            raise ValueError("input_shape[3]: %d must be divisible by " "self.sub_groups %d " % (input_shape[3], self.sub_groups))
 
         net = inputs
         if self.sub_groups == 1:

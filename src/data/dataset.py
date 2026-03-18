@@ -1016,14 +1016,10 @@ class WakeWordDataset:
         dirs = ensure_processed_directory(processed_dir)
 
         # Check if valid cache exists
-        # Check if valid cache exists
         if self._is_cache_valid(processed_dir, paths_cfg, hardware_cfg, training_cfg):
             logger.info("[CACHE] Valid feature cache found — skipping feature extraction")
             self._load_store()
             self._is_built = True
-            return self
-            logger.info("[CACHE] Valid feature cache found — skipping feature extraction")
-            self._load_store()
             return self
 
         logger.info("[CACHE] No valid cache found — performing full feature extraction")

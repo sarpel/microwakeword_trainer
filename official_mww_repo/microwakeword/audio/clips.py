@@ -13,17 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import audio_metadata
-import datasets
 import math
 import os
 import random
 import wave
-
-import numpy as np
-
 from pathlib import Path
 
+import audio_metadata
+import datasets
+import numpy as np
 from microwakeword.audio.audio_utils import remove_silence_webrtc
 
 
@@ -98,54 +96,33 @@ class Clips:
                 sizes.extend([os.path.getsize(i) for i in paths_to_clips])
 
                 # Correct for the wav file header bytes. Assumes all files in the directory have same parameters.
-                header_correction = (
-                    os.path.getsize(paths_to_clips[0])
-                    - frames * sample_width * channels
-                )
+                header_correction = os.path.getsize(paths_to_clips[0]) - frames * sample_width * channels
 
                 durations = []
                 for size in sizes:
-                    durations.append(
-                        (size - header_correction)
-                        / (sample_rate * sample_width * channels)
-                    )
+                    durations.append((size - header_correction) / (sample_rate * sample_width * channels))
 
-                filtered_paths = [
-                    path_to_clip
-                    for path_to_clip, duration in zip(paths_to_clips, durations)
-                    if (self.min_clip_duration_s < duration)
-                    and (duration < self.max_clip_duration_s)
-                ]
+                filtered_paths = [path_to_clip for path_to_clip, duration in zip(paths_to_clips, durations) if (self.min_clip_duration_s < duration) and (duration < self.max_clip_duration_s)]
             else:
                 # If not a wave file, use the audio_metadata package to analyze audio file headers for the duration.
                 # This is slower!
                 filtered_paths = []
 
-                if (self.min_clip_duration_s > 0) or (
-                    not math.isinf(self.max_clip_duration_s)
-                ):
+                if (self.min_clip_duration_s > 0) or (not math.isinf(self.max_clip_duration_s)):
                     for audio_file in paths_to_clips:
                         metadata = audio_metadata.load(audio_file)
                         duration = metadata["streaminfo"]["duration"]
-                        if (self.min_clip_duration_s < duration) and (
-                            duration < self.max_clip_duration_s
-                        ):
+                        if (self.min_clip_duration_s < duration) and (duration < self.max_clip_duration_s):
                             filtered_paths.append(audio_file)
 
         # Load all filtered clips
-        audio_dataset = datasets.Dataset.from_dict(
-            {"audio": [str(i) for i in filtered_paths]}
-        ).cast_column("audio", datasets.Audio())
+        audio_dataset = datasets.Dataset.from_dict({"audio": [str(i) for i in filtered_paths]}).cast_column("audio", datasets.Audio())
 
         # Convert all clips to 16 kHz sampling rate when accessed
-        audio_dataset = audio_dataset.cast_column(
-            "audio", datasets.Audio(sampling_rate=16000)
-        )
+        audio_dataset = audio_dataset.cast_column("audio", datasets.Audio(sampling_rate=16000))
 
         if random_split_seed is not None:
-            train_testvalid = audio_dataset.train_test_split(
-                test_size=2 * split_count, seed=random_split_seed
-            )
+            train_testvalid = audio_dataset.train_test_split(test_size=2 * split_count, seed=random_split_seed)
             test_valid = train_testvalid["test"].train_test_split(test_size=0.5)
             split_dataset = datasets.DatasetDict(
                 {
@@ -211,7 +188,7 @@ class Clips:
         clip_audio = self.repeat_clip(clip_audio)
         return clip_audio
 
-    def random_audio_generator(self, max_clips: int = math.inf):
+    def random_audio_generator(self, max_clips: float = math.inf):
         """A Python generator that retrieves random audio clips.
 
         Args:

@@ -19,6 +19,7 @@
 # imports
 import numpy as np
 from ai_edge_litert.interpreter import Interpreter
+
 from microwakeword.audio.audio_utils import generate_features_for_clip
 
 
@@ -97,9 +98,7 @@ class Model:
 
         # Slice the input data into the required number of chunks
         chunks = []
-        for last_index in range(
-            self.input_feature_slices, len(spectrogram) + 1, self.stride
-        ):
+        for last_index in range(self.input_feature_slices, len(spectrogram) + 1, self.stride):
             chunk = spectrogram[last_index - self.input_feature_slices : last_index]
             if len(chunk) == self.input_feature_slices:
                 chunks.append(chunk)
@@ -146,9 +145,7 @@ class Model:
         data = data / input_scale + input_zero_point
         return data.astype(data_type)
 
-    def dequantize_output_data(
-        self, data: np.ndarray, output_details: dict
-    ) -> np.ndarray:
+    def dequantize_output_data(self, data: np.ndarray, output_details: dict) -> np.ndarray:
         """Dequantize the model output
 
         Args:

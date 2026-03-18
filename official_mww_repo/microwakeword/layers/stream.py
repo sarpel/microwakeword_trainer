@@ -15,10 +15,9 @@
 
 """Wrapper for streaming inference."""
 
-from absl import logging
-from microwakeword.layers import average_pooling2d
-from microwakeword.layers import modes
 import tensorflow as tf
+from absl import logging
+from microwakeword.layers import average_pooling2d, modes
 
 
 def frequeny_pad(inputs, dilation, stride, kernel_size):
@@ -211,23 +210,15 @@ class Stream(tf.keras.layers.Layer):
             ):
                 if self.use_one_step:
                     if strides[0] > 1:
-                        raise ValueError(
-                            "Stride in time dim greater than 1 "
-                            "in streaming mode with use_one_step=True "
-                            "is not supported, set use_one_step=False"
-                        )
+                        raise ValueError("Stride in time dim greater than 1 " "in streaming mode with use_one_step=True " "is not supported, set use_one_step=False")
 
             dilation_rate = wrapped_cell.get_config()["dilation_rate"]
             kernel_size = wrapped_cell.get_config()["kernel_size"]
 
             # set parameters in frequency domain
             self.stride_freq = strides[1] if len(strides) > 1 else strides
-            self.dilation_freq = (
-                dilation_rate[1] if len(dilation_rate) > 1 else dilation_rate
-            )
-            self.kernel_size_freq = (
-                kernel_size[1] if len(kernel_size) > 1 else kernel_size
-            )
+            self.dilation_freq = dilation_rate[1] if len(dilation_rate) > 1 else dilation_rate
+            self.kernel_size_freq = kernel_size[1] if len(kernel_size) > 1 else kernel_size
 
             if padding == "same" and self.pad_freq_dim == "same":
                 raise ValueError(
@@ -240,9 +231,7 @@ class Stream(tf.keras.layers.Layer):
 
             if self.use_one_step:
                 # effective kernel size in time dimension
-                self.ring_buffer_size_in_time_dim = (
-                    dilation_rate[0] * (kernel_size[0] - 1) + 1
-                )
+                self.ring_buffer_size_in_time_dim = dilation_rate[0] * (kernel_size[0] - 1) + 1
             else:
                 # Streaming of strided or 1 step conv.
                 # Assuming input length is a multiple of strides (otherwise streaming
@@ -250,23 +239,14 @@ class Stream(tf.keras.layers.Layer):
                 # dilation_rate[0] * (kernel_size[0] - 1)) ensures that we do not
                 # ignore the `strides - 1` rightmost (and hence most recent) valid
                 # input samples.
-                self.ring_buffer_size_in_time_dim = max(
-                    0, dilation_rate[0] * (kernel_size[0] - 1) - (strides[0] - 1)
-                )
+                self.ring_buffer_size_in_time_dim = max(0, dilation_rate[0] * (kernel_size[0] - 1) - (strides[0] - 1))
 
         elif isinstance(wrapped_cell, tf.keras.layers.AveragePooling2D):
             strides = wrapped_cell.get_config()["strides"]
             pool_size = wrapped_cell.get_config()["pool_size"]
             self.stride = strides[0]
-            if (
-                self.mode
-                not in (modes.Modes.TRAINING, modes.Modes.NON_STREAM_INFERENCE)
-                and strides[0] != pool_size[0]
-            ):
-                raise ValueError(
-                    "Stride in time %d must = pool size in time %d"
-                    % (strides[0], pool_size[0])
-                )
+            if self.mode not in (modes.Modes.TRAINING, modes.Modes.NON_STREAM_INFERENCE) and strides[0] != pool_size[0]:
+                raise ValueError("Stride in time %d must = pool size in time %d" % (strides[0], pool_size[0]))
             # effective kernel size in time dimension
             self.ring_buffer_size_in_time_dim = pool_size[0]
 
@@ -289,8 +269,7 @@ class Stream(tf.keras.layers.Layer):
             # outside of the layer, we overwrite the computed
             # `self.ring_buffer_size_in_time_dim` with this specified value.
             logging.warning(
-                "ring_buffer_size_in_time_dim overwritten by the "
-                "passed-in value: %d",
+                "ring_buffer_size_in_time_dim overwritten by the " "passed-in value: %d",
                 ring_buffer_size_in_time_dim,
             )
             self.ring_buffer_size_in_time_dim = ring_buffer_size_in_time_dim
@@ -456,9 +435,7 @@ class Stream(tf.keras.layers.Layer):
         # in both training and inference modes. That is why we introduced
         # self.pad_freq_dim.
         if self.pad_freq_dim == "same":
-            inputs = frequeny_pad(
-                inputs, self.dilation_freq, self.stride_freq, self.kernel_size_freq
-            )
+            inputs = frequeny_pad(inputs, self.dilation_freq, self.stride_freq, self.kernel_size_freq)
 
         if self.mode == modes.Modes.STREAM_INTERNAL_STATE_INFERENCE:
             return self._streaming_internal_state(inputs)
@@ -467,9 +444,7 @@ class Stream(tf.keras.layers.Layer):
             if self.ring_buffer_size_in_time_dim:
                 # in streaming inference mode with external state
                 # in addition to the output we return the output state.
-                output, self.output_state = self._streaming_external_state(
-                    inputs, self.input_state
-                )
+                output, self.output_state = self._streaming_external_state(inputs, self.input_state)
             else:
                 # if there is no ring buffer then the input_state isn't needed.
                 output = self.cell(inputs)
@@ -504,20 +479,14 @@ class Stream(tf.keras.layers.Layer):
         if self.mode == modes.Modes.STREAM_EXTERNAL_STATE_INFERENCE:
             return [self.input_state]
         else:
-            raise ValueError(
-                "Expected the layer to be in external streaming mode, "
-                f"not `{self.mode}`."
-            )
+            raise ValueError("Expected the layer to be in external streaming mode, " f"not `{self.mode}`.")
 
     def get_output_state(self):
         # output state will be used only for STREAM_EXTERNAL_STATE_INFERENCE mode
         if self.mode == modes.Modes.STREAM_EXTERNAL_STATE_INFERENCE:
             return [self.output_state]
         else:
-            raise ValueError(
-                "Expected the layer to be in external streaming mode, "
-                f"not `{self.mode}`."
-            )
+            raise ValueError("Expected the layer to be in external streaming mode, " f"not `{self.mode}`.")
 
     def _streaming_internal_state(self, inputs):
         if isinstance(self.get_core_layer(), tf.keras.layers.Conv2DTranspose):
@@ -536,9 +505,7 @@ class Stream(tf.keras.layers.Layer):
             # but 'Tensor' object does not support item assignment,
             # so doing it through full summation below
             output_shape[1] -= self.state_shape[1]
-            padded_remainder = tf.concat(
-                [self.states, tf.zeros(output_shape, tf.float32)], 1
-            )
+            padded_remainder = tf.concat([self.states, tf.zeros(output_shape, tf.float32)], 1)
             outputs = outputs + padded_remainder
 
             # extract remainder state and subtract bias if it is used:
@@ -548,13 +515,9 @@ class Stream(tf.keras.layers.Layer):
                 # need to access bias of the cell layer,
                 # where cell can be wrapped by wrapper layer
                 bias = self.get_core_layer().bias
-                new_state = (
-                    outputs[:, -self.ring_buffer_size_in_time_dim :, :] - bias
-                )  # pylint: disable=invalid-unary-operand-type
+                new_state = outputs[:, -self.ring_buffer_size_in_time_dim :, :] - bias  # pylint: disable=invalid-unary-operand-type
             else:
-                new_state = outputs[
-                    :, -self.ring_buffer_size_in_time_dim :, :
-                ]  # pylint: disable=invalid-unary-operand-type
+                new_state = outputs[:, -self.ring_buffer_size_in_time_dim :, :]  # pylint: disable=invalid-unary-operand-type
             assign_states = self.states.assign(new_state)
 
             with tf.control_dependencies([assign_states]):
@@ -583,9 +546,7 @@ class Stream(tf.keras.layers.Layer):
                 if self.ring_buffer_size_in_time_dim:
                     memory = tf.keras.layers.concatenate([self.states, inputs], 1)
 
-                    state_update = memory[
-                        :, -self.ring_buffer_size_in_time_dim :, :
-                    ]  # pylint: disable=invalid-unary-operand-type
+                    state_update = memory[:, -self.ring_buffer_size_in_time_dim :, :]  # pylint: disable=invalid-unary-operand-type
 
                     assign_states = self.states.assign(state_update)
 
@@ -615,13 +576,9 @@ class Stream(tf.keras.layers.Layer):
                 # where cell can be wrapped by wrapper layer
                 bias = self.get_core_layer().bias
 
-                new_state = (
-                    outputs[:, -self.ring_buffer_size_in_time_dim :, :] - bias
-                )  # pylint: disable=invalid-unary-operand-type
+                new_state = outputs[:, -self.ring_buffer_size_in_time_dim :, :] - bias  # pylint: disable=invalid-unary-operand-type
             else:
-                new_state = outputs[
-                    :, -self.ring_buffer_size_in_time_dim :, :
-                ]  # pylint: disable=invalid-unary-operand-type
+                new_state = outputs[:, -self.ring_buffer_size_in_time_dim :, :]  # pylint: disable=invalid-unary-operand-type
 
             if self.transposed_conv_crop_output:
                 outputs = outputs[:, 0 : self.output_time_dim, :]
@@ -644,9 +601,7 @@ class Stream(tf.keras.layers.Layer):
                 # add new row [batch_size, memory_size, feature_dim, channel]
                 memory = tf.keras.layers.concatenate([state, inputs], 1)
 
-                state_update = memory[
-                    :, -self.ring_buffer_size_in_time_dim :, :
-                ]  # pylint: disable=invalid-unary-operand-type
+                state_update = memory[:, -self.ring_buffer_size_in_time_dim :, :]  # pylint: disable=invalid-unary-operand-type
 
                 output = self.cell(memory)
                 return output, state_update
