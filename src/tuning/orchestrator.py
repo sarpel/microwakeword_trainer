@@ -390,11 +390,18 @@ class MicroAutoTuner:
 
         optimizer = self._create_optimizer()
 
+        # Create label smoothing variable for TensorFlow optimization
         try:
             import tensorflow as tf
 
             label_smoothing_var = tf.Variable(initial_value=tf.constant(0.0, dtype=tf.float32), trainable=False)
-        except Exception:
+        except (ImportError, AttributeError):
+            # TensorFlow not available or version issue
+            logger.warning("TensorFlow not available for label smoothing; feature disabled")
+            label_smoothing_var = None
+        except Exception as e:
+            # Specific TF errors (e.g., memory allocation, device initialization)
+            logger.warning(f"Failed to create TensorFlow label smoothing variable: {e}")
             label_smoothing_var = None
 
         max_iterations = int(self._get_cfg("max_iterations", 100))

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import pickle
 from dataclasses import dataclass, field
 from typing import Any, Optional, cast
 
@@ -88,7 +87,9 @@ class Population:
         if best.weights_bytes is None:
             raise ValueError("Best candidate has no serialized weights")
 
-        best_weights = [np.array(w, copy=True) for w in pickle.loads(best.weights_bytes)]
+        # Load weights using numpy.savez format (secure, no pickle)
+        loaded = np.load(io.BytesIO(best.weights_bytes), allow_pickle=False)
+        best_weights = [np.array(w, copy=True) for w in loaded["weights"]]
         worst_weights = [np.array(w, copy=True) for w in best_weights]
 
         # Build trainable weight index set, preferring explicit trainable flags.
@@ -116,7 +117,10 @@ class Population:
             noise = rng.normal(loc=0.0, scale=perturbation_scale, size=weight.shape).astype(weight.dtype, copy=False)
             worst_weights[idx] = weight + noise
 
-        worst.weights_bytes = pickle.dumps(worst_weights)
+        # Save weights using numpy.savez format (secure, no pickle)
+        buffer = io.BytesIO()
+        np.savez(buffer, weights=worst_weights)
+        worst.weights_bytes = buffer.getvalue()
         model.set_weights(worst_weights)
 
 

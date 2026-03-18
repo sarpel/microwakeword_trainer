@@ -1159,7 +1159,8 @@ class SpeakerClustering:
         for cache_file in cache_dir.glob("emb_*.npz"):
             try:
                 # Inspect stored metadata to filter by embedding_model
-                data = np.load(cache_file, allow_pickle=True)
+                # Security: Use allow_pickle=False to prevent RCE from cache files
+                data = np.load(cache_file, allow_pickle=False)
                 # Check if "model_name" is in the file, then read it
                 if "model_name" in data.files:
                     cached_model = str(data["model_name"].item() if data["model_name"].ndim == 0 else data["model_name"])
