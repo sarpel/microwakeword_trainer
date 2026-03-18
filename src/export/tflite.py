@@ -54,6 +54,7 @@ tf.get_logger().setLevel("ERROR")
 
 from src.export.verification import compute_expected_state_shapes, verify_tflite_model
 from src.model.architecture import build_core_layers
+from src.utils.text_utils import to_snake_case
 
 logger = logging.getLogger(__name__)
 
@@ -1293,11 +1294,17 @@ def export_streaming_tflite(
 
     print("\n[4/5] Saving and verifying...")
 
-    # Save TFLite model
+    # Use snake_case wake_word for filename if available in config
+    export_cfg = config.get("export", {}) if config else {}
+    wake_word_display = export_cfg.get("wake_word", model_name)
+    wake_word_snake = to_snake_case(wake_word_display)
+    
+    # Save TFLite model with wake_word-based filename
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    tflite_file = output_path / f"{model_name}.tflite"
+    tflite_file = output_path / f"{wake_word_snake}.tflite"
     tflite_file.write_bytes(tflite_model)
+
 
     print(f"✓ TFLite model saved to: {tflite_file}")
     print(f"  Size: {len(tflite_model) / 1024:.2f} KB")

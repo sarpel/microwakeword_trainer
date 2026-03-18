@@ -9,6 +9,7 @@ from typing import Any
 import tensorflow as tf
 
 from .tflite_utils import estimate_tensor_arena_size
+from src.utils.text_utils import to_snake_case
 
 logger = logging.getLogger(__name__)
 
@@ -346,7 +347,7 @@ def create_esphome_package(
         model: Trained Keras model (not used, for API compatibility)
         config: Full configuration dictionary
         output_dir: Output directory for package files
-        model_name: Name for the model (used in filenames)
+        model_name: Name for the model (used in filenames, snake_case preferred)
         tflite_path: Optional path to TFLite model
         analysis_results: Optional TFLite analysis results to include
 
@@ -370,8 +371,13 @@ def create_esphome_package(
         tflite_path=tflite_path,
     )
 
-    # Save manifest
-    manifest_path = str(Path(output_dir) / "manifest.json")
+    # Get wake_word from manifest for filename (snake_case)
+    wake_word_display = manifest.get("wake_word", model_name)
+    wake_word_snake = to_snake_case(wake_word_display)
+
+    # Save manifest with wake_word-based filename
+    manifest_filename = f"{wake_word_snake}.json"
+    manifest_path = str(Path(output_dir) / manifest_filename)
     save_manifest(manifest, manifest_path)
 
     # Get tensor arena size from manifest

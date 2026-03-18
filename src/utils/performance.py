@@ -41,8 +41,6 @@ def get_system_info() -> Dict[str, Any]:
             }
     except Exception:  # noqa: S110
         pass  # GPU info not available, continue without it
-        pass  # GPU info not available, continue without it
-        pass
 
     return info
 

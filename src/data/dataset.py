@@ -70,6 +70,7 @@ class RaggedMmap:
         name: str = "ragged",
         dtype: Optional["np.dtype[Any]"] = None,
         create: bool = True,
+        max_cache_memory_mb: float = 512.0,
     ):
         """Initialize RaggedMmap storage.
 
@@ -78,6 +79,7 @@ class RaggedMmap:
             name: Name for this storage
             dtype: NumPy data type for arrays
             create: If True, create directory if it does not exist
+            max_cache_memory_mb: Maximum memory for cache in MB (default: 512)
         """
         self.base_dir = Path(base_dir)
         self.name = name
@@ -91,6 +93,10 @@ class RaggedMmap:
         self._num_arrays: int = 0
         self._total_bytes: int = 0
         self._memory_cache: OrderedDict[int, np.ndarray] | None = None
+        self._max_cache_memory_mb = max_cache_memory_mb
+        self._current_cache_memory_mb: float = 0.0
+        self._cache_hits: int = 0
+        self._cache_misses: int = 0
 
         if create:
             self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -305,11 +311,20 @@ class RaggedMmap:
         if self._memory_cache is not None:
             if idx in self._memory_cache:
                 self._memory_cache.move_to_end(idx)
+                self._cache_hits += 1
                 return self._memory_cache[idx]
             array = np.array(self._data[elem_offset : elem_offset + elem_length])
-            self._memory_cache[idx] = array
-            if len(self._memory_cache) > 1024:
-                self._memory_cache.popitem(last=False)
+            self._cache_misses += 1
+            # Cache with memory pressure awareness
+            item_size_mb = array.nbytes / (1024 * 1024)
+            if item_size_mb < self._max_cache_memory_mb * 0.1:  # Only cache small items
+                # Evict entries until we have room
+                while (self._current_cache_memory_mb + item_size_mb > self._max_cache_memory_mb
+                       and self._memory_cache):
+                    _, evicted = self._memory_cache.popitem(last=False)
+                    self._current_cache_memory_mb -= evicted.nbytes / (1024 * 1024)
+                self._memory_cache[idx] = array
+                self._current_cache_memory_mb += item_size_mb
             return array
         array = np.array(self._data[elem_offset : elem_offset + elem_length])
         return array
@@ -319,7 +334,23 @@ class RaggedMmap:
         if self._memory_cache is not None:
             cache_size = len(self._memory_cache)
             self._memory_cache.clear()
+            self._current_cache_memory_mb = 0.0
             logger.debug(f"Cleared RaggedMmap cache ({cache_size} items)")
+
+    def get_cache_stats(self) -> dict[str, float]:
+        """Get cache statistics.
+
+        Returns:
+            Dict with hits, misses, hit_rate, memory_used_mb
+        """
+        total = self._cache_hits + self._cache_misses
+        hit_rate = self._cache_hits / total if total > 0 else 0.0
+        return {
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+            "hit_rate": hit_rate,
+            "memory_used_mb": self._current_cache_memory_mb,
+        }
 
     def get_batch(self, indices: List[int]) -> List[np.ndarray]:
         """Get multiple arrays by indices with optimized sequential access.

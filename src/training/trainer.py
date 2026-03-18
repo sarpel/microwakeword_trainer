@@ -11,9 +11,11 @@ Step-based training loop with:
 import gc
 import logging
 import os
+import random
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -45,6 +47,26 @@ from src.training.tensorboard_logger import TensorBoardLogger
 from src.utils.logging_config import setup_rich_logging
 from src.utils.performance import get_system_info
 from src.utils.terminal_logger import TerminalLogger
+from src.utils.checkpoint_validation import (
+    log_validation_result,
+    validate_checkpoint_before_loading,
+    validate_ema_state_before_swap,
+)
+from src.evaluation.calibration import compute_brier_score
+from src.evaluation.metrics import MetricsCalculator
+from src.model.architecture import build_model
+from src.training.mining import (
+    AsyncHardExampleMiner,
+    HardExampleMiner,
+    log_false_predictions_to_json,
+    run_top_fp_extraction,
+)
+from src.training.profiler import TFProfiler, TrainingProfiler
+from src.training.rich_logger import RichTrainingLogger
+from src.training.tensorboard_logger import TensorBoardLogger
+from src.utils.logging_config import setup_rich_logging
+from src.utils.performance import get_system_info
+from src.utils.terminal_logger import TerminalLogger
 
 
 class EvaluationMetrics:
@@ -60,6 +82,7 @@ class EvaluationMetrics:
         ambient_duration_hours: float = 0.0,
         default_threshold: float = 0.5,
         sliding_window_size: int = 1,
+        max_samples: int = 100000,
     ):
         # Initialize validation file paths to None
         self._val_file_paths: list[str] | None = None
@@ -67,6 +90,8 @@ class EvaluationMetrics:
 
         Args:
             cutoffs: Array of threshold values (default: 101 points from 0 to 1)
+            max_samples: Maximum number of samples to store for metrics computation
+                        (uses reservoir sampling for large datasets)
         """
         if cutoffs is None:
             cutoffs_list = np.linspace(0.0, 1.0, 101).tolist()
@@ -76,10 +101,11 @@ class EvaluationMetrics:
         self.ambient_duration_hours = ambient_duration_hours
         self.default_threshold = default_threshold
         self.sliding_window_size = int(sliding_window_size or 1)
+        self.max_samples = max_samples
 
-        # Accumulated predictions and labels
-        self.all_y_true: list = []
-        self.all_y_scores: list = []
+        # Accumulated predictions and labels (bounded for memory safety)
+        self.all_y_true: deque = deque(maxlen=max_samples)
+        self.all_y_scores: deque = deque(maxlen=max_samples)
 
         # Per-threshold counts stored as numpy arrays (indexed by cutoff position).
         # Using arrays avoids 101-iteration Python loops during accumulation.
@@ -106,8 +132,19 @@ class EvaluationMetrics:
         y_true_flat = np.ravel(y_true)
         y_scores_flat = np.ravel(y_scores)
 
-        self.all_y_true.extend(y_true_flat.tolist())
-        self.all_y_scores.extend(y_scores_flat.tolist())
+        # Use reservoir sampling for bounded memory when exceeding max_samples
+        y_true_list = y_true_flat.tolist()
+        y_scores_list = y_scores_flat.tolist()
+
+        for yt, ys in zip(y_true_list, y_scores_list):
+            if len(self.all_y_true) < self.max_samples:
+                self.all_y_true.append(yt)
+                self.all_y_scores.append(ys)
+            else:
+                # Reservoir sampling to maintain representative subset
+                idx = random.randint(0, len(self.all_y_true) - 1)
+                self.all_y_true[idx] = yt
+                self.all_y_scores[idx] = ys
 
         # Vectorized update across all thresholds using numpy broadcasting
         cutoffs_arr = np.array(self.cutoffs, dtype=np.float32).reshape(-1, 1)  # [101, 1]
@@ -205,8 +242,8 @@ class EvaluationMetrics:
 
     def reset(self) -> None:
         """Reset all accumulated metrics."""
-        self.all_y_true = []
-        self.all_y_scores = []
+        self.all_y_true = deque(maxlen=self.max_samples)
+        self.all_y_scores = deque(maxlen=self.max_samples)
         n = len(self.cutoffs)
         self._tp_arr = np.zeros(n, dtype=np.int64)
         self._fp_arr = np.zeros(n, dtype=np.int64)
@@ -1024,6 +1061,17 @@ class Trainer:
         optimizer = self.model.optimizer
         assert optimizer is not None, "_swap_to_ema_weights called before model optimizer was created"
         optimizer_any: Any = optimizer
+        # Validate EMA state before swap
+        is_valid, error_msg = validate_ema_state_before_swap(
+            self.model, self._saved_training_weights, self._ema_enabled
+        )
+        if not is_valid:
+            self.logger.log_error(f"EMA state validation failed: {error_msg}")
+            raise RuntimeError(f"EMA state inconsistency: {error_msg}")
+        # Save raw training weights before overwriting with EMA
+        self._saved_training_weights = [w.copy() for w in self.model.get_weights()]
+        # Swap EMA weights into model variables for evaluation
+        optimizer_any.finalize_variable_values(self.model.trainable_variables)
         # Save raw training weights before overwriting with EMA
         self._saved_training_weights = [w.copy() for w in self.model.get_weights()]
         # Swap EMA weights into model variables for evaluation
@@ -1039,6 +1087,16 @@ class Trainer:
         if not self._ema_enabled or self._saved_training_weights is None:
             return
         assert self.model is not None, "_restore_training_weights called before model was built"
+        # Validate EMA state before restoring
+        is_valid, error_msg = validate_ema_state_before_swap(
+            self.model, self._saved_training_weights, self._ema_enabled
+        )
+        if not is_valid:
+            self.logger.log_warning(f"EMA state validation failed during restore: {error_msg}")
+            # Log warning but proceed - restoration might still work
+        # Use set_weights() to properly restore all weights including BatchNorm moving stats
+        self.model.set_weights(self._saved_training_weights)
+        self._saved_training_weights = None
         # Use set_weights() to properly restore all weights including BatchNorm moving stats
         self.model.set_weights(self._saved_training_weights)
         self._saved_training_weights = None
@@ -1894,6 +1952,19 @@ class Trainer:
         _ = self.model(tf.zeros((1, *input_shape), dtype=tf.float32), training=False)
 
         # Load pre-trained weights if provided (for fine-tuning)
+        if weights_path is not None:
+            self.logger.log_info(f"Loading weights from: {weights_path}")
+            # Validate checkpoint compatibility before loading
+            is_valid, error_msg = validate_checkpoint_before_loading(
+                self.model, weights_path
+            )
+            if not is_valid:
+                self.logger.log_error(f"Checkpoint validation failed: {error_msg}")
+                raise ValueError(f"Incompatible checkpoint: {error_msg}")
+            self.model.load_weights(weights_path)
+
+
+
         if weights_path is not None:
             self.logger.log_info(f"Loading weights from: {weights_path}")
             self.model.load_weights(weights_path)

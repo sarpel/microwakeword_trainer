@@ -137,6 +137,12 @@ class MicroFrontend:
         """
         self.config = config or FeatureConfig()
         self._check_pymicro_features()
+        self._pymicro_frontend = self._create_frontend()
+
+    def _create_frontend(self):
+        """Create and cache the pymicro_features frontend instance."""
+        import pymicro_features
+        return pymicro_features.MicroFrontend()
 
     def _check_pymicro_features(self) -> None:
         """Check if pymicro-features is available.
@@ -193,17 +199,15 @@ class MicroFrontend:
         Returns:
             Mel spectrogram of shape (num_frames, mel_bins)
         """
-        import pymicro_features
-
         # PCAN (Per-Channel Amplitude Normalization) is hardcoded ON in the pymicro-features C++ backend:
         # enable_pcan=1, strength=0.95, offset=80.0, gain_bits=21
         # This matches ESPHome's on-device microfrontend exactly — no mismatch, no Python config needed.
         # Do NOT add an enable_pcan Python config flag — it would be meaningless dead code.
-        # Create a fresh frontend per call to avoid state leakage
+        # Reuse the cached frontend instance for performance (process_samples is stateless per call)
         # Note: PCAN (Per-Channel Amplitude Normalization) is hardcoded ON in the
         # pymicro-features C++ backend. There is no Python flag to enable/disable it.
         # This matches the official ESPHome okay_nabu model configuration.
-        frontend = pymicro_features.MicroFrontend()
+        frontend = self._pymicro_frontend
 
         # Ensure correct dtype
         audio = audio.astype(np.float32)
