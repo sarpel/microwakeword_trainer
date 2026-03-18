@@ -41,10 +41,10 @@ training:
   auto_lr_scale_method: "sqrt"  # Method to scale LR based on batch size (sqrt or linear)
   # LR starts at standard 0.001, decays ~5x per phase for stable convergence
   # learning_rates: [0.0014, 0.00028, 0.00007]  # Sqrt-scaled for batch_size 256 (×√2 from 128)
-  batch_size: 512  # Training batch size per GPU
+  batch_size: 256  # Training batch size per GPU
   split_seed: 42  # Random seed for train/val/test split reproducibility
   eval_step_interval: 500  # Not directly used as a condition in the training loop
-  eval_basic_step_interval: 2500  # Main eval trigger: runs full validation with all metrics
+  eval_basic_step_interval: 1000  # Main eval trigger: runs full validation with all metrics
   materialize_metrics_interval: 1000  # Training accuracy computation interval
   eval_advanced_step_interval: 5000  # Advanced metrics: score distribution, gain metrics, mining updates
   eval_confusion_matrix_interval: 5000  # Prints confusion matrix with per-class breakdown
@@ -53,13 +53,13 @@ training:
   steps_per_epoch: 1000  # Number of steps per epoch for progress tracking
 
   positive_class_weight: [3.0, 4.0, 6.0]  # Weight for positive samples per phase
-  negative_class_weight: [2.0, 4.0, 6.0]  # Weight for negative samples per phase
-  hard_negative_class_weight: [3.0, 5.0, 7.0]  # Weight for hard negatives per phase
+  negative_class_weight: [2.0, 3.0, 4.0]  # Weight for negative samples per phase
+  hard_negative_class_weight: [3.0, 6.0, 8.0]  # Weight for hard negatives per phase
 
   # Progressive SpecAugment: light→moderate→strong
-  time_mask_max_size: [2, 3, 4]  # Max SpecAugment time mask length per phase
+  time_mask_max_size: [1, 2, 2]  # Max SpecAugment time mask length per phase
   time_mask_count: [1, 1, 1]  # Number of time masks per phase
-  freq_mask_max_size: [2, 3, 4]  # Max SpecAugment frequency mask length per phase
+  freq_mask_max_size: [1, 2, 2]  # Max SpecAugment frequency mask length per phase
   freq_mask_count: [1, 1, 1]  # Number of frequency masks per phase
 
   # Checkpoint selection
