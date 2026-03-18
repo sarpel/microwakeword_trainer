@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pickle
+import io
 from dataclasses import dataclass, field
 from typing import Any, Optional, cast
 
@@ -24,14 +24,20 @@ class Candidate:
     knob_history: list[str] = field(default_factory=list)
 
     def save_state(self, model) -> None:
-        """Serialize all model weights via get_weights()."""
-        self.weights_bytes = pickle.dumps(model.get_weights())
+        """Serialize all model weights via get_weights() using numpy (pickle-free)."""
+        weights = model.get_weights()
+        buffer = io.BytesIO()
+        np.savez(buffer, *weights)
+        self.weights_bytes = buffer.getvalue()
 
     def restore_state(self, model) -> None:
-        """Restore serialized model weights via set_weights()."""
+        """Restore serialized model weights via set_weights() (pickle-free)."""
         if self.weights_bytes is None:
             return
-        model.set_weights(pickle.loads(self.weights_bytes))
+        buffer = io.BytesIO(self.weights_bytes)
+        with np.load(buffer, allow_pickle=False) as data:
+            weights = [data[f"arr_{i}"] for i in range(len(data.files))]
+        model.set_weights(weights)
 
 
 class Population:
@@ -83,7 +89,9 @@ class Population:
         if best.weights_bytes is None:
             raise ValueError("Best candidate has no serialized weights")
 
-        best_weights = [np.array(w, copy=True) for w in pickle.loads(best.weights_bytes)]
+        best_buffer = io.BytesIO(best.weights_bytes)
+        with np.load(best_buffer, allow_pickle=False) as data:
+            best_weights = [np.array(data[f"arr_{i}"], copy=True) for i in range(len(data.files))]
         worst_weights = [np.array(w, copy=True) for w in best_weights]
 
         # Build trainable weight index set, preferring explicit trainable flags.
@@ -111,7 +119,9 @@ class Population:
             noise = rng.normal(loc=0.0, scale=perturbation_scale, size=weight.shape).astype(weight.dtype, copy=False)
             worst_weights[idx] = weight + noise
 
-        worst.weights_bytes = pickle.dumps(worst_weights)
+        worst_buffer = io.BytesIO()
+        np.savez(worst_buffer, *worst_weights)
+        worst.weights_bytes = worst_buffer.getvalue()
         model.set_weights(worst_weights)
 
 

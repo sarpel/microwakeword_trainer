@@ -337,9 +337,6 @@ class TestEvaluator:
         y_true_binary = (y_true == 1).astype(np.int32)
         brier = compute_brier_score(y_true_binary, y_score)
         curve = compute_calibration_curve(y_true_binary, y_score, n_bins=10)
-        """Compute calibration metrics."""
-        brier = compute_brier_score(y_true, y_score)
-        curve = compute_calibration_curve(y_true, y_score, n_bins=10)
 
         return {
             "brier_score": float(brier),

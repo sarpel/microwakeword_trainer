@@ -13,6 +13,7 @@ the Hugging Face `transformers` library.
 """
 
 import hashlib
+import json
 import logging
 import os
 import tempfile
@@ -522,14 +523,16 @@ def save_embeddings_cache(
     audio_paths: List[str],
     model_name: str,
 ) -> None:
-    """Save embeddings to cache."""
+    """Save embeddings to cache (pickle-free, uses JSON sidecar for model_name)."""
     files_hash = _compute_files_hash(audio_paths, model_name)
     np.savez_compressed(
         cache_path,
         embeddings=embeddings,
         files_hash=np.frombuffer(files_hash.encode(), dtype=np.uint8),
-        model_name=model_name,  # Save model_name for cache invalidation
     )
+    # Write model_name to JSON sidecar for secure cache validation
+    sidecar_path = cache_path.with_suffix(".json")
+    sidecar_path.write_text(json.dumps({"model_name": model_name}), encoding="utf-8")
     logger.info(f"Saved embeddings cache: {cache_path}")
 
 
@@ -1158,17 +1161,22 @@ class SpeakerClustering:
         # First glob for all emb_*.npz files
         for cache_file in cache_dir.glob("emb_*.npz"):
             try:
-                # Inspect stored metadata to filter by embedding_model
-                data = np.load(cache_file, allow_pickle=True)
-                # Check if "model_name" is in the file, then read it
-                if "model_name" in data.files:
-                    cached_model = str(data["model_name"].item() if data["model_name"].ndim == 0 else data["model_name"])
+                # Read model_name from JSON sidecar (pickle-free)
+                sidecar_path = cache_file.with_suffix(".json")
+                if sidecar_path.exists():
+                    cached_model = json.loads(sidecar_path.read_text(encoding="utf-8")).get("model_name", "")
                 else:
-                    cached_model = ""
+                    # Fallback: check if "model_name" is in the npz (legacy path, allow_pickle=False for safety)
+                    data = np.load(cache_file, allow_pickle=False)
+                    cached_model = str(data["model_name"].item()) if "model_name" in data.files else ""
+                    data.close()
                 if cached_model == self.config.embedding_model:
                     cache_file.unlink()
+                    # Also remove sidecar if present
+                    sidecar = cache_file.with_suffix(".json")
+                    if sidecar.exists():
+                        sidecar.unlink()
                     logger.info(f"Removed cache file: {cache_file}")
-                data.close()
             except Exception as e:
                 logger.warning(f"Failed to inspect cache file {cache_file}: {e}")
 

@@ -991,9 +991,6 @@ class WakeWordDataset:
             self._load_store()
             self._is_built = True
             return self
-            logger.info("[CACHE] Valid feature cache found — skipping feature extraction")
-            self._load_store()
-            return self
 
         logger.info("[CACHE] No valid cache found — performing full feature extraction")
 
