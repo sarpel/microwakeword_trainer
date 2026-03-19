@@ -1,6 +1,7 @@
 """Audio quality scoring library (fast + full modes)."""
 
 import csv
+import logging
 import os
 import shutil
 import threading
@@ -13,7 +14,10 @@ from urllib.request import urlopen
 
 import numpy as np
 
+from ..utils.logging_config import get_logger
 from ..utils.optional_deps import require_optional
+
+logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -58,12 +62,13 @@ def _ensure_dnsmos_model(cache_dir: Path) -> Path:
     if model_path.exists():
         return model_path
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"  Downloading DNSMOS model → {model_path} ...")
+    logger.info("Downloading DNSMOS model → %s", model_path)
     with urlopen(_DNSMOS_URL, timeout=120) as resp:
         tmp_path = model_path.with_suffix(".tmp")
         tmp_path.write_bytes(resp.read())
     tmp_path.rename(model_path)
-    print(f"  DNSMOS model downloaded ({model_path.stat().st_size / 1024:.0f} KB)")
+    size_kb = model_path.stat().st_size / 1024
+    logger.info("DNSMOS model downloaded (%.0f KB)", size_kb)
     return model_path
 
 
@@ -498,7 +503,7 @@ def score_directory(root: Path, config: QualityScoreConfig, mode: str, num_worke
     """Score all WAV files under root in mode='fast' or mode='full'."""
     files = sorted(f for f in root.rglob("*.wav"))
     n = len(files)
-    print(f"\nScoring: {root}  ({n:,} files)")
+    logger.info("Scoring: %s (%d files)", root, n)
 
     if mode not in {"fast", "full"}:
         raise ValueError("mode must be 'fast' or 'full'")
@@ -514,19 +519,21 @@ def score_directory(root: Path, config: QualityScoreConfig, mode: str, num_worke
                     r = fut.result()
                 except Exception as e:
                     f = futs[fut]
-                    print(f"  [WARN] Failed scoring {f.name}: {e}")
+                    logger.warning("Failed scoring %s: %s", f.name, e)
                     continue
                 r.dir_label = root.name
                 results.append(r)
                 done += 1
                 if config.verbose:
-                    print(f"  {r.path.relative_to(root)}  clip={r.clip_ratio * 100:.3f}%  snr={r.snr_db:.1f}dB  wqi={r.wqi:.3f}" + (f"  [GATE: {r.discard_reason}]" if r.discard else ""))
+                    logger.debug("%s clip=%.3f%% snr=%.1fdB wqi=%.3f%s",
+                                 r.path.relative_to(root), r.clip_ratio * 100, r.snr_db, r.wqi,
+                                 f" [GATE: {r.discard_reason}]" if r.discard else "")
                 elif done % 5000 == 0:
-                    print(f"  ... {done:,}/{n:,} scored")
+                    logger.debug("Progress: %d/%d scored", done, n)
     else:
         model_path = _ensure_dnsmos_model(config.dnsmos_cache)
         nw = num_workers or min(16, os.cpu_count() or 4)
-        print("  Loading DNSMOS + Silero VAD (per-thread, lazy) ...")
+        logger.debug("Loading DNSMOS + Silero VAD (per-thread, lazy)")
 
         # Thread-local storage: each thread gets its own model instances
         _tls: threading.local = threading.local()
@@ -547,18 +554,17 @@ def score_directory(root: Path, config: QualityScoreConfig, mode: str, num_worke
                     r = fut.result()
                 except Exception as e:
                     f = futs[fut]
-                    print(f"  [WARN] Failed scoring {f.name}: {e}")
+                    logger.warning("Failed scoring %s: %s", f.name, e)
                     continue
                 results.append(r)
                 done += 1
                 if config.verbose:
-                    print(
-                        f"  {r.path.relative_to(root)}  clip={r.clip_ratio * 100:.3f}%  snr={r.snr_db:.1f}dB  "
-                        f"vad={r.vad_conf:.3f}  dnsmos={r.dnsmos_ovrl:.2f}  wqi={r.wqi:.3f}" + (f"  [GATE: {r.discard_reason}]" if r.discard else "")
-                    )
+                    logger.debug("%s clip=%.3f%% snr=%.1fdB vad=%.3f dnsmos=%.2f wqi=%.3f%s",
+                                 r.path.relative_to(root), r.clip_ratio * 100, r.snr_db, r.vad_conf,
+                                 r.dnsmos_ovrl, r.wqi, f" [GATE: {r.discard_reason}]" if r.discard else "")
                 elif done % 1000 == 0:
-                    print(f"  ... {done:,}/{n:,} scored")
-        print("  DNSMOS + Silero VAD ✓")
+                    logger.debug("Progress: %d/%d scored", done, n)
+        logger.debug("DNSMOS + Silero VAD loaded")
 
     _apply_percentile_gate(results, config.discard_bottom_pct, config.min_wqi)
     return results

@@ -23,6 +23,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from ..utils.logging_config import setup_rich_logging
+from ..utils.path_utils import resolve_path_safe
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -339,10 +340,25 @@ Examples:
     # Configure Rich logging for all project logs
     _configure_cluster_logging()
 
-    output_dir = Path(args.output_dir)
+    # Validate and sanitize paths to prevent path traversal (CWE-22)
+    try:
+        output_dir = resolve_path_safe(args.output_dir, allow_absolute=True)
+    except ValueError as e:
+        console.print(f"[red]Invalid output directory: {e}[/red]")
+        sys.exit(1)
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.undo is not None:
+        try:
+            undo_path = resolve_path_safe(args.undo, allow_absolute=True)
+            if not undo_path.exists():
+                console.print(f"[red]Undo manifest not found: {args.undo}[/red]")
+                sys.exit(1)
+        except ValueError as e:
+            console.print(f"[red]Invalid undo path: {e}[/red]")
+            sys.exit(1)
+
         console.print(
             Panel.fit(
                 "[bold yellow]Undo Mode[/bold yellow]\n[dim]Restoring files to original locations[/dim]",
@@ -350,7 +366,7 @@ Examples:
                 border_style="yellow",
             )
         )
-        undo_moves(Path(args.undo), dry_run=args.dry_run)
+        undo_moves(undo_path, dry_run=args.dry_run)
         return
 
     if args.dry_run:
@@ -370,7 +386,30 @@ Examples:
             )
         )
 
-    namelists = [Path(args.namelist)] if args.namelist is not None else discover_namelists(Path(args.namelist_dir))
+    # Validate namelist path if provided
+    namelists = []
+    if args.namelist is not None:
+        try:
+            namelist_path = resolve_path_safe(args.namelist, allow_absolute=True)
+            if not namelist_path.exists():
+                console.print(f"[red]Namelist file not found: {args.namelist}[/red]")
+                sys.exit(1)
+            namelists = [namelist_path]
+        except ValueError as e:
+            console.print(f"[red]Invalid namelist path: {e}[/red]")
+            sys.exit(1)
+    else:
+        # Validate namelist directory
+        try:
+            namelist_dir = resolve_path_safe(args.namelist_dir, allow_absolute=True)
+            if not namelist_dir.exists():
+                console.print(f"[red]Namelist directory not found: {args.namelist_dir}[/red]")
+                sys.exit(1)
+            namelists = discover_namelists(namelist_dir)
+        except ValueError as e:
+            console.print(f"[red]Invalid namelist directory: {e}[/red]")
+            sys.exit(1)
+
     console.print(f"[dim]Found {len(namelists)} namelist(s) to process[/dim]")
 
     total_moved = 0

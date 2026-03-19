@@ -18,6 +18,8 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
 )
+
+from src.utils.path_utils import resolve_path_safe
 from rich.table import Table
 from rich.tree import Tree
 
@@ -297,6 +299,26 @@ Output files (per dataset):
 
     args = parser.parse_args()
 
+    # Validate output directory path (prevent path traversal)
+    try:
+        output_dir = resolve_path_safe(args.output_dir, allow_absolute=True)
+    except ValueError as e:
+        console.print(f"[red]Invalid output directory: {e}[/red]")
+        sys.exit(1)
+    args.output_dir = str(output_dir)
+
+    # Validate override config path if provided
+    if args.override:
+        try:
+            override_path = resolve_path_safe(args.override, allow_absolute=True)
+            if not override_path.exists():
+                console.print(f"[red]Override config file not found: {args.override}[/red]")
+                sys.exit(1)
+            args.override = str(override_path)
+        except ValueError as e:
+            console.print(f"[red]Invalid override config path: {e}[/red]")
+            sys.exit(1)
+
     # Configure Rich logging for all project logs
     _configure_cluster_logging()
 
@@ -304,7 +326,13 @@ Output files (per dataset):
     if args.config in ConfigLoader.VALID_PRESETS:
         config = load_full_config(args.config, args.override)
     else:
-        config_path = Path(args.config)
+        # Validate custom config path
+        try:
+            config_path = resolve_path_safe(args.config, allow_absolute=True)
+        except ValueError as e:
+            console.print(f"[red]Invalid config path: {e}[/red]")
+            sys.exit(1)
+
         if not config_path.exists():
             console.print(f"[red]Config file not found: {args.config}[/red]")
             sys.exit(1)

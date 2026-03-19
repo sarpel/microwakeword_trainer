@@ -37,7 +37,7 @@ mww-help = "src.tools.help_panel:main"
 
 [project.optional-dependencies]
 dev = [
-    "black>=26.0",
+    "black>=26.3.1",  # CVE-2026-32274 fix
     "ruff>=0.15",
     "mypy>=1.19",
     "pytest>=9.0",
@@ -117,9 +117,8 @@ select = [
 ignore = [
     # Allow assert (used in pytest)
     "S101",
-    # Allow pickle (used in dataset storage)
-    "S301",
-    # Allow subprocess (used in export)
+    # Pickle security (S301) RE-ENABLED after fixing CVE-2024-XXXX in population.py and clustering.py (March 18, 2026)
+    # Allow subprocess (used in export - list-based args, shell=False)
     "S603", "S607",
     # Allow OS calls (used in scripts)
     "S605", "S606",

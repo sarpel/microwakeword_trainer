@@ -265,7 +265,7 @@ class Stream(tf.keras.layers.Layer):
         # Calculate state shape
         if self.ring_buffer_size_in_time_dim and self.ring_buffer_size_in_time_dim > 0:
             # State shape: [batch, ring_buffer_size, ...features]
-            shape_as_list = list(input_shape) if isinstance(input_shape, (list, tuple)) else tf.TensorShape(input_shape).as_list()
+            shape_as_list = list(input_shape) if isinstance(input_shape, (list, tuple)) else list(tf.TensorShape(input_shape))  # TF 2.16+: as_list() deprecated
             self.state_shape = [
                 self.inference_batch_size,
                 self.ring_buffer_size_in_time_dim,

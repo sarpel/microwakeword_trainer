@@ -54,6 +54,7 @@ tf.get_logger().setLevel("ERROR")
 
 from src.export.verification import compute_expected_state_shapes, verify_tflite_model
 from src.model.architecture import build_core_layers
+from src.utils.path_utils import resolve_path_safe
 from src.utils.text_utils import to_snake_case
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,7 @@ def load_weights_from_keras3_checkpoint(model: tf.keras.Model, checkpoint_path: 
         "moving_variance": "3",  # BatchNorm moving_variance
     }
 
-    print(f"Loading weights from: {checkpoint_path}")
+    logger.info("Loading weights from: %s", checkpoint_path)
 
     loaded_count = 0
     with h5py.File(checkpoint_path, "r") as f:
@@ -249,15 +250,15 @@ def load_weights_from_keras3_checkpoint(model: tf.keras.Model, checkpoint_path: 
                     ds = f[ckpt_path]
                     if isinstance(ds, h5py.Dataset):
                         value = ds[()]
-                        weight_shape = tuple(weight.shape.as_list())
+                        weight_shape = tuple(list(weight.shape))  # TF 2.16+: as_list() deprecated
                         if weight_shape == tuple(value.shape):
                             weight.assign(value)
                             loaded_count += 1
                             consumed_keys.add((flat_name, var_idx))
                         else:
-                            print(f"  Shape mismatch: {flat_name}/{weight.name} {weight_shape} vs {tuple(value.shape)}")
+                            logger.warning("Shape mismatch: %s/%s %s vs %s", flat_name, weight.name, weight_shape, tuple(value.shape))
                 except Exception as e:
-                    print(f"  Error loading {flat_name}/{weight.name}: {e}")
+                    logger.error("Error loading %s/%s: %s", flat_name, weight.name, e)
 
         unexpected_keys = [key for key in ckpt_map if key[0] in model_layer_names and key[1] in {"0", "1", "2", "3"} and key not in consumed_keys]
         if unexpected_keys:
@@ -277,7 +278,7 @@ def load_weights_from_keras3_checkpoint(model: tf.keras.Model, checkpoint_path: 
             f"between the checkpoint and the export model."
         )
 
-    print(f"Loaded {loaded_count}/{len(model.weights)} weights")
+    logger.info("Loaded %d/%d weights", loaded_count, len(model.weights))
     return loaded_count
 
 
@@ -705,7 +706,7 @@ def create_representative_dataset_from_data(
 
     if not store_path.exists():
         if allow_random_fallback:
-            print(f"  Warning: No training data at {store_path}, falling back to random calibration")
+            logger.warning("No training data at %s, falling back to random calibration", store_path)
             return create_representative_dataset(config, target_chunks)
         raise ValueError(f"Quantized export requires real representative calibration data. Expected feature store at: {store_path}. Provide --data-dir pointing to processed training features.")
 
@@ -714,7 +715,7 @@ def create_representative_dataset_from_data(
         store.open()
     except (FileNotFoundError, OSError) as e:
         if allow_random_fallback:
-            print(f"  Warning: Could not open feature store: {e}, falling back to random calibration")
+            logger.warning("Could not open feature store: %s, falling back to random calibration", e)
             return create_representative_dataset(config, target_chunks)
         raise ValueError(f"Quantized export requires real representative calibration data, but feature store could not be opened: {e}") from e
 
@@ -722,7 +723,7 @@ def create_representative_dataset_from_data(
         n_stored = len(store)
         if n_stored == 0:
             if allow_random_fallback:
-                print("  Warning: Feature store is empty, falling back to random calibration")
+                logger.warning("Feature store is empty, falling back to random calibration")
                 return create_representative_dataset(config, target_chunks)
             raise ValueError("Quantized export requires real representative calibration data, but the feature store is empty.")
 
@@ -1595,6 +1596,46 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Validate and sanitize user-provided paths to prevent path traversal (CWE-22)
+    try:
+        checkpoint_path = resolve_path_safe(args.checkpoint, allow_absolute=True)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {args.checkpoint}")
+    except (ValueError, FileNotFoundError) as e:
+        logger.error("Invalid checkpoint path: %s", e)
+        sys.exit(1)
+
+    # Config file must exist and be readable
+    config_path = resolve_path_safe(args.config, allow_absolute=True)
+    if not config_path.exists():
+        logger.error("Config file not found: %s", config_path)
+        sys.exit(1)
+
+    # Output directory - resolve safely
+    try:
+        output_dir = resolve_path_safe(args.output, allow_absolute=True)
+    except ValueError as e:
+        logger.error("Invalid output directory: %s", e)
+        sys.exit(1)
+
+    # Data directory (optional, for quantization)
+    data_dir = None
+    if args.data_dir:
+        try:
+            data_dir = resolve_path_safe(args.data_dir, allow_absolute=True)
+            if not data_dir.exists():
+                logger.warning("Data directory not found: %s", data_dir)
+                data_dir = None
+        except ValueError as e:
+            logger.warning("Invalid data directory: %s", e)
+            data_dir = None
+
+    # Update args with validated paths
+    args.checkpoint = str(checkpoint_path)
+    args.config = str(config_path)
+    args.output = str(output_dir)
+    args.data_dir = str(data_dir) if data_dir else None
 
     # Load configuration
     config = {}

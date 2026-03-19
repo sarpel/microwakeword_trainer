@@ -269,7 +269,7 @@ class MixConvBlock(tf.keras.layers.Layer):
         if self.filters is None:
             return input_shape
         if isinstance(input_shape, tf.TensorShape):
-            shape_list = input_shape.as_list()
+            shape_list = list(input_shape)  # TF 2.16+: as_list() deprecated
         else:
             shape_list = list(input_shape)
         if len(shape_list) < 4:
@@ -384,7 +384,7 @@ class ResidualBlock(tf.keras.layers.Layer):
     def compute_output_shape(self, input_shape):
         """Compute output shape for model.summary()."""
         if isinstance(input_shape, tf.TensorShape):
-            shape_list = input_shape.as_list()
+            shape_list = list(input_shape)  # TF 2.16+: as_list() deprecated
         else:
             shape_list = list(input_shape)
         if len(shape_list) < 4:
@@ -662,7 +662,7 @@ class MixedNet(tf.keras.Model):
         # Streaming for temporal pooling
         # Compute temporal ring-buffer size from effective pre-flatten time dimension.
         # This is config-aware: first-conv presence, kernel, and stride all affect time.
-        input_shape_list = tf.TensorShape(input_shape).as_list() if input_shape is not None else None
+        input_shape_list = list(tf.TensorShape(input_shape)) if input_shape is not None else None  # TF 2.16+: as_list() deprecated
         if input_shape_list and input_shape_list[0] is not None:
             pre_flatten_temporal_frames = int(input_shape_list[0])
             if self.first_conv_filters > 0:
@@ -750,7 +750,7 @@ class MixedNet(tf.keras.Model):
     def compute_output_shape(self, input_shape):
         """Compute output shape for model.summary()."""
         if isinstance(input_shape, tf.TensorShape):
-            shape_list = input_shape.as_list()
+            shape_list = list(input_shape)  # TF 2.16+: as_list() deprecated
         else:
             shape_list = list(input_shape)
         batch_dim = shape_list[0] if shape_list else None
