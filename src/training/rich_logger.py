@@ -3,6 +3,8 @@
 Provides progress bars, metric tables, confusion matrices, and formatted logging.
 """
 
+import math
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -139,6 +141,22 @@ class RichTrainingLogger:
         eta_seconds = remaining / speed
         return self._format_eta(eta_seconds)
 
+    @staticmethod
+    def _format_fah(value: float) -> str:
+        """Format FAH for display while preserving very small non-zero values.
+
+        Why: showing fixed ``.2f`` precision makes values below 0.005 appear as
+        ``0.00``, which can be misread as exactly zero instead of very low FAH.
+        """
+        if not math.isfinite(value):
+            return str(value)
+        abs_value = abs(value)
+        if abs_value == 0.0:
+            return "0.00"
+        if abs_value < 0.01:
+            return f"{value:.2e}"
+        return f"{value:.2f}"
+
     def create_progress(self, total_steps: int) -> tuple[Progress, TaskID]:
         """Create a Rich Progress bar with custom columns.
 
@@ -233,7 +251,7 @@ class RichTrainingLogger:
                 color = "red"
             table.add_row(
                 "Ambient FA/Hour",
-                f"[{color}]{faph:.2f}[/{color}]",
+                f"[{color}]{self._format_fah(float(faph))}[/{color}]",
             )
 
         # Additional operational metrics
@@ -391,8 +409,8 @@ class RichTrainingLogger:
         table.add_column("Value")
 
         table.add_row("Total Time", time_str)
-        table.add_row("Best FA/Hour", f"{best_fah:.2f}")
-        table.add_row("Best Recall", f"{best_recall:.4f}")
+        table.add_row("Best FA/Hour", self._format_fah(best_fah))
+        table.add_row("Best Val Recall@TargetFAH", f"{best_recall:.4f}")
         table.add_row("Best Weights", best_path)
 
         panel = Panel(

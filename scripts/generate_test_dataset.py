@@ -153,7 +153,7 @@ def verify_wav_file(filepath: Path) -> dict:
         return {"error": str(e)}
 
 
-def main(args: argparse.Namespace | None = None) -> int:
+def main(args: list[str] | None = None) -> int:
     """Main entry point with CLI argument parsing."""
     # Declare globals at function start before any use
     global DATASET_DIR, POSITIVE_DIR, NEGATIVE_DIR, HARD_NEGATIVE_DIR

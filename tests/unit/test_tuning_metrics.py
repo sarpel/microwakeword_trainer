@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 # These imports will ALL FAIL (ImportError) until metrics.py is created — that's the RED phase.
 from src.tuning.metrics import (
-    TuneMetrics,
-    ParetoArchive,
     ErrorMemory,
+    ParetoArchive,
     ThresholdOptimizer,
-    compute_hypervolume,
-    fit_temperature,
+    TuneMetrics,
     apply_temperature,
     compute_ece,
+    compute_hypervolume,
+    fit_temperature,
 )
-
 
 # ---------------------------------------------------------------------------
 # TuneMetrics tests

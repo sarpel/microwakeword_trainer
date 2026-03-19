@@ -250,7 +250,7 @@ def load_weights_from_keras3_checkpoint(model: tf.keras.Model, checkpoint_path: 
                     ds = f[ckpt_path]
                     if isinstance(ds, h5py.Dataset):
                         value = ds[()]
-                        weight_shape = tuple(list(weight.shape))  # TF 2.16+: as_list() deprecated
+                        weight_shape = tuple(weight.shape)  # TF 2.16+: as_list() deprecated
                         if weight_shape == tuple(value.shape):
                             weight.assign(value)
                             loaded_count += 1

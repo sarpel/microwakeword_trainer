@@ -256,7 +256,9 @@ class OptimizedDataPipeline:
 
         # Apply SpecAugment if enabled (TF backend) and compute class weights in-pipeline
         if self.spec_augment_config.get("enabled", False):
-            backend = self.spec_augment_config.get("backend", "cupy")
+            # Use TF as default for better performance (PERF-005 fix)
+            # CuPy backend causes CPU-GPU memory transfers (15-25% slowdown)
+            backend = self.spec_augment_config.get("backend", "tf")
             if backend == "tf":
                 time_mask_max_size = self.spec_augment_config.get("time_mask_max_size", 10)
                 time_mask_count = self.spec_augment_config.get("time_mask_count", 2)

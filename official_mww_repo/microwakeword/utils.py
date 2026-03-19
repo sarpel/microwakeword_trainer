@@ -20,7 +20,6 @@ import os.path
 
 import numpy as np
 import tensorflow as tf
-
 from microwakeword.layers import modes, stream, strided_drop
 
 

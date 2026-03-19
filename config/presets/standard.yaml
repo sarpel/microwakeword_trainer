@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────────
-# STANDARD PRESET - Balanced quality/speed for regular training
-# Use for: Day-to-day training with good accuracy/speed tradeoff
+# STANDARD PRESET - Good balance of accuracy and training speed
+# Use for: Regular iterations, testing new datasets, daily training
 # Hardware: RTX 3060 Ti 8GB, 64GB RAM, Ryzen 9 7950X
 # ─────────────────────────────────────────────────────────────────
 DATASET_DIR: "./dataset"
@@ -34,72 +34,67 @@ paths:
 # TRAINING PARAMETERS
 # ─────────────────────────────────────────────────────────────────
 training:
-  # 3-phase schedule: faster than max_quality for regular iteration
-  training_steps: [20000, 10000, 5000]  # Number of training steps per phase
-  base_batch_size: 128  # Base batch size (matches batch_size, no scaling needed)
-  base_learning_rates: [0.001, 0.0002, 0.00005]  # Base learning rates per phase
-  auto_lr_scale_method: "sqrt"  # Method to scale LR based on batch size
-  learning_rates: [0.001, 0.0002, 0.00005]  # Explicit rates (no auto-scaling at batch_size=128)
-  batch_size: 128  # Training batch size
+  # 3-phase schedule: Phase 1 learns discrimination, Phase 2 refines boundary, Phase 3 polishes
+  training_steps: [25000, 15000, 10000]  # Reduced for standard training time
+  base_batch_size: 128  # Base batch size before auto-scaling
+  base_learning_rates: [0.001, 0.0002, 0.00005]  # Base learning rates per phase before auto-scaling
+  auto_lr_scale_method: "sqrt"  # Method to scale LR based on batch size (sqrt or linear)
+  batch_size: 256  # Training batch size per GPU
   split_seed: 42  # Random seed for train/val/test split reproducibility
-  eval_step_interval: 500  # Eval trigger step interval
-  eval_basic_step_interval: 2500  # Main eval: less frequent to improve throughput
+  eval_step_interval: 500  # Not directly used as a condition in the training loop
+  eval_basic_step_interval: 1000  # Main eval trigger: runs full validation with all metrics
   materialize_metrics_interval: 1000  # Training accuracy computation interval
-  eval_advanced_step_interval: 10000  # Advanced metrics less frequent to reduce overhead
-  eval_confusion_matrix_interval: 5000  # Confusion matrix logging interval
-  eval_checkpoints_interval: 10000  # Checkpoint less frequently to reduce sync + I/O overhead
+  eval_advanced_step_interval: 2000  # Advanced metrics: score distribution, gain metrics, mining updates
+  eval_confusion_matrix_interval: 2000  # Prints confusion matrix with per-class breakdown
+  eval_checkpoints_interval: 2000  # Checkpoint sync points
   eval_log_every_step: false  # Reduce per-step logging overhead
   steps_per_epoch: 1000  # Number of steps per epoch for progress tracking
 
-  # Recall-biased class weighting (maximize detection at cost of more false alarms)
-  positive_class_weight: [10.0, 20.0, 30.0]  # Weight for positive samples per phase
-  negative_class_weight: [1.0, 1.0, 1.0]  # Weight for negative samples per phase
-  hard_negative_class_weight: [1.0, 1.0, 1.0]  # Weight for hard negatives per phase
+  positive_class_weight: [3.0, 5.0, 8.0]  # Weight for positive samples per phase
+  negative_class_weight: [2.0, 3.0, 4.0]  # Weight for negative samples per phase
+  hard_negative_class_weight: [3.0, 6.0, 8.0]  # Weight for hard negatives per phase
 
-  # Moderate SpecAugment
-  time_mask_max_size: [1, 2, 3]  # Max SpecAugment time mask length per phase
-  time_mask_count: [1, 1, 1]  # Number of time masks per phase
-  freq_mask_max_size: [1, 2, 3]  # Max SpecAugment frequency mask length per phase
-  freq_mask_count: [1, 1, 1]  # Number of frequency masks per phase
+  # Progressive SpecAugment: light→moderate→strong
+  time_mask_max_size: [2, 4, 5]  # Max SpecAugment time mask length per phase
+  time_mask_count: [1, 2, 2]  # Number of time masks per phase
+  freq_mask_max_size: [2, 4, 5]  # Max SpecAugment frequency mask length per phase
+  freq_mask_count: [1, 2, 2]  # Number of frequency masks per phase
 
-  # Checkpoint selection: maximize recall
+  # Checkpoint selection
+  minimization_metric: "ambient_false_positives_per_hour"  # Metric to minimize for checkpoint selection
+  target_minimization: 10.0  # Target value for minimization metric
   maximization_metric: "average_viable_recall"  # Metric to maximize for checkpoint selection
-  minimization_metric: "ambient_false_positives_per_hour"  # Metric to minimize (FAH target)
-  target_minimization: 2.0  # Target FAH ceiling for checkpoint selection
 
-  ambient_duration_hours: 42.02  # Total hours of ambient audio for FAH calculation
-  train_split: 0.8  # Fraction of data for training
-  val_split: 0.1  # Fraction of data for validation
-  test_split: 0.1  # Fraction of data for testing
+  # 24h of ambient audio (negative + background + hard_negative) for FAH calculation
+  ambient_duration_hours: 24  # Reduced from 48 for standard training
+  train_split: 0.8  # Fraction of data for training (80%)
+  val_split: 0.1  # Fraction of data for validation (10%)
+  test_split: 0.1  # Fraction of data for testing (10%)
   strict_content_hash_leakage_check: true  # Enable strict data leakage detection
-  speaker_based_split: false  # No speaker-based split for standard (faster, sufficient for most cases)
 
-  # Optimizer and loss
-  optimizer: "adam"  # Optimizer algorithm
-  label_smoothing: 0.0  # No label smoothing (recall-biased training)
-  gradient_clipnorm: 2.0  # Gradient L2 norm clipping
-  ema_decay: 0.9995  # EMA smoothing factor (higher = slower decay)
+  # Optimizer and loss parameters
+  optimizer: "adam"  # Optimizer algorithm (adam or sgd)
+  label_smoothing: 0.01  # Label smoothing factor (0.0 = disabled, 0.1-0.2 typical)
+  gradient_clipnorm: 1.0  # Clips gradient L2 norm to prevent exploding gradients
+  ema_decay: 0.9995  # EMA smoothing factor (higher = slower decay, half-life ~6900 steps)
   random_seed: 42  # Random seed for reproducible runs
-
-  # No intra-phase cosine LR decay for standard (flat LR per phase)
-  cosine_decay_alpha: 0.0  # Intra-phase LR decay disabled
-
-  # Plateau-based LR reduction
-  plateau_lr_factor: 0.3  # LR reduction factor on plateau
-  plateau_patience: 3  # Consecutive plateau evals before LR reduction
-  plateau_max_reductions: 2  # Max LR reductions before stopping
-
+  # Intra-phase cosine LR decay (prevents flat LR stagnation)
+  cosine_decay_alpha: 0.1  # Intra-phase LR decay factor (LR ends at 30% of phase start)
+  # Plateau-based LR reduction and early stopping
+  plateau_lr_factor: 0.3  # LR reduction factor on plateau (0.3 = reduce to 30%)
+  plateau_patience: 5  # Consecutive plateau evals before LR reduction
+  plateau_max_reductions: 2  # Max LR reductions before stopping (0 = disabled)
   # Phase transition staggering
   phase_stagger_steps: 2000  # Delay class weights + augmentation after LR phase change
-
   # BatchNorm freezing
   freeze_bn_on_plateau: true  # Freeze BatchNorm layers when plateau detected
+  speaker_based_split: true  # Enable speaker-based train/val/test split for stricter data isolation
 
 # ─────────────────────────────────────────────────────────────────
 # MIXEDNET ARCHITECTURE
 # ─────────────────────────────────────────────────────────────────
 model:
-  architecture: "mixednet"  # Model architecture
+  architecture: "mixednet"  # Model architecture (mixednet or other supported)
   first_conv_filters: 32  # Number of filters in first convolution layer
   first_conv_kernel_size: 5  # Kernel size for first convolution layer
   stride: 3  # Stride for first convolution layer
@@ -108,40 +103,39 @@ model:
   repeat_in_block: "1,1,1,1"  # Repetitions per MixConv block
   residual_connection: "0,1,1,1"  # Which blocks have residual connections
 
-  # Light regularization for standard (less than max_quality)
-  dropout_rate: 0.08  # Dropout probability for classification head
-  l2_regularization: 0.00003  # L2 weight regularization factor
+  dropout_rate: 0.10  # Reduced for standard training
+  l2_regularization: 0.0001  # L2 weight regularization factor
 
 # ─────────────────────────────────────────────────────────────────
-# AUGMENTATION (moderate for standard)
+# AUGMENTATION (moderate for standard generalization)
 # ─────────────────────────────────────────────────────────────────
 augmentation:
-  SevenBandParametricEQ: 0.20  # Probability of applying parametric EQ augmentation
-  TanhDistortion: 0.15  # Higher distortion probability than max_quality
-  PitchShift: 0.15  # Higher pitch shift probability than max_quality
-  BandStopFilter: 0.10  # Probability of applying band-stop filter
-  AddColorNoise: 0.20  # Probability of adding colored noise
-  AddBackgroundNoiseFromFile: 0.35  # Probability of adding background noise
+  SevenBandParametricEQ: 0.15  # Probability of applying parametric EQ augmentation
+  TanhDistortion: 0.05  # Probability of applying tanh distortion
+  PitchShift: 0.05  # Probability of applying pitch shift
+  BandStopFilter: 0.05  # Probability of applying band-stop filter
+  AddColorNoise: 0.15  # Probability of adding colored noise
+  AddBackgroundNoiseFromFile: 0.30  # Probability of adding background noise
   Gain: 1.0  # Gain adjustment probability
-  ApplyImpulseResponse: 0.30  # Probability of applying room impulse response
+  ApplyImpulseResponse: 0.20  # Probability of applying room impulse response
 
-  # Noise mixing
+  # Noise mixing: wider SNR range for robustness
   background_min_snr_db: -5.0  # Minimum SNR for background noise mixing
   background_max_snr_db: 15.0  # Maximum SNR for background noise mixing
-  min_jitter_s: 0.15  # Minimum audio jitter in seconds
-  max_jitter_s: 0.20  # Maximum audio jitter in seconds
+  min_jitter_s: 0.08  # Minimum audio jitter in seconds
+  max_jitter_s: 0.25  # Maximum audio jitter in seconds
 
   # Augmentation magnitude ranges
   eq_min_gain_db: -6.0  # Minimum EQ gain in dB
   eq_max_gain_db: 6.0  # Maximum EQ gain in dB
   distortion_min: 0.05  # Minimum distortion intensity
   distortion_max: 0.2  # Maximum distortion intensity
-  pitch_shift_min_semitones: -2.0  # Wider pitch range than max_quality
-  pitch_shift_max_semitones: 2.0  # Wider pitch range than max_quality
+  pitch_shift_min_semitones: -1.2  # Minimum pitch shift in semitones
+  pitch_shift_max_semitones: 1.2  # Maximum pitch shift in semitones
   band_stop_min_center_freq: 125.0  # Minimum band-stop filter center frequency
   band_stop_max_center_freq: 7500.0  # Maximum band-stop filter center frequency
-  band_stop_min_bandwidth_fraction: 0.5  # Minimum band-stop bandwidth as fraction
-  band_stop_max_bandwidth_fraction: 1.99  # Maximum band-stop bandwidth as fraction
+  band_stop_min_bandwidth_fraction: 0.5  # Minimum band-stop bandwidth as fraction of center freq
+  band_stop_max_bandwidth_fraction: 1.99  # Maximum band-stop bandwidth as fraction of center freq
   gain_min_db: -5.0  # Minimum gain adjustment in dB
   gain_max_db: 5.0  # Maximum gain adjustment in dB
   color_noise_min_snr_db: -10.0  # Minimum SNR for colored noise
@@ -150,56 +144,48 @@ augmentation:
   # Background sources
   impulse_paths: ["${DATASET_DIR:-./dataset}/rirs"]  # Paths to impulse response files
   background_paths: ["${DATASET_DIR:-./dataset}/background"]  # Paths to background noise files
-  augmentation_duration_s: 3.2  # Standard augmentation window duration in seconds
 
 # ─────────────────────────────────────────────────────────────────
-# PERFORMANCE CONFIGURATION (tuned for RTX 3060 Ti + Ryzen 9 7950X)
+# PERFORMANCE CONFIGURATION
 # ─────────────────────────────────────────────────────────────────
 performance:
-  gpu_only: true  # Use GPU-only mode
-  mixed_precision: true  # Enable mixed precision (FP16)
+  gpu_only: true  # Use GPU-only mode (no CPU fallback)
+  mixed_precision: true  # Enable mixed precision (FP16) for 2-3x speedup
   spec_augment_backend: "tf"  # SpecAugment backend (tf or cupy)
-  num_workers: 8  # Number of data loading workers
+  num_workers: 16  # Number of data loading workers
   num_threads_per_worker: 2  # Threads per data loading worker
-  prefetch_factor: 8  # Prefetch factor (smaller than max_quality for standard)
+  prefetch_factor: 16  # Prefetch factor for data pipeline
   pin_memory: true  # Pin CPU memory for faster GPU transfer
   max_memory_gb: 40  # Maximum system memory to use in GB
   inter_op_parallelism: 16  # TensorFlow inter-op parallelism threads
   intra_op_parallelism: 16  # TensorFlow intra-op parallelism threads
 
-  # Profiling
   enable_profiling: false  # Enable TensorFlow profiling
   profile_every_n_steps: 1000  # Profile interval in steps
   profile_output_dir: "./profiles"  # Directory for profile outputs
   tf_profile_start_step: 0  # Step to start profiling
   gpu_memory_log_interval: 1000  # GPU memory logging interval in steps
 
-  # TensorBoard logging
   tensorboard_enabled: true  # Enable TensorBoard logging
   tensorboard_log_dir: "./logs"  # TensorBoard log directory
   tensorboard_log_histograms: false  # Log weight histograms
   tensorboard_log_images: false  # Log image tensors
-  tensorboard_log_pr_curves: false  # Disable expensive PR curve logging for better throughput
-  tensorboard_log_roc_curves: false  # ROC curves disabled for standard (expensive)
-  tensorboard_log_graph: true  # Log computation graph
-  tensorboard_log_advanced_scalars: false  # Reduce TensorBoard overhead
+  tensorboard_log_pr_curves: false  # Enable PR curve logging during training
+  tensorboard_log_roc_curves: false  # Enable ROC curve plotting during training
+  tensorboard_log_graph: false  # Log computation graph
+  tensorboard_log_advanced_scalars: true  # Reduce eval-time TensorBoard overhead
   tensorboard_log_weight_histograms: false  # Log weight histograms separately
-  tensorboard_image_interval: 5000  # Image logging interval in steps
-  tensorboard_histogram_interval: 5000  # Histogram logging interval in steps
+  tensorboard_image_interval: 2000  # Image logging interval in steps
+  tensorboard_histogram_interval: 2000  # Histogram logging interval in steps
 
-  # Sophisticated metrics (Phase 4)
-  tensorboard_log_learning_rate: true  # Log learning rate schedule
-  tensorboard_log_gradient_norms: false  # Gradient norms disabled for standard
-  tensorboard_log_activation_stats: false  # Activation stats disabled for standard
-  tensorboard_log_confidence_drift: false  # Disable extra eval-time logging
-  tensorboard_log_per_class_accuracy: false  # Disable extra eval-time logging
-  tensorboard_sophisticated_interval: 10000  # Sparse sophisticated logging to preserve throughput
+  tensorboard_log_learning_rate: false  # Log learning rate
+  tensorboard_log_gradient_norms: false  # Disable heavy histogram/scalar logging
+  tensorboard_log_activation_stats: false  # Enable expensive activation-stat collection
+  tensorboard_log_confidence_drift: false  # Enable extra eval-time logging
+  tensorboard_log_per_class_accuracy: false  # Enable extra eval-time logging
+  tensorboard_sophisticated_interval: 5000  # Sparse sophisticated logging to preserve throughput
 
   # Data pipeline
-  prefetch_buffer: 8  # tf.data prefetch buffer size
-  use_tfdata: true  # Use tf.data pipeline instead of Python generators
-  tfdata_cache_dir: "${DATA_DIR:-./data}/processed/tfdata_cache"  # Disk cache directory for tf.data pipelines
-  tfdata_shuffle_buffer: 2000  # Shuffle buffer size for tf.data pipeline
   mmap_readonly: true  # Use read-only memory-mapped files
   tfdata_prefetch_to_device: true  # Prefetch data directly to GPU
   tfdata_prefetch_device: "/GPU:0"  # Device for data prefetch
@@ -207,15 +193,19 @@ performance:
   log_throughput: false  # Log throughput statistics
   log_throughput_interval: 1000  # Throughput logging interval in steps
   disable_mmap: false  # Disable memory-mapped files
+  prefetch_buffer: 32  # tf.data prefetch buffer size (larger = faster GPU feed)
+  use_tfdata: true  # Use tf.data pipeline instead of Python generators
+  tfdata_cache_dir: "${DATA_DIR:-./data}/processed/tfdata_cache"  # Disk cache directory for tf.data pipelines
+  tfdata_shuffle_buffer: 5000  # Shuffle buffer size for tf.data pipeline (larger = better shuffling)
 
 # ─────────────────────────────────────────────────────────────────
-# SPEAKER CLUSTERING (enabled for standard)
+# SPEAKER CLUSTERING
 # ─────────────────────────────────────────────────────────────────
 speaker_clustering:
   enabled: true  # Enable speaker clustering
   method: "adaptive"  # Clustering method (adaptive, threshold, fixed)
   embedding_model: "speechbrain/spkrec-ecapa-voxceleb"  # Speaker embedding model
-  similarity_threshold: 0.68  # Threshold for grouping same speaker
+  similarity_threshold: 0.65  # Slightly relaxed for standard training
   n_clusters: null  # Explicit cluster count (null = auto-detect)
   leakage_audit_enabled: true  # Enable data leakage audit
   leakage_similarity_threshold: 0.9  # Threshold for leakage detection
@@ -232,30 +222,25 @@ speaker_clustering:
   adaptive_threshold_large: 50000  # Adaptive threshold for large datasets
 
 # ─────────────────────────────────────────────────────────────────
-# HARD NEGATIVE MINING (standard settings)
+# HARD NEGATIVE MINING
 # ─────────────────────────────────────────────────────────────────
 mining:
   enabled: true  # Enable hard negative mining
   async_mining: true  # Use async (non-blocking background) mining for better throughput
-  fp_threshold: 0.65  # False positive probability threshold for mining
-  max_samples: 1000  # Lower mining memory/CPU overhead per epoch
-  mining_interval_epochs: 3  # Mine less frequently to reduce throughput impact
+
+  fp_threshold: 0.8  # False positive probability threshold for mining
+  max_samples: 250  # Lowered for standard training
+  mining_interval_epochs: 2  # Mine less frequently
   collection_mode: "log_only"  # Mining collection mode
-
-  # Logging
-  log_predictions: false  # Disable per-epoch FP logging to reduce I/O and memory pressure
+  log_predictions: true  # Enable per-epoch FP logging
   log_file: "logs/false_predictions.json"  # Log file path
-  top_k_per_epoch: 150  # Top K false positives to mine per epoch
-
-  # Post-training mining
   enable_post_training_mining: true  # Enable mining after training ends
   mined_subdirectory: "mined"  # Subdirectory for mined samples
-  min_epochs_before_mining: 10  # Minimum epochs before starting mining
+  min_epochs_before_mining: 5  # Minimum epochs before starting mining
+  top_k_per_epoch: 50  # Top K false positives to mine per epoch
   deduplicate_by_hash: true  # Deduplicate samples by hash
-
-  # Top FP extraction
   extract_top_fps: true  # Extract top false positives
-  top_fp_percent: 5.0  # Top percentage of false positives to extract
+  top_fp_percent: 2.0  # Reduced for standard training
   extraction_confidence_threshold: 0.8  # Confidence threshold for extraction
   extraction_output_dir: "${DATASET_DIR:-./dataset}/top5fps"  # Extraction output directory
   extraction_log_file: "logs/top_fp_extraction.json"  # Extraction log file
@@ -273,22 +258,21 @@ export:
 
   quantize: true  # Enable INT8 quantization for TFLite export
   inference_input_type: "int8"  # Input data type for TFLite model
-  inference_output_type: "uint8"  # Output data type for TFLite model (must be uint8 for ESPHome)
+  inference_output_type: "uint8"  # Output data type for TFLite model
 
-  probability_cutoff: 0  # 0 = auto-calculate from checkpoint metadata
+  probability_cutoff: 0.97  # 0 = auto-calculate from checkpoint metadata
   sliding_window_size: 5  # Sliding window size for streaming
   tensor_arena_size: 0  # Tensor arena size (0 = auto-calculate)
   minimum_esphome_version: "2024.7.0"  # Minimum ESPHome version requirement
 
-  # Calibration dataset
-  representative_dataset_size: 1000  # Size of representative dataset for quantization
-  representative_dataset_real_size: 4000  # Real size of representative dataset
+  representative_dataset_size: 10000  # Balanced size for standard calibration
+  representative_dataset_real_size: 10000  # Real size of representative dataset
   max_samples_for_cutoff_calc: 5000  # Max test samples for auto-cutoff inference
-  arena_size_margin: 1.3  # Multiplier for tensor arena size (1.3 = 30% margin)
+  arena_size_margin: 1.3  # Margin factor for arena size calculation
   calibration_seed: 42  # RNG seed for calibration dataset sampling
-  representative_positive_fraction: 0.3  # Fraction of positives in representative dataset
-  representative_dataset_min_chunks: 500  # Minimum chunks for representative dataset
-  min_probability_cutoff_guard: 0.05  # Safety floor for probability cutoff
+  representative_positive_fraction: 0.5  # Fraction of positives in representative dataset (0.5 for max quality)
+  representative_dataset_min_chunks: 2000  # Minimum chunks for representative dataset
+  min_probability_cutoff_guard: 0.05  # Safety floor for probability cutoff (avoids near-zero cutoffs)
 
 # ─────────────────────────────────────────────────────────────────
 # PREPROCESSING
@@ -323,12 +307,12 @@ quality:
 # EVALUATION AND METRICS
 # ─────────────────────────────────────────────────────────────────
 evaluation:
-  default_threshold: 0.97  # Default probability threshold for evaluation
-  n_thresholds: 101  # Number of threshold steps for ROC/PR curves
+  default_threshold: 0.90  # Default probability threshold for evaluation
+  n_thresholds: 257  # Number of threshold steps for ROC/PR curves
   max_fah: 10.0  # Maximum false alarms per hour for evaluation
   warmup_runs: 10  # Number of warmup runs before latency measurement
   n_latency_runs: 100  # Number of inference runs for latency stats
-  target_fah: 2.0  # Target false alarms per hour (more lenient than max_quality)
+  target_fah: 2.0  # Target false alarms per hour
   target_recall: 0.90  # Target recall score
   gain_window_steps: 1000  # Window size for gain metrics
   plateau_window_evals: 5  # Window size for plateau detection
@@ -336,31 +320,29 @@ evaluation:
   plateau_slope_eps: 0.0001  # Slope epsilon for plateau detection
 
 # ─────────────────────────────────────────────────────────────────
-# AUTO-TUNING (post-training fine-tuning)
+# AUTO-TUNING
 # ─────────────────────────────────────────────────────────────────
 auto_tuning:
   enabled: true  # Enable post-training auto-tuning
-  target_fah: 0.3  # Target false alarms per hour for auto-tuning
+  target_fah: 2.0  # Target false alarms per hour for auto-tuning
   target_recall: 0.90  # Target recall score for auto-tuning
-  max_iterations: 30  # Maximum auto-tuning iterations
-  max_gradient_steps: 2000  # Total gradient steps budget (smaller than max_quality)
+  max_iterations: 20  # Reduced for standard preset
+  max_gradient_steps: 20000  # Total gradient steps budget for tuning
   patience: 10  # Consecutive non-improvements before stopping
-  cv_folds: 5  # Cross-validation folds (fewer than max_quality)
-  confirmation_fraction: 0.40  # Fraction of data for final confirmation
+  cv_folds: 5  # Cross-validation folds for threshold optimization
+  confirmation_fraction: 0.30  # Fraction of data for final confirmation
   search_eval_fraction: 0.30  # Fraction of search data for evaluation
-  bootstrap_samples: 2000  # Bootstrap samples for confidence intervals
+  bootstrap_samples: 1000  # Bootstrap samples for confidence intervals
   require_confirmation: true  # Require final confirmation phase
   group_key: speaker_id  # Group key for speaker-aware splits
   output_dir: ./tuning_output  # Output directory for tuning results
   calibration_fraction: 0.15  # Fraction of search data for INT8 model calibration
   representative_fraction: 0.05  # Fraction of search data for representative calibration dataset
 
-# ─────────────────────────────────────────────────────────────────
-# AUTO-TUNING EXPERT (standard settings)
-# ─────────────────────────────────────────────────────────────────
+# Expert-level auto-tuning parameters
 auto_tuning_expert:
-  population_size: 4  # Number of candidates in population
-  micro_burst_steps: 50  # Gradient steps per micro-burst
+  population_size: 5  # Reduced population for faster search
+  micro_burst_steps: 100  # Steps per burst
   knob_cycle:  # Cyclic coordinate descent knob order
     - lr
     - threshold
@@ -370,7 +352,7 @@ auto_tuning_expert:
     - label_smoothing
   exploit_explore_interval: 6  # Full cycles between exploit/explore
   weight_perturbation_scale: 0.01  # Gaussian noise scale for weight perturbation
-  label_smoothing_range: [0.0, 0.15]  # [min, max] label smoothing
+  label_smoothing_range: [0.0, 0.05]  # [min, max] label smoothing
   lr_range: [0.0000001, 0.0001]  # [min, max] learning rate
   hypervolume_reference: [10.0, 0.0]  # [max_fah_ref, min_recall_ref]
-  pareto_archive_size: 32  # Maximum entries in Pareto archive
+  pareto_archive_size: 32  # Smaller archive for standard

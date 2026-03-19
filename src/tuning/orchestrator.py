@@ -8,6 +8,7 @@ calls and no trainable_weights-based serialization.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -242,7 +243,22 @@ class MicroAutoTuner:
             cv_folds=int(self.config.get("auto_tuning", {}).get("cv_folds", 5)),
             fold_indices=fold_indices,
         )
-        return metrics
+        return self._ensure_tune_metrics(metrics)
+
+    def _ensure_tf_seed_for_determinism(self) -> None:
+        """Set TensorFlow seed once when deterministic ops are enabled."""
+        if getattr(self, "_tf_seed_applied", False):
+            return
+        if os.getenv("TF_DETERMINISTIC_OPS") != "1":
+            return
+
+        training_cfg = self.config.get("training", {})
+        seed = int(training_cfg.get("random_seed", 42))
+
+        import tensorflow as tf
+
+        tf.random.set_seed(seed)
+        self._tf_seed_applied = True
 
     @staticmethod
     def _ensure_tune_metrics(metrics: Any) -> TuneMetrics:
@@ -377,6 +393,7 @@ class MicroAutoTuner:
         if self.dry_run or bool(self._get_cfg("dry_run", False)):
             return {}
 
+        self._ensure_tf_seed_for_determinism()
         model = self._create_model()
         dataset_dict = self._load_data()
         partition = partition_data(dataset_dict, self.config, self.auto_tuning_config)

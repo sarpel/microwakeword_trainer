@@ -142,7 +142,7 @@ def validate_checkpoint_compatibility(
 
             # Check individual weight shapes
             shape_mismatches = []
-            for i, (current, loaded) in enumerate(zip(current_weights, loaded_weights)):
+            for i, (current, loaded) in enumerate(zip(current_weights, loaded_weights, strict=False)):
                 if current.shape != loaded.shape:
                     shape_mismatches.append(f"Weight {i}: expected {current.shape}, got {loaded.shape}")
 
@@ -258,7 +258,7 @@ def validate_ema_weight_consistency(
 
     # Check individual weight shapes
     shape_mismatches = []
-    for i, (current, saved) in enumerate(zip(current_weights, saved_training_weights)):
+    for i, (current, saved) in enumerate(zip(current_weights, saved_training_weights, strict=False)):
         if current.shape != saved.shape:
             shape_mismatches.append(f"Weight {i}: model has {current.shape}, saved is {saved.shape}")
 
@@ -285,7 +285,7 @@ def validate_ema_weight_consistency(
     # Check that saved weights differ from current (they should if EMA is active)
     if result.is_valid:
         weight_differences = []
-        for i, (current, saved) in enumerate(zip(current_weights, saved_training_weights)):
+        for _i, (current, saved) in enumerate(zip(current_weights, saved_training_weights, strict=False)):
             diff = np.abs(current - saved).mean()
             weight_differences.append(diff)
 

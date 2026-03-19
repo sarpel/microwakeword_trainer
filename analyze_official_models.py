@@ -3,11 +3,16 @@
 Uses standard TFLite Interpreter API + flatbuffer parsing for subgraph analysis.
 """
 
+import importlib
 import json
+import logging
 import os
+from typing import Any
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
+
+logger = logging.getLogger(__name__)
 
 
 def get_subgraph_count_from_flatbuffer(model_data: bytes) -> int:
@@ -17,25 +22,26 @@ def get_subgraph_count_from_flatbuffer(model_data: bytes) -> int:
 
         model = schema.ModelT.InitFromPackedBuf(model_data, 0)
         return len(model.subgraphs) if model.subgraphs else 0
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("TensorFlow flatbuffer parser unavailable: %s", exc)
     try:
-        from tflite.Model import Model
+        model_module = importlib.import_module("tflite.Model")
+        model_class = model_module.Model
 
         buf = bytearray(model_data)
-        model = Model.GetRootAs(buf, 0)
-        return model.SubgraphsLength()
-    except Exception:
-        pass
+        model = model_class.GetRootAs(buf, 0)
+        return int(model.SubgraphsLength())
+    except Exception as exc:
+        logger.debug("tflite.Model parser unavailable: %s", exc)
     return -1
 
 
-def analyze_tflite_model(model_path: str) -> dict:
+def analyze_tflite_model(model_path: str) -> dict[str, Any]:
     """Deep analysis of a TFLite model."""
     with open(model_path, "rb") as f:
         model_data = f.read()
 
-    result = {
+    result: dict[str, Any] = {
         "file": os.path.basename(model_path),
         "file_size_bytes": len(model_data),
         "num_subgraphs": get_subgraph_count_from_flatbuffer(model_data),
@@ -50,23 +56,25 @@ def analyze_tflite_model(model_path: str) -> dict:
 
     result["main_subgraph"] = {"num_tensors": len(tensor_details), "num_inputs": len(input_details), "num_outputs": len(output_details)}
 
-    result["inputs"] = []
+    inputs: list[dict[str, Any]] = []
     for inp in input_details:
         info = {"name": inp["name"], "shape": inp["shape"].tolist(), "dtype": inp["dtype"].__name__ if hasattr(inp["dtype"], "__name__") else str(inp["dtype"]), "index": int(inp["index"])}
         qp = inp.get("quantization_parameters", {})
         if qp and len(qp.get("scales", [])) > 0:
             info["quant_scale"] = float(qp["scales"][0])
             info["quant_zero_point"] = int(qp["zero_points"][0])
-        result["inputs"].append(info)
+        inputs.append(info)
+    result["inputs"] = inputs
 
-    result["outputs"] = []
+    outputs: list[dict[str, Any]] = []
     for out in output_details:
         info = {"name": out["name"], "shape": out["shape"].tolist(), "dtype": out["dtype"].__name__ if hasattr(out["dtype"], "__name__") else str(out["dtype"]), "index": int(out["index"])}
         qp = out.get("quantization_parameters", {})
         if qp and len(qp.get("scales", [])) > 0:
             info["quant_scale"] = float(qp["scales"][0])
             info["quant_zero_point"] = int(qp["zero_points"][0])
-        result["outputs"].append(info)
+        outputs.append(info)
+    result["outputs"] = outputs
 
     state_tensors = []
     for td in tensor_details:
@@ -91,7 +99,7 @@ def analyze_tflite_model(model_path: str) -> dict:
 
     try:
         op_details = interpreter._get_ops_details()
-        unique_ops = sorted(set(op.get("op_name", "unknown") for op in op_details))
+        unique_ops = sorted({op.get("op_name", "unknown") for op in op_details})
         result["unique_ops"] = unique_ops
         result["num_unique_ops"] = len(unique_ops)
         result["total_ops"] = len(op_details)

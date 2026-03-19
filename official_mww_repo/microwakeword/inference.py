@@ -19,7 +19,6 @@
 # imports
 import numpy as np
 from ai_edge_litert.interpreter import Interpreter
-
 from microwakeword.audio.audio_utils import generate_features_for_clip
 
 

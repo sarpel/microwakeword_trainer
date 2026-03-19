@@ -19,7 +19,6 @@
 import ast
 
 import tensorflow as tf
-
 from microwakeword.layers import delay, stream, strided_drop, sub_spectral_normalization
 
 

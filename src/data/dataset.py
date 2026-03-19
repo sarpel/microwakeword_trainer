@@ -23,6 +23,10 @@ from src.data.ingestion import load_audio_wave
 
 logger = logging.getLogger(__name__)
 
+# Bump when split assignment semantics change so stale processed caches are invalidated.
+DATASET_CACHE_MANIFEST_VERSION = 3
+SPLIT_ASSIGNMENT_LOGIC_VERSION = 2
+
 
 class _BatchBuffer(TypedDict):
     features: np.ndarray
@@ -319,8 +323,7 @@ class RaggedMmap:
             item_size_mb = array.nbytes / (1024 * 1024)
             if item_size_mb < self._max_cache_memory_mb * 0.1:  # Only cache small items
                 # Evict entries until we have room
-                while (self._current_cache_memory_mb + item_size_mb > self._max_cache_memory_mb
-                       and self._memory_cache):
+                while self._current_cache_memory_mb + item_size_mb > self._max_cache_memory_mb and self._memory_cache:
                     _, evicted = self._memory_cache.popitem(last=False)
                     self._current_cache_memory_mb -= evicted.nbytes / (1024 * 1024)
                 self._memory_cache[idx] = array
@@ -838,14 +841,42 @@ class WakeWordDataset:
         }
         return sha256(json.dumps(hardware_key, sort_keys=True).encode()).hexdigest()
 
-    def _compute_split_hash(self, training_cfg: dict) -> str:
-        """Compute hash of split configuration."""
+    def _compute_namelist_hash(self, paths_cfg: dict) -> str:
+        """Compute hash for speaker-mapping files that affect split assignment."""
+        project_root = Path(__file__).resolve().parent.parent.parent
+        search_paths = [
+            project_root / "cluster_output" / "namelist.json",
+            project_root / "namelist.json",
+        ]
+
+        positive_dir = paths_cfg.get("positive_dir")
+        if positive_dir:
+            positive_path = Path(positive_dir)
+            search_paths.insert(0, positive_path / "namelist.json")
+            search_paths.insert(1, positive_path.parent / "cluster_output" / "namelist.json")
+
+        entries: list[str] = []
+        for candidate in search_paths:
+            if not candidate.exists():
+                continue
+            try:
+                stat = candidate.stat()
+                entries.append(f"{candidate.resolve()}|{stat.st_mtime_ns}|{stat.st_size}")
+            except OSError:
+                continue
+
+        return sha256("\n".join(entries).encode()).hexdigest()
+
+    def _compute_split_hash(self, training_cfg: dict, paths_cfg: dict) -> str:
+        """Compute hash of split configuration and split-affecting side inputs."""
         split_key = {
             "train_split": float(training_cfg.get("train_split", 0.8)),
             "val_split": float(training_cfg.get("val_split", 0.1)),
             "test_split": float(training_cfg.get("test_split", 0.1)),
             "split_seed": int(training_cfg.get("split_seed", 42)),
             "speaker_based_split": bool(training_cfg.get("speaker_based_split", False)),
+            "split_assignment_logic_version": SPLIT_ASSIGNMENT_LOGIC_VERSION,
+            "namelist_hash": self._compute_namelist_hash(paths_cfg),
         }
         return sha256(json.dumps(split_key, sort_keys=True).encode()).hexdigest()
 
@@ -868,13 +899,13 @@ class WakeWordDataset:
             return False
 
         # Verify version
-        if manifest.get("version") != 1:
+        if manifest.get("version") != DATASET_CACHE_MANIFEST_VERSION:
             return False
 
         # Compute current hashes
         current_file_hash = self._compute_file_list_hash(paths_cfg)
         current_hardware_hash = self._compute_hardware_hash(hardware_cfg)
-        current_split_hash = self._compute_split_hash(training_cfg)
+        current_split_hash = self._compute_split_hash(training_cfg, paths_cfg)
 
         # Compare hashes
         if manifest.get("file_list_hash") != current_file_hash:
@@ -906,11 +937,11 @@ class WakeWordDataset:
     ) -> None:
         """Write cache manifest after successful feature extraction."""
         manifest = {
-            "version": 1,
+            "version": DATASET_CACHE_MANIFEST_VERSION,
             "created_at": datetime.now().isoformat(),
             "file_list_hash": self._compute_file_list_hash(paths_cfg),
             "hardware_hash": self._compute_hardware_hash(hardware_cfg),
-            "split_hash": self._compute_split_hash(training_cfg),
+            "split_hash": self._compute_split_hash(training_cfg, paths_cfg),
             "splits": {name: {"count": count, "dir": name} for name, count in splits.items()},
         }
         manifest_path = Path(processed_dir) / "cache_manifest.json"

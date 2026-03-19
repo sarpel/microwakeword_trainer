@@ -18,10 +18,10 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
 )
-
-from src.utils.path_utils import resolve_path_safe
 from rich.table import Table
 from rich.tree import Tree
+
+from src.utils.path_utils import resolve_path_safe
 
 from ..config.loader import ConfigLoader, load_full_config
 from ..utils.logging_config import setup_rich_logging

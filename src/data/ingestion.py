@@ -8,9 +8,11 @@ Provides:
 """
 
 import logging
+import os
 import random
 import struct
 import wave
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -367,14 +369,21 @@ class Clips:
 
             # Find all WAV files (recursively in subdirectories, including mined/)
             wav_files = list(dir_path.rglob("*.wav"))
+            logger.debug(f"Found {len(wav_files)} audio files to load")
 
-            for wav_file in wav_files:
+            # Process audio files in parallel for better I/O performance (PERF-003 fix)
+            # Use ThreadPoolExecutor to parallelize I/O-bound audio loading
+            max_workers = min(32, os.cpu_count() or 4)
+            label_samples: List[SampleRecord] = []
+
+            def process_single_wav(wav_file: Path) -> Optional[SampleRecord]:
+                """Process a single WAV file - designed for parallel execution."""
                 try:
                     # Validate audio
                     is_valid, error_msg = validate_audio_wave(wav_file)
                     if not is_valid:
-                        logger.warning(f"Skipping invalid audio {wav_file}: {error_msg}")
-                        continue
+                        logger.debug(f"Skipping invalid audio {wav_file}: {error_msg}")
+                        return None
 
                     # Get audio info
                     info = get_audio_info(wav_file)
@@ -383,15 +392,15 @@ class Clips:
                     duration_ms = info["duration_ms"]
                     if duration_ms < self.config.min_duration_ms:
                         logger.debug(f"Skipping too short audio {wav_file}: {duration_ms:.0f}ms")
-                        continue
+                        return None
                     if duration_ms > self.config.max_duration_ms:
                         logger.debug(f"Skipping too long audio {wav_file}: {duration_ms:.0f}ms")
-                        continue
+                        return None
 
                     # Extract speaker ID from filename or parent directory
                     speaker_id = self._extract_speaker_id(wav_file)
 
-                    sample = SampleRecord(
+                    return SampleRecord(
                         path=wav_file,
                         label=label,
                         split=Split.TRAIN,  # Will be assigned during split
@@ -399,11 +408,23 @@ class Clips:
                         duration_ms=duration_ms,
                         sample_rate=info["sample_rate"],
                     )
-                    all_samples.append(sample)
-
                 except Exception as e:
                     logger.warning(f"Error processing {wav_file}: {e}")
-                    continue
+                    return None
+
+            # Process files in parallel
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks
+                future_to_file = {executor.submit(process_single_wav, wav): wav for wav in wav_files}
+
+                # Collect results as they complete
+                for future in as_completed(future_to_file):
+                    result = future.result()
+                    if result is not None:
+                        label_samples.append(result)
+
+            all_samples.extend(label_samples)
+            logger.info(f"Loaded {len(label_samples)} valid {label.value} samples")
 
         # Assign splits
         self.samples = self._assign_splits(all_samples)
@@ -567,6 +588,21 @@ class Clips:
             train_speakers = set(speaker_ids[:n_train])
             val_speakers = set(speaker_ids[n_train : n_train + n_val])
 
+            # Guardrail: if positive speakers exist, ensure at least one is assigned to train.
+            # This prevents a degenerate split where train has no positive samples.
+            positive_speakers = {sid for sid, speaker_samples in speakers.items() if any(s.label == Label.POSITIVE for s in speaker_samples)}
+            has_train_positive_speaker = bool(train_speakers.intersection(positive_speakers))
+            if positive_speakers and not has_train_positive_speaker:
+                # Deterministic donor choice from shuffled order for reproducibility
+                donor_positive_speaker = next((sid for sid in speaker_ids if sid in positive_speakers), None)
+                if donor_positive_speaker is not None:
+                    train_speakers.add(donor_positive_speaker)
+                    val_speakers.discard(donor_positive_speaker)
+                    logger.warning(
+                        "Speaker-based split produced no positive speakers in train; reassigned speaker %s to train to preserve training viability",
+                        donor_positive_speaker,
+                    )
+
             result = []
             for sample in samples:
                 if sample.speaker_id:
@@ -610,6 +646,35 @@ class Clips:
                     sample.split = Split.TEST
 
             result = shuffled
+
+        # Final guardrail: ensure train includes at least one positive sample whenever positives exist.
+        train_has_positive = any(s.split == Split.TRAIN and s.label == Label.POSITIVE for s in result)
+        all_positive_samples = [s for s in result if s.label == Label.POSITIVE]
+        if all_positive_samples and not train_has_positive:
+            # Prefer moving a no-speaker positive sample first (avoids speaker leakage risk).
+            fallback_sample = next((s for s in all_positive_samples if s.speaker_id is None and s.split != Split.TRAIN), None)
+            if fallback_sample is not None:
+                old_split = fallback_sample.split
+                fallback_sample.split = Split.TRAIN
+                logger.warning(
+                    "Reassigned one positive no-speaker sample from %s to train to avoid zero-positive training split",
+                    old_split.value,
+                )
+            else:
+                # As a last resort, move all samples for one positive speaker to train.
+                fallback_with_speaker = next((s for s in all_positive_samples if s.speaker_id and s.split != Split.TRAIN), None)
+                if fallback_with_speaker is not None:
+                    moved_speaker_id = fallback_with_speaker.speaker_id
+                    moved_count = 0
+                    for sample in result:
+                        if sample.speaker_id == moved_speaker_id and sample.split != Split.TRAIN:
+                            sample.split = Split.TRAIN
+                            moved_count += 1
+                    logger.warning(
+                        "Reassigned speaker %s (%d sample(s)) to train to avoid zero-positive training split",
+                        moved_speaker_id,
+                        moved_count,
+                    )
 
         return result
 

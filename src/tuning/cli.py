@@ -10,7 +10,6 @@ os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 import argparse
 import logging
 import sys
-from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
@@ -18,6 +17,7 @@ from rich.table import Table
 
 from src.tuning.orchestrator import MicroAutoTuner
 from src.utils.logging_config import setup_rich_logging
+from src.utils.path_utils import resolve_path_safe
 
 # Backward compatibility alias for tests
 AutoTuner = MicroAutoTuner
@@ -166,10 +166,37 @@ def validate_args(args: argparse.Namespace) -> bool:
     """Validate command line arguments."""
     console = Console()
 
-    # Check checkpoint exists
-    if not getattr(args, "dry_run", False) and not Path(args.checkpoint).exists():
-        console.print(f"[red]Error: Checkpoint not found: {args.checkpoint}[/]")
+    # Validate and sanitize checkpoint path to prevent path traversal (CWE-22)
+    try:
+        checkpoint_path = resolve_path_safe(args.checkpoint, allow_absolute=True)
+        if not checkpoint_path.exists():
+            console.print(f"[red]Error: Checkpoint not found: {args.checkpoint}[/]")
+            return False
+        args.checkpoint = str(checkpoint_path)
+    except ValueError as e:
+        console.print(f"[red]Error: Invalid checkpoint path: {e}[/]")
         return False
+
+    # Validate override config path if provided
+    if args.override:
+        try:
+            override_path = resolve_path_safe(args.override, allow_absolute=True)
+            if not override_path.exists():
+                console.print(f"[red]Error: Override config not found: {args.override}[/]")
+                return False
+            args.override = str(override_path)
+        except ValueError as e:
+            console.print(f"[red]Error: Invalid override config path: {e}[/]")
+            return False
+
+    # Validate output directory if provided
+    if args.output_dir:
+        try:
+            output_dir = resolve_path_safe(args.output_dir, allow_absolute=True)
+            args.output_dir = str(output_dir)
+        except ValueError as e:
+            console.print(f"[red]Error: Invalid output directory: {e}[/]")
+            return False
 
     # Validate target values (only check if explicitly provided)
     if args.target_fah is not None and args.target_fah <= 0:

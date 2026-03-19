@@ -49,8 +49,25 @@ from src.utils.checkpoint_validation import (
     validate_ema_state_before_swap,
 )
 from src.utils.logging_config import setup_rich_logging
+from src.utils.path_utils import resolve_path_safe
 from src.utils.performance import get_system_info
 from src.utils.terminal_logger import TerminalLogger
+
+
+def _format_fah_for_log(value: float) -> str:
+    """Format FAH for logs without hiding tiny non-zero values.
+
+    Using fixed two-decimal formatting can display real values below 0.005 as
+    ``0.00``. For sub-0.01 magnitudes, scientific notation preserves signal.
+    """
+    if not np.isfinite(value):
+        return str(value)
+    abs_value = abs(value)
+    if abs_value == 0.0:
+        return "0.00"
+    if abs_value < 0.01:
+        return f"{value:.2e}"
+    return f"{value:.2f}"
 
 
 class EvaluationMetrics:
@@ -120,7 +137,7 @@ class EvaluationMetrics:
         y_true_list = y_true_flat.tolist()
         y_scores_list = y_scores_flat.tolist()
 
-        for yt, ys in zip(y_true_list, y_scores_list):
+        for yt, ys in zip(y_true_list, y_scores_list, strict=False):
             if len(self.all_y_true) < self.max_samples:
                 self.all_y_true.append(yt)
                 self.all_y_scores.append(ys)
@@ -278,6 +295,10 @@ class Trainer:
         self.batch_size = training.get("batch_size", 384)
         self.eval_step_interval = training.get("eval_step_interval", 500)
         self.eval_basic_step_interval = training.get("eval_basic_step_interval", 500)
+        # Basic eval runs frequently (often every epoch). Cap batches to avoid
+        # long epoch-boundary stalls while preserving full validation for
+        # advanced/checkpoint intervals.
+        self.eval_basic_max_batches = int(training.get("eval_basic_max_batches", 64) or 0)
         self.materialize_metrics_interval = int(training.get("materialize_metrics_interval", self.eval_basic_step_interval) or self.eval_basic_step_interval)
         if self.materialize_metrics_interval <= 0:
             self.materialize_metrics_interval = self.eval_basic_step_interval
@@ -1054,10 +1075,6 @@ class Trainer:
         self._saved_training_weights = [w.copy() for w in self.model.get_weights()]
         # Swap EMA weights into model variables for evaluation
         optimizer_any.finalize_variable_values(self.model.trainable_variables)
-        # Save raw training weights before overwriting with EMA
-        self._saved_training_weights = [w.copy() for w in self.model.get_weights()]
-        # Swap EMA weights into model variables for evaluation
-        optimizer_any.finalize_variable_values(self.model.trainable_variables)
 
     def _restore_training_weights(self):
         """Restore raw training weights after EMA-based evaluation.
@@ -1069,16 +1086,14 @@ class Trainer:
         if not self._ema_enabled or self._saved_training_weights is None:
             return
         assert self.model is not None, "_restore_training_weights called before model was built"
+        saved_weights = self._saved_training_weights
         # Validate EMA state before restoring
-        is_valid, error_msg = validate_ema_state_before_swap(self.model, self._saved_training_weights, self._ema_enabled)
+        is_valid, error_msg = validate_ema_state_before_swap(self.model, saved_weights, self._ema_enabled)
         if not is_valid:
             self.logger.log_warning(f"EMA state validation failed during restore: {error_msg}")
             # Log warning but proceed - restoration might still work
         # Use set_weights() to properly restore all weights including BatchNorm moving stats
-        self.model.set_weights(self._saved_training_weights)
-        self._saved_training_weights = None
-        # Use set_weights() to properly restore all weights including BatchNorm moving stats
-        self.model.set_weights(self._saved_training_weights)
+        self.model.set_weights(saved_weights)
         self._saved_training_weights = None
 
     def _apply_class_weights(
@@ -1157,23 +1172,23 @@ class Trainer:
             if not fah_budget_met:
                 return (
                     False,
-                    f"[Operational] FAH budget not met: FAH={fah:.2f} > {target_fah * 1.1:.2f} (target={target_fah:.2f} × 1.1). Best constrained recall={self.best_constrained_recall:.4f}",
+                    f"[Operational] FAH budget not met: FAH={_format_fah_for_log(fah)} > {_format_fah_for_log(target_fah * 1.1)} (target={_format_fah_for_log(target_fah)} × 1.1). Best constrained recall={self.best_constrained_recall:.4f}",
                 )
             if operating_recall > self.best_constrained_recall:
-                reason = f"[Operational] Constrained recall improved: {operating_recall:.4f} > {self.best_constrained_recall:.4f} (FAH={fah:.2f} ≤ budget {target_fah * 1.1:.2f})"
+                reason = f"[Operational] Constrained recall improved: {operating_recall:.4f} > {self.best_constrained_recall:.4f} (FAH={_format_fah_for_log(fah)} ≤ budget {_format_fah_for_log(target_fah * 1.1)})"
                 return True, reason
             return (
                 False,
-                f"[Operational] No recall improvement: {operating_recall:.4f} ≤ {self.best_constrained_recall:.4f} (FAH={fah:.2f})",
+                f"[Operational] No recall improvement: {operating_recall:.4f} ≤ {self.best_constrained_recall:.4f} (FAH={_format_fah_for_log(fah)})",
             )
         else:
             # --- Stage 1: Warm-up --- #
             if auc_pr > self.best_auc_pr:
-                reason = f"[Warm-up] PR-AUC improved: {auc_pr:.4f} > {self.best_auc_pr:.4f} (FAH={fah:.2f}, FAH budget not yet met — target={target_fah:.2f})"
+                reason = f"[Warm-up] PR-AUC improved: {auc_pr:.4f} > {self.best_auc_pr:.4f} (FAH={_format_fah_for_log(fah)}, FAH budget not yet met — target={_format_fah_for_log(target_fah)})"
                 return True, reason
             return (
                 False,
-                f"[Warm-up] No PR-AUC improvement: {auc_pr:.4f} ≤ {self.best_auc_pr:.4f} (FAH={fah:.2f})",
+                f"[Warm-up] No PR-AUC improvement: {auc_pr:.4f} ≤ {self.best_auc_pr:.4f} (FAH={_format_fah_for_log(fah)})",
             )
 
     def _save_checkpoint(
@@ -1427,6 +1442,7 @@ class Trainer:
         data_generator,
         chunk_size: int = 2000,
         ambient_duration_hours: float | None = None,
+        max_batches: int | None = None,
     ) -> tuple[dict[str, float], TrainingMetrics, list[int], list[str]]:
         """Validate using a provided model and return detached validation artifacts.
 
@@ -1463,8 +1479,11 @@ class Trainer:
         path_cursor = 0
         path_clip_id = 0
         prev_path: str | None = None
+        processed_batches = 0
 
         for batch in iterator:
+            if max_batches is not None and max_batches > 0 and processed_batches >= max_batches:
+                break
             if not isinstance(batch, tuple) or len(batch) < 2:
                 raise ValueError(
                     f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth) or (fingerprints, ground_truth, metadata). Got: {type(batch).__name__} with value {batch!r}"
@@ -1473,6 +1492,7 @@ class Trainer:
             ground_truth = batch[1]
             metadata = batch[2] if len(batch) >= 3 else None
             predictions = model(fingerprints, training=False)
+            processed_batches += 1
 
             if predictions.ndim == 2 and predictions.shape[1] > 1:
                 scores = predictions[:, 1]
@@ -1641,6 +1661,7 @@ class Trainer:
         data_generator,
         chunk_size: int = 2000,
         ambient_duration_hours: float | None = None,
+        max_batches: int | None = None,
     ) -> dict[str, float]:
         """Validate model on validation set with chunked processing to limit memory.
 
@@ -1666,6 +1687,7 @@ class Trainer:
             data_generator=data_generator,
             chunk_size=chunk_size,
             ambient_duration_hours=ambient_duration_hours,
+            max_batches=max_batches,
         )
         self.val_metrics = metrics_tracker
         self._last_val_raw_labels = last_val_raw_labels
@@ -1941,10 +1963,6 @@ class Trainer:
                 raise ValueError(f"Incompatible checkpoint: {error_msg}")
             self.model.load_weights(weights_path)
 
-        if weights_path is not None:
-            self.logger.log_info(f"Loading weights from: {weights_path}")
-            self.model.load_weights(weights_path)
-
         self.model.summary(print_fn=self.logger.console.print)
 
         # Setup cProfile profiler
@@ -2179,10 +2197,19 @@ class Trainer:
                         mining_data_factory=mining_data_factory,
                     )
                     if not scheduled and self._pending_validation is None:
+                        # Keep epoch-boundary basic validation lightweight; full
+                        # validation still runs for advanced/checkpoint intervals.
+                        basic_eval_max_batches: int | None = None
+                        if basic_due and not advanced_due and self.eval_basic_max_batches > 0:
+                            basic_eval_max_batches = self.eval_basic_max_batches
                         self._swap_to_ema_weights()
-                        weights_snapshot = [np.array(w, copy=True) for w in self.model.get_weights()]
+                        weights_snapshot: list[np.ndarray] | None = None
+                        if advanced_due:
+                            # Snapshot only when advanced path may checkpoint or
+                            # early-stop-save; avoid expensive full-copy on basic-only eval.
+                            weights_snapshot = [np.array(w, copy=True) for w in self.model.get_weights()]
                         try:
-                            val_metrics = self.validate(val_data_factory)
+                            val_metrics = self.validate(val_data_factory, max_batches=basic_eval_max_batches)
                         finally:
                             self._restore_training_weights()
                         self._handle_validation_results(
@@ -2195,7 +2222,8 @@ class Trainer:
                             mining_data_factory=mining_data_factory,
                             weights_snapshot=weights_snapshot,
                         )
-                        del weights_snapshot
+                        if weights_snapshot is not None:
+                            del weights_snapshot
                         gc.collect()
                         if bool(self._async_early_stop_requested):
                             break
@@ -2271,6 +2299,12 @@ class Trainer:
             self.best_recall,
         )
 
+        # Ensure post-training held-out test evaluation uses the validated best
+        # checkpoint (EMA-smoothed when EMA is enabled), not the restored raw
+        # in-memory training weights.
+        if self.best_weights_path and os.path.exists(self.best_weights_path):
+            self.model.load_weights(self.best_weights_path)
+
         # Note: We do NOT reload best_weights here because:
         # 1. Training is complete - no need to reload weights
         # 2. model already contains the right weights (either training or EMA depending on when we last saved)
@@ -2311,6 +2345,7 @@ class Trainer:
                         mapped = "ambient_false_positives_per_hour" if key == "fah" else key
                         test_metrics[mapped] = float(value)
                 if test_metrics:
+                    self.logger.log_info("Held-out test summary (not validation):")
                     self.logger.log_validation_results(test_metrics, total_steps, total_steps)
 
                 confusion = eval_results.get("confusion_matrix", {})
@@ -2553,6 +2588,18 @@ def main():
         help="Custom log filename (default: auto-generated timestamp)",
     )
     args = parser.parse_args()
+
+    # Validate and sanitize override config path if provided to prevent path traversal (CWE-22)
+    if args.override:
+        try:
+            override_path = resolve_path_safe(args.override, allow_absolute=True)
+            if not override_path.exists():
+                sys.stderr.write(f"Error: Override config file not found: {args.override}\n")
+                sys.exit(1)
+            args.override = str(override_path)
+        except ValueError as e:
+            sys.stderr.write(f"Error: Invalid override config path: {e}\n")
+            sys.exit(1)
 
     # Start terminal logging with default directory first (update after loading config)
     terminal_logger = TerminalLogger(

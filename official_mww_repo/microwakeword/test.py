@@ -22,9 +22,8 @@ from typing import List
 import numpy as np
 import tensorflow as tf
 from absl import logging
-from numpy.lib.stride_tricks import sliding_window_view
-
 from microwakeword.inference import Model
+from numpy.lib.stride_tricks import sliding_window_view
 
 
 def compute_metrics(true_positives, true_negatives, false_positives, false_negatives):

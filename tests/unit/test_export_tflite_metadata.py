@@ -158,7 +158,7 @@ def test_auto_calculate_probability_cutoff_runs_tflite_inference(tmp_path: Path,
     class FakeInterpreter:
         def __init__(self, model_path: str):
             self.model_path = model_path
-            self._input = None
+            self._input: np.ndarray | None = None
 
         def allocate_tensors(self):
             return None

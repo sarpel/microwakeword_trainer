@@ -87,9 +87,10 @@ def test_mixednet_default_residual_connections() -> None:
         return
 
     found_fallback = False
-    for node in ast.walk(init_fn):
-        if isinstance(node, ast.If):
-            test = node.test
+    init_nodes = list(ast.walk(init_fn))
+    for init_node in init_nodes:
+        if isinstance(init_node, ast.If):
+            test = init_node.test
             if (
                 isinstance(test, ast.Compare)
                 and isinstance(test.left, ast.Name)
@@ -100,7 +101,7 @@ def test_mixednet_default_residual_connections() -> None:
                 and isinstance(test.comparators[0], ast.Constant)
                 and test.comparators[0].value is None
             ):
-                for stmt in node.body:
+                for stmt in init_node.body:
                     if (
                         isinstance(stmt, ast.Assign)
                         and len(stmt.targets) == 1

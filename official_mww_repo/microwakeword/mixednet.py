@@ -18,7 +18,6 @@
 import ast
 
 import tensorflow as tf
-
 from microwakeword.layers import stream, strided_drop
 
 

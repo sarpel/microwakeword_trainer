@@ -280,7 +280,18 @@ class SpectrogramGeneration:
             config: Feature configuration
         """
         self.config = config or FeatureConfig()
-        self._frontend = MicroFrontend(self.config)
+        # Use cached frontend for performance (PERF-004 fix)
+        # Reuses MicroFrontend instance instead of creating new one per call
+        self._frontend = _get_cached_frontend(
+            sample_rate=self.config.sample_rate,
+            window_size_ms=self.config.window_size_ms,
+            window_step_ms=self.config.window_step_ms,
+            mel_bins=self.config.mel_bins,
+            num_coeffs=self.config.num_coeffs,
+            fft_size=self.config.fft_size,
+            low_freq=self.config.low_freq,
+            high_freq=self.config.high_freq,
+        )
         self._rng = random.Random(42)  # noqa: S311
 
     @property

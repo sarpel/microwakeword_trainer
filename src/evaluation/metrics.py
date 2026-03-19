@@ -107,7 +107,7 @@ def _binarize_labels(y_true: np.ndarray) -> np.ndarray:
 
     This ensures consistent handling of hard-negative label 2 across all metrics.
     """
-    return (y_true == 1).astype(np.int32)
+    return np.asarray((y_true == 1).astype(np.int32))
 
 
 def compute_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
@@ -314,7 +314,7 @@ def _compute_thresholds(y_scores: np.ndarray, n_thresholds: int | None = None) -
         sample_idx = np.linspace(0, thresholds.size - 1, max_thresholds).astype(int)
         thresholds = thresholds[np.unique(sample_idx)]
 
-    return thresholds
+    return np.asarray(thresholds)
 
 
 def compute_recall_at_no_faph(

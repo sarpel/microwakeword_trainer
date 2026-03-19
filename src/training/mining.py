@@ -55,6 +55,7 @@ import tensorflow as tf
 
 from src.training.rich_logger import RichTrainingLogger
 from src.utils.logging_config import setup_rich_logging
+from src.utils.path_utils import resolve_path_safe
 
 logger = logging.getLogger(__name__)
 rich_logger = RichTrainingLogger()
@@ -1769,6 +1770,80 @@ Examples:
     if args.command is None:
         parser.print_help()
         return 1
+
+    # Validate and sanitize paths to prevent path traversal (CWE-22)
+    # ── mine command ───────────────────────────────────────────────────────
+    if args.command == "mine":
+        # Validate prediction-log path
+        try:
+            log_path = resolve_path_safe(args.prediction_log, allow_absolute=True)
+            if not log_path.exists():
+                logger.error("Prediction log not found: %s", args.prediction_log)
+                return 1
+            args.prediction_log = log_path
+        except ValueError as e:
+            logger.error("Invalid prediction log path: %s", e)
+            return 1
+
+        # Validate output-dir
+        try:
+            output_dir = resolve_path_safe(args.output_dir, allow_absolute=True)
+            args.output_dir = output_dir
+        except ValueError as e:
+            logger.error("Invalid output directory: %s", e)
+            return 1
+
+    # ── extract-top-fps command ───────────────────────────────────────────
+    elif args.command == "extract-top-fps":
+        # Validate checkpoint path if provided
+        if args.checkpoint:
+            try:
+                ckpt_path = resolve_path_safe(args.checkpoint, allow_absolute=True)
+                if not ckpt_path.exists():
+                    logger.error("Checkpoint not found: %s", args.checkpoint)
+                    return 1
+                args.checkpoint = str(ckpt_path)
+            except ValueError as e:
+                logger.error("Invalid checkpoint path: %s", e)
+                return 1
+
+    # ── consolidate-logs command ─────────────────────────────────────────
+    elif args.command == "consolidate-logs":
+        # Validate log-dir if provided
+        if args.log_dir:
+            try:
+                log_dir = resolve_path_safe(args.log_dir, allow_absolute=True)
+                if not log_dir.exists():
+                    logger.error("Log directory not found: %s", args.log_dir)
+                    return 1
+                args.log_dir = str(log_dir)
+            except ValueError as e:
+                logger.error("Invalid log directory: %s", e)
+                return 1
+
+        # Validate output path
+        try:
+            output_path = resolve_path_safe(args.output, allow_absolute=True)
+            args.output = str(output_path)
+        except ValueError as e:
+            logger.error("Invalid output path: %s", e)
+            return 1
+
+        # Validate stats-output path
+        try:
+            stats_path = resolve_path_safe(args.stats_output, allow_absolute=True)
+            args.stats_output = str(stats_path)
+        except ValueError as e:
+            logger.error("Invalid stats output path: %s", e)
+            return 1
+
+        # Validate move-to path
+        try:
+            move_to_path = resolve_path_safe(args.move_to, allow_absolute=True)
+            args.move_to = str(move_to_path)
+        except ValueError as e:
+            logger.error("Invalid move-to path: %s", e)
+            return 1
 
     # Setup Rich logging for all project logs
     _configure_mining_logging(verbose=getattr(args, "verbose", False))

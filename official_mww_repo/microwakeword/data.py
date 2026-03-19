@@ -21,11 +21,10 @@ from pathlib import Path
 
 import numpy as np
 from absl import logging
-from mmap_ninja.ragged import RaggedMmap
-
 from microwakeword.audio.augmentation import Augmentation
 from microwakeword.audio.clips import Clips
 from microwakeword.audio.spectrograms import SpectrogramGeneration
+from mmap_ninja.ragged import RaggedMmap
 
 
 def spec_augment(

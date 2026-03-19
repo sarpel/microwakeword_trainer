@@ -70,8 +70,8 @@ def resolve_path_safe(
             try:
                 resolved.relative_to(base_dir)
                 return resolved
-            except ValueError:
-                raise ValueError(f"Absolute path {user_path} escapes base directory {base_dir}")
+            except ValueError as exc:
+                raise ValueError(f"Absolute path {user_path} escapes base directory {base_dir}") from exc
 
     # Resolve the path relative to base_dir
     resolved = (base_dir / user_path).resolve()
@@ -79,11 +79,8 @@ def resolve_path_safe(
     # Check for path traversal: ensure resolved is within base_dir
     try:
         resolved.relative_to(base_dir)
-    except ValueError:
-        raise ValueError(
-            f"Path traversal detected: {user_path} resolves to {resolved} "
-            f"which escapes base directory {base_dir}"
-        )
+    except ValueError as exc:
+        raise ValueError(f"Path traversal detected: {user_path} resolves to {resolved} which escapes base directory {base_dir}") from exc
 
     return resolved
 
@@ -119,10 +116,8 @@ def validate_path_within_dir(
 
     try:
         file_path.relative_to(allowed_dir)
-    except ValueError:
-        raise ValueError(
-            f"Path {file_path} is not within allowed directory {allowed_dir}"
-        )
+    except ValueError as exc:
+        raise ValueError(f"Path {file_path} is not within allowed directory {allowed_dir}") from exc
 
     if must_exist and not file_path.exists():
         raise FileNotFoundError(f"File does not exist: {file_path}")
@@ -150,15 +145,15 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
         'audio.wav'
     """
     # Remove path separators and dangerous characters
-    dangerous_chars = ['/', '\\', '..', '\x00']
+    dangerous_chars = ["/", "\\", "..", "\x00"]
     result = filename
 
     for char in dangerous_chars:
-        result = result.replace(char, '')
+        result = result.replace(char, "")
 
     # Remove any remaining .. sequences
-    while '..' in result:
-        result = result.replace('..', '')
+    while ".." in result:
+        result = result.replace("..", "")
 
     # Limit length
     result = result[:max_length]

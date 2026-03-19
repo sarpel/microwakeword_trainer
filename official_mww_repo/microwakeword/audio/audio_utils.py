@@ -18,9 +18,7 @@ import tensorflow as tf
 import webrtcvad
 from pymicro_features import MicroFrontend
 from scipy.io import wavfile
-from tensorflow.lite.experimental.microfrontend.python.ops import (
-    audio_microfrontend_op as frontend_op,
-)
+from tensorflow.lite.experimental.microfrontend.python.ops import audio_microfrontend_op as frontend_op
 
 
 def generate_features_for_clip(audio_samples: np.ndarray, step_ms: int = 20, use_c: bool = True):
