@@ -24,6 +24,7 @@ def resolve_path_safe(
     user_path: Union[str, Path],
     base_dir: Optional[Union[str, Path]] = None,
     allow_absolute: bool = False,
+    must_exist: bool = True,
 ) -> Path:
     """Safely resolve a user-provided path, preventing path traversal.
 
@@ -36,6 +37,7 @@ def resolve_path_safe(
                   If None, uses current working directory.
         allow_absolute: Whether to allow absolute paths. If False, absolute
                        paths are resolved relative to base_dir.
+        must_exist: Whether the path must exist on disk. Default True.
 
     Returns:
         Resolved, absolute Path object
@@ -82,7 +84,7 @@ def resolve_path_safe(
     except ValueError as exc:
         raise ValueError(f"Path traversal detected: {user_path} resolves to {resolved} which escapes base directory {base_dir}") from exc
     # Optionally verify existence
-    if not resolved.exists():
+    if must_exist and not resolved.exists():
         raise FileNotFoundError(f"Path does not exist: {resolved}")
 
     return resolved

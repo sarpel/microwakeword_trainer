@@ -92,7 +92,7 @@ def main():
         "RIRs": "rirs",
     }
 
-    results = defaultdict(lambda: {"count": 0, "duration": 0.0})
+    results: dict[str, dict[str, float]] = defaultdict(lambda: {"count": 0, "duration": 0.0})
 
     # Analyze each category
     print("Analyzing dataset...")

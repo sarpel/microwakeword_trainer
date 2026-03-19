@@ -42,6 +42,13 @@ class KnobCycle:
         return self._pos
 
 
+def _cap_knob_history(candidate: Any) -> None:
+    """Cap knob_history to prevent unbounded memory growth."""
+    max_history = 1000
+    if hasattr(candidate, "knob_history") and len(candidate.knob_history) > max_history:
+        candidate.knob_history = candidate.knob_history[-max_history:]
+
+
 class LRKnob(Knob):
     name = "lr"
 
@@ -62,6 +69,7 @@ class LRKnob(Knob):
 
         if hasattr(candidate, "knob_history"):
             candidate.knob_history.append(f"lr={lr:.2e}")
+            _cap_knob_history(candidate)
 
 
 class ThresholdKnob(Knob):
@@ -72,6 +80,7 @@ class ThresholdKnob(Knob):
         candidate.threshold_optimizer = optimizer
         if hasattr(candidate, "knob_history"):
             candidate.knob_history.append("threshold=optimized")
+            _cap_knob_history(candidate)
 
 
 class TemperatureKnob(Knob):
@@ -94,6 +103,7 @@ class TemperatureKnob(Knob):
 
         if hasattr(candidate, "knob_history"):
             candidate.knob_history.append(f"temperature={current_temp:.3f}")
+            _cap_knob_history(candidate)
 
 
 class SamplingMixKnob(Knob):
@@ -105,6 +115,7 @@ class SamplingMixKnob(Knob):
         candidate._sampling_mix_arm = next_arm
         if hasattr(candidate, "knob_history"):
             candidate.knob_history.append(f"sampling_mix=arm{next_arm}")
+            _cap_knob_history(candidate)
 
 
 class WeightPerturbationKnob(Knob):
@@ -133,6 +144,7 @@ class WeightPerturbationKnob(Knob):
         model.set_weights(all_weights)
         if hasattr(candidate, "knob_history"):
             candidate.knob_history.append(f"weight_perturbation={scale}")
+            _cap_knob_history(candidate)
 
 
 class LabelSmoothingKnob(Knob):
@@ -155,6 +167,7 @@ class LabelSmoothingKnob(Knob):
 
         if hasattr(candidate, "knob_history"):
             candidate.knob_history.append(f"label_smoothing={smoothing:.4f}")
+            _cap_knob_history(candidate)
 
 
 class FocusedSampler:

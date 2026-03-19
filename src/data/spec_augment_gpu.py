@@ -81,10 +81,9 @@ def spec_augment_gpu(
     # Transfer back to CPU
     spec_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(spec_gpu))
     del spec_gpu
-    # Removed per-iteration pool clearing to avoid performance degradation
-    # with MemoryAsyncPool. Use periodic cleanup or pressure-based clearing instead.
-    # cp.get_default_memory_pool().free_all_blocks()
-    # cp.get_default_pinned_memory_pool().free_all_blocks()
+    # Memory pool cleanup to prevent GPU memory accumulation
+    cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
 
     return spec_cpu
 

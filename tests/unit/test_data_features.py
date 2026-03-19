@@ -207,7 +207,8 @@ class TestMicroFrontend:
             modules_to_restore["pymicro_features"] = sys.modules.pop("pymicro_features")
 
         # Create a mock __import__ that raises ImportError for pymicro_features
-        original_import = __builtins__["__import__"]
+        # Create a mock __import__ that raises ImportError for pymicro_features
+        original_import = getattr(__builtins__, "__import__")
 
         def mock_import(name, *args, **kwargs):
             if name == "pymicro_features":

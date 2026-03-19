@@ -325,14 +325,15 @@ class Stream(tf.keras.layers.Layer):
                 message="inputs time dimension must be 1 in one-step streaming mode",
             )
 
+            assert self.states is not None, "states must be initialized before streaming"
             # Shift buffer and add new input
             # Remove oldest: [batch, 1:buffer_size, ...]
             # Use ellipsis (...) so this works for both 3D and 4D state tensors.
             memory = self.states[:, 1 : self.ring_buffer_size_in_time_dim, ...]
-            # Concatenate new input at end
             memory = tf.concat([memory, inputs], axis=1)
 
             # Update state
+            assert self.states is not None, "states must be initialized before streaming"
             assign_op = self.states.assign(memory)
             with tf.control_dependencies([assign_op]):
                 # Apply the wrapped cell
@@ -343,7 +344,7 @@ class Stream(tf.keras.layers.Layer):
                 memory = tf.concat([self.states, inputs], axis=1)
                 # Keep only the last ring_buffer_size samples
                 state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
-
+                assert self.states is not None, "states must be initialized before streaming"
                 assign_op = self.states.assign(state_update)
                 with tf.control_dependencies([assign_op]):
                     return self.cell(memory)
@@ -365,7 +366,7 @@ class Stream(tf.keras.layers.Layer):
                 message="inputs time dimension must be 1 in one-step streaming mode",
             )
 
-            # Shift buffer and add new input
+            assert input_state is not None, "input_state must be provided for streaming"
             memory = input_state[:, 1 : self.ring_buffer_size_in_time_dim, ...]
             memory = tf.concat([memory, inputs], axis=1)
 
@@ -373,8 +374,8 @@ class Stream(tf.keras.layers.Layer):
             self.output_state = memory
             return output, memory
         else:
-            # Strided mode
             if self.ring_buffer_size_in_time_dim:
+                assert input_state is not None, "input_state must be provided for streaming"
                 memory = tf.concat([input_state, inputs], axis=1)
                 state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
                 output = self.cell(memory)

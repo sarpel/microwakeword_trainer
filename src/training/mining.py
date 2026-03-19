@@ -442,6 +442,7 @@ class AsyncHardExampleMiner:
             try:
                 del model
                 gc.collect()
+                tf.keras.backend.clear_session()
             except (NameError, UnboundLocalError):
                 pass
             with self._lock:
@@ -1787,7 +1788,7 @@ Examples:
 
         # Validate output-dir
         try:
-            output_dir = resolve_path_safe(args.output_dir, allow_absolute=True)
+            output_dir = resolve_path_safe(args.output_dir, allow_absolute=True, must_exist=False)
             args.output_dir = output_dir
         except ValueError as e:
             logger.error("Invalid output directory: %s", e)
@@ -1805,6 +1806,18 @@ Examples:
                 args.checkpoint = str(ckpt_path)
             except ValueError as e:
                 logger.error("Invalid checkpoint path: %s", e)
+                return 1
+
+        # Validate log file path if provided
+        if args.log_file:
+            try:
+                log_path = resolve_path_safe(args.log_file, allow_absolute=True)
+                if not log_path.exists():
+                    logger.error("Log file not found: %s", args.log_file)
+                    return 1
+                args.log_file = str(log_path)
+            except ValueError as e:
+                logger.error("Invalid log file path: %s", e)
                 return 1
 
     # ── consolidate-logs command ─────────────────────────────────────────
@@ -1879,7 +1892,8 @@ Examples:
                 logger.info("DRY RUN — skipping extraction (would scan and report)")
                 confidence_threshold = float(args.threshold) if args.threshold is not None else 0.0
                 top_percent = float(args.top_percent) if args.top_percent is not None else 0.0
-                result = {
+            if args.dry_run:
+                result: dict[str, Any] = {
                     "total_hard_neg_files": 0,
                     "confidence_threshold": confidence_threshold,
                     "total_false_positives": 0,
@@ -1887,16 +1901,6 @@ Examples:
                     "top_fp_count": 0,
                     "files": [],
                 }
-            else:
-                result = run_top_fp_extraction(
-                    config,
-                    checkpoint_path=args.checkpoint,
-                    top_percent_override=args.top_percent,
-                    threshold_override=args.threshold,
-                    log_file_override=args.log_file,
-                )
-
-            if args.dry_run:
                 print("\nDRY RUN Results:")
             else:
                 print("\nExtraction Results:")

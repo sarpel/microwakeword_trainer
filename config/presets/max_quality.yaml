@@ -176,10 +176,10 @@ performance:
   tensorboard_log_dir: "./logs"  # TensorBoard log directory
   tensorboard_log_histograms: false  # Log weight histograms
   tensorboard_log_images: false  # Log image tensors
-  tensorboard_log_pr_curves: true  # Enable PR curve logging during training
-  tensorboard_log_roc_curves: true  # Enable ROC curve plotting during training
+  tensorboard_log_pr_curves: false  # Enable PR curve logging during training
+  tensorboard_log_roc_curves: false  # Enable ROC curve plotting during training
   tensorboard_log_graph: false  # Log computation graph
-  tensorboard_log_advanced_scalars: true  # Reduce eval-time TensorBoard overhead
+  tensorboard_log_advanced_scalars: false  # Reduce eval-time TensorBoard overhead
   tensorboard_log_weight_histograms: false  # Log weight histograms separately
   tensorboard_image_interval: 5000  # Image logging interval in steps
   tensorboard_histogram_interval: 5000  # Histogram logging interval in steps

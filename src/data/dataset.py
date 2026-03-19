@@ -707,11 +707,15 @@ class WakeWordDataset:
             for idx in range(len(store)):
                 _, label = store.get(idx)
                 counts[label] = counts.get(label, 0) + 1
-            store.close()
             return counts
         except (FileNotFoundError, PermissionError, OSError, IOError) as e:
             logger.warning(f"Could not read label distribution for {split_name}: {e}")
             return {}
+        finally:
+            try:
+                store.close()
+            except Exception:
+                pass
 
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, int]:
         """Get item by index.

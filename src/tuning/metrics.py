@@ -238,6 +238,18 @@ class ErrorMemory:
             elif predictions[i] == 0 and labels[i] == 1:
                 self.persistent_misses[idx_key] = self.persistent_misses.get(idx_key, 0) + 1
 
+        # Cap dictionary sizes to prevent unbounded growth
+        max_entries = 10000
+        if len(self.persistent_false_alarms) > max_entries:
+            # Remove oldest entries (lowest indices)
+            keys_to_remove = sorted(self.persistent_false_alarms.keys())[: len(self.persistent_false_alarms) - max_entries]
+            for k in keys_to_remove:
+                del self.persistent_false_alarms[k]
+        if len(self.persistent_misses) > max_entries:
+            keys_to_remove = sorted(self.persistent_misses.keys())[: len(self.persistent_misses) - max_entries]
+            for k in keys_to_remove:
+                del self.persistent_misses[k]
+
     def get_persistent_fa_indices(self, min_count: int = 3) -> list[int]:
         return [idx for idx, count in self.persistent_false_alarms.items() if count >= min_count]
 
@@ -272,7 +284,7 @@ def _logit(p: np.ndarray) -> np.ndarray:
 def fit_temperature(probs: np.ndarray, labels: np.ndarray) -> float:
     """Platt scaling: find temperature T minimizing NLL on calibration set."""
     try:
-        from scipy.optimize import minimize_scalar
+        from scipy.optimize import OptimizeResult, minimize_scalar
     except ImportError:
         return 1.0
 
@@ -286,7 +298,7 @@ def fit_temperature(probs: np.ndarray, labels: np.ndarray) -> float:
         scaled = np.clip(scaled, 1e-7, 1.0 - 1e-7)
         return float(-np.mean(y * np.log(scaled) + (1 - y) * np.log(1 - scaled)))
 
-    result = minimize_scalar(nll, bounds=(0.1, 10.0), method="bounded")
+    result: OptimizeResult = minimize_scalar(nll, bounds=(0.1, 10.0), method="bounded")
     optimal_t = float(result.x)
 
     # Only use if ECE improves
@@ -357,7 +369,7 @@ class ThresholdOptimizer:
         fold_indices: Optional[list] = None,
         use_binary_search: bool = False,
         sample_weights: Optional[np.ndarray] = None,
-    ) -> tuple:
+    ) -> tuple[float, int, TuneMetrics]:
         """Threshold optimization.
 
         Returns: (threshold_float32, threshold_uint8, TuneMetrics)

@@ -82,12 +82,17 @@ class SampleRecord:
         """Validate and normalize fields after initialization."""
         self.path = Path(self.path)
 
-        if not isinstance(self.label, Label):
-            self.label = Label(self.label)
+        # Use local variables to avoid mypy type narrowing issues with isinstance
+        label_val = self.label
+        if not isinstance(label_val, Label):
+            label_val = Label(label_val)  # type: ignore[unreachable]
+        self.label = label_val
 
-        if not isinstance(self.split, Split):
-            self.split = Split(self.split)
-
+        split_val = self.split
+        if not isinstance(split_val, Split):
+            split_val = Split(split_val)  # type: ignore[unreachable]
+        self.split = split_val
+        self.split = split_val
         if self.sample_rate != VALIDATION_SAMPLE_RATE:
             logger.warning(f"Sample {self.path.name} has non-standard sample rate: {self.sample_rate} Hz (expected {VALIDATION_SAMPLE_RATE})")
 

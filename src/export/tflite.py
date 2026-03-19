@@ -10,8 +10,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Generator, Optional
 
-from rich.markdown import args
-
 # Suppress verbose TF/XLA logs before importing tensorflow
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
