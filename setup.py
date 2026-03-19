@@ -61,6 +61,7 @@ setup(
             "mww-cluster-apply=src.tools.cluster_apply:main",
             "mww-mine-hard-negatives=src.training.mining:main",
             "mww-pipeline=src.pipeline:main",
+            "mww-help=src.tools.help_panel:main",
         ],
     },
 )

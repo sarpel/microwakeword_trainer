@@ -39,7 +39,10 @@ os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | %(message)s",
-    handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()],
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
 )
 logger = get_logger(__name__)
 
@@ -224,7 +227,7 @@ def clean_dataset() -> dict[str, int]:
 
         # Progress (her 1000 dosyada bir)
         if idx % 1000 == 0:
-            logger.info(f"İlerleme: {idx}/{total_to_scan} ({idx/total_to_scan*100:.1f}%)")
+            logger.info(f"İlerleme: {idx}/{total_to_scan} ({idx / total_to_scan * 100:.1f}%)")
 
         is_bad, reason = is_garbage(full_path)
 
@@ -257,7 +260,7 @@ def clean_dataset() -> dict[str, int]:
     logger.info(f"Toplam taranan  : {total_files}")
     logger.info(f"Bozuk bulunan   : {garbage_files}")
     logger.info(f"Temiz kalan     : {total_files - garbage_files}")
-    logger.info(f"Bozuk oranı     : {garbage_files/max(total_files,1)*100:.2f}%")
+    logger.info(f"Bozuk oranı     : {garbage_files / max(total_files, 1) * 100:.2f}%")
     logger.info("-" * 70)
 
     if stats:

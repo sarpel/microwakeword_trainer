@@ -12,7 +12,13 @@ from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 from rich.table import Table
 from rich.tree import Tree
 
@@ -79,7 +85,9 @@ def discover_namelists(namelist_dir: Path) -> list[Path]:
     return namelists
 
 
-def plan_moves(mappings: dict[str, str]) -> tuple[list[tuple[Path, Path]], dict[str, int]]:
+def plan_moves(
+    mappings: dict[str, str],
+) -> tuple[list[tuple[Path, Path]], dict[str, int]]:
     """Plan file moves from mappings."""
     move_plan: list[tuple[Path, Path]] = []
     stats: dict[str, int] = defaultdict(int)
@@ -295,7 +303,12 @@ Examples:
     )
 
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--namelist", type=str, default=None, help="Path to a namelist JSON file from mww-cluster-analyze")
+    group.add_argument(
+        "--namelist",
+        type=str,
+        default=None,
+        help="Path to a namelist JSON file from mww-cluster-analyze",
+    )
     group.add_argument(
         "--namelist-dir",
         type=str,
@@ -315,7 +328,11 @@ Examples:
         default="./cluster_output",
         help="Directory for backup manifests (default: ./cluster_output)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Preview changes without moving files")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without moving files",
+    )
 
     args = parser.parse_args()
 

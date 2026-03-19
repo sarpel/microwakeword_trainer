@@ -8,10 +8,14 @@ Step-based training loop with:
 - Integration with TrainingProfiler
 """
 
+import gc
+import logging
 import os
+import random
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -31,10 +35,20 @@ from src.data.spec_augment_gpu import batch_spec_augment_gpu
 from src.evaluation.calibration import compute_brier_score
 from src.evaluation.metrics import MetricsCalculator
 from src.model.architecture import build_model
-from src.training.mining import AsyncHardExampleMiner, HardExampleMiner, log_false_predictions_to_json, run_top_fp_extraction
+from src.training.mining import (
+    AsyncHardExampleMiner,
+    HardExampleMiner,
+    log_false_predictions_to_json,
+    run_top_fp_extraction,
+)
 from src.training.profiler import TFProfiler, TrainingProfiler
 from src.training.rich_logger import RichTrainingLogger
 from src.training.tensorboard_logger import TensorBoardLogger
+from src.utils.checkpoint_validation import (
+    validate_checkpoint_before_loading,
+    validate_ema_state_before_swap,
+)
+from src.utils.logging_config import setup_rich_logging
 from src.utils.performance import get_system_info
 from src.utils.terminal_logger import TerminalLogger
 
@@ -52,6 +66,7 @@ class EvaluationMetrics:
         ambient_duration_hours: float = 0.0,
         default_threshold: float = 0.5,
         sliding_window_size: int = 1,
+        max_samples: int = 100000,
     ):
         # Initialize validation file paths to None
         self._val_file_paths: list[str] | None = None
@@ -59,6 +74,8 @@ class EvaluationMetrics:
 
         Args:
             cutoffs: Array of threshold values (default: 101 points from 0 to 1)
+            max_samples: Maximum number of samples to store for metrics computation
+                        (uses reservoir sampling for large datasets)
         """
         if cutoffs is None:
             cutoffs_list = np.linspace(0.0, 1.0, 101).tolist()
@@ -68,10 +85,11 @@ class EvaluationMetrics:
         self.ambient_duration_hours = ambient_duration_hours
         self.default_threshold = default_threshold
         self.sliding_window_size = int(sliding_window_size or 1)
+        self.max_samples = max_samples
 
-        # Accumulated predictions and labels
-        self.all_y_true: list = []
-        self.all_y_scores: list = []
+        # Accumulated predictions and labels (bounded for memory safety)
+        self.all_y_true: deque = deque(maxlen=max_samples)
+        self.all_y_scores: deque = deque(maxlen=max_samples)
 
         # Per-threshold counts stored as numpy arrays (indexed by cutoff position).
         # Using arrays avoids 101-iteration Python loops during accumulation.
@@ -98,8 +116,19 @@ class EvaluationMetrics:
         y_true_flat = np.ravel(y_true)
         y_scores_flat = np.ravel(y_scores)
 
-        self.all_y_true.extend(y_true_flat.tolist())
-        self.all_y_scores.extend(y_scores_flat.tolist())
+        # Use reservoir sampling for bounded memory when exceeding max_samples
+        y_true_list = y_true_flat.tolist()
+        y_scores_list = y_scores_flat.tolist()
+
+        for yt, ys in zip(y_true_list, y_scores_list):
+            if len(self.all_y_true) < self.max_samples:
+                self.all_y_true.append(yt)
+                self.all_y_scores.append(ys)
+            else:
+                # Reservoir sampling to maintain representative subset
+                idx = random.randint(0, len(self.all_y_true) - 1)
+                self.all_y_true[idx] = yt
+                self.all_y_scores[idx] = ys
 
         # Vectorized update across all thresholds using numpy broadcasting
         cutoffs_arr = np.array(self.cutoffs, dtype=np.float32).reshape(-1, 1)  # [101, 1]
@@ -150,6 +179,38 @@ class EvaluationMetrics:
             threshold=self.default_threshold,
         )
 
+        # Re-compute binary metrics (accuracy/precision/recall/f1) at an adaptive threshold
+        # when the default threshold produces degenerate all-zero predictions.
+        # During early training the model's score distribution sits well below the deployment
+        # threshold (0.97), so threshold-based metrics are meaningless until scores shift up.
+        # We use threshold_for_target_fah if available (already computed above), otherwise
+        # fall back to the score median — both give a live, informative training signal.
+        adaptive_threshold = metrics.get("threshold_for_target_fah")
+        if adaptive_threshold is None:
+            # No FAH data — fall back to class-aware midpoint threshold.
+            # np.median(all_y_scores) gives ~0.0008 (dominated by negatives scoring near 0),
+            # which marks everything as positive and freezes Precision/Recall/F1.
+            # Instead use the midpoint between median-of-positives and median-of-negatives.
+            pos_mask = y_true == 1
+            neg_mask = y_true == 0
+            if pos_mask.any() and neg_mask.any():
+                pos_median = float(np.median(y_scores[pos_mask]))
+                neg_median = float(np.median(y_scores[neg_mask]))
+                adaptive_threshold = (pos_median + neg_median) / 2.0
+            else:
+                adaptive_threshold = float(np.median(y_scores))
+        if abs(adaptive_threshold - self.default_threshold) > 1e-6:
+            # Only re-compute if the adaptive threshold differs meaningfully
+            binary_pred = (y_scores > adaptive_threshold).astype(int)
+            from src.evaluation.metrics import (
+                compute_accuracy,
+                compute_precision_recall,
+            )
+
+            metrics["accuracy"] = compute_accuracy(y_true, binary_pred)
+            metrics["precision"], metrics["recall"], metrics["f1_score"] = compute_precision_recall(y_true, binary_pred)
+            metrics["eval_threshold"] = adaptive_threshold
+
         # Add per-threshold metrics for backward compatibility (ROC/PR curves)
         for i, cutoff in enumerate(self.cutoffs):
             tp = int(self._tp_arr[i])
@@ -165,8 +226,8 @@ class EvaluationMetrics:
 
     def reset(self) -> None:
         """Reset all accumulated metrics."""
-        self.all_y_true = []
-        self.all_y_scores = []
+        self.all_y_true = deque(maxlen=self.max_samples)
+        self.all_y_scores = deque(maxlen=self.max_samples)
         n = len(self.cutoffs)
         self._tp_arr = np.zeros(n, dtype=np.int64)
         self._fp_arr = np.zeros(n, dtype=np.int64)
@@ -181,7 +242,12 @@ class EvaluationMetrics:
         """Return (tp, fp, tn, fn) counts at the nearest stored cutoff to threshold."""
         cutoffs_arr = np.array(self.cutoffs)
         idx = int(np.argmin(np.abs(cutoffs_arr - threshold)))
-        return int(self._tp_arr[idx]), int(self._fp_arr[idx]), int(self._tn_arr[idx]), int(self._fn_arr[idx])
+        return (
+            int(self._tp_arr[idx]),
+            int(self._fp_arr[idx]),
+            int(self._tn_arr[idx]),
+            int(self._fn_arr[idx]),
+        )
 
 
 # Backward-compatible alias
@@ -232,6 +298,9 @@ class Trainer:
             seed_everything(int(self.random_seed))
             self._seed_applied = True
         # Class weights (positive upweighted to compensate for class imbalance)
+        # NOTE: These defaults differ from coding-guidelines (Pos=1.0, Neg=20.0, HardNeg=40.0)
+        # Multi-phase training uses phased weight scaling: early phases have higher positive weight,
+        # later phases gradually reduce it. This is intentional for this training strategy.
         self.positive_weights = training.get("positive_class_weight", [5.0, 7.0, 9.0])
         self.negative_weights = training.get("negative_class_weight", [1.5, 1.5, 1.5])
         self.hard_negative_weights = training.get("hard_negative_class_weight", [3.0, 5.0, 7.0])
@@ -283,6 +352,11 @@ class Trainer:
         mining_cfg = config.get("mining", {})
         self.async_mining = mining_cfg.get("async_mining", False)
         self.spec_augment_backend = performance.get("spec_augment_backend", "tf")
+        if self.spec_augment_backend not in {"tf", "cupy"}:
+            self.logger.log_warning(f"Unknown spec_augment_backend='{self.spec_augment_backend}', falling back to 'tf'")
+            self.spec_augment_backend = "tf"
+        if self.use_tfdata and self.spec_augment_enabled and self.spec_augment_backend != "tf":
+            self.logger.log_warning("SpecAugment backend is set to CuPy while tf.data is enabled. This introduces per-step CPU↔GPU transfers; prefer backend='tf' for throughput.")
         self.log_throughput_interval = int(performance.get("log_throughput_interval", 1000) or 1000)
         self.tf_profile_start_step = int(performance.get("tf_profile_start_step", 0) or 0)
         self.gpu_memory_log_interval = int(performance.get("gpu_memory_log_interval", 1000) or 0)
@@ -381,7 +455,16 @@ class Trainer:
         self._last_materialized_accuracy: float = 0.0  # Keep last accuracy for display between materialization intervals
 
         # TensorBoard metric selection (keep focused, high-signal metrics)
-        self._tb_train_metric_keys = ["loss", "precision", "recall", "auc", "step_time_ms", "data_loading_ms", "spec_augment_ms", "train_step_ms"]
+        self._tb_train_metric_keys = [
+            "loss",
+            "precision",
+            "recall",
+            "auc",
+            "step_time_ms",
+            "data_loading_ms",
+            "spec_augment_ms",
+            "train_step_ms",
+        ]
         self._tb_val_metric_keys = [
             "precision",
             "recall",
@@ -434,7 +517,7 @@ class Trainer:
         self.hn_config = hn_config  # Store config for collection mode access
         self.hard_negative_miner: HardExampleMiner | None = None
         self._async_miner: AsyncHardExampleMiner | None = None  # Async miner instance
-        self.false_predictions_log: list[dict] = []  # In-memory log for current epoch
+        self.false_predictions_log: list[dict] = []  # In-memory log for current epoch (capped)
         if self.hard_negative_mining_enabled:
             collection_mode = hn_config.get("collection_mode", "log_only")
             if self.async_mining and collection_mode == "mine_immediately":
@@ -465,6 +548,9 @@ class Trainer:
         if ema_decay is not None:
             self.logger.log_info(f"EMA configured with decay={ema_decay} (will be applied during optimizer creation)")
         self._ema_enabled = False
+        if ema_decay is not None:
+            self._ema_enabled = True
+        self._saved_training_weights: list[np.ndarray] | None = None  # For EMA weight swap
         if ema_decay is not None:
             self._ema_enabled = True
 
@@ -513,11 +599,20 @@ class Trainer:
         )
         if lazy and not (log_pr_curves or log_roc_curves):
             # Prefer canonical detection_threshold, with backward compat
-            default_threshold = float(self.evaluation_config.get("detection_threshold", self.evaluation_config.get("default_threshold", self.evaluation_config.get("threshold", 0.97))) or 0.97)
+            default_threshold = float(
+                self.evaluation_config.get(
+                    "detection_threshold",
+                    self.evaluation_config.get(
+                        "default_threshold",
+                        self.evaluation_config.get("threshold", 0.97),
+                    ),
+                )
+                or 0.97
+            )
             self.logger.log_info(f"Lazy threshold mode: using default {default_threshold}")
             return [default_threshold]
 
-        return np.linspace(0.0, 1.0, n_thresholds).tolist()
+        return [float(v) for v in np.linspace(0.0, 1.0, n_thresholds)]
 
     def _init_tensorboard_logger(self, log_dir: Path) -> None:
         if not self.tensorboard_enabled:
@@ -562,7 +657,14 @@ class Trainer:
         tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
         if image_due:
             self.tensorboard_logger.log_score_distribution_image(y_true, y_score, step, raw_labels)
-            self.tensorboard_logger.log_confusion_matrix_image(tp, fp, tn, fn, step, threshold=self.val_metrics.default_threshold)
+            self.tensorboard_logger.log_confusion_matrix_image(
+                tp,
+                fp,
+                tn,
+                fn,
+                step,
+                threshold=self.val_metrics.default_threshold,
+            )
             self.tensorboard_logger.log_roc_pr_curves(y_true, y_score, step)
             self.tensorboard_logger.log_pr_curve_interactive(y_true, y_score, step)
             self.tensorboard_logger.log_calibration_curve(y_true, y_score, step)
@@ -800,8 +902,16 @@ class Trainer:
             # Log to TensorBoard
             if self.tensorboard_writer is not None:
                 with self.tensorboard_writer.as_default():
-                    tf.summary.scalar("train/plateau_lr_reductions", self._plateau_reduction_count, step=step)
-                    tf.summary.scalar("train/lr_reduction_factor", self._lr_reduction_factor, step=step)
+                    tf.summary.scalar(
+                        "train/plateau_lr_reductions",
+                        self._plateau_reduction_count,
+                        step=step,
+                    )
+                    tf.summary.scalar(
+                        "train/lr_reduction_factor",
+                        self._lr_reduction_factor,
+                        step=step,
+                    )
 
             return False
         else:
@@ -935,8 +1045,17 @@ class Trainer:
         optimizer = self.model.optimizer
         assert optimizer is not None, "_swap_to_ema_weights called before model optimizer was created"
         optimizer_any: Any = optimizer
+        # Validate EMA state before swap
+        is_valid, error_msg = validate_ema_state_before_swap(self.model, self._saved_training_weights, self._ema_enabled)
+        if not is_valid:
+            self.logger.log_error(f"EMA state validation failed: {error_msg}")
+            raise RuntimeError(f"EMA state inconsistency: {error_msg}")
         # Save raw training weights before overwriting with EMA
-        self._saved_training_weights = [v.numpy().copy() for v in self.model.trainable_variables]
+        self._saved_training_weights = [w.copy() for w in self.model.get_weights()]
+        # Swap EMA weights into model variables for evaluation
+        optimizer_any.finalize_variable_values(self.model.trainable_variables)
+        # Save raw training weights before overwriting with EMA
+        self._saved_training_weights = [w.copy() for w in self.model.get_weights()]
         # Swap EMA weights into model variables for evaluation
         optimizer_any.finalize_variable_values(self.model.trainable_variables)
 
@@ -947,12 +1066,20 @@ class Trainer:
         the un-smoothed weights. Gradients should be applied to raw weights,
         not EMA weights.
         """
-        if not self._ema_enabled or not hasattr(self, "_saved_training_weights"):
+        if not self._ema_enabled or self._saved_training_weights is None:
             return
         assert self.model is not None, "_restore_training_weights called before model was built"
-        for var, saved in zip(self.model.trainable_variables, self._saved_training_weights, strict=False):
-            var.assign(saved)
-        del self._saved_training_weights
+        # Validate EMA state before restoring
+        is_valid, error_msg = validate_ema_state_before_swap(self.model, self._saved_training_weights, self._ema_enabled)
+        if not is_valid:
+            self.logger.log_warning(f"EMA state validation failed during restore: {error_msg}")
+            # Log warning but proceed - restoration might still work
+        # Use set_weights() to properly restore all weights including BatchNorm moving stats
+        self.model.set_weights(self._saved_training_weights)
+        self._saved_training_weights = None
+        # Use set_weights() to properly restore all weights including BatchNorm moving stats
+        self.model.set_weights(self._saved_training_weights)
+        self._saved_training_weights = None
 
     def _apply_class_weights(
         self,
@@ -962,24 +1089,31 @@ class Trainer:
         negative_weight: float,
         hard_negative_weight: float,
         is_hard_negative: np.ndarray | None = None,
-    ) -> tf.Tensor:
-        """Apply class weights to sample weights (GPU-accelerated)."""
-        # Flatten to 1D to avoid SelectV2 broadcastability failures when tensors
+    ) -> np.ndarray:
+        """Apply class weights to sample weights using numpy (avoids TF graph accumulation)."""
+        # Flatten to 1D to avoid broadcastability failures when arrays
         # arrive with shape (batch, 1) from different code paths (e.g. tfdata prefetch)
-        y_true_t = tf.cast(tf.reshape(tf.constant(y_true), [-1]), tf.float32)
-        sw_t = tf.cast(tf.reshape(tf.constant(sample_weights), [-1]), tf.float32)
+        y_true_flat = np.asarray(y_true, dtype=np.float32).ravel()
+        sw_flat = np.asarray(sample_weights, dtype=np.float32).ravel()
+        if y_true_flat.shape[0] != sw_flat.shape[0]:
+            raise ValueError(f"sample_weights size must match labels size: got {sw_flat.shape[0]} weights for {y_true_flat.shape[0]} labels")
         if is_hard_negative is not None:
-            hn_t = tf.cast(tf.reshape(tf.constant(is_hard_negative), [-1]), tf.bool)
-            class_weights = tf.where(
-                y_true_t == 1,
+            hn_flat = np.asarray(is_hard_negative, dtype=bool).ravel()
+            class_weights = np.where(
+                y_true_flat == 1,
                 positive_weight,
-                tf.where(hn_t, hard_negative_weight, negative_weight),
+                np.where(hn_flat, hard_negative_weight, negative_weight),
             )
         else:
-            class_weights = tf.where(y_true_t == 1, positive_weight, negative_weight)
-        return sw_t * class_weights
+            class_weights = np.where(y_true_flat == 1, positive_weight, negative_weight)
+        return np.asarray(sw_flat * class_weights)
 
-    def _is_best_model(self, metrics: dict[str, float], target_fah: float, target_recall: float) -> tuple[bool, str]:
+    def _is_best_model(
+        self,
+        metrics: dict[str, float],
+        target_fah: float,
+        target_recall: float,
+    ) -> tuple[bool, str]:
         """Determine if current model is best using a two-stage checkpoint strategy.
 
         Stage 1 — Warm-up (no epoch has yet met the FAH budget):
@@ -1081,15 +1215,67 @@ class Trainer:
             self.best_quality_score = float(quality_score)  # display only
             # Update stage-specific best trackers
             auc_pr_raw = metrics.get("auc_pr")
+            recall_at_fah_raw = metrics.get("recall_at_target_fah")
             if isinstance(auc_pr_raw, (int, float, np.floating, np.integer)):
                 self.best_auc_pr = max(self.best_auc_pr, float(auc_pr_raw))
-            recall_at_fah_raw = metrics.get("recall_at_target_fah")
             if isinstance(recall_at_fah_raw, (int, float, np.floating, np.integer)):
                 self.best_constrained_recall = max(self.best_constrained_recall, float(recall_at_fah_raw))
 
+            # Persist recommended deployment threshold to best_weights .metadata.json sidecar.
+            # This allows mww-export to use it as a head-start when probability_cutoff: 0.
+            self._write_checkpoint_threshold_metadata(metrics)
+
         # Save periodic checkpoint
-        checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_step_{self.current_step}.weights.h5")
+        checkpoint_path = os.path.join(
+            self.checkpoint_dir,
+            f"checkpoint_step_{self.current_step}.weights.h5",
+        )
         self.model.save_weights(checkpoint_path)
+
+    def _write_checkpoint_threshold_metadata(self, metrics: dict[str, float]) -> None:
+        """Persist recommended deployment threshold to best_weights .metadata.json sidecar.
+
+        Called whenever best_weights.weights.h5 is saved. Writes threshold_for_target_fah
+        (or threshold_for_target_recall as fallback) as `probability_cutoff` so the export
+        pipeline can pick it up when probability_cutoff: 0 is configured.
+        """
+        if not self.best_weights_path:
+            return
+
+        import json as _json
+
+        threshold = metrics.get("threshold_for_target_fah")
+        source = "threshold_for_target_fah"
+        if threshold is None or not isinstance(threshold, (int, float, np.floating, np.integer)):
+            threshold = metrics.get("threshold_for_target_recall")
+            source = "threshold_for_target_recall"
+        if threshold is None or not isinstance(threshold, (int, float, np.floating, np.integer)):
+            return  # No actionable threshold to persist
+
+        threshold_float = float(threshold)
+        if not (0.0 < threshold_float <= 1.0):
+            return  # Guard: skip clearly invalid values
+
+        meta_path = Path(self.best_weights_path).with_suffix(".metadata.json")
+        existing: dict = {}
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r") as f:
+                    loaded = _json.load(f)
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except Exception as exc:
+                self.logger.log_warning(f"Could not read existing threshold metadata; rewriting fresh: {exc}")
+
+        existing["probability_cutoff"] = threshold_float
+        existing["probability_cutoff_source"] = source
+        existing["probability_cutoff_step"] = int(self.current_step)
+
+        try:
+            with open(meta_path, "w") as f:
+                _json.dump(existing, f, indent=2)
+        except Exception as exc:
+            self.logger.log_warning(f"Could not write threshold metadata: {exc}")
 
     def _write_run_metadata(self) -> None:
         """Write run_metadata.json to checkpoint dir for reproducibility tracking."""
@@ -1102,7 +1288,12 @@ class Trainer:
         try:
             import subprocess
 
-            result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
             if result.returncode == 0:
                 git_commit = result.stdout.strip()
         except Exception as exc:
@@ -1182,7 +1373,9 @@ class Trainer:
             is_hard_negative=is_hard_negative,
         )
 
-        labels = tf.reshape(train_ground_truth, [-1, 1])
+        # Defensive binarization: hard negatives (label=2) must be treated as 0 for BCE
+        binary_gt = tf.cast(tf.equal(train_ground_truth, 1), tf.float32)
+        labels = tf.reshape(binary_gt, [-1, 1])
         result = self.model.train_on_batch(
             train_fingerprints,
             labels,
@@ -1207,28 +1400,26 @@ class Trainer:
     def _process_validation_chunk(
         self,
         metrics_tracker: TrainingMetrics,
-        chunk_scores: list[tf.Tensor],
-        chunk_labels: list[tf.Tensor],
+        chunk_scores: list[np.ndarray],
+        chunk_labels: list[np.ndarray],
     ) -> None:
         """Process a chunk of validation data to update metrics incrementally.
 
-        This method concatenates the accumulated chunk tensors, converts to numpy,
-        updates the validation metrics, and clears the chunk lists to free memory.
+        This method concatenates the accumulated chunk arrays, updates the
+        validation metrics, and clears the chunk lists to free memory.
 
         Args:
             metrics_tracker: Metrics accumulator to update
-            chunk_scores: List of score tensors from model predictions
-            chunk_labels: List of label tensors
+            chunk_scores: List of score arrays from model predictions
+            chunk_labels: List of label arrays
         """
         if not chunk_scores:
             return
 
-        scores_all = tf.concat(chunk_scores, axis=0)
-        labels_all = tf.concat(chunk_labels, axis=0)
-        scores_np = scores_all.numpy()
-        labels_np = labels_all.numpy()
+        scores_np = np.concatenate(chunk_scores, axis=0)
+        labels_np = np.concatenate(chunk_labels, axis=0)
         metrics_tracker.update(labels_np, scores_np)
-        del scores_all, labels_all, scores_np, labels_np
+        del scores_np, labels_np
 
     def _validate_with_model(
         self,
@@ -1241,7 +1432,8 @@ class Trainer:
 
         Args:
             model: Model to evaluate.
-            data_generator: Callable or generator yielding (fingerprints, labels, metadata).
+        data_generator: Callable or generator yielding either
+            (fingerprints, labels) or (fingerprints, labels, metadata).
             chunk_size: Samples per metrics update chunk.
             ambient_duration_hours: Override ambient duration for FAH calculation.
                 Defaults to ``self.val_ambient_duration_hours`` (scaled by val_split).
@@ -1261,18 +1453,25 @@ class Trainer:
 
         score_samples: list[float] = []
         score_sample_limit = 2000
-        chunk_scores: list[tf.Tensor] = []
-        chunk_labels: list[tf.Tensor] = []
+        chunk_scores: list[np.ndarray] = []
+        chunk_labels: list[np.ndarray] = []
         total_samples = 0
         last_val_paths: list[str] = self._val_file_paths or []
         last_val_raw_labels: list[int] = []
         clip_ids_accumulator: list[int] = []
         clip_id_counter = 0
+        path_cursor = 0
+        path_clip_id = 0
+        prev_path: str | None = None
 
         for batch in iterator:
-            if not isinstance(batch, tuple) or len(batch) != 3:
-                raise ValueError(f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth, metadata) 3-tuples. Got: {type(batch).__name__} with value {batch!r}")
-            fingerprints, ground_truth, metadata = batch
+            if not isinstance(batch, tuple) or len(batch) < 2:
+                raise ValueError(
+                    f"Trainer.validate() expects data_generator to yield (fingerprints, ground_truth) or (fingerprints, ground_truth, metadata). Got: {type(batch).__name__} with value {batch!r}"
+                )
+            fingerprints = batch[0]
+            ground_truth = batch[1]
+            metadata = batch[2] if len(batch) >= 3 else None
             predictions = model(fingerprints, training=False)
 
             if predictions.ndim == 2 and predictions.shape[1] > 1:
@@ -1280,11 +1479,42 @@ class Trainer:
             else:
                 scores = tf.reshape(predictions, [-1])
 
-            chunk_scores.append(scores)
-            chunk_labels.append(tf.cast(ground_truth, tf.int32))
+            chunk_scores.append(scores.numpy())
+            chunk_labels.append(tf.cast(ground_truth, tf.int32).numpy())
             n_samples_in_batch = len(scores)
-            clip_ids_accumulator.extend(range(clip_id_counter, clip_id_counter + n_samples_in_batch))
-            clip_id_counter += n_samples_in_batch
+
+            # Prefer real clip boundaries for sliding-window semantics.
+            batch_clip_ids: list[int] | None = None
+            if isinstance(metadata, dict):
+                metadata_clip_ids = metadata.get("clip_ids")
+                if metadata_clip_ids is None and "clip_id" in metadata:
+                    metadata_clip_ids = metadata["clip_id"]
+                if metadata_clip_ids is not None:
+                    metadata_clip_ids_np = np.asarray(metadata_clip_ids).reshape(-1)
+                    if metadata_clip_ids_np.size == 1 and n_samples_in_batch > 1:
+                        metadata_clip_ids_np = np.repeat(metadata_clip_ids_np, n_samples_in_batch)
+                    if metadata_clip_ids_np.size == n_samples_in_batch:
+                        batch_clip_ids = metadata_clip_ids_np.astype(np.int64, copy=False).tolist()
+
+            if batch_clip_ids is None and last_val_paths and (path_cursor + n_samples_in_batch) <= len(last_val_paths):
+                batch_clip_ids = []
+                for i in range(n_samples_in_batch):
+                    path = str(last_val_paths[path_cursor + i])
+                    if prev_path is None:
+                        prev_path = path
+                    elif path != prev_path:
+                        path_clip_id += 1
+                        prev_path = path
+                    batch_clip_ids.append(path_clip_id)
+                path_cursor += n_samples_in_batch
+
+            if batch_clip_ids is None:
+                batch_clip_ids = list(range(clip_id_counter, clip_id_counter + n_samples_in_batch))
+                clip_id_counter += n_samples_in_batch
+            elif batch_clip_ids:
+                clip_id_counter = max(clip_id_counter, int(max(batch_clip_ids)) + 1)
+
+            clip_ids_accumulator.extend(batch_clip_ids)
             total_samples += n_samples_in_batch
             if isinstance(metadata, dict) and "raw_labels" in metadata:
                 raw_labels = metadata["raw_labels"]
@@ -1373,6 +1603,25 @@ class Trainer:
             )
             metrics["recall_at_target_fah"] = float(recall_at_fah)
             metrics["threshold_for_target_fah"] = float(threshold_at_fah)
+            # Retroactively recompute binary classification metrics at the operational FAH threshold.
+            # This overrides the metrics computed by compute_metrics() which used either the default
+            # threshold (0.97, produces all-zeros early in training) or the broken median fallback.
+            # threshold_at_fah is the only threshold that gives a live, meaningful training signal.
+            if threshold_at_fah > 0 and metrics_tracker.all_y_true:
+                _y_true_fah = np.array(metrics_tracker.all_y_true)
+                _y_scores_fah = np.array(metrics_tracker.all_y_scores)
+                _binary_pred = (_y_scores_fah > threshold_at_fah).astype(int)
+                from src.evaluation.metrics import (
+                    compute_accuracy,
+                    compute_precision_recall,
+                )
+
+                metrics["accuracy"] = compute_accuracy(_y_true_fah, _binary_pred)
+                _prec, _rec, _f1 = compute_precision_recall(_y_true_fah, _binary_pred)
+                metrics["precision"] = _prec
+                metrics["recall"] = _rec
+                metrics["f1_score"] = _f1
+                metrics["eval_threshold"] = float(threshold_at_fah)
             metrics["operating_threshold"] = float(threshold_at_fah)
             metrics["operating_recall"] = float(recall_at_fah)
             metrics["operating_target_fah"] = float(self.eval_target_fah)
@@ -1387,16 +1636,21 @@ class Trainer:
 
         return metrics, metrics_tracker, last_val_raw_labels, last_val_paths
 
-    def validate(self, data_generator, chunk_size: int = 2000, ambient_duration_hours: float | None = None) -> dict[str, float]:
+    def validate(
+        self,
+        data_generator,
+        chunk_size: int = 2000,
+        ambient_duration_hours: float | None = None,
+    ) -> dict[str, float]:
         """Validate model on validation set with chunked processing to limit memory.
 
         Args:
             data_generator: Factory callable (invoked to yield batches) or generator.
                 When a callable is provided it is called to get a fresh iterator;
                 this avoids exhausting a one-shot generator.
-                Must yield 3-tuples: (fingerprints, ground_truth, metadata), where
-                fingerprints is a NumPy/Tensor array of model inputs, ground_truth
-                is the label array, and metadata can be any auxiliary batch info.
+                Must yield either 2-tuples ``(fingerprints, ground_truth)`` or
+                3-tuples ``(fingerprints, ground_truth, metadata)`` where metadata
+                can be any auxiliary batch info (including ``None``).
             chunk_size: Number of samples to process before updating metrics incrementally.
                 Smaller values reduce peak memory usage. Default: 2000
             ambient_duration_hours: Override ambient duration for FAH calculation.
@@ -1419,27 +1673,14 @@ class Trainer:
         return metrics
 
     def _compute_metrics_background(self, step: int, weights_snapshot: list[np.ndarray], val_data_factory) -> dict[str, Any]:
-        """Run validation in background on a re-instantiated model with copied weights."""
-        assert self.model is not None, "_compute_metrics_background called before model was built"
-        # Use from_config() instead of clone_model() so that input_shape and
-        # temporal_rb_size are correctly reproduced from the training model's config.
-        # clone_model() on a subclassed model does NOT preserve __init__ kwargs and
-        # produces a model with wrong temporal ring-buffer / Dense layer shapes.
-        eval_model = self.model.__class__.from_config(self.model.get_config())
-        _ = eval_model(tf.zeros((1, *self.input_shape), dtype=tf.float32), training=False)
-        eval_model.set_weights(weights_snapshot)
-        metrics, metrics_tracker, last_val_raw_labels, last_val_paths = self._validate_with_model(
-            model=eval_model,
-            data_generator=val_data_factory,
-        )
-        return {
-            "step": step,
-            "metrics": metrics,
-            "metrics_tracker": metrics_tracker,
-            "last_val_raw_labels": last_val_raw_labels,
-            "last_val_paths": last_val_paths,
-            "weights_snapshot": weights_snapshot,
-        }
+        """Deprecated async validation worker.
+
+        Background validation previously reconstructed a second model instance from
+        config and copied weights into it. That approach is brittle for subclassed
+        and stateful models, so scheduling now falls back to synchronous validation
+        on the live model (see ``_schedule_validation``).
+        """
+        raise RuntimeError("Background validation model reconstruction is disabled; use synchronous validation path.")
 
     def _schedule_validation(
         self,
@@ -1450,38 +1691,17 @@ class Trainer:
         val_data_factory,
         mining_data_factory,
     ) -> bool:
-        """Schedule validation work in background when no job is currently pending."""
+        """Schedule validation work in background when no job is currently pending.
+
+        Returns ``False`` to force synchronous validation on the live model.
+        This avoids brittle background model reconstruction for subclassed/stateful
+        models and prevents making checkpoint decisions from a reconstructed clone.
+        """
         assert self.model is not None, "_schedule_validation called before model was built"
         with self._validation_lock:
-            if self._pending_validation is not None and not self._pending_validation["future"].done():
+            if self._pending_validation is not None:
                 return False
-
-            try:
-                self._swap_to_ema_weights()
-                weights_snapshot = [np.array(w, copy=True) for w in self.model.get_weights()]
-                try:
-                    future = self._validation_executor.submit(
-                        self._compute_metrics_background,
-                        step,
-                        weights_snapshot,
-                        val_data_factory,
-                    )
-                finally:
-                    self._restore_training_weights()
-            except Exception as exc:
-                self.logger.log_warning(f"Async validation scheduling failed during EMA snapshot: {exc}")
-                return False
-
-            self._pending_validation = {
-                "future": future,
-                "step": step,
-                "basic_due": basic_due,
-                "advanced_due": advanced_due,
-                "total_steps": total_steps,
-                "val_data_factory": val_data_factory,
-                "mining_data_factory": mining_data_factory,
-            }
-            return True
+            return False
 
     def _handle_validation_results(
         self,
@@ -1498,8 +1718,14 @@ class Trainer:
         val_metrics = self._augment_quality_metrics(val_metrics, step)
 
         if advanced_due and self._check_and_act_on_plateau(val_metrics, step):
-            self._save_checkpoint(val_metrics, is_best=False, reason="early_stop_plateau", weights_snapshot=weights_snapshot)
+            self._save_checkpoint(
+                val_metrics,
+                is_best=False,
+                reason="early_stop_plateau",
+                weights_snapshot=weights_snapshot,
+            )
             self._async_early_stop_requested = True
+            self._release_validation_artifacts()
             return
 
         if basic_due:
@@ -1512,7 +1738,6 @@ class Trainer:
 
         if self.tensorboard_writer is not None:
             self._log_tensorboard_metrics("val", val_metrics, step, self._tb_val_metric_keys)
-            self.tensorboard_writer.flush()
         if advanced_due and self.tensorboard_logger is not None:
             self._log_advanced_tensorboard_metrics(val_metrics, step)
 
@@ -1545,23 +1770,40 @@ class Trainer:
                     self._last_mined_epoch = approx_epoch
                 elif collection_mode == "mine_immediately":
                     if self.async_mining and self._async_miner is not None:
-                        if not self._async_miner.is_mining():
-                            self.logger.log_mining(f"Starting async mining at epoch {approx_epoch}...")
-                            mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
-                            self._async_miner.start_mining(self.model, mining_source_factory, approx_epoch)
-                        else:
+                        if self._async_miner.is_mining():
+                            # Miner is still running — try to collect result
                             mining_result = self._async_miner.get_result()
                             if mining_result is not None:
                                 self.logger.log_mining(
                                     f"Completed async mining at epoch {approx_epoch}",
                                     count=mining_result["num_hard_negatives"],
                                 )
-                                self._last_mined_epoch = approx_epoch
+                                self._last_mined_epoch = mining_result.get("epoch", approx_epoch)
+                        else:
+                            # Miner is idle — collect any lingering result, then start new mining
+                            mining_result = self._async_miner.get_result()
+                            if mining_result is not None:
+                                self.logger.log_mining(
+                                    f"Collected async mining result from epoch {mining_result.get('epoch', '?')}",
+                                    count=mining_result["num_hard_negatives"],
+                                )
+                                self._last_mined_epoch = mining_result.get("epoch", approx_epoch)
+                            self.logger.log_mining(f"Starting async mining at epoch {approx_epoch}...")
+                            mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
+                            self._async_miner.start_mining(self.model, mining_source_factory, approx_epoch)
                     elif self.hard_negative_miner is not None:
                         self.logger.log_mining(f"Mining at epoch {approx_epoch}...")
                         try:
-                            mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
-                            mining_result = self.hard_negative_miner.mine_from_dataset(self.model, mining_source_factory, approx_epoch)
+                            self._swap_to_ema_weights()
+                            try:
+                                mining_source_factory = mining_data_factory if mining_data_factory is not None else val_data_factory
+                                mining_result = self.hard_negative_miner.mine_from_dataset(
+                                    self.model,
+                                    mining_source_factory,
+                                    approx_epoch,
+                                )
+                            finally:
+                                self._restore_training_weights()
                             self.logger.log_mining(
                                 f"Completed at epoch {approx_epoch}",
                                 count=mining_result["num_hard_negatives"],
@@ -1573,6 +1815,19 @@ class Trainer:
                             self.logger.log_warning(f"Hard negative mining failed (RuntimeError): {e}")
                         except Exception:
                             raise
+
+        self._release_validation_artifacts()
+
+    def _release_validation_artifacts(self) -> None:
+        """Release large validation buffers once results are consumed.
+
+        Keeps tensorboard/checkpoint/mining logic intact (they consume buffers first in
+        ``_handle_validation_results``), then frees host memory to avoid growth across
+        long trainings with frequent evaluations.
+        """
+        self.val_metrics.reset()  # Properly reset all accumulated metrics including numpy arrays
+        self._last_val_raw_labels = []
+        self._last_val_paths = []
 
     def _check_validation(self, block: bool = False) -> None:
         """Check pending validation; consume results when complete."""
@@ -1606,6 +1861,10 @@ class Trainer:
             mining_data_factory=pending["mining_data_factory"],
             weights_snapshot=result.get("weights_snapshot"),
         )
+        # Free references held by the consumed result to release memory
+        del result
+        del pending
+        gc.collect()
 
     def _log_false_predictions_to_json(self, epoch: int) -> None:
         """Log false positive predictions to JSON file for post-training mining.
@@ -1675,6 +1934,15 @@ class Trainer:
         # Load pre-trained weights if provided (for fine-tuning)
         if weights_path is not None:
             self.logger.log_info(f"Loading weights from: {weights_path}")
+            # Validate checkpoint compatibility before loading
+            is_valid, error_msg = validate_checkpoint_before_loading(self.model, weights_path)
+            if not is_valid:
+                self.logger.log_error(f"Checkpoint validation failed: {error_msg}")
+                raise ValueError(f"Incompatible checkpoint: {error_msg}")
+            self.model.load_weights(weights_path)
+
+        if weights_path is not None:
+            self.logger.log_info(f"Loading weights from: {weights_path}")
             self.model.load_weights(weights_path)
 
         self.model.summary(print_fn=self.logger.console.print)
@@ -1729,13 +1997,23 @@ class Trainer:
                 # Get training batch
                 _t_data_end = step_start  # fallback; overwritten on success
                 try:
-                    train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
+                    (
+                        train_fingerprints,
+                        train_ground_truth,
+                        train_sample_weights,
+                        train_is_hard_neg,
+                    ) = next(train_data_generator)
                     _t_data_end = time.perf_counter()
                 except StopIteration:
                     # Restart by calling the factory again
                     train_data_generator = train_data_factory()
                     try:
-                        train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg = next(train_data_generator)
+                        (
+                            train_fingerprints,
+                            train_ground_truth,
+                            train_sample_weights,
+                            train_is_hard_neg,
+                        ) = next(train_data_generator)
                         _t_data_end = time.perf_counter()
                     except StopIteration as exc:
                         raise RuntimeError("train_data_factory() returned an empty generator after restart. Cannot continue training without batches.") from exc
@@ -1757,14 +2035,9 @@ class Trainer:
                                 freq_mask_max_size=self.freq_mask_max_size[aug_phase],
                                 freq_mask_count=self.freq_mask_count[aug_phase],
                             )
-                            # batch_spec_augment_gpu returns a CuPy GPU array.
-                            # Convert back to numpy so that train_on_batch always
-                            # receives a numpy array.  Passing CuPy arrays causes
-                            # Keras to retrace the training graph (CuPy != numpy type
-                            # signature) and the new trace triggers a broadcast error
-                            # in binary_crossentropy's internal logistic_loss path.
-                            if not isinstance(train_fingerprints, np.ndarray):
-                                train_fingerprints = np.asarray(train_fingerprints)
+                            # batch_spec_augment_gpu can return non-NumPy arrays.
+                            # Normalize to NumPy for stable Keras tracing/input typing.
+                            train_fingerprints = np.asarray(train_fingerprints)
                         except RuntimeError as e:
                             # GPU not available or CuPy not installed, skip SpecAugment
                             if not self._spec_augment_warning_shown:
@@ -1775,15 +2048,28 @@ class Trainer:
                 _t_train_start = time.perf_counter()
                 if self.profiler and step % self.profile_every_n == 0:
                     with self.profiler.profile_section(f"full_step_{step}"):
-                        train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg)
+                        train_metrics = self.train_step(
+                            train_fingerprints,
+                            train_ground_truth,
+                            train_sample_weights,
+                            train_is_hard_neg,
+                        )
                 else:
-                    train_metrics = self.train_step(train_fingerprints, train_ground_truth, train_sample_weights, train_is_hard_neg)
+                    train_metrics = self.train_step(
+                        train_fingerprints,
+                        train_ground_truth,
+                        train_sample_weights,
+                        train_is_hard_neg,
+                    )
                 _t_train_end = time.perf_counter()
                 materialize_due = step % self.materialize_metrics_interval == 0
                 if not materialize_due:
                     loss_value = float(train_metrics.get("loss", 0.0))
                     # Keep last materialized accuracy for display (don't show 0 when not materialized)
-                    train_metrics = {"loss": loss_value, "accuracy": self._last_materialized_accuracy}
+                    train_metrics = {
+                        "loss": loss_value,
+                        "accuracy": self._last_materialized_accuracy,
+                    }
                 else:
                     # Update cached accuracy when materialized
                     self._last_materialized_accuracy = float(train_metrics.get("accuracy", 0.0))
@@ -1801,7 +2087,16 @@ class Trainer:
                         delta_steps = step - last_throughput_step
                         steps_per_sec = delta_steps / elapsed if delta_steps > 0 else 0.0
                         samples_per_sec = delta_samples / elapsed if delta_samples > 0 else 0.0
-                        self.logger.log_info(f"Throughput: {steps_per_sec:.2f} steps/s, {samples_per_sec:.1f} samples/s over last {delta_steps} steps")
+                        remaining_steps = total_steps - step
+                        if steps_per_sec > 0:
+                            eta_secs = int(remaining_steps / steps_per_sec)
+                            eta_h = eta_secs // 3600
+                            eta_m = (eta_secs % 3600) // 60
+                            eta_s = eta_secs % 60
+                            eta_str = f"{eta_h}:{eta_m:02d}:{eta_s:02d}"
+                        else:
+                            eta_str = "--:--:--"
+                        self.logger.log_info(f"Throughput: {steps_per_sec:.2f} steps/s, {samples_per_sec:.1f} samples/s over last {delta_steps} steps | ETA: {eta_str}")
                     last_throughput_time = now
                     last_throughput_step = step
                     last_throughput_samples = step * self.batch_size
@@ -1811,12 +2106,27 @@ class Trainer:
                 approx_epoch = step // self.steps_per_epoch if self.steps_per_epoch > 0 else 0
                 phase_settings_display["epoch"] = approx_epoch
                 if self.eval_log_every_step or step % self.eval_basic_step_interval == 0:
-                    self.logger.update_step(progress, progress_task, step, train_metrics, phase_settings_display)
+                    self.logger.update_step(
+                        progress,
+                        progress_task,
+                        step,
+                        train_metrics,
+                        phase_settings_display,
+                    )
 
                 if self.tensorboard_writer is not None and step % self.eval_basic_step_interval == 0:
-                    self._log_tensorboard_metrics("train", train_metrics, step, self._tb_train_metric_keys)
+                    self._log_tensorboard_metrics(
+                        "train",
+                        train_metrics,
+                        step,
+                        self._tb_train_metric_keys,
+                    )
                     with self.tensorboard_writer.as_default():
-                        tf.summary.scalar("train/learning_rate", float(phase_settings_display["learning_rate"]), step=step)
+                        tf.summary.scalar(
+                            "train/learning_rate",
+                            float(phase_settings_display["learning_rate"]),
+                            step=step,
+                        )
 
                 # Log GPU memory + utilization to TensorBoard
                 if self.tensorboard_writer is not None and self.gpu_memory_log_interval > 0 and step % self.gpu_memory_log_interval == 0 and self.tf_profiler is not None:
@@ -1826,7 +2136,11 @@ class Trainer:
                     gpu_load = float(gpu_info.get("load_percent", 0.0)) if isinstance(gpu_info, dict) else 0.0
                     with self.tensorboard_writer.as_default():
                         tf.summary.scalar("gpu/peak_memory_mb", mem["peak_mb"], step=step)
-                        tf.summary.scalar("gpu/current_memory_mb", mem["current_mb"], step=step)
+                        tf.summary.scalar(
+                            "gpu/current_memory_mb",
+                            mem["current_mb"],
+                            step=step,
+                        )
                         tf.summary.scalar("gpu/utilization_percent", gpu_load, step=step)
 
                 # Start TF Profiler trace (fires once, captures a short window)
@@ -1881,11 +2195,32 @@ class Trainer:
                             mining_data_factory=mining_data_factory,
                             weights_snapshot=weights_snapshot,
                         )
-                        if self._async_early_stop_requested:
+                        del weights_snapshot
+                        gc.collect()
+                        if bool(self._async_early_stop_requested):
                             break
 
                 self._check_validation()
-                if self._async_early_stop_requested:
+
+                # Periodic garbage collection to prevent memory buildup
+                if step % 500 == 0:
+                    gc.collect()
+                    # Every epoch boundary, do a deeper cleanup
+                    if self.steps_per_epoch > 0 and step % self.steps_per_epoch == 0:
+                        # Force all three generations of garbage collection
+                        gc.collect(0)
+                        gc.collect(1)
+                        gc.collect(2)
+                        # Clear CuPy memory pools at epoch boundary
+                        if self.spec_augment_enabled and self.spec_augment_backend == "cupy":
+                            try:
+                                import cupy as cp
+
+                                cp.get_default_memory_pool().free_all_blocks()
+                                cp.get_default_pinned_memory_pool().free_all_blocks()
+                            except (ImportError, Exception):  # noqa: S110
+                                pass
+                if bool(self._async_early_stop_requested):
                     break
 
                 # Resume progress bar if it was stopped (e.g., phase transition)
@@ -1908,6 +2243,9 @@ class Trainer:
                 self.logger.log_info("Waiting for async hard negative mining to complete...")
                 self._async_miner.wait_for_completion()
                 self.logger.log_info("Async hard negative mining completed")
+            # Explicitly clean up training data generator
+            train_data_generator = None
+            gc.collect()
 
         # Training complete
         total_time = time.time() - start_time
@@ -1933,7 +2271,12 @@ class Trainer:
             self.best_recall,
         )
 
-        # Note: We do NOT load best_weights here because:
+        # Note: We do NOT reload best_weights here because:
+        # 1. Training is complete - no need to reload weights
+        # 2. model already contains the right weights (either training or EMA depending on when we last saved)
+        # 3. best_weights.weights.h5 (validated best checkpoint) has EMA-smoothed weights and proven metrics
+        # 4. Loading weights here causes optimizer state warnings due to EMA finalize
+        # For export/inference, use best_weights.weights.h5 which has validated EMA-smoothed weights
         # 1. Training is complete - no need to reload weights
         # 2. model already contains the right weights (either training or EMA depending on when we last saved)
         # 3. final_weights.weights.h5 (saved above) has EMA-smoothed weights, which is preferred
@@ -1944,20 +2287,45 @@ class Trainer:
             from src.evaluation.test_evaluator import TestEvaluator
 
             log_dir = self.config.get("performance", {}).get("tensorboard_log_dir", "./logs")
-            test_feature_store_path = os.path.join(self.config.get("paths", {}).get("processed_dir", "./data/processed"), "test")
+            test_feature_store_path = os.path.join(
+                self.config.get("paths", {}).get("processed_dir", "./data/processed"),
+                "test",
+            )
             evaluator = TestEvaluator(self.model, self.config, str(log_dir))
-            evaluator.evaluate(test_data_factory, test_feature_store_path=test_feature_store_path)
+            eval_results = evaluator.evaluate(
+                test_data_factory,
+                test_feature_store_path=test_feature_store_path,
+            )
             self.logger.log_info("Running held-out test evaluation...")
-            # Use test_split-scaled ambient duration so FAH is correct for the test set.
-            training_cfg = self.config.get("training", {})
-            test_split = float(training_cfg.get("test_split", 0.1))
-            test_ambient_hours = self.ambient_duration_hours * test_split
-            test_metrics = self.validate(test_data_factory, ambient_duration_hours=test_ambient_hours)
-            self.logger.log_validation_results(test_metrics, total_steps, total_steps)
-            tp, fp, tn, fn = self.val_metrics.get_counts_at_threshold(self.val_metrics.default_threshold)
-            self.logger.log_confusion_matrix(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
-            self.logger.log_per_class_analysis(tp, fp, tn, fn, threshold=self.val_metrics.default_threshold)
+            if eval_results is not None:
+                basic = eval_results.get("basic_metrics", {})
+                advanced = eval_results.get("advanced_metrics", {})
+                test_metrics: dict[str, float] = {}
+                for key in ("accuracy", "precision", "recall", "f1_score"):
+                    value = basic.get(key)
+                    if value is not None:
+                        test_metrics[key] = float(value)
+                for key in ("auc_roc", "auc_pr", "fah"):
+                    value = advanced.get(key)
+                    if value is not None:
+                        mapped = "ambient_false_positives_per_hour" if key == "fah" else key
+                        test_metrics[mapped] = float(value)
+                if test_metrics:
+                    self.logger.log_validation_results(test_metrics, total_steps, total_steps)
 
+                confusion = eval_results.get("confusion_matrix", {})
+                tp = int(confusion.get("tp", 0))
+                fp = int(confusion.get("fp", 0))
+                tn = int(confusion.get("tn", 0))
+                fn = int(confusion.get("fn", 0))
+                threshold = float(self.evaluation_config.get("default_threshold", 0.97))
+                self.logger.log_confusion_matrix(tp, fp, tn, fn, threshold=threshold)
+                self.logger.log_per_class_analysis(tp, fp, tn, fn, threshold=threshold)
+            else:
+                self.logger.log_warning("Held-out test evaluation did not produce results; skipping consolidated test summary logs")
+
+        config_preset = self.config.get("training", {}).get("_config_preset", "standard")
+        self.logger.log_next_steps(self.best_weights_path or final_path, config_preset)
         return self.model
 
 
@@ -2033,7 +2401,12 @@ def train(config: dict) -> tf.keras.Model:
                     "seed": training_cfg.get("split_seed", 42),
                 }
 
-            pipeline = OptimizedDataPipeline(dataset, config, max_time_frames=max_time_frames, spec_augment_config=spec_augment_config)
+            pipeline = OptimizedDataPipeline(
+                dataset,
+                config,
+                max_time_frames=max_time_frames,
+                spec_augment_config=spec_augment_config,
+            )
             shuffle_seed = int(config.get("training", {}).get("split_seed", 42))
             train_ds = pipeline.create_training_pipeline(shuffle_seed=shuffle_seed)
             val_ds = pipeline.create_validation_pipeline()
@@ -2047,9 +2420,17 @@ def train(config: dict) -> tf.keras.Model:
                     yield features, labels_int, sample_weights, is_hard_neg
 
             def val_factory():
+                clip_id_offset = 0
                 for features, labels, _, _ in val_ds:
                     labels_int = tf.cast(labels, tf.int32)
-                    yield features, labels_int, None
+                    batch_size = int(tf.shape(labels_int)[0].numpy())
+                    clip_ids = np.arange(clip_id_offset, clip_id_offset + batch_size, dtype=np.int64)
+                    clip_id_offset += batch_size
+                    metadata = {
+                        "raw_labels": labels_int.numpy().tolist(),
+                        "clip_ids": clip_ids.tolist(),
+                    }
+                    yield features, labels_int, metadata
 
             def test_factory():
                 for features, labels, _, _ in test_ds:
@@ -2181,6 +2562,8 @@ def main():
 
     try:
         with terminal_logger:
+            # Route all Python logging (27 src/ modules) through Rich for the duration of training
+            setup_rich_logging(level=logging.WARNING)
             # Load config
             config = load_full_config(args.config, args.override)
 

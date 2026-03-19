@@ -18,7 +18,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src"
 ARCH_PATH = SRC_ROOT / "model" / "architecture.py"
 TFLITE_PATH = SRC_ROOT / "export" / "tflite.py"
-AUTOTUNER_PATH = SRC_ROOT / "tuning" / "autotuner.py"
 LOADER_PATH = REPO_ROOT / "config" / "loader.py"
 PRESETS_DIR = REPO_ROOT / "config" / "presets"
 
@@ -73,7 +72,10 @@ def test_mixednet_default_residual_connections() -> None:
     init_fn: ast.FunctionDef | None = None
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == "MixedNet":
-            init_fn = next((item for item in node.body if isinstance(item, ast.FunctionDef) and item.name == "__init__"), None)
+            init_fn = next(
+                (item for item in node.body if isinstance(item, ast.FunctionDef) and item.name == "__init__"),
+                None,
+            )
             break
 
     assert init_fn is not None, "MixedNet.__init__ not found"
@@ -126,7 +128,10 @@ def test_create_okay_nabu_model_residual_connections_literal() -> None:
                     break
 
     assert target_call is not None, "Could not find MixedNet(...) call in create_okay_nabu_model"
-    residual_kw = next((kw for kw in target_call.keywords if kw.arg == "residual_connections"), None)
+    residual_kw = next(
+        (kw for kw in target_call.keywords if kw.arg == "residual_connections"),
+        None,
+    )
     assert residual_kw is not None, "Missing residual_connections keyword in create_okay_nabu_model"
 
     value = residual_kw.value
@@ -138,9 +143,8 @@ def test_create_okay_nabu_model_residual_connections_literal() -> None:
 @pytest.mark.integration
 def test_no_int8_shadow_artifacts_in_tuning() -> None:
     """Guardrail 7: remove legacy INT8 shadow evaluation artifacts from tuning."""
-    content = _read(AUTOTUNER_PATH)
     for forbidden in ("_evaluate_int8", "int8_shadow", "eval_results_int8"):
-        assert forbidden not in content
+        _assert_token_absent_in_python_files(SRC_ROOT / "tuning", forbidden)
 
 
 @pytest.mark.integration

@@ -53,7 +53,7 @@ def apply_sliding_window_detection(
         start = np.maximum(0, i - sliding_window_size + 1)
         window_sum = cumsum[i + 1] - cumsum[start]
         window_len = i - start + 1
-        return (window_sum > float(threshold) * window_len).astype(int)
+        return np.asarray((window_sum > float(threshold) * window_len).astype(int), dtype=int)
 
     # Validate clip_ids length matches scores
     if len(clip_ids) != scores.size:
@@ -102,8 +102,18 @@ def compute_accuracy(
     return float(np.sum(correct * weights) / total_weight)
 
 
+def _binarize_labels(y_true: np.ndarray) -> np.ndarray:
+    """Binarize labels: treat label==1 as positive, everything else as negative.
+
+    This ensures consistent handling of hard-negative label 2 across all metrics.
+    """
+    return (y_true == 1).astype(np.int32)
+
+
 def compute_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
     """Compute ROC AUC score."""
+    # Use helper for consistent binarization
+    y_true = _binarize_labels(y_true)
     if len(np.unique(y_true)) < 2:
         return 0.5
 
@@ -261,15 +271,61 @@ def compute_roc_pr_curves(
     }
 
 
+def _compute_thresholds(y_scores: np.ndarray, n_thresholds: int | None = None) -> np.ndarray:
+    """Compute threshold sweep values.
+
+    Args:
+        y_scores: Prediction scores.
+        n_thresholds: If provided, use fixed linspace for backward compatibility.
+            If None, use score-adaptive thresholds derived from unique score values.
+
+    Returns:
+        Sorted threshold array in [0, 1].
+    """
+    if n_thresholds is not None:
+        return np.linspace(0, 1, n_thresholds)
+
+    scores = np.asarray(y_scores, dtype=float).reshape(-1)
+    if scores.size == 0:
+        return np.array([0.0, 1.0], dtype=float)
+
+    unique_scores = np.unique(np.clip(scores, 0.0, 1.0))
+
+    # Keep adaptive mode bounded for dense float outputs:
+    # 333 unique values * 3 offsets + 2 boundaries = 1001 (pre-dedup).
+    max_unique_values = 333
+    if unique_scores.size > max_unique_values:
+        sample_idx = np.linspace(0, unique_scores.size - 1, max_unique_values).astype(int)
+        unique_scores = unique_scores[np.unique(sample_idx)]
+
+    eps = 1e-7
+    thresholds = np.concatenate(
+        [
+            np.array([0.0, 1.0], dtype=float),
+            unique_scores - eps,
+            unique_scores,
+            unique_scores + eps,
+        ]
+    )
+    thresholds = np.unique(np.clip(thresholds, 0.0, 1.0))
+
+    max_thresholds = 1000
+    if thresholds.size > max_thresholds:
+        sample_idx = np.linspace(0, thresholds.size - 1, max_thresholds).astype(int)
+        thresholds = thresholds[np.unique(sample_idx)]
+
+    return thresholds
+
+
 def compute_recall_at_no_faph(
     y_true: np.ndarray,
     y_scores: np.ndarray,
-    n_thresholds: int = 101,
+    n_thresholds: int | None = None,
     sliding_window_size: int = 1,
     clip_ids: np.ndarray | None = None,
 ) -> tuple[float, float]:
     """Compute recall at the lowest threshold yielding zero false positives."""
-    thresholds = np.linspace(0, 1, n_thresholds)
+    thresholds = _compute_thresholds(y_scores, n_thresholds=n_thresholds)
 
     y_pred_curr = np.array([], dtype=int)
 
@@ -316,7 +372,7 @@ def compute_recall_at_target_fah(
     y_scores: np.ndarray,
     ambient_duration_hours: float,
     target_fah: float,
-    n_thresholds: int = 101,
+    n_thresholds: int | None = None,
     sliding_window_size: int = 1,
     clip_ids: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
@@ -325,7 +381,7 @@ def compute_recall_at_target_fah(
     This selects the operating point with maximum recall among all thresholds
     satisfying ``fah <= target_fah``.
     """
-    thresholds = np.linspace(0, 1, n_thresholds)
+    thresholds = _compute_thresholds(y_scores, n_thresholds=n_thresholds)
     neg_mask = y_true == 0
     pos_mask = y_true == 1
     pos_total = np.sum(pos_mask)
@@ -430,12 +486,12 @@ def compute_average_viable_recall(
     y_scores: np.ndarray,
     ambient_duration_hours: float,
     max_fah: float = 10.0,
-    n_thresholds: int = 101,
+    n_thresholds: int | None = None,
     sliding_window_size: int = 1,
     clip_ids: np.ndarray | None = None,
 ) -> float:
     """Compute average viable recall (AUC of recall vs normalized FAH)."""
-    thresholds = np.linspace(0, 1, n_thresholds)
+    thresholds = _compute_thresholds(y_scores, n_thresholds=n_thresholds)
 
     recalls = []
     fahs = []
@@ -536,7 +592,7 @@ class MetricsCalculator:
         self,
         ambient_duration_hours: float,
         max_fah: float = 10.0,
-        n_thresholds: int = 101,
+        n_thresholds: int | None = None,
     ) -> float:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_average_viable_recall requires y_score")
@@ -550,7 +606,7 @@ class MetricsCalculator:
             clip_ids=self.clip_ids,
         )
 
-    def compute_recall_at_no_faph(self, n_thresholds: int = 101) -> tuple[float, float]:
+    def compute_recall_at_no_faph(self, n_thresholds: int | None = None) -> tuple[float, float]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_recall_at_no_faph requires y_score")
         return compute_recall_at_no_faph(
@@ -565,7 +621,7 @@ class MetricsCalculator:
         self,
         ambient_duration_hours: float,
         target_fah: float,
-        n_thresholds: int = 101,
+        n_thresholds: int | None = None,
     ) -> tuple[float, float, float]:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_recall_at_target_fah requires y_score")
@@ -624,16 +680,19 @@ class MetricsCalculator:
         auc_roc = compute_roc_auc(self.y_true, self.y_score)
 
         auc_pr: float | None = None
-        unique_classes = np.unique(self.y_true)
-        if len(unique_classes) >= 2:
+        valid_mask = self.y_true != 2
+        y_true_pr = _binarize_labels(self.y_true[valid_mask])
+        y_score_pr = self.y_score[valid_mask]
+
+        if len(np.unique(y_true_pr)) >= 2:
             try:
                 from sklearn.metrics import average_precision_score
 
-                auc_pr = float(average_precision_score(self.y_true, self.y_score))
+                auc_pr = float(average_precision_score(y_true_pr, y_score_pr))
             except ImportError:
                 logger.warning("sklearn not available; setting auc_pr=None in compute_all_metrics")
         else:
-            logger.warning("Only one class present in y_true; auc_pr is undefined and set to None")
+            logger.warning("Only one class present in PR-AUC labels; auc_pr is undefined and set to None")
 
         metrics: dict[str, Any] = {
             "accuracy": accuracy,
@@ -646,7 +705,12 @@ class MetricsCalculator:
 
         if ambient_duration_hours > 0:
             # Pass ambient_duration_hours explicitly instead of mutating estimator state
-            metrics.update(self.compute_fah_metrics(threshold=threshold, ambient_duration_hours=ambient_duration_hours))
+            metrics.update(
+                self.compute_fah_metrics(
+                    threshold=threshold,
+                    ambient_duration_hours=ambient_duration_hours,
+                )
+            )
 
             recall_no_faph, thresh_no_faph = self.compute_recall_at_no_faph()
             metrics["recall_at_no_faph"] = recall_no_faph

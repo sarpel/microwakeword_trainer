@@ -99,7 +99,11 @@ class AudioSimilarityDetector:
     # the start of an indented code block. Python uses indentation (spaces/tabs)
     # instead of curly braces {} like other languages!
 
-    def __init__(self, model_name: str = "laion/clap-htsat-unfused", device: Optional[str] = None):
+    def __init__(
+        self,
+        model_name: str = "laion/clap-htsat-unfused",
+        device: Optional[str] = None,
+    ):
         """
         Initialize the Audio Similarity Detector.
 
@@ -269,7 +273,11 @@ class AudioSimilarityDetector:
 
         try:
             # İŞLEMCİYE GÖNDER (RAM Sorunu için .tolist() kullanıyoruz)
-            inputs = self.processor(audio=audio_tensor.tolist(), sampling_rate=self.sample_rate, return_tensors="pt").to(self.device)
+            inputs = self.processor(
+                audio=audio_tensor.tolist(),
+                sampling_rate=self.sample_rate,
+                return_tensors="pt",
+            ).to(self.device)
 
             with torch.no_grad():
                 # Determine target dtype safely
@@ -286,7 +294,7 @@ class AudioSimilarityDetector:
                 # Only cast floating-point tensors to target dtype, skip masks and integer tensors
                 mask_keys = {"attention_mask"}
                 if target_dtype is not None:
-                    inputs = {k: v.to(target_dtype) if (k not in mask_keys and isinstance(v, torch.Tensor) and torch.is_floating_point(v)) else v for k, v in inputs.items()}
+                    inputs = {k: (v.to(target_dtype) if (k not in mask_keys and isinstance(v, torch.Tensor) and torch.is_floating_point(v)) else v) for k, v in inputs.items()}
 
                 # MODEL ÇIKTISINI AL
                 outputs = self.model.get_audio_features(**inputs)
@@ -307,7 +315,7 @@ class AudioSimilarityDetector:
 
                 # TENSÖRÜ NUMPY DİZİSİNE ÇEVİR
                 # .float() ile 32-bit'e çekip numpy'a veriyoruz
-                embedding = embedding_tensor.float().cpu().numpy().squeeze()
+                embedding = np.asarray(embedding_tensor.float().cpu().numpy().squeeze())
 
             return embedding
 
@@ -410,7 +418,12 @@ class AudioSimilarityDetector:
     # METHOD: find_similar_pairs (PUBLIC METHOD)
     # ========================================================================
 
-    def find_similar_pairs(self, similarity_matrix: np.ndarray, audio_files: List[Path], threshold: float = 0.90) -> List[Tuple[Path, Path, float]]:
+    def find_similar_pairs(
+        self,
+        similarity_matrix: np.ndarray,
+        audio_files: List[Path],
+        threshold: float = 0.90,
+    ) -> List[Tuple[Path, Path, float]]:
         """
         Identify pairs of audio files that exceed the similarity threshold.
 
@@ -489,7 +502,12 @@ class AudioSimilarityDetector:
     # METHOD: organize_files (PUBLIC METHOD)
     # ========================================================================
 
-    def organize_files(self, similar_pairs: List[Tuple[Path, Path, float]], output_dir: Path, copy_mode: bool = True) -> None:
+    def organize_files(
+        self,
+        similar_pairs: List[Tuple[Path, Path, float]],
+        output_dir: Path,
+        copy_mode: bool = True,
+    ) -> None:
         """
         Organize similar audio files into folders.
 
@@ -573,7 +591,7 @@ class AudioSimilarityDetector:
                 file_to_cluster[file1] = cluster2
 
             # CASE 4: BOTH ARE ALREADY IN CLUSTERS
-            elif cluster1 != cluster2 and cluster2 is not None:
+            elif cluster1 is not None and cluster1 != cluster2 and cluster2 is not None:
                 # MERGE CLUSTERS: This is more complex!
                 # All files in cluster2 should move to cluster1
                 # CONCEPT: We iterate through all mappings and update them
@@ -706,9 +724,19 @@ Examples:
         # help text is shown when user runs: python script.py --help
     )
 
-    parser.add_argument("--target", type=str, default="./sorted_audio", help="Path to output directory (default: ./sorted_audio)")  # Used if user doesn't specify
+    parser.add_argument(
+        "--target",
+        type=str,
+        default="./sorted_audio",
+        help="Path to output directory (default: ./sorted_audio)",
+    )  # Used if user doesn't specify
 
-    parser.add_argument("--threshold", type=float, default=0.90, help="Similarity threshold (0.0-1.0, default: 0.90)")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.90,
+        help="Similarity threshold (0.0-1.0, default: 0.90)",
+    )
 
     parser.add_argument(
         "--move",
@@ -738,11 +766,9 @@ Examples:
     if not source_dir.is_dir():
         print(f"❌ ERROR: Source path is not a directory: {source_dir}")
         sys.exit(1)
-
-    # VALIDATE THRESHOLD
     if not 0.0 <= args.threshold <= 1.0:
         print(f"❌ ERROR: Threshold must be between 0.0 and 1.0 (got {args.threshold})")
-        sys.exit(1)
+        sys.exit(2)  # Validation error
 
     # ========================================================================
     # STEP 3: INITIALIZE THE DETECTOR

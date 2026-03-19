@@ -65,7 +65,11 @@ def test_select_export_probability_cutoff_prefers_fah_at_target_recall() -> None
     y_scores = np.array([0.99, 0.95, 0.90, 0.10, 0.20, 0.30, 0.40, 0.80], dtype=np.float32)
 
     cfg = {
-        "evaluation": {"target_recall": 0.90, "target_fah": 2.0, "n_thresholds": 101},
+        "evaluation": {
+            "target_recall": 0.90,
+            "target_fah": 2.0,
+            "n_thresholds": 101,
+        },
         "training": {"ambient_duration_hours": 10.0, "test_split": 0.1},
         "export": {"sliding_window_size": 1},
     }
@@ -83,7 +87,11 @@ def test_select_export_probability_cutoff_falls_back_to_recall_at_target_fah() -
     y_scores = np.array([0.60, 0.55, 0.51, 0.50, 0.45, 0.40, 0.35, 0.30], dtype=np.float32)
 
     cfg = {
-        "evaluation": {"target_recall": 1.1, "target_fah": 0.0, "n_thresholds": 101},
+        "evaluation": {
+            "target_recall": 1.1,
+            "target_fah": 0.0,
+            "n_thresholds": 101,
+        },
         "training": {"ambient_duration_hours": 10.0, "test_split": 0.1},
         "export": {"sliding_window_size": 1},
     }
@@ -99,7 +107,12 @@ def test_select_export_probability_cutoff_applies_low_threshold_guardrail() -> N
     y_scores = np.array([0.02, 0.03, 0.04, 0.0, 0.0, 0.0], dtype=np.float32)
 
     cfg = {
-        "evaluation": {"target_recall": 1.0, "target_fah": 0.0, "n_thresholds": 101, "default_threshold": 0.91},
+        "evaluation": {
+            "target_recall": 1.0,
+            "target_fah": 0.0,
+            "n_thresholds": 101,
+            "default_threshold": 0.91,
+        },
         "training": {"ambient_duration_hours": 10.0, "test_split": 0.1},
         "export": {"sliding_window_size": 1, "probability_cutoff": 0.92},
     }
@@ -151,16 +164,50 @@ def test_auto_calculate_probability_cutoff_runs_tflite_inference(tmp_path: Path,
             return None
 
         def get_input_details(self):
-            return [{"index": 0, "shape": np.array([1, 3, 40]), "dtype": np.int8, "quantization_parameters": {"scales": np.array([0.1]), "zero_points": np.array([0])}}]
+            return [
+                {
+                    "index": 0,
+                    "shape": np.array([1, 3, 40]),
+                    "dtype": np.int8,
+                    "quantization_parameters": {
+                        "scales": np.array([0.1]),
+                        "zero_points": np.array([0]),
+                    },
+                }
+            ]
 
         def get_output_details(self):
-            return [{"index": 1, "dtype": np.uint8, "quantization_parameters": {"scales": np.array([1.0 / 255.0]), "zero_points": np.array([0])}}]
+            return [
+                {
+                    "index": 1,
+                    "dtype": np.uint8,
+                    "quantization_parameters": {
+                        "scales": np.array([1.0 / 255.0]),
+                        "zero_points": np.array([0]),
+                    },
+                }
+            ]
 
         def get_tensor_details(self):
             return [
-                {"index": 0, "name": "input", "shape": np.array([1, 3, 40]), "dtype": np.int8},
-                {"index": 1, "name": "output", "shape": np.array([1, 1]), "dtype": np.uint8},
-                {"index": 5, "name": "ReadVariableOp_stream", "shape": np.array([1, 2, 1, 40]), "dtype": np.float32},
+                {
+                    "index": 0,
+                    "name": "input",
+                    "shape": np.array([1, 3, 40]),
+                    "dtype": np.int8,
+                },
+                {
+                    "index": 1,
+                    "name": "output",
+                    "shape": np.array([1, 1]),
+                    "dtype": np.uint8,
+                },
+                {
+                    "index": 5,
+                    "name": "ReadVariableOp_stream",
+                    "shape": np.array([1, 2, 1, 40]),
+                    "dtype": np.float32,
+                },
             ]
 
         def set_tensor(self, index: int, value):
@@ -177,11 +224,19 @@ def test_auto_calculate_probability_cutoff_runs_tflite_inference(tmp_path: Path,
             prob = 0.95 if mean_val > 20 else 0.05
             return np.array([[int(round(prob * 255.0))]], dtype=np.uint8)
 
-    monkeypatch.setattr(tflite_mod, "tf", SimpleNamespace(lite=SimpleNamespace(Interpreter=FakeInterpreter)))
+    monkeypatch.setattr(
+        tflite_mod,
+        "tf",
+        SimpleNamespace(lite=SimpleNamespace(Interpreter=FakeInterpreter)),
+    )
     monkeypatch.setattr("src.data.dataset.FeatureStore", FakeFeatureStore)
 
     cfg = {
-        "evaluation": {"target_recall": 0.8, "target_fah": 1.0, "n_thresholds": 51},
+        "evaluation": {
+            "target_recall": 0.8,
+            "target_fah": 1.0,
+            "n_thresholds": 51,
+        },
         "training": {"ambient_duration_hours": 10.0, "test_split": 0.1},
         "export": {"sliding_window_size": 1},
     }

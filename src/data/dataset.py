@@ -6,22 +6,29 @@ Provides:
 - FeatureStore: Manage features on disk with mmap access
 """
 
+import json
 import logging
 import os
 import struct
 from collections import OrderedDict
-import json
+from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha1, sha256
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union, cast
 
 import numpy as np
 
 from src.data.ingestion import load_audio_wave
 
 logger = logging.getLogger(__name__)
+
+
+class _BatchBuffer(TypedDict):
+    features: np.ndarray
+    labels: np.ndarray
+    weights: np.ndarray
+    is_hard_neg: np.ndarray
 
 
 # =============================================================================
@@ -63,6 +70,7 @@ class RaggedMmap:
         name: str = "ragged",
         dtype: Optional["np.dtype[Any]"] = None,
         create: bool = True,
+        max_cache_memory_mb: float = 512.0,
     ):
         """Initialize RaggedMmap storage.
 
@@ -71,6 +79,7 @@ class RaggedMmap:
             name: Name for this storage
             dtype: NumPy data type for arrays
             create: If True, create directory if it does not exist
+            max_cache_memory_mb: Maximum memory for cache in MB (default: 512)
         """
         self.base_dir = Path(base_dir)
         self.name = name
@@ -84,6 +93,10 @@ class RaggedMmap:
         self._num_arrays: int = 0
         self._total_bytes: int = 0
         self._memory_cache: OrderedDict[int, np.ndarray] | None = None
+        self._max_cache_memory_mb = max_cache_memory_mb
+        self._current_cache_memory_mb: float = 0.0
+        self._cache_hits: int = 0
+        self._cache_misses: int = 0
 
         if create:
             self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -122,12 +135,28 @@ class RaggedMmap:
                 length_data = f.read()
             self._lengths = np.frombuffer(length_data, dtype=np.int64)
 
-            self._num_arrays = len(self._lengths)
-            self._total_bytes = int(self._lengths.sum())
+            # Validate/repair index files if there is a single trailing orphan entry.
+            # This can happen after an interrupted write while updating index files.
+            offsets_len = len(self._offsets)
+            lengths_len = len(self._lengths)
+            if offsets_len != lengths_len:
+                diff = abs(offsets_len - lengths_len)
+                if diff == 1:
+                    min_len = min(offsets_len, lengths_len)
+                    logger.warning(
+                        "RaggedMmap index mismatch detected for '%s' at %s: offsets=%d, lengths=%d. Using the first %d aligned entries and ignoring one trailing orphan entry.",
+                        self.name,
+                        self.base_dir,
+                        offsets_len,
+                        lengths_len,
+                        min_len,
+                    )
+                    self._offsets = self._offsets[:min_len]
+                    self._lengths = self._lengths[:min_len]
+                else:
+                    raise ValueError(f"Offsets ({offsets_len}) and lengths ({lengths_len}) mismatch")
 
-            # Validate offsets and lengths have the same length
-            if len(self._offsets) != len(self._lengths):
-                raise ValueError(f"Offsets ({len(self._offsets)}) and lengths ({len(self._lengths)}) mismatch")
+            self._num_arrays = len(self._lengths)
             self._total_bytes = int(self._lengths.sum())
 
     def open(self, mode: str = "r", disable_mmap: bool = False):
@@ -282,11 +311,20 @@ class RaggedMmap:
         if self._memory_cache is not None:
             if idx in self._memory_cache:
                 self._memory_cache.move_to_end(idx)
+                self._cache_hits += 1
                 return self._memory_cache[idx]
             array = np.array(self._data[elem_offset : elem_offset + elem_length])
-            self._memory_cache[idx] = array
-            if len(self._memory_cache) > 1024:
-                self._memory_cache.popitem(last=False)
+            self._cache_misses += 1
+            # Cache with memory pressure awareness
+            item_size_mb = array.nbytes / (1024 * 1024)
+            if item_size_mb < self._max_cache_memory_mb * 0.1:  # Only cache small items
+                # Evict entries until we have room
+                while (self._current_cache_memory_mb + item_size_mb > self._max_cache_memory_mb
+                       and self._memory_cache):
+                    _, evicted = self._memory_cache.popitem(last=False)
+                    self._current_cache_memory_mb -= evicted.nbytes / (1024 * 1024)
+                self._memory_cache[idx] = array
+                self._current_cache_memory_mb += item_size_mb
             return array
         array = np.array(self._data[elem_offset : elem_offset + elem_length])
         return array
@@ -296,7 +334,23 @@ class RaggedMmap:
         if self._memory_cache is not None:
             cache_size = len(self._memory_cache)
             self._memory_cache.clear()
+            self._current_cache_memory_mb = 0.0
             logger.debug(f"Cleared RaggedMmap cache ({cache_size} items)")
+
+    def get_cache_stats(self) -> dict[str, float]:
+        """Get cache statistics.
+
+        Returns:
+            Dict with hits, misses, hit_rate, memory_used_mb
+        """
+        total = self._cache_hits + self._cache_misses
+        hit_rate = self._cache_hits / total if total > 0 else 0.0
+        return {
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+            "hit_rate": hit_rate,
+            "memory_used_mb": self._current_cache_memory_mb,
+        }
 
     def get_batch(self, indices: List[int]) -> List[np.ndarray]:
         """Get multiple arrays by indices with optimized sequential access.
@@ -522,6 +576,13 @@ class FeatureStore:
         if self.labels is not None:
             self.labels.close()
 
+    def clear_caches(self):
+        """Clear memory caches in underlying RaggedMmap stores."""
+        if self.features is not None:
+            self.features.clear_cache()
+        if self.labels is not None:
+            self.labels.clear_cache()
+
 
 # =============================================================================
 # WAKE WORD DATASET (PyTorch-compatible)
@@ -575,7 +636,7 @@ class WakeWordDataset:
 
         # Pre-allocate batch buffers to avoid repeated allocation
         max_batch_size = self.batch_size
-        self._batch_buffer = {
+        self._batch_buffer: _BatchBuffer = {
             "features": np.empty((max_batch_size, self.max_time_frames, self.feature_dim), dtype=np.float32),
             "labels": np.empty(max_batch_size, dtype=np.int64),
             "weights": np.empty(max_batch_size, dtype=np.float32),
@@ -904,7 +965,11 @@ class WakeWordDataset:
 
         try:
             with open(paths_file, "r") as f:
-                return json.load(f)
+                loaded = json.load(f)
+                if isinstance(loaded, list) and all(isinstance(item, str) for item in loaded):
+                    return cast(list[str], loaded)
+                logger.warning(f"Invalid file path payload in {paths_file}; expected list[str]")
+                return None
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to load file paths from {paths_file}: {e}")
             return None
@@ -954,6 +1019,7 @@ class WakeWordDataset:
         if self._is_cache_valid(processed_dir, paths_cfg, hardware_cfg, training_cfg):
             logger.info("[CACHE] Valid feature cache found — skipping feature extraction")
             self._load_store()
+            self._is_built = True
             return self
 
         logger.info("[CACHE] No valid cache found — performing full feature extraction")
@@ -1124,7 +1190,7 @@ class WakeWordDataset:
         shuffle: bool,
         include_hard_negative_flag: bool,
     ):
-        batch_buffer = {
+        batch_buffer: _BatchBuffer = {
             "features": np.empty((self.batch_size, max_time_frames, self.feature_dim), dtype=np.float32),
             "labels": np.empty(self.batch_size, dtype=np.int64),
             "weights": np.empty(self.batch_size, dtype=np.float32),
@@ -1156,6 +1222,9 @@ class WakeWordDataset:
                 epoch_indices = rng.permutation(indices).tolist() if shuffle else indices
                 batch_idx = 0
 
+                # Clear RaggedMmap caches at epoch boundaries to prevent memory buildup
+                store.clear_caches()
+
                 for idx in epoch_indices:
                     try:
                         feature, label = store.get(idx)
@@ -1165,7 +1234,7 @@ class WakeWordDataset:
                     fixed_feature = self._pad_or_truncate(feature, max_time_frames)
                     if batch_idx < len(batch_buffer["features"]):
                         batch_buffer["features"][batch_idx] = fixed_feature
-                        batch_buffer["labels"][batch_idx] = label & 1
+                        batch_buffer["labels"][batch_idx] = int(label == 1)  # Binarize: 0=neg, 1=pos, 2=hard_neg → 0
                         batch_buffer["weights"][batch_idx] = 1.0
                         batch_buffer["is_hard_neg"][batch_idx] = label == 2
                         batch_idx += 1
@@ -1207,7 +1276,7 @@ class WakeWordDataset:
                             # Retry adding the sample after flushing
                             if batch_idx < len(batch_buffer["features"]):
                                 batch_buffer["features"][batch_idx] = fixed_feature
-                                batch_buffer["labels"][batch_idx] = label & 1
+                                batch_buffer["labels"][batch_idx] = int(label == 1)  # Binarize: 2→0
                                 batch_buffer["weights"][batch_idx] = 1.0
                                 batch_buffer["is_hard_neg"][batch_idx] = label == 2
                                 batch_idx += 1
@@ -1217,14 +1286,17 @@ class WakeWordDataset:
                             if added:
                                 break
 
-                if batch_idx != 0:
+                if batch_idx == 0:
+                    continue  # Skip empty batches to avoid yielding empty data
+
+                if not infinite:
+                    # Yield remaining partial batch before exiting
                     batch = (
                         batch_buffer["features"][:batch_idx].copy(),
                         batch_buffer["labels"][:batch_idx].copy(),
                         batch_buffer["weights"][:batch_idx].copy(),
                         batch_buffer["is_hard_neg"][:batch_idx].copy(),
                     )
-                    batch_idx = 0
                     fingerprints, ground_truth, sample_weights, is_hard_neg = batch
                     if include_hard_negative_flag:
                         yield (
@@ -1239,8 +1311,6 @@ class WakeWordDataset:
                             ground_truth.astype(np.int32, copy=False),
                             sample_weights,
                         )
-
-                if not infinite:
                     break
         finally:
             try:
@@ -1268,7 +1338,7 @@ class WakeWordDataset:
             yield from self._iter_split_batches(
                 split="train",
                 max_time_frames=max_time_frames,
-                infinite=True,
+                infinite=False,
                 shuffle=True,
                 include_hard_negative_flag=True,
             )

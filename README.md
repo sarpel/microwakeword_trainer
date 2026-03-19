@@ -1,4 +1,4 @@
-# microwakeword_trainer v2.0.0
+# microwakeword_trainer v2.1.0
 
 GPU-accelerated wake word training framework for ESPHome. Train custom "Hey Siri" or "OK Google" style wake words and deploy them to ESP32 devices.
 
@@ -12,6 +12,7 @@ This framework provides a complete pipeline for training wake word detection mod
 - **MixedNet architecture** optimized for edge deployment
 - **GPU-accelerated training** with CuPy SpecAugment
 - **ESPHome-compatible export** with INT8 quantization
+- **Adaptive thresholding** for production-ready evaluation metrics
 - **Streaming inference** support for real-time detection
 
 ## Project Status
@@ -836,6 +837,22 @@ python scripts/verify_esphome.py model.tflite --verbose
 # - Wrong number of subgraphs (must be 2)
 # - Missing quantization
 ```
+
+### RaggedMmap Index Mismatch Warning
+
+If you see a warning like:
+
+`RaggedMmap index mismatch detected ... Using the first N aligned entries and ignoring one trailing orphan entry.`
+
+this indicates a recoverable single-entry trailing index mismatch in processed feature-store files. The loader now recovers in-memory for `abs(len(offsets)-len(lengths)) == 1` so evaluation/comparison workflows can continue; larger mismatches still fail fast and require regenerating processed data.
+
+### evaluate_model datetime error (resolved)
+
+If you previously hit:
+
+`UnboundLocalError: cannot access local variable 'datetime' where it is not associated with a value`
+
+in `scripts/evaluate_model.py`, this is fixed in current code. Update to latest and re-run the command.
 
 ---
 

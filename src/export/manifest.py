@@ -2,10 +2,13 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 import tensorflow as tf
+
+from src.utils.text_utils import to_snake_case
 
 from .tflite_utils import estimate_tensor_arena_size
 
@@ -13,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 # Default tensor arena size in bytes (0 = auto-calculate from model)
 DEFAULT_TENSOR_ARENA_SIZE = 0
+
+# Sentinel value: probability_cutoff <= 0 triggers auto-calculation from checkpoint metadata.
+# Set export.probability_cutoff: 0 in config to enable auto-selection.
+AUTO_PROBABILITY_CUTOFF_SENTINEL = 0.0
 
 
 def generate_manifest(
@@ -39,6 +46,9 @@ def generate_manifest(
     # Resolve tensor arena size from config/measurement policy
     arena_size = resolve_tensor_arena_size(tflite_path=tflite_path, export_config=export_config)
 
+    # Resolve probability cutoff: 0 triggers auto-selection from checkpoint metadata
+    probability_cutoff = resolve_probability_cutoff(tflite_path=tflite_path, export_config=export_config)
+
     # Build model filename from path
     model_filename = Path(model_path).name if model_path else "wake_word.tflite"
 
@@ -55,7 +65,7 @@ def generate_manifest(
         "trained_languages": export_config.get("trained_languages", ["en"]),
         "version": 2,
         "micro": {
-            "probability_cutoff": float(export_config.get("probability_cutoff", 0.97)),
+            "probability_cutoff": probability_cutoff,
             "sliding_window_size": export_config.get("sliding_window_size", 5),
             "feature_step_size": feature_step_size,
             "tensor_arena_size": arena_size,
@@ -64,6 +74,87 @@ def generate_manifest(
     }
 
     return manifest
+
+
+def resolve_probability_cutoff(
+    tflite_path: str | None,
+    export_config: dict[str, Any],
+    evaluation_default: float = 0.5,
+) -> float:
+    """Resolve manifest probability_cutoff using a single canonical policy.
+
+    Policy:
+    1) If export.probability_cutoff > 0, use it as explicit override.
+    2) Else if TFLite sidecar metadata exists with tuned_probability_cutoff, use it.
+    3) Else fallback to 0.5 (reasonable deployment default; avoids silent missed detections
+       from the old 0.97 hardcode during early training when scores are low).
+
+    This mirrors the resolve_tensor_arena_size() pattern: set probability_cutoff: 0
+    in config to enable auto-selection from the checkpoint metadata written by training
+    and export pipelines.
+    """
+    configured = export_config.get("probability_cutoff", AUTO_PROBABILITY_CUTOFF_SENTINEL)
+    try:
+        configured_float = float(configured)
+    except (TypeError, ValueError):
+        configured_float = AUTO_PROBABILITY_CUTOFF_SENTINEL
+
+    if configured_float > AUTO_PROBABILITY_CUTOFF_SENTINEL:
+        return float(configured_float)
+
+    # Auto-select: try to read from checkpoint sidecar metadata
+    if tflite_path:
+        tflite_p = Path(tflite_path)
+        # Look for metadata sidecar next to the checkpoint (same stem, .metadata.json)
+        # The export pipeline writes tuned_probability_cutoff to the .weights.h5 sidecar.
+        # Search common locations: same dir as tflite, parent dir (checkpoint dir).
+        # Filter to ensure we select the metadata that corresponds to the tflite_p model.
+        candidate_dirs = [tflite_p.parent, tflite_p.parent.parent]
+        tflite_stem = tflite_p.stem
+
+        for candidate_dir in candidate_dirs:
+            matching_files = []
+            # Filter metadata files that match the TFLite model/checkpoint identifier
+            for meta_file in candidate_dir.glob("*.metadata.json"):
+                meta_stem = meta_file.stem.replace(".metadata", "")
+                # Use common prefix to find matching metadata files
+                common_prefix = os.path.commonprefix([tflite_stem, meta_stem])
+                # Only match if there's a meaningful common prefix
+                if len(common_prefix) > 0:
+                    matching_files.append(meta_file)
+
+            # Deterministically select single matching file
+            if len(matching_files) == 1:
+                meta_file = matching_files[0]
+            elif len(matching_files) > 1:
+                # Multiple matches: prefer the one with largest common prefix overlap
+                meta_file = max(matching_files, key=lambda f: len(os.path.commonprefix([tflite_stem, f.stem.replace(".metadata", "")])))
+            else:
+                # No match in this dir, continue to next candidate
+                continue
+
+            try:
+                with open(meta_file, "r") as f:
+                    meta = json.load(f)
+                tuned = meta.get("tuned_probability_cutoff") or meta.get("probability_cutoff")
+                if tuned is not None:
+                    cutoff = float(tuned)
+                    if 0.0 < cutoff <= 1.0:
+                        logger.info(
+                            "Auto probability_cutoff: %.4f from checkpoint metadata %s",
+                            cutoff,
+                            meta_file,
+                        )
+                        return cutoff
+            except Exception as exc:
+                logger.debug("Could not read metadata file %s: %s", meta_file, exc)
+
+    # Final fallback: use 0.5 so model can still detect
+    logger.warning(
+        "Auto probability_cutoff: no checkpoint metadata found; using fallback %.2f. Run mww-export with --data-dir to compute optimal cutoff from test split.",
+        evaluation_default,
+    )
+    return evaluation_default
 
 
 def resolve_tensor_arena_size(tflite_path: str | None, export_config: dict[str, Any]) -> int:
@@ -221,6 +312,8 @@ def verify_esphome_compatibility(manifest: dict[str, Any]) -> dict[str, Any]:
             if not (0.0 < prob_cutoff <= 1.0):
                 results["compatible"] = False
                 results["errors"].append("probability_cutoff must be between 0 and 1")
+            elif prob_cutoff >= 0.95:
+                results["warnings"].append(f"probability_cutoff ({prob_cutoff}) is very high and may cause missed detections")
 
         if micro.get("feature_step_size") != 10:
             results["compatible"] = False
@@ -255,7 +348,7 @@ def create_esphome_package(
         model: Trained Keras model (not used, for API compatibility)
         config: Full configuration dictionary
         output_dir: Output directory for package files
-        model_name: Name for the model (used in filenames)
+        model_name: Name for the model (used in filenames, snake_case preferred)
         tflite_path: Optional path to TFLite model
         analysis_results: Optional TFLite analysis results to include
 
@@ -279,8 +372,13 @@ def create_esphome_package(
         tflite_path=tflite_path,
     )
 
-    # Save manifest
-    manifest_path = str(Path(output_dir) / "manifest.json")
+    # Get wake_word from manifest for filename (snake_case)
+    wake_word_display = manifest.get("wake_word", model_name)
+    wake_word_snake = to_snake_case(wake_word_display)
+
+    # Save manifest with wake_word-based filename
+    manifest_filename = f"{wake_word_snake}.json"
+    manifest_path = str(Path(output_dir) / manifest_filename)
     save_manifest(manifest, manifest_path)
 
     # Get tensor arena size from manifest

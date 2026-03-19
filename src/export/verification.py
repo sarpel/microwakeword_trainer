@@ -1,9 +1,63 @@
+import ast
 from typing import Any
 
 import numpy as np
 import tensorflow as tf
 
 from .tflite_utils import estimate_tensor_arena_size
+
+
+def _sanitize_json(obj: Any) -> Any:
+    """Convert NumPy types to JSON-safe Python primitives.
+
+    Recursively converts:
+    - np.ndarray -> list via .tolist()
+    - np.integer -> int
+    - np.floating -> float
+    - np.dtype -> str
+    - Recursively handles lists and dicts
+    """
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.integer, int)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, float)):
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.dtype):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_sanitize_json(item) for item in obj]
+    else:
+        return obj
+
+
+def _get_default_model_mixconv_kernel_sizes() -> list[list[int]]:
+    """Read default MixConv kernels from canonical model config defaults."""
+    from config.loader import ModelConfig
+
+    raw = ModelConfig().mixconv_kernel_sizes
+    # Avoid blindly wrapping: if raw already starts with '[' and ends with ']', use it as-is
+    to_parse = raw if raw.startswith("[") and raw.endswith("]") else f"[{raw}]"
+    try:
+        parsed = ast.literal_eval(to_parse)
+    except (SyntaxError, ValueError) as e:
+        raise ValueError(f"Failed to parse mixconv_kernel_sizes from ModelConfig: {e}") from e
+    if not isinstance(parsed, list):
+        raise ValueError(f"Default mixconv_kernel_sizes must parse to list, got {type(parsed).__name__}")
+    # Validate it's a list of iterables and convert each element to int
+    return [[int(k) for k in group] for group in parsed]
+
+
+def _get_default_model_pointwise_filters() -> list[int]:
+    """Read default pointwise filters from canonical model config defaults."""
+    from config.loader import ModelConfig
+
+    raw = ModelConfig().pointwise_filters
+    return [int(v.strip()) for v in raw.split(",") if v.strip()]
 
 
 def _ensure_quantized_int(value: Any) -> int:
@@ -50,9 +104,9 @@ def compute_expected_state_shapes(
     if temporal_frames < 2:
         raise ValueError(f"temporal_frames must be >= 2, got {temporal_frames}")
     if mixconv_kernel_sizes is None:
-        mixconv_kernel_sizes = [[5], [7, 11], [9, 15], [23]]
+        mixconv_kernel_sizes = _get_default_model_mixconv_kernel_sizes()
     if pointwise_filters is None:
-        pointwise_filters = [64, 64, 64, 64]
+        pointwise_filters = _get_default_model_pointwise_filters()
     if mel_bins < 1:
         raise ValueError(f"mel_bins must be >= 1, got {mel_bins}")
     if first_conv_filters < 1:
@@ -75,7 +129,10 @@ def compute_expected_state_shapes(
     ]
 
 
-def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int, ...]] | None = None) -> dict[str, Any]:
+def verify_tflite_model(
+    tflite_path: str,
+    expected_state_shapes: list[tuple[int, ...]] | None = None,
+) -> dict[str, Any]:
     """Validate TFLite model compatibility against ESPHome invariants.
 
     The interpreter is created with
@@ -149,7 +206,10 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         input_zero = _ensure_quantized_int(input_zero_points[0])
         details["input_scale"] = input_scale
         details["input_zero_point"] = input_zero
-        checks["input_quant_params"] = abs(input_scale - 0.101961) <= 1e-4 and input_zero == -128
+        # Canonical input scale = 26/255 ≈ 0.10196078568696976 (ARCHITECTURAL_CONSTITUTION Article II).
+        # Tolerance 5e-4 accommodates minor floating-point variation in TFLite's
+        # quantizer while still catching grossly wrong scales.
+        checks["input_quant_params"] = abs(input_scale - 0.10196078568696976) <= 5e-4 and input_zero == -128
         if not checks["input_quant_params"]:
             errors.append(f"Input quantization mismatch: scale={input_scale}, zero_point={input_zero}")
             valid = False
@@ -262,7 +322,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
             if tensor is not None:
                 observed_state_payload_shapes.append(tuple(int(v) for v in tensor.get("shape", [])))
                 dtype = tensor.get("dtype")
-                observed_read_payload_dtypes.append(str(dtype))
+                observed_read_payload_dtypes.append(np.dtype(dtype).name)
                 quant = tensor.get("quantization_parameters", {}) or {}
                 scales = np.asarray(quant.get("scales", []))
                 zero_points = np.asarray(quant.get("zero_points", []))
@@ -274,19 +334,19 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
                 tensor = all_tensors.get(payload_idx)
                 if tensor is not None:
                     dtype = tensor.get("dtype")
-                    observed_assign_payload_dtypes.append(str(dtype))
+                    observed_assign_payload_dtypes.append(np.dtype(dtype).name)
                     quant = tensor.get("quantization_parameters", {}) or {}
                     scales = np.asarray(quant.get("scales", []))
                     zero_points = np.asarray(quant.get("zero_points", []))
                     observed_assign_payload_quantized.append(scales.size > 0 and zero_points.size > 0)
 
-    details["observed_state_payload_shapes"] = observed_state_payload_shapes
-    details["observed_read_payload_dtypes"] = observed_read_payload_dtypes
-    details["observed_read_payload_quantized"] = observed_read_payload_quantized
-    details["observed_assign_payload_dtypes"] = observed_assign_payload_dtypes
-    details["observed_assign_payload_quantized"] = observed_assign_payload_quantized
+    details["observed_state_payload_shapes"] = _sanitize_json(observed_state_payload_shapes)
+    details["observed_read_payload_dtypes"] = _sanitize_json(observed_read_payload_dtypes)
+    details["observed_read_payload_quantized"] = _sanitize_json(observed_read_payload_quantized)
+    details["observed_assign_payload_dtypes"] = _sanitize_json(observed_assign_payload_dtypes)
+    details["observed_assign_payload_quantized"] = _sanitize_json(observed_assign_payload_quantized)
 
-    checks["state_payload_dtypes_int8"] = all(np.dtype(dt) == np.dtype("int8") for dt in observed_read_payload_dtypes)
+    checks["state_payload_dtypes_int8"] = all(np.dtype(dt).name == "int8" for dt in observed_read_payload_dtypes)
     checks["state_dtypes_int8"] = checks["state_payload_dtypes_int8"]
     if not checks["state_payload_dtypes_int8"]:
         errors.append(f"READ_VARIABLE payload tensors must be int8, got dtypes: {observed_read_payload_dtypes}")
@@ -298,7 +358,7 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         valid = False
 
     if observed_assign_payload_dtypes:
-        checks["assign_payload_dtypes_int8"] = all(np.dtype(dt) == np.dtype("int8") for dt in observed_assign_payload_dtypes)
+        checks["assign_payload_dtypes_int8"] = all(np.dtype(dt).name == "int8" for dt in observed_assign_payload_dtypes)
         if not checks["assign_payload_dtypes_int8"]:
             errors.append(f"ASSIGN_VARIABLE payload tensors must be int8, got dtypes: {observed_assign_payload_dtypes}")
             valid = False
@@ -314,29 +374,27 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
 
     # Check shapes as a set (TFLite graph traversal order for READ_VARIABLE ops
     # is not guaranteed to match variable creation order)
-    if observed_state_payload_shapes is not None:
-        observed_sorted = sorted(observed_state_payload_shapes)
-    else:
-        observed_sorted = []
+    observed_sorted = sorted(observed_state_payload_shapes)
     expected_sorted = sorted(expected_state_shapes)
     checks["state_shapes"] = observed_sorted == expected_sorted
     details["expected_state_shapes"] = expected_sorted
     details["state_shape_assumption"] = "config-aware" if not expected_shapes_assumed_default else "default-temporal-frames"
 
     if not checks["state_shapes"]:
+        # Fail fast on shape mismatches - do not silently allow under default assumptions
+        error_msg = (
+            f"State payload tensor shape mismatch: observed={observed_sorted}, expected={expected_sorted}. "
+            f"Shape assumption: {'config-aware' if not expected_shapes_assumed_default else 'default-temporal-frames'}. "
+            "For non-default clip_duration_ms/architecture, pass config-aware expected_state_shapes."
+        )
+        errors.append(error_msg)
+        valid = False
         if expected_shapes_assumed_default:
-            warnings.append(
-                "State payload tensor shape mismatch under default temporal-frame assumptions. "
-                "For non-default clip_duration_ms/architecture, pass config-aware expected_state_shapes "
-                "to avoid false failures."
-            )
-            checks["state_shapes"] = True
+            # Also store the mismatch details for debugging
             details["state_shape_mismatch_under_default_assumption"] = {
                 "observed": observed_sorted,
                 "expected_default": expected_sorted,
             }
-        else:
-            errors.append(f"State payload tensor shape mismatch: observed={observed_sorted}, expected={expected_sorted}")
             valid = False
 
     try:
@@ -370,7 +428,10 @@ def verify_tflite_model(tflite_path: str, expected_state_shapes: list[tuple[int,
         interpreter.invoke()
         test_output = interpreter.get_tensor(output_details[0]["index"])
         checks["inference_works"] = True
-        details["test_output_range"] = (float(test_output.min()), float(test_output.max()))
+        details["test_output_range"] = (
+            float(test_output.min()),
+            float(test_output.max()),
+        )
     except Exception as e:
         errors.append(f"Inference test failed: {e}")
         checks["inference_works"] = False

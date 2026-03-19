@@ -4,7 +4,7 @@ Complete reference for the microwakeword_trainer configuration system.
 
 ## Overview
 
-The configuration system uses **12 dataclasses** with YAML-based presets. Configuration is loaded via `config/loader.py` (736 lines) which supports:
+The configuration system uses **14 dataclasses** with YAML-based presets. Configuration is loaded via `config/loader.py` which supports:
 
 - **Preset inheritance**: Start from `fast_test`, `standard`, or `max_quality`
 - **Environment variable substitution**: `${VAR:-default}` syntax
@@ -313,6 +313,20 @@ Available environment variables:
 | `warmup_runs` | int | 10 | Warmup runs for latency |
 | `n_latency_runs` | int | 100 | Number of latency runs |
 
+## Configuration Sections (continued)
+
+### 14. AutoTuningExpertConfig
+
+**File**: `config/loader.py` - Advanced auto-tuning parameters
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `min_burst_steps` | int | 200 | Min steps for fine-tuning burst |
+| `max_burst_steps` | int | 25000 | Max steps for fine-tuning burst |
+| `min_lr` | float | 1e-7 | Minimum learning rate |
+| `max_lr` | float | 1e-4 | Maximum learning rate |
+| `sam_rho` | float | 0.05 | SAM rho parameter |
+| `swa_collection_interval` | int | 100 | SWA collection interval |
 `scripts/evaluate_model.py` consumes these settings and writes `evaluation_artifacts/` output:
 - `evaluation_report.json`
 - `executive_report.md`

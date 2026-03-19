@@ -1,7 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-03-13
-**Project:** microwakeword_trainer v2.0.0
+**Generated:** 2026-03-16
+**Project:** microwakeword_trainer v2.1.0
 
 ## OVERVIEW
 GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipeline with MixedNet architecture, CuPy GPU SpecAugment, TFLite INT8 export.
@@ -56,6 +56,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 - **Don't evaluate auto-tuner on same data used for FocusedSampler training** — split search into search_train/search_eval via `search_eval_fraction` config. Training and evaluating on same data causes train-on-test contamination that degrades model quality.
 - **Don't hardcode okay_nabu state shapes in export verification** — use `compute_expected_state_shapes()` for config-aware validation. Models with different `clip_duration_ms` produce different `temporal_frames`, changing stream_5 shape.
 - **Don't reload checkpoints after EMA finalize** - At end of training, EMA may have cleared optimizer state; reloading triggers "optimizer has 2 variables whereas saved has 92 variables" warning without benefit. Only reload when resuming from interruption (see ARCHITECTURAL_CONSTITUTION.md Article IX).
+- **Don't feed large chunks to `pymicro_features.process_samples`** — `process_samples()` produces at most ONE frame per call and advances by exactly `samples_read` (160) samples. Feeding 480-sample chunks and advancing by 480 silently discards 320 samples per call, producing ~1/3 the correct frames with wrong values. Always advance `byte_idx += output.samples_read * 2`, feeding 160-sample (10ms) steps (see `src/data/features.py`).
 
 ### Environment & Dependencies
 - **Don't mix TF and PyTorch in same venv** - Use separate environments
@@ -80,6 +81,7 @@ GPU-accelerated wake word training framework for ESPHome. TensorFlow-based pipel
 - **Two-phase training**: Phase 1 (feature learning) + Phase 2 (fine-tuning)
 - **Class weighting**: positive=1.0, negative=20.0, hard_neg=40.0
 - **Checkpoint selection**: Two-stage (PR-AUC warm-up → recall@target_FAH)
+- **Adaptive Thresholding**: Evaluation metrics (accuracy, recall, etc.) are re-computed at an adaptive threshold optimized for target FAH during validation for improved production-readiness.
 
 ### Export System
 - **Dual subgraphs**: Main inference + initialization
@@ -128,6 +130,9 @@ python scripts/eval_dashboard.py --report logs/evaluation_artifacts/evaluation_r
 - `evaluate_model.py` writes `evaluation_report.json`, PNG plots, and executive reports (`executive_report.md` / `.html`) under `evaluation_artifacts/`
 - `eval_dashboard.py` builds `interactive_dashboard.html` from `evaluation_report.json` (keep dashboard in same folder as report/images)
 - `DELEGATE` visibility is runtime/delegate-path dependent in analyzers; compatibility checks should focus on static-graph invariants and ESPHome-registered op set
+- `RaggedMmap` may emit a warning when it detects a single trailing orphan index entry (`offsets/lengths` mismatch by 1). This is recovered in-memory by aligned-prefix truncation to keep evaluation/comparison workflows running; larger mismatches still fail fast.
+- `evaluate_model.py` datetime shadowing bug is fixed (2026-03-17): timestamp generation now uses module-scope import and no longer crashes with `UnboundLocalError`.
+- **Audit Compliance**: All 11 CRITICAL issues from the 2026-03-16 comprehensive audit (EMA BatchNorm stats, hard neg labeling, CuPy memory leaks, etc.) have been resolved.
 
 ### Module AGENTS.md Files
 - `src/data/AGENTS.md` - Data pipeline

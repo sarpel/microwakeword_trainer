@@ -137,6 +137,12 @@ class MicroFrontend:
         """
         self.config = config or FeatureConfig()
         self._check_pymicro_features()
+        self._pymicro_frontend = self._create_frontend()
+
+    def _create_frontend(self):
+        """Create and cache the pymicro_features frontend instance."""
+        import pymicro_features
+        return pymicro_features.MicroFrontend()
 
     def _check_pymicro_features(self) -> None:
         """Check if pymicro-features is available.
@@ -179,10 +185,13 @@ class MicroFrontend:
         Uses the TFLite Micro audio frontend for ESPHome-compatible
         feature extraction (40 mel bins, 16kHz, 30ms window, 10ms step).
 
-        The pymicro_features.MicroFrontend requires frame-by-frame feeding
-        (480 samples = 30ms at 16kHz per chunk) and returns a flat list of
-        floats in .features, where every consecutive mel_bins values form
-        one spectrogram frame.
+        pymicro_features.MicroFrontend.process_samples() produces at most ONE
+        output frame per call and advances by exactly `samples_read` samples
+        (= 160 samples = 10ms at 16kHz). Audio must be fed in step-size chunks
+        (160 samples = 10ms) and the byte index advanced by samples_read * 2.
+        Feeding larger chunks (e.g. 480 samples = 30ms) silently discards the
+        samples after the first consumed step, producing only 1/3 of the correct
+        frames with wrong values.
 
         Args:
             audio: Audio samples as float32 array in range [-1, 1]
@@ -190,17 +199,15 @@ class MicroFrontend:
         Returns:
             Mel spectrogram of shape (num_frames, mel_bins)
         """
-        import pymicro_features
-
         # PCAN (Per-Channel Amplitude Normalization) is hardcoded ON in the pymicro-features C++ backend:
         # enable_pcan=1, strength=0.95, offset=80.0, gain_bits=21
         # This matches ESPHome's on-device microfrontend exactly — no mismatch, no Python config needed.
         # Do NOT add an enable_pcan Python config flag — it would be meaningless dead code.
-        # Create a fresh frontend per call to avoid state leakage
+        # Reuse the cached frontend instance for performance (process_samples is stateless per call)
         # Note: PCAN (Per-Channel Amplitude Normalization) is hardcoded ON in the
         # pymicro-features C++ backend. There is no Python flag to enable/disable it.
         # This matches the official ESPHome okay_nabu model configuration.
-        frontend = pymicro_features.MicroFrontend()
+        frontend = self._pymicro_frontend
 
         # Ensure correct dtype
         audio = audio.astype(np.float32)
@@ -209,20 +216,32 @@ class MicroFrontend:
         audio_int16 = np.clip(audio, -1.0, 1.0)
         audio_int16 = (audio_int16 * 32767.0).astype(np.int16)
 
-        # Feed audio in 480-sample chunks (30ms window at 16kHz)
-        frame_size = self.config.window_size_samples
+        # Feed audio byte-by-byte using samples_read to advance correctly.
+        # process_samples() produces at most ONE output frame per call and consumes
+        # exactly `samples_read` samples (= window_step_samples = 160 at 16kHz/10ms).
+        # Feeding larger chunks and advancing by the full chunk size silently discards
+        # audio: only 1 frame is produced from a 30ms (480-sample) chunk instead of 3.
+        # Official platform (audio_utils.py) uses: idx += frontend_result.samples_read * 2
+        FEED_SAMPLES = 160  # 10ms at 16kHz — one step at a time
+        audio_bytes = audio_int16.tobytes()
         all_features = []
+        byte_idx = 0
+        feed_bytes = FEED_SAMPLES * 2  # int16 = 2 bytes per sample
 
-        for i in range(0, len(audio_int16), frame_size):
-            chunk = audio_int16[i : i + frame_size]
-            if len(chunk) < frame_size:
+        while byte_idx < len(audio_bytes):
+            chunk = audio_bytes[byte_idx : byte_idx + feed_bytes]
+            if len(chunk) < feed_bytes:
                 # Pad last chunk with zeros if needed
-                chunk = np.pad(chunk, (0, frame_size - len(chunk)))
-            chunk_bytes = chunk.tobytes()
-            output = frontend.process_samples(chunk_bytes)
+                chunk = chunk + b"\x00" * (feed_bytes - len(chunk))
+            output = frontend.process_samples(chunk)
+            # Handle zero samples_read to prevent infinite loop
+            consumed_bytes = output.samples_read * 2
+            if consumed_bytes == 0:
+                # Fallback: advance by at least feed_size or minimum 2 bytes
+                consumed_bytes = min(feed_bytes, len(chunk)) if len(chunk) > 0 else 2
+            byte_idx += consumed_bytes
             if output.features:
                 all_features.extend(output.features)
-
         if not all_features:
             # Return empty spectrogram with correct shape
             return np.zeros((0, self.config.mel_bins), dtype=np.float32)
@@ -267,12 +286,12 @@ class SpectrogramGeneration:
     @property
     def frame_size(self) -> int:
         """Get window size in samples."""
-        return self.config.window_size_samples
+        return int(self.config.window_size_samples)
 
     @property
     def frame_step(self) -> int:
         """Get step between frames in samples."""
-        return self.config.window_step_samples
+        return int(self.config.window_step_samples)
 
     @property
     def num_mel_bins(self) -> int:

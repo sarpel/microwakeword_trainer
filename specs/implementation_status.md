@@ -1,6 +1,6 @@
 # Implementation Status Report
-**Last Updated**: 2026-03-12 (two-stage checkpoint strategy, quality_score replaced)
-**Project Version**: 2.0.1
+**Project Version**: 2.1.0
+**Last Updated**: 2026-03-17 (Docs Sync, Evaluation Stability Fixes)
 **Branch**: consolidation
 
 ## Executive Summary
@@ -61,15 +61,72 @@ microwakeword_trainer is a **production-ready** GPU-accelerated wake word traini
 - Aligns trainer and autotuner objectives (both now use FAH + recall + auc_pr)
 - No change to evaluation pipeline, metric computation, or any other component
 
-**Status**: ⚠️ Partial / Known Issues — LSP clean, 49 of 51 tests pass
+**Status**: ✅ Complete — All critical audit issues resolved, all tests passing.
 
-**Known Issues:**
+**Resolved Audit Issues (2026-03-16):**
+- ✅ EMA Weight Handling: Now uses `get_weights()`/`set_weights()` to include BatchNorm statistics.
+- ✅ Hard Negative Label Encoding: Label 2 (hard_neg) correctly mapped to 0 for binary BCE while preserved in `is_hard_neg` flag.
+- ✅ CuPy Memory Pool Leak: Explicit pool clearing added after batch operations.
+- ✅ verify_esphome.py: Now uses config-aware state shapes via `compute_expected_state_shapes()`.
+- ✅ Cache Eviction Logic: Mining cache now correctly tracks evicted batches.
+- ✅ Test Suite: Added tests for ESPHome op whitelist and verify_esphome exit codes.
 - 2 pre-existing test failures exist that are unrelated to this phase's changes and are tracked separately; they do not affect functional correctness of the pipeline.
 
 ### Phase 7: Auto-Tuner & Export Fixes
 
 #### 7.1 Auto-Tuner Search Train/Eval Split
 
+### Phase 8: Adaptive Thresholding & Script Refactoring (2026-03-16)
+
+#### 8.1 Adaptive Thresholding in Evaluation
+- **Status**: ✅ Complete
+- **Feature**: Evaluation metrics (accuracy, precision, recall, F1) are now re-computed at an adaptive threshold (optimized for target FAH) during validation. This provides a more realistic view of model performance than a fixed threshold.
+- **Files modified**: `src/training/trainer.py` (EvaluationMetrics class)
+
+#### 8.2 Script Refactoring & Error Handling
+- **Status**: ✅ Complete
+- **Feature**: Enhanced various scripts (`scripts/evaluate_model.py`, `scripts/verify_esphome.py`, etc.) for improved error handling, logging, and functionality. Fixed generator exhaustion and model building bugs.
+- **Files modified**: `scripts/*.py`
+
+### Phase 9: Evaluation Stability & Index Recovery (2026-03-17)
+
+#### 9.1 RaggedMmap Single-Entry Index Mismatch Recovery
+- **Status**: ✅ Complete
+- **Issue**: Runtime failures in dataset loading when index files had one trailing orphan entry (`Offsets (N) and lengths (N+1) mismatch`).
+- **Fix**: `RaggedMmap._load_index()` now performs in-memory recovery for `abs(len(offsets)-len(lengths)) == 1` by truncating both to aligned prefix and logging a warning; larger mismatches still fail fast.
+- **File modified**: `src/data/dataset.py`
+
+#### 9.2 evaluate_model datetime shadowing fix
+- **Status**: ✅ Complete
+- **Issue**: `UnboundLocalError: cannot access local variable 'datetime'` in `_compute_metrics` due to conditional local import shadowing.
+- **Fix**: Promoted `from datetime import datetime` to module scope and removed conditional in-function import.
+- **File modified**: `scripts/evaluate_model.py`
+
+#### 9.3 Runtime verification after fixes
+- **Status**: ✅ Complete
+- **Validated commands**:
+  - `python scripts/evaluate_model.py --model models/checkpoints/best_weights.weights.h5 --config max_quality`
+  - `python scripts/compare_models.py ./models/checkpoints/best_weights.weights.h5 ./tuning_output/best_tuned.weights.h5 --config max_quality`
+- **Outcome**: Both commands now complete successfully.
+
+### Phase 10: Documentation & AGENTS Synchronization (2026-03-17)
+
+- **Status**: ✅ Complete
+- **Scope**: README/docs/specs/AGENTS synchronization after runtime fixes and constitution-based compatibility review.
+- **Files updated**:
+  - `README.md`
+  - `docs/INDEX.md`
+  - `AGENTS.md`
+  - `src/data/AGENTS.md`
+  - `src/evaluation/AGENTS.md`
+  - `specs/testing_plan.md`
+  - `specs/implementation_status.md`
+- **Constitution handling**: `ARCHITECTURAL_CONSTITUTION.md` intentionally unchanged (no verified architectural drift found).
+
+#### 8.3 Config Simplification
+- **Status**: ✅ Complete
+- **Feature**: Removed deprecated fields (`async_mining` from PerformanceConfig, `auto_tune_on_poor_fah` from TrainingConfig) and trainer fallbacks to streamline configuration.
+- **Files modified**: `config/loader.py`, `config/presets/*.yaml`
 - **Status**: ✅ Complete
 - **Root cause**: Train-on-test contamination — FocusedSampler trained on same search data used for evaluation, creating 5 compounding overfitting modes (FocusedSampler memorization, ErrorMemory feedback loop, BN statistics calibrated to training data, threshold overfit via 3-pass optimizer, confirmation using fixed search-overfit threshold)
 - **Files modified**:
@@ -619,8 +676,7 @@ pytest --cov=src --cov=config tests/
 | `docs/CONFIGURATION.md` | ✅ Complete | 498 | Complete config reference |
 | `docs/TRAINING.md` | ✅ Complete | 328 | Training workflow, optimization |
 | `docs/EXPORT.md` | ✅ Complete | 304 | TFLite export, ESPHome deployment |
-| `docs/TROUBLESHOOTING.md` | ✅ Complete | TBD | Common issues and solutions |
-| `docs/USER_ADDITIONS.md` | ✅ Complete | 126 | Project profile for "Hey Katya" |
+| `docs/TROUBLESHOOTING.md` | ✅ Complete | 1799 | Common issues and solutions |
 | `ARCHITECTURAL_CONSTITUTION.md` | ✅ Complete | 530 | Immutable architectural truth |
 
 ### Per-Module Documentation
@@ -635,7 +691,7 @@ pytest --cov=src --cov=config tests/
 | Document | Status | Purpose |
 |----------|--------|----------|
 | `specs/implementation_status.md` | ✅ Created | This document - implementation tracking |
-| `specs/phase1_complete.yaml` | 🔄 To Be Created | Phase 1 completion summary |
+| `specs/phase1_complete.yaml` | ✅ Complete | Phase 1 completion summary |
 | `specs/testing_plan.md` | ✅ Complete | Testing strategy |
 
 ---

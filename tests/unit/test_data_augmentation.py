@@ -9,7 +9,11 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from src.data.augmentation import AudioAugmentation, AugmentationConfig, apply_spec_augment_gpu
+from src.data.augmentation import (
+    AudioAugmentation,
+    AugmentationConfig,
+    apply_spec_augment_gpu,
+)
 
 # =============================================================================
 # Fixtures
@@ -190,7 +194,10 @@ class TestAudioAugmentation:
         aug = AudioAugmentation(config)
 
         # Mock the individual methods
-        with patch.object(aug, "apply_gain") as mock_gain, patch.object(aug, "apply_eq") as mock_eq:
+        with (
+            patch.object(aug, "apply_gain") as mock_gain,
+            patch.object(aug, "apply_eq") as mock_eq,
+        ):
             mock_gain.return_value = sample_audio
             mock_eq.return_value = sample_audio
             # Also mock other methods that might be called
@@ -278,7 +285,10 @@ class TestAudioAugmentation:
         mock_eq = MagicMock()
         mock_eq.return_value = sample_audio * 0.9
 
-        with patch.dict("sys.modules", {"audiomentations": MagicMock(SevenBandParametricEQ=MagicMock(return_value=mock_eq))}):
+        with patch.dict(
+            "sys.modules",
+            {"audiomentations": MagicMock(SevenBandParametricEQ=MagicMock(return_value=mock_eq))},
+        ):
             with patch("audiomentations.SevenBandParametricEQ", return_value=mock_eq):
                 result = aug.apply_eq(sample_audio)  # noqa: F841
                 mock_eq.assert_called_once()
@@ -482,12 +492,14 @@ class TestAudioAugmentation:
         )
         aug = AudioAugmentation(config)
 
-        with patch("src.data.ingestion.load_audio_wave", side_effect=FileNotFoundError("Not found")):
+        with patch(
+            "src.data.ingestion.load_audio_wave",
+            side_effect=FileNotFoundError("Not found"),
+        ):
             with caplog.at_level("WARNING"):
                 with patch.object(aug, "apply_color_noise") as mock_color:
                     mock_color.return_value = sample_audio
-                    result = aug.apply_background_noise(sample_audio)  # noqa: F841
-
+                    _ = aug.apply_background_noise(sample_audio)
                 assert "Failed to apply background noise" in caplog.text
 
     # -------------------------------------------------------------------------
@@ -541,7 +553,10 @@ class TestAudioAugmentation:
         )
         aug = AudioAugmentation(config)
 
-        with patch("src.data.ingestion.load_audio_wave", side_effect=OSError("IO error")):
+        with patch(
+            "src.data.ingestion.load_audio_wave",
+            side_effect=OSError("IO error"),
+        ):
             with caplog.at_level("WARNING"):
                 result = aug.apply_rir(sample_audio)
 
@@ -559,7 +574,10 @@ class TestApplySpecAugmentGPU:
 
     def test_raises_without_cupy(self, sample_spectrogram):
         """Test that function raises ImportError when CuPy is not available."""
-        with patch("src.data.augmentation.HAS_CUPY", False), patch("src.data.augmentation.cp", None):
+        with (
+            patch("src.data.augmentation.HAS_CUPY", False),
+            patch("src.data.augmentation.cp", None),
+        ):
             with pytest.raises(ImportError, match="CuPy is required"):
                 apply_spec_augment_gpu(sample_spectrogram)
 
@@ -598,6 +616,9 @@ class TestApplySpecAugmentGPU:
         mock_cp.random.randint.return_value = MagicMock(item=lambda: 5)
         mock_cp.get_default_memory_pool.return_value = MagicMock(free_all_blocks=lambda: None)
 
-        with patch("src.data.augmentation.HAS_CUPY", True), patch("src.data.augmentation.cp", mock_cp):
+        with (
+            patch("src.data.augmentation.HAS_CUPY", True),
+            patch("src.data.augmentation.cp", mock_cp),
+        ):
             result = apply_spec_augment_gpu(sample_spectrogram)
             assert result is not None

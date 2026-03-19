@@ -64,8 +64,8 @@ training:
   freq_mask_count: [1, 1, 1]  # Number of frequency masks per phase
 
   # Checkpoint selection: maximize recall
-  minimization_metric: "average_viable_recall"  # Metric to minimize
-  target_minimization: 1.0  # Target value for minimization metric
+  minimization_metric: "ambient_false_positives_per_hour"  # Metric to minimize
+  target_minimization: 5.0  # Target value for minimization metric
   maximization_metric: "average_viable_recall"  # Metric to maximize
 
   ambient_duration_hours: 42.02  # Total hours of ambient audio for FAH calculation
@@ -193,7 +193,7 @@ performance:
   # Data pipeline
   prefetch_buffer: 8  # tf.data prefetch buffer size
   use_tfdata: true  # Use tf.data pipeline
-  tfdata_cache_dir: null  # Cache directory (null = memory)
+  tfdata_cache_dir: "${DATA_DIR:-./data}/processed/tfdata_cache"  # Disk cache directory for tf.data pipelines
   tfdata_shuffle_buffer: 2000  # Shuffle buffer size
   mmap_readonly: true  # Use read-only memory-mapped files
   tfdata_prefetch_to_device: true  # Prefetch data to GPU
@@ -264,7 +264,7 @@ export:
   inference_input_type: "int8"  # Input data type
   inference_output_type: "uint8"  # Output data type (must be uint8 for ESPHome)
 
-  probability_cutoff: 0.97  # Probability threshold for wake word detection
+  probability_cutoff: 0  # 0 = auto-calculate from checkpoint metadata
   sliding_window_size: 5  # Sliding window size for streaming
   tensor_arena_size: 0  # Tensor arena size (0 = auto-calculate)
   minimum_esphome_version: "2024.7.0"  # Minimum ESPHome version
@@ -348,23 +348,18 @@ auto_tuning:
 # AUTO-TUNING EXPERT
 # ─────────────────────────────────────────────────────────────────
 auto_tuning_expert:
-  min_burst_steps: 200  # Minimum gradient steps per burst
-  max_burst_steps: 25000  # Maximum gradient steps per burst
-  default_burst_steps: 750  # Default gradient steps per burst
-  min_lr: 0.0000001  # Minimum learning rate for bursts
-  max_lr: 0.0001  # Maximum learning rate for bursts
-  default_lr: 0.00001  # Default learning rate for bursts
-  sam_rho: 0.05  # SAM perturbation radius
-  swa_collection_interval: 100  # SWA snapshot collection interval
-  initial_temperature: 0.5  # Initial temperature for simulated annealing
-  cooling_rate: 0.97  # Cooling rate for simulated annealing
-  reheat_after: 5  # Consecutive non-improvements before reheat
-  reheat_factor: 1.3  # Temperature multiplier on reheat
-  active_pool_size: 16  # Maximum candidates in active pool
+  population_size: 2  # Minimal population for fast testing
+  micro_burst_steps: 10  # Minimal burst steps for fast testing
+  knob_cycle:  # Cyclic coordinate descent knob order
+    - lr
+    - threshold
+    - temperature
+    - sampling_mix
+    - weight_perturbation
+    - label_smoothing
+  exploit_explore_interval: 6  # Full cycles between exploit/explore
+  weight_perturbation_scale: 0.01  # Gaussian noise scale for weight perturbation
+  label_smoothing_range: [0.0, 0.15]  # [min, max] label smoothing
+  lr_range: [0.0000001, 0.0001]  # [min, max] learning rate
+  hypervolume_reference: [10.0, 0.0]  # [max_fah_ref, min_recall_ref]
   pareto_archive_size: 32  # Maximum entries in Pareto archive
-  stir_level_1: 3  # Stagnation count for stir level 1
-  stir_level_2: 5  # Stagnation count for stir level 2
-  stir_level_3: 7  # Stagnation count for stir level 3
-  stir_level_4: 9  # Stagnation count for stir level 4
-  stir_level_5: 12  # Stagnation count for stir level 5
-  curriculum_advance_threshold: 0.3  # Minimum improvement for curriculum advance

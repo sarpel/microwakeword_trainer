@@ -130,6 +130,7 @@ class PerformanceOptimizer:
             self.config,
             split="train",
             use_mixed_precision=self.mixed_precision_enabled,
+            max_time_frames=max_time_frames,
         )
 
     def create_validation_dataset(
@@ -151,6 +152,7 @@ class PerformanceOptimizer:
             self.config,
             split="val",
             use_mixed_precision=False,  # No mixed precision for validation
+            max_time_frames=max_time_frames,
         )
 
     def benchmark(self, dataset: WakeWordDataset, n_batches: int = 100) -> dict[str, float]:

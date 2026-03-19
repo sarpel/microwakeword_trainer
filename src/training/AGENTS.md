@@ -5,7 +5,7 @@ Complete training loop with Rich logging, profiling, hard example mining, and wa
 ## Files
 | File | Lines | Purpose | Key Classes/Functions |
 |------|-------|---------|----------------------|
-| `trainer.py` | ~960 | Main training loop | `Trainer`, `EvaluationMetrics`, `train()` |
+| `trainer.py` | ~2400 | Main training loop | `Trainer`, `EvaluationMetrics`, `train()` |
 | `mining.py` | ~1860 | Unified mining & FP extraction | `HardExampleMiner`, `AsyncHardExampleMiner` |
 | `rich_logger.py` | 312 | Rich-based progress display | `RichTrainingLogger` |
 | `augmentation.py` | 266 | Waveform-level augmentation | `AudioAugmentationPipeline` |
@@ -48,6 +48,10 @@ Two-stage strategy:
 1. **Stage 1 (warm-up)**: Saves by PR-AUC until FAH budget first met
 2. **Stage 2 (operational)**: Saves by recall@target_fah when FAH ≤ target
 
+## Adaptive Thresholding
+
+Evaluation metrics are re-computed at an optimized threshold for target FAH during validation.
+
 ## EMA Weight Management
 
 When EMA is enabled (`training.ema_decay` configured, default in `max_quality.yaml`):
@@ -56,9 +60,10 @@ When EMA is enabled (`training.ema_decay` configured, default in `max_quality.ya
 
 | Checkpoint File | EMA Weights? | Purpose |
 |---------------|-------------|---------|
-| `final_weights.weights.h5` | ✅ Yes | End of training, export/inference (preferred) |
-| `best_weights.weights.h5` | ✅ Yes | Best model during training, resume training |
-| `checkpoint_step_NNNN.weights.h5` | ✅ Yes | Periodic recovery checkpoints |
+| `best_weights.weights.h5` | ✅ Yes | **Export/inference (preferred)** — validated best EMA weights |
+| `final_weights.weights.h5` | ✅ Yes | End of training fallback — EMA weights but not validated |
+| `checkpoint_step_NNNN.weights.h5` | ✅ Yes | Periodic recovery checkpoints (created at regular intervals for training resume capability) |
+
 
 **Training flow with EMA:**
 1. `_swap_to_ema_weights()` called before validation/checkpointing

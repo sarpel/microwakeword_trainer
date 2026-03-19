@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class PerformanceMonitor:
         self.enable_profiling = enable_profiling
         self.baseline_metrics: dict[str, float] = {}
         self.section_history: defaultdict[str, list[float]] = defaultdict(list)
-        self.alerts: list[dict[str, Any]] = []
+        self.alerts: list[str] = []
         self._last_alert_time: dict[str, float] = {}  # section -> last alert timestamp
         self._last_alert_msg: dict[str, str] = {}  # section -> last alert message
         self._alert_cooldown_seconds = 300  # 5 minutes cooldown for same alert
@@ -99,6 +99,9 @@ class PerformanceMonitor:
                     last_msg = self._last_alert_msg.get(section, "")
                     if alert_msg != last_msg or (current_time - last_time) >= self._alert_cooldown_seconds:
                         self.alerts.append(alert_msg)
+                        # Bound alerts list to prevent memory growth
+                        if len(self.alerts) > 200:
+                            self.alerts = self.alerts[-100:]
                         logger.warning(alert_msg)
                         self._last_alert_time[section] = current_time
                         self._last_alert_msg[section] = alert_msg
@@ -120,6 +123,9 @@ class PerformanceMonitor:
                 last_msg = self._last_alert_msg.get(section, "")
                 if alert_msg != last_msg or (current_time - last_time) >= self._alert_cooldown_seconds:
                     self.alerts.append(alert_msg)
+                    # Bound alerts list to prevent memory growth
+                    if len(self.alerts) > 200:
+                        self.alerts = self.alerts[-100:]
                     logger.warning(alert_msg)
                     self._last_alert_time[section] = current_time
                     self._last_alert_msg[section] = alert_msg

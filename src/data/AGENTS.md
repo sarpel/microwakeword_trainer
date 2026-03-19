@@ -36,6 +36,8 @@ Audio (WAV) → ingestion.py → features.py → dataset.py → Training
 - **40 mel bins, 10ms stride, 30ms window**: Standard feature output shape [time_frames, 40]
 - **PCAN always ON**: Enabled in pymicro-features C++ backend (no Python flag)
 - **HAS_CUPY flag**: Checked at import time for GPU availability
+- **Memory Management**: Explicitly clear CuPy memory pool (`cp.get_default_memory_pool().free_all_blocks()`) after batch SpecAugment to prevent OOM.
+- **Label Consistency**: Use binary labels (0/1) for training while preserving hard negative identity in metadata for weighted loss.
 
 ## Anti-Patterns
 
@@ -43,6 +45,11 @@ Audio (WAV) → ingestion.py → features.py → dataset.py → Training
 - **Don't batch without padding**: Variable-length clips need careful collation
 - **Don't use CPU augmentation**: SpecAugment has no CPU fallback
 - **Don't skip speaker clustering**: Leads to train/test leakage
+- **Don't feed large chunks to `process_samples`**: `pymicro_features.MicroFrontend.process_samples()` produces at most ONE frame per call, consuming only `samples_read` (160) samples. Feeding 480-sample (30ms) chunks and advancing by 480 silently discards 320 samples per call — producing 1/3 the frames at wrong values. Always advance by `output.samples_read * 2` (bytes), feeding 160-sample (10ms) steps.
+
+## Operational Notes
+
+- `RaggedMmap._load_index()` now includes a narrow recovery path for a single trailing orphan index entry (`offsets/lengths` mismatch by exactly 1). The loader truncates to aligned prefix in-memory and logs a warning so downstream read-only workflows (evaluation/comparison) can proceed. Larger mismatches still raise immediately.
 
 ## Related Documentation
 

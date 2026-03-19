@@ -133,7 +133,11 @@ class TestCreateRepresentativeDatasetFromData:
         train_dir = tmp_path / "train"
         train_dir.mkdir()
 
-        gen_fn = create_representative_dataset_from_data({"mel_bins": mel_bins, "stride": stride}, str(tmp_path), num_samples=100)
+        gen_fn = create_representative_dataset_from_data(
+            {"mel_bins": mel_bins, "stride": stride},
+            str(tmp_path),
+            num_samples=100,
+        )
         samples = list(gen_fn())
 
         # Skip 2 anchors, remaining should be sequential chunks
@@ -238,7 +242,10 @@ class TestCreateRepresentativeDatasetFromData:
         """Spectrograms shorter than stride are skipped."""
         mel_bins = 40
         store_data = [
-            (_make_spectrogram(2, mel_bins, 10.0), 0),  # Too short (2 < stride 3)
+            (
+                _make_spectrogram(2, mel_bins, 10.0),
+                0,
+            ),  # Too short (2 < stride 3)
             (_make_spectrogram(6, mel_bins, 10.0), 0),  # OK: 2 chunks
         ]
         fake_store = FakeFeatureStore(store_data)

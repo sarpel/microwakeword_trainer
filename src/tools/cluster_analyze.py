@@ -11,7 +11,13 @@ from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 from rich.table import Table
 from rich.tree import Tree
 
@@ -83,9 +89,9 @@ def analyze_clusters(
         "total_files": total_files,
         "num_clusters": num_clusters,
         "samples_per_cluster": samples_per_cluster,
-        "min_cluster_size": min(samples_per_cluster) if samples_per_cluster else 0,
-        "max_cluster_size": max(samples_per_cluster) if samples_per_cluster else 0,
-        "avg_cluster_size": sum(samples_per_cluster) / len(samples_per_cluster) if samples_per_cluster else 0.0,
+        "min_cluster_size": (min(samples_per_cluster) if samples_per_cluster else 0),
+        "max_cluster_size": (max(samples_per_cluster) if samples_per_cluster else 0),
+        "avg_cluster_size": (sum(samples_per_cluster) / len(samples_per_cluster) if samples_per_cluster else 0.0),
         "threshold_used": config.similarity_threshold,
         "embedding_model": config.embedding_model,
         "method": config.method,
@@ -251,7 +257,12 @@ Output files (per dataset):
         required=True,
         help="Config preset name (standard, fast_test, max_quality) or path to YAML file",
     )
-    parser.add_argument("--override", type=str, default=None, help="Override config file (optional)")
+    parser.add_argument(
+        "--override",
+        type=str,
+        default=None,
+        help="Override config file (optional)",
+    )
     parser.add_argument(
         "--output-dir",
         type=str,
@@ -270,7 +281,12 @@ Output files (per dataset):
         default=None,
         help="Explicit number of clusters (overrides threshold). Use when you know approximate speaker count.",
     )
-    parser.add_argument("--max-files", type=int, default=None, help="Limit number of files to process (for testing)")
+    parser.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        help="Limit number of files to process (for testing)",
+    )
     parser.add_argument(
         "--dataset",
         type=str,
@@ -375,9 +391,9 @@ Output files (per dataset):
             "Next steps:\n"
             "1. Review the reports and namelists above\n"
             "2. Inspect sample files in each cluster\n"
-            "3. Run Start-Clustering.py to organize files into speaker directories:\n"
-            "   python Start-Clustering.py --namelist-dir cluster_output --dry-run\n"
-            "   python Start-Clustering.py --namelist-dir cluster_output",
+            "3. Run mww-cluster-apply to organize files into speaker directories:\n"
+            "   mww-cluster-apply --namelist-dir cluster_output --dry-run\n"
+            "   mww-cluster-apply --namelist-dir cluster_output",
             title="Done",
             border_style="green",
         )

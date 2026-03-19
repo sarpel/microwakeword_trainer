@@ -43,12 +43,12 @@ training:
   batch_size: 128  # Training batch size
   split_seed: 42  # Random seed for train/val/test split reproducibility
   eval_step_interval: 500  # Eval trigger step interval
-  eval_basic_step_interval: 1000  # Main eval: runs full validation with all metrics
+  eval_basic_step_interval: 2500  # Main eval: less frequent to improve throughput
   materialize_metrics_interval: 1000  # Training accuracy computation interval
-  eval_advanced_step_interval: 5000  # Advanced metrics: score distribution, gain metrics
+  eval_advanced_step_interval: 10000  # Advanced metrics less frequent to reduce overhead
   eval_confusion_matrix_interval: 5000  # Confusion matrix logging interval
-  eval_checkpoints_interval: 5000  # Best model checkpoint saving interval
-  eval_log_every_step: true  # Log evaluation status every step
+  eval_checkpoints_interval: 10000  # Checkpoint less frequently to reduce sync + I/O overhead
+  eval_log_every_step: false  # Reduce per-step logging overhead
   steps_per_epoch: 1000  # Number of steps per epoch for progress tracking
 
   # Recall-biased class weighting (maximize detection at cost of more false alarms)
@@ -64,8 +64,8 @@ training:
 
   # Checkpoint selection: maximize recall
   maximization_metric: "average_viable_recall"  # Metric to maximize for checkpoint selection
-  target_maximization: 1.0  # Target value for maximization metric
-  # minimization_metric removed (was incorrectly set to same as maximization_metric)
+  minimization_metric: "ambient_false_positives_per_hour"  # Metric to minimize (FAH target)
+  target_minimization: 2.0  # Target FAH ceiling for checkpoint selection
 
   ambient_duration_hours: 42.02  # Total hours of ambient audio for FAH calculation
   train_split: 0.8  # Fraction of data for training
@@ -179,10 +179,10 @@ performance:
   tensorboard_log_dir: "./logs"  # TensorBoard log directory
   tensorboard_log_histograms: false  # Log weight histograms
   tensorboard_log_images: false  # Log image tensors
-  tensorboard_log_pr_curves: true  # Log precision-recall curves
+  tensorboard_log_pr_curves: false  # Disable expensive PR curve logging for better throughput
   tensorboard_log_roc_curves: false  # ROC curves disabled for standard (expensive)
   tensorboard_log_graph: true  # Log computation graph
-  tensorboard_log_advanced_scalars: true  # Log advanced scalar metrics
+  tensorboard_log_advanced_scalars: false  # Reduce TensorBoard overhead
   tensorboard_log_weight_histograms: false  # Log weight histograms separately
   tensorboard_image_interval: 5000  # Image logging interval in steps
   tensorboard_histogram_interval: 5000  # Histogram logging interval in steps
@@ -191,14 +191,14 @@ performance:
   tensorboard_log_learning_rate: true  # Log learning rate schedule
   tensorboard_log_gradient_norms: false  # Gradient norms disabled for standard
   tensorboard_log_activation_stats: false  # Activation stats disabled for standard
-  tensorboard_log_confidence_drift: true  # Log prediction confidence drift
-  tensorboard_log_per_class_accuracy: true  # Log per-class accuracy breakdown
-  tensorboard_sophisticated_interval: 2000  # Sophisticated metrics logging interval
+  tensorboard_log_confidence_drift: false  # Disable extra eval-time logging
+  tensorboard_log_per_class_accuracy: false  # Disable extra eval-time logging
+  tensorboard_sophisticated_interval: 10000  # Sparse sophisticated logging to preserve throughput
 
   # Data pipeline
   prefetch_buffer: 8  # tf.data prefetch buffer size
   use_tfdata: true  # Use tf.data pipeline instead of Python generators
-  tfdata_cache_dir: null  # Cache directory (null = in-memory cache)
+  tfdata_cache_dir: "${DATA_DIR:-./data}/processed/tfdata_cache"  # Disk cache directory for tf.data pipelines
   tfdata_shuffle_buffer: 2000  # Shuffle buffer size for tf.data pipeline
   mmap_readonly: true  # Use read-only memory-mapped files
   tfdata_prefetch_to_device: true  # Prefetch data directly to GPU
@@ -238,12 +238,12 @@ mining:
   enabled: true  # Enable hard negative mining
   async_mining: true  # Use async (non-blocking background) mining for better throughput
   fp_threshold: 0.65  # False positive probability threshold for mining
-  max_samples: 5000  # Maximum samples to mine per epoch (larger pool than max_quality)
-  mining_interval_epochs: 1  # Mine every N epochs
+  max_samples: 1000  # Lower mining memory/CPU overhead per epoch
+  mining_interval_epochs: 3  # Mine less frequently to reduce throughput impact
   collection_mode: "log_only"  # Mining collection mode
 
   # Logging
-  log_predictions: true  # Log prediction results
+  log_predictions: false  # Disable per-epoch FP logging to reduce I/O and memory pressure
   log_file: "logs/false_predictions.json"  # Log file path
   top_k_per_epoch: 150  # Top K false positives to mine per epoch
 
@@ -275,7 +275,7 @@ export:
   inference_input_type: "int8"  # Input data type for TFLite model
   inference_output_type: "uint8"  # Output data type for TFLite model (must be uint8 for ESPHome)
 
-  probability_cutoff: 0.97  # Probability threshold for wake word detection
+  probability_cutoff: 0  # 0 = auto-calculate from checkpoint metadata
   sliding_window_size: 5  # Sliding window size for streaming
   tensor_arena_size: 0  # Tensor arena size (0 = auto-calculate)
   minimum_esphome_version: "2024.7.0"  # Minimum ESPHome version requirement
@@ -359,23 +359,18 @@ auto_tuning:
 # AUTO-TUNING EXPERT (standard settings)
 # ─────────────────────────────────────────────────────────────────
 auto_tuning_expert:
-  min_burst_steps: 20  # Minimum gradient steps per burst (surgical gradient bursts: 20-200 steps)
-  max_burst_steps: 200  # Maximum gradient steps per burst (surgical gradient bursts: 20-200 steps, staying within max_gradient_steps=2000)
-  default_burst_steps: 100  # Default gradient steps per burst (within 20-200 range)
-  min_lr: 0.0000001  # Minimum learning rate for bursts
-  max_lr: 0.0001  # Maximum learning rate for bursts
-  default_lr: 0.00001  # Default learning rate for bursts
-  sam_rho: 0.05  # SAM perturbation radius
-  swa_collection_interval: 100  # SWA snapshot collection interval
-  initial_temperature: 0.5  # Initial temperature for simulated annealing
-  cooling_rate: 0.97  # Cooling rate for simulated annealing
-  reheat_after: 5  # Consecutive non-improvements before reheat
-  reheat_factor: 1.3  # Temperature multiplier on reheat
-  active_pool_size: 16  # Maximum candidates in active pool
+  population_size: 4  # Number of candidates in population
+  micro_burst_steps: 50  # Gradient steps per micro-burst
+  knob_cycle:  # Cyclic coordinate descent knob order
+    - lr
+    - threshold
+    - temperature
+    - sampling_mix
+    - weight_perturbation
+    - label_smoothing
+  exploit_explore_interval: 6  # Full cycles between exploit/explore
+  weight_perturbation_scale: 0.01  # Gaussian noise scale for weight perturbation
+  label_smoothing_range: [0.0, 0.15]  # [min, max] label smoothing
+  lr_range: [0.0000001, 0.0001]  # [min, max] learning rate
+  hypervolume_reference: [10.0, 0.0]  # [max_fah_ref, min_recall_ref]
   pareto_archive_size: 32  # Maximum entries in Pareto archive
-  stir_level_1: 3  # Stagnation count for stir level 1
-  stir_level_2: 5  # Stagnation count for stir level 2
-  stir_level_3: 7  # Stagnation count for stir level 3
-  stir_level_4: 9  # Stagnation count for stir level 4
-  stir_level_5: 12  # Stagnation count for stir level 5
-  curriculum_advance_threshold: 0.3  # Minimum improvement for curriculum advance

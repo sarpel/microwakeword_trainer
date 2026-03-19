@@ -41,7 +41,6 @@ def get_system_info() -> Dict[str, Any]:
             }
     except Exception:  # noqa: S110
         pass  # GPU info not available, continue without it
-        pass
 
     return info
 
@@ -62,13 +61,19 @@ def check_gpu_and_cupy_available() -> tuple[bool, str]:
         tuple (available: bool, message: str)
     """
     if not check_gpu_available():
-        return False, "No NVIDIA GPU detected by GPUtil. Training requires a GPU."
+        return (
+            False,
+            "No NVIDIA GPU detected by GPUtil. Training requires a GPU.",
+        )
 
     try:
         import cupy as cp
 
         if not cp.cuda.is_available():
-            return False, "CuPy is installed but cannot access the GPU. Check CUDA installation."
+            return (
+                False,
+                "CuPy is installed but cannot access the GPU. Check CUDA installation.",
+            )
 
         # Try a small allocation to be sure
         _test_arr = cp.array([1, 2, 3])
@@ -76,7 +81,10 @@ def check_gpu_and_cupy_available() -> tuple[bool, str]:
         cp.get_default_memory_pool().free_all_blocks()
         return True, f"GPU and CuPy available: {GPUtil.getGPUs()[0].name}"
     except ImportError:
-        return False, "CuPy not found. Install cupy (e.g., pip install cupy-cuda12x)."
+        return (
+            False,
+            "CuPy not found. Install cupy (e.g., pip install cupy-cuda12x).",
+        )
     except Exception as e:
         return False, f"Error initializing CuPy/GPU: {e}"
 
@@ -275,6 +283,8 @@ def format_bytes(bytes_val: int) -> str:
 class IOProfiler:
     """Profile disk I/O operations to identify bottlenecks."""
 
+    _MAX_OPS = 500  # Cap per-operation-type to prevent unbounded growth
+
     def __init__(self):
         self.io_operations = defaultdict(list)
 
@@ -292,9 +302,13 @@ class IOProfiler:
                     "filepath": filepath,
                     "size_bytes": size_bytes,
                     "duration_ms": duration_ms,
-                    "throughput_mb_s": (size_bytes / (1024**2)) / (duration_ms / 1000) if duration_ms > 0 else 0,
+                    "throughput_mb_s": ((size_bytes / (1024**2)) / (duration_ms / 1000) if duration_ms > 0 else 0),
                 }
             )
+            # Cap list size to prevent unbounded growth
+            ops = self.io_operations["read"]
+            if len(ops) > self._MAX_OPS:
+                del ops[: len(ops) - self._MAX_OPS]
 
     @contextmanager
     def track_write(self, filepath: str):
@@ -310,9 +324,13 @@ class IOProfiler:
                     "filepath": filepath,
                     "size_bytes": size_bytes,
                     "duration_ms": duration_ms,
-                    "throughput_mb_s": (size_bytes / (1024**2)) / (duration_ms / 1000) if duration_ms > 0 else 0,
+                    "throughput_mb_s": ((size_bytes / (1024**2)) / (duration_ms / 1000) if duration_ms > 0 else 0),
                 }
             )
+            # Cap list size to prevent unbounded growth
+            ops = self.io_operations["write"]
+            if len(ops) > self._MAX_OPS:
+                del ops[: len(ops) - self._MAX_OPS]
 
     def get_report(self) -> str:
         """Generate I/O profiling report."""

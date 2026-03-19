@@ -374,11 +374,16 @@ class Stream(tf.keras.layers.Layer):
             return output, memory
         else:
             # Strided mode
-            memory = tf.concat([input_state, inputs], axis=1)
-            state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
-            output = self.cell(memory)
-            self.output_state = state_update
-            return output, state_update
+            if self.ring_buffer_size_in_time_dim:
+                memory = tf.concat([input_state, inputs], axis=1)
+                state_update = memory[:, -self.ring_buffer_size_in_time_dim :, ...]
+                output = self.cell(memory)
+                self.output_state = state_update
+                return output, state_update
+            else:
+                output = self.cell(inputs)
+                self.output_state = input_state
+                return output, input_state
 
     def _non_streaming(self, inputs, training=None):
         """Non-streaming mode (training or inference)."""
@@ -387,21 +392,33 @@ class Stream(tf.keras.layers.Layer):
             pad_total = self.ring_buffer_size_in_time_dim - 1 if self.use_one_step else self.ring_buffer_size_in_time_dim
             if pad_total > 0:
                 # Build a dynamic padding spec that matches the actual input rank
-                _ = tf.rank(inputs)  # noqa: F841  # rank info retrieved but not directly used
-                # Padding: [[0,0]] for each dim, with [pad_total, 0] or [half, half]
-                # on the time dimension (axis 1).
-                # We use tf.pad with a statically-built list when rank is known, else dynamic.
+                # Use tf.rank to get dynamic rank when static_rank is None
                 static_rank = inputs.shape.rank
-                n_dims = static_rank if static_rank is not None else 4  # conservative default
-                pad = [[0, 0]] * n_dims
-                if self.pad_time_dim == "causal":
-                    pad[1] = [pad_total, 0]
-                elif self.pad_time_dim == "same":
-                    if self.mode != Modes.TRAINING:
-                        raise ValueError("pad_time_dim='same' is not supported in streaming/inference modes. Use 'causal' for streaming-compatible padding.")
-                    half = pad_total // 2
-                    pad[1] = [half, pad_total - half]
-                inputs = tf.pad(inputs, pad, "constant")
+                if static_rank is None:
+                    n_dims = tf.cast(tf.rank(inputs), tf.int32)
+                    # Create dynamic padding spec
+                    pad = tf.fill([n_dims, 2], 0)
+                    # Update time dimension (axis 1)
+                    if self.pad_time_dim == "causal":
+                        pad = tf.tensor_scatter_nd_update(pad, [[1, 0]], [pad_total])
+                    elif self.pad_time_dim == "same":
+                        if self.mode != Modes.TRAINING:
+                            raise ValueError("pad_time_dim='same' is not supported in streaming/inference modes. Use 'causal' for streaming-compatible padding.")
+                        half = pad_total // 2
+                        pad = tf.tensor_scatter_nd_update(pad, [[1, 0]], [half])
+                        pad = tf.tensor_scatter_nd_update(pad, [[1, 1]], [pad_total - half])
+                    inputs = tf.pad(inputs, pad, "constant")
+                else:
+                    # Static rank: build list padding spec
+                    pad = [[0, 0]] * static_rank
+                    if self.pad_time_dim == "causal":
+                        pad[1] = [pad_total, 0]
+                    elif self.pad_time_dim == "same":
+                        if self.mode != Modes.TRAINING:
+                            raise ValueError("pad_time_dim='same' is not supported in streaming/inference modes. Use 'causal' for streaming-compatible padding.")
+                        half = pad_total // 2
+                        pad[1] = [half, pad_total - half]
+                    inputs = tf.pad(inputs, pad, "constant")
 
         return self.cell(inputs)
 
@@ -474,7 +491,13 @@ class StridedDrop(tf.keras.layers.Layer):
     Used for matching dimensions between residual connections and conv outputs.
     """
 
-    def __init__(self, time_slices_to_drop, mode=Modes.NON_STREAM_INFERENCE, name=None, **kwargs):
+    def __init__(
+        self,
+        time_slices_to_drop,
+        mode=Modes.NON_STREAM_INFERENCE,
+        name=None,
+        **kwargs,
+    ):
         super().__init__(name=name, **kwargs)
         self.time_slices_to_drop = time_slices_to_drop
         self.mode = mode
@@ -515,7 +538,13 @@ class StridedKeep(tf.keras.layers.Layer):
     Used in MixConv to split ring buffer into branches with different kernel sizes.
     """
 
-    def __init__(self, time_slices_to_keep, mode=Modes.NON_STREAM_INFERENCE, name=None, **kwargs):
+    def __init__(
+        self,
+        time_slices_to_keep,
+        mode=Modes.NON_STREAM_INFERENCE,
+        name=None,
+        **kwargs,
+    ):
         super().__init__(name=name, **kwargs)
         self.time_slices_to_keep = max(time_slices_to_keep, 1)
         self.mode = mode
@@ -721,9 +750,10 @@ class StreamingMixedNet:
     def reset(self):
         """Reset all state variables to zero tensors."""
         # Reset internal state in Stream layers (actual TensorFlow state variables)
-        for layer in self.model.layers:
-            if isinstance(layer, Stream) and hasattr(layer, "states") and layer.states is not None:
-                layer.states.assign(tf.zeros_like(layer.states))
+        if hasattr(self.model, "layers"):
+            for layer in self.model.layers:
+                if isinstance(layer, Stream) and hasattr(layer, "states") and layer.states is not None:
+                    layer.states.assign(tf.zeros_like(layer.states))
 
         # Reset external state dictionary (for external streaming mode)
         state_names = get_streaming_state_names()

@@ -87,8 +87,7 @@ def main():
 
     if not directories:
         print("Error: No directories specified. Use --config or specify directories directly.")
-        sys.exit(1)
-
+        sys.exit(2)
     total_files = 0
     total_seconds = 0.0
 

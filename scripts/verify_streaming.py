@@ -74,7 +74,7 @@ def _smoke_test(tflite_path: str, frames: list[np.ndarray], verbose: bool) -> di
         "passed": passed,
         "outputs": outputs,
         "invalid_count": len(invalid),
-        "error": f"Got {len(invalid)} out-of-range uint8 values" if not passed else None,
+        "error": (f"Got {len(invalid)} out-of-range uint8 values" if not passed else None),
     }
 
 
@@ -99,7 +99,7 @@ def _determinism_test(tflite_path: str, frames: list[np.ndarray], verbose: bool)
     return {
         "passed": passed,
         "mismatch_count": len(mismatches),
-        "error": f"{len(mismatches)} frames produced different outputs" if not passed else None,
+        "error": (f"{len(mismatches)} frames produced different outputs" if not passed else None),
     }
 
 
@@ -121,7 +121,7 @@ def _state_change_test(tflite_path: str, frames: list[np.ndarray], verbose: bool
         "passed": passed,
         "unique_outputs": unique_outputs,
         "total_frames": len(frames),
-        "error": "All frames produced identical output — ring buffer may not be updating" if not passed else None,
+        "error": ("All frames produced identical output — ring buffer may not be updating" if not passed else None),
     }
 
 
@@ -129,7 +129,11 @@ def _boundary_test(tflite_path: str, verbose: bool) -> dict:
     """Feed all-zeros and all-max frames; model should not crash or produce NaN."""
     errors = []
 
-    for label, value in [("all_zeros", 0), ("all_max", 127), ("all_min", -128)]:
+    for label, value in [
+        ("all_zeros", 0),
+        ("all_max", 127),
+        ("all_min", -128),
+    ]:
         interp = _make_interpreter(tflite_path)
         frame = np.full((1, 3, 40), value, dtype=np.int8)
         try:
@@ -239,7 +243,12 @@ Examples:
         """,
     )
     parser.add_argument("model_path", type=str, help="Path to TFLite model file")
-    parser.add_argument("--frames", type=int, default=15, help="Number of random frames to test (default: 15)")
+    parser.add_argument(
+        "--frames",
+        type=int,
+        default=15,
+        help="Number of random frames to test (default: 15)",
+    )
     parser.add_argument("--seed", type=int, default=42, help="RNG seed (default: 42)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Print per-check details")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
@@ -255,7 +264,12 @@ Examples:
         print("Warning: File does not have .tflite extension", file=sys.stderr)
 
     try:
-        results = run_gate(str(model_path), n_frames=args.frames, seed=args.seed, verbose=args.verbose)
+        results = run_gate(
+            str(model_path),
+            n_frames=args.frames,
+            seed=args.seed,
+            verbose=args.verbose,
+        )
         print_results(results, use_json=args.json)
         return 0 if results["passed"] else 1
     except Exception as exc:
@@ -264,7 +278,7 @@ Examples:
             import traceback
 
             traceback.print_exc()
-        return 2
+        return 1
 
 
 if __name__ == "__main__":

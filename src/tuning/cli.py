@@ -2,7 +2,7 @@
 
 import os
 
-# Suppress verbose TF/XLA logs before importing tensorflow (via autotuner)
+# Suppress verbose TF/XLA logs before importing tensorflow
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
@@ -16,8 +16,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from src.tuning.autotuner import AutoTuner
+from src.tuning.orchestrator import MicroAutoTuner
 from src.utils.logging_config import setup_rich_logging
+
+# Backward compatibility alias for tests
+AutoTuner = MicroAutoTuner
 
 
 def _configure_logging(verbose: bool = False) -> None:
@@ -31,16 +34,15 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mww-autotune",
         description="""
-MaxQualityAutoTuner — post-training auto-tuning for wake word models.
+MicroAutoTuner -- population-based post-training auto-tuning for wake word models.
 
 Iteratively improves model quality to achieve target FAH/recall using:
-  - 7 surgical strategy arms with Thompson sampling
-  - 3-pass threshold optimization (quantile → exact → CV refinement)
-  - Temperature scaling for probability calibration
+  - Population-based candidate optimization
+  - Knob cycling (LR, threshold, temperature, sampling mix, weight perturbation, label smoothing)
   - Pareto archive (never regress on any objective)
-  - INT8 shadow evaluation (optional)
-  - Simulated annealing acceptance criterion
-  - Confirmation phase for final candidate validation
+  - Hypervolume tracking for multi-objective optimization
+  - Exploit/explore phases for efficient search
+  - Lightweight gradient bursts (micro-bursts)
 
 Quality is prioritized over speed. Time cost does not matter.
         """,
@@ -131,6 +133,20 @@ Quality is prioritized over speed. Time cost does not matter.
     )
 
     parser.add_argument(
+        "--population-size",
+        type=int,
+        default=None,
+        help="Override population_size in config",
+    )
+
+    parser.add_argument(
+        "--micro-burst-steps",
+        type=int,
+        default=None,
+        help="Override micro_burst_steps in config",
+    )
+
+    parser.add_argument(
         "--cv-folds",
         type=int,
         default=None,
@@ -151,7 +167,7 @@ def validate_args(args: argparse.Namespace) -> bool:
     console = Console()
 
     # Check checkpoint exists
-    if not Path(args.checkpoint).exists():
+    if not getattr(args, "dry_run", False) and not Path(args.checkpoint).exists():
         console.print(f"[red]Error: Checkpoint not found: {args.checkpoint}[/]")
         return False
 
@@ -248,6 +264,10 @@ def main() -> int:
         at["cv_folds"] = args.cv_folds
     if args.no_confirmation:
         at["require_confirmation"] = False
+    if getattr(args, "population_size", None) is not None:
+        at["population_size"] = args.population_size
+    if getattr(args, "micro_burst_steps", None) is not None:
+        at["micro_burst_steps"] = args.micro_burst_steps
 
     # Print summary
     print_config_summary(args, config_dict)
@@ -264,13 +284,16 @@ def main() -> int:
 
     # Run auto-tuning
     try:
-        tuner = AutoTuner(
-            checkpoint_path=args.checkpoint,
-            config=config_dict,
-            auto_tuning_config=at,
-            console=console,
-            users_hard_negs_dir=args.users_hard_negs,
-        )
+        tuner_kwargs = {
+            "checkpoint_path": args.checkpoint,
+            "config": config_dict,
+            "auto_tuning_config": at,
+            "console": console,
+            "users_hard_negs_dir": args.users_hard_negs,
+        }
+        if getattr(args, "dry_run", False):
+            tuner_kwargs["dry_run"] = True
+        tuner = AutoTuner(**tuner_kwargs)
         result = tuner.tune()
 
         # Print final results
@@ -329,7 +352,7 @@ def main() -> int:
             if int8_fah is not None and int8_recall is not None:
                 result_table.add_row("INT8 FAH (diag)", f"{float(int8_fah):.4f}")
                 result_table.add_row("INT8 Recall (diag)", f"{float(int8_recall):.4f}")
-            result_table.add_row("Iterations", str(result["iterations"]))
+            result_table.add_row("Iterations", str(result.get("iterations_completed", result.get("iterations", 0))))
             result_table.add_row("Notes", "confirmation failed; showing both confirm and search metrics")
             result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
             result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
@@ -349,7 +372,7 @@ def main() -> int:
             if int8_fah is not None and int8_recall is not None:
                 result_table.add_row("INT8 FAH (diag)", f"{float(int8_fah):.4f}")
                 result_table.add_row("INT8 Recall (diag)", f"{float(int8_recall):.4f}")
-            result_table.add_row("Iterations", str(result["iterations"]))
+            result_table.add_row("Iterations", str(result.get("iterations_completed", result.get("iterations", 0))))
             result_table.add_row("Target Met", "Yes" if result["target_met"] else "No")
             result_table.add_row("Best Checkpoint", str(result["best_checkpoint"] or "N/A"))
             result_table.add_row("Pareto Points", str(len(result.get("pareto_frontier", []))))

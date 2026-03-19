@@ -1,24 +1,53 @@
 """Auto-tuning module for wake word models."""
 
-from .autotuner import AutoTuner
+from src.tuning.dashboard import TuningDashboard, save_artifacts
+from src.tuning.knobs import (
+    KnobCycle,
+    LabelSmoothingKnob,
+    LRKnob,
+    SamplingMixKnob,
+    TemperatureKnob,
+    ThresholdKnob,
+    WeightPerturbationKnob,
+)
+from src.tuning.metrics import (
+    ErrorMemory,
+    ParetoArchive,
+    TuneMetrics,
+    compute_hypervolume,
+)
+from src.tuning.orchestrator import MicroAutoTuner
+from src.tuning.population import Candidate, Population, partition_data
 
 
-def autotune(checkpoint_path: str, config: "FullConfig", output_dir: str, target_fah: float, target_recall: float, max_iterations: int):
-    """Convenience function to run auto-tuning.
-
-    Args:
-        checkpoint_path: Path to the model checkpoint to tune.
-        config: FullConfig object containing tuning parameters.
-        output_dir: Directory for tuning outputs.
-        target_fah: Target false alarms per hour.
-        target_recall: Target recall score.
-        max_iterations: Maximum tuning iterations.
-
-    Returns:
-        Auto-tuning results.
-    """
-    tuner = AutoTuner(checkpoint_path=checkpoint_path, config=config, output_dir=output_dir)
-    return tuner.run(target_fah=target_fah, target_recall=target_recall, max_iterations=max_iterations)
+def autotune(checkpoint_path, config, auto_tuning_config=None, **kwargs) -> dict:
+    """Convenience wrapper around MicroAutoTuner.tune()."""
+    tuner = MicroAutoTuner(
+        checkpoint_path,
+        config,
+        auto_tuning_config or {},
+        **kwargs,
+    )
+    return tuner.tune()
 
 
-__all__ = ["AutoTuner", "autotune"]
+__all__ = [
+    "MicroAutoTuner",
+    "autotune",
+    "TuneMetrics",
+    "ParetoArchive",
+    "ErrorMemory",
+    "compute_hypervolume",
+    "Candidate",
+    "Population",
+    "partition_data",
+    "KnobCycle",
+    "LRKnob",
+    "ThresholdKnob",
+    "TemperatureKnob",
+    "SamplingMixKnob",
+    "WeightPerturbationKnob",
+    "LabelSmoothingKnob",
+    "TuningDashboard",
+    "save_artifacts",
+]

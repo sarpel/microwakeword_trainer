@@ -19,7 +19,7 @@ import os
 import sys
 from pathlib import Path
 
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
 import numpy as np
@@ -38,6 +38,7 @@ console = Console()
 def _load_keras_model(checkpoint_path: str, config: dict):
     """Load a Keras model from a .weights.h5 checkpoint."""
     import tensorflow as tf
+
     from src.model.architecture import build_model
 
     hardware = config.get("hardware", {})
@@ -46,7 +47,20 @@ def _load_keras_model(checkpoint_path: str, config: dict):
     mel_bins = hardware.get("mel_bins", 40)
     input_shape = (int(clip_duration_ms / window_step_ms), mel_bins)
 
-    model = build_model(config, input_shape=input_shape)
+    model_cfg = config.get("model", {})
+    model = build_model(
+        input_shape=input_shape,
+        num_classes=2,
+        first_conv_filters=model_cfg.get("first_conv_filters", 32),
+        first_conv_kernel_size=model_cfg.get("first_conv_kernel_size", 5),
+        stride=model_cfg.get("stride", 3),
+        pointwise_filters=model_cfg.get("pointwise_filters", "64,64,64,64"),
+        mixconv_kernel_sizes=model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"),
+        repeat_in_block=model_cfg.get("repeat_in_block", "1,1,1,1"),
+        residual_connection=model_cfg.get("residual_connection", "0,1,1,1"),
+        dropout_rate=model_cfg.get("dropout_rate", 0.08),
+        l2_regularization=model_cfg.get("l2_regularization", 0.00003),
+    )
     _ = model(tf.zeros((1, *input_shape), dtype=tf.float32), training=False)
 
     # Try Keras 3 checkpoint loader first
@@ -63,17 +77,16 @@ def _load_keras_model(checkpoint_path: str, config: dict):
 
 
 def _load_tflite_model(tflite_path: str):
-    """Load a TFLite model and return an interpreter."""
-    try:
-        from ai_edge_litert.interpreter import Interpreter
-    except ImportError:
-        import tensorflow as tf
+    """Load a TFLite model and return model bytes for fresh-interpreter-per-sample inference.
 
-        Interpreter = tf.lite.Interpreter
-
-    interpreter = Interpreter(model_path=tflite_path)
-    interpreter.allocate_tensors()
-    return interpreter, "tflite"
+    TFLite resource variables (streaming state) cannot be reliably reset via
+    reset_all_variables() or set_tensor() — those only affect ReadVariableOp read copies,
+    not the underlying resource variable buffers.  Creating a fresh interpreter per sample
+    from in-memory bytes is the ONLY reliable method (~0.6ms overhead, negligible).
+    """
+    with open(tflite_path, "rb") as f:
+        model_bytes = f.read()
+    return model_bytes, "tflite"
 
 
 def _infer_keras(model, batch: np.ndarray) -> np.ndarray:
@@ -82,34 +95,75 @@ def _infer_keras(model, batch: np.ndarray) -> np.ndarray:
     return np.array(preds).ravel()
 
 
-def _infer_tflite(interpreter, batch: np.ndarray) -> np.ndarray:
-    """Run inference with a TFLite interpreter (one sample at a time for streaming models)."""
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
+def _infer_tflite(model_bytes: bytes, batch: np.ndarray, config: dict) -> np.ndarray:
+    """Run streaming inference with a TFLite model using fresh interpreter per sample.
+
+    The exported TFLite model is a streaming model with input shape [1, stride, 40].
+    Full spectrograms must be fed in stride-sized chunks.  A fresh interpreter is created
+    per sample because TFLite resource variables cannot be reliably reset via
+    reset_all_variables() or set_tensor() on ReadVariableOp tensors.
+    """
+    import tensorflow as tf
+
+    # Extract quantization params from a template interpreter (once per batch)
+    _tmpl = tf.lite.Interpreter(model_content=model_bytes)
+    _tmpl.allocate_tensors()
+
+    input_details = _tmpl.get_input_details()
+    output_details = _tmpl.get_output_details()
 
     in_dtype = input_details[0]["dtype"]
     out_dtype = output_details[0]["dtype"]
 
+    # Quantization parameters
+    in_quant = input_details[0].get("quantization_parameters", {})
+    in_scale = in_quant.get("scales", np.array([1.0]))[0]
+    in_zero_point = in_quant.get("zero_points", np.array([0]))[0]
+
+    out_quant = output_details[0].get("quantization_parameters", {})
+    out_scale = out_quant.get("scales", np.array([1.0]))[0]
+    out_zero_point = out_quant.get("zero_points", np.array([0]))[0]
+
+    input_index = input_details[0]["index"]
+    output_index = output_details[0]["index"]
+    del _tmpl
+
+    # Model config for stride and mel_bins
+    model_cfg = config.get("model", {})
+    hardware_cfg = config.get("hardware", {})
+    stride = model_cfg.get("stride", 3)
+    mel_bins = hardware_cfg.get("mel_bins", 40)
+
     preds = []
     for sample in batch:
-        # Reshape to [1, ...] and cast to expected dtype
-        inp = sample[np.newaxis, ...]
-        if in_dtype == np.int8:
-            inp = (inp * 127).clip(-128, 127).astype(np.int8)
-        else:
-            inp = inp.astype(in_dtype)
+        num_frames = sample.shape[0]
 
-        interpreter.set_tensor(input_details[0]["index"], inp)
-        interpreter.invoke()
-        out = interpreter.get_tensor(output_details[0]["index"]).ravel()
+        # Fresh interpreter per sample — the ONLY reliable way to reset streaming state
+        interpreter = tf.lite.Interpreter(model_content=model_bytes)
+        interpreter.allocate_tensors()
 
-        # Dequantize uint8/int8 output to [0, 1]
-        if out_dtype == np.uint8:
-            out = out.astype(np.float32) / 255.0
-        elif out_dtype == np.int8:
-            out = (out.astype(np.float32) + 128.0) / 255.0
+        # Streaming inference: slide stride-sized chunks across spectrogram
+        prediction = 0.0
+        for t in range(0, num_frames - stride + 1, stride):
+            chunk = sample[t : t + stride]  # [stride, mel_bins]
+            chunk = chunk.reshape(1, stride, mel_bins)  # [1, stride, mel_bins]
 
-        preds.append(float(out[0]) if len(out) > 0 else 0.0)
+            # Quantize float32 -> int8 using proper scale/zero_point
+            if in_dtype != np.float32:
+                chunk = np.clip(chunk / in_scale + in_zero_point, -128, 127).astype(in_dtype)
+
+            interpreter.set_tensor(input_index, chunk)
+            interpreter.invoke()
+
+            raw_out = interpreter.get_tensor(output_index)
+            # Dequantize output to float [0, 1]
+            if out_dtype != np.float32:
+                prediction = (raw_out.astype(np.float32) - out_zero_point) * out_scale
+                prediction = prediction.flatten()[0]
+            else:
+                prediction = raw_out.flatten()[0]
+
+        preds.append(float(prediction))
 
     return np.array(preds)
 
@@ -135,10 +189,16 @@ def _evaluate_model(model_path: str, config: dict, data_factory) -> dict:
     suffix = path.suffix.lower()
     if suffix in (".h5", ".hdf5") or "weights" in path.name:
         model, kind = _load_keras_model(str(path), config)
-        infer_fn = lambda batch: _infer_keras(model, batch)
+
+        def infer_fn(batch):
+            return _infer_keras(model, batch)
+
     elif suffix == ".tflite":
-        interpreter, kind = _load_tflite_model(str(path))
-        infer_fn = lambda batch: _infer_tflite(interpreter, batch)
+        model_bytes, kind = _load_tflite_model(str(path))
+
+        def infer_fn(batch):
+            return _infer_tflite(model_bytes, batch, config)
+
     else:
         console.print(f"[red]✗ Unsupported model format: {suffix}[/]")
         sys.exit(1)
@@ -175,7 +235,12 @@ def _evaluate_model(model_path: str, config: dict, data_factory) -> dict:
     calc = MetricsCalculator(y_true=y_true, y_score=y_scores)
     metrics = calc.compute_all_metrics(ambient_duration_hours=scaled_hours, threshold=0.5)
 
-    return {"y_true": y_true, "y_scores": y_scores, "metrics": metrics, "kind": kind}
+    return {
+        "y_true": y_true,
+        "y_scores": y_scores,
+        "metrics": metrics,
+        "kind": kind,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -230,13 +295,17 @@ def _build_comparison_table(name_a: str, name_b: str, metrics_a: dict, metrics_b
     return table
 
 
-def _build_operating_points_table(name: str, metrics: dict) -> Table:
+def _build_operating_points_table(name: str, metrics: dict) -> "Table | None":
     """Show threshold-recall-FAH table from operating_points if available."""
     ops = metrics.get("operating_points", [])
     if not ops:
         return None
 
-    t = Table(title=f"Operating Points: {Path(name).stem}", show_header=True, header_style="bold blue")
+    t = Table(
+        title=f"Operating Points: {Path(name).stem}",
+        show_header=True,
+        header_style="bold blue",
+    )
     t.add_column("Target FAH", justify="right")
     t.add_column("Threshold", justify="right")
     t.add_column("Actual FAH", justify="right")
@@ -265,10 +334,20 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("model_a", help="Path to model A (.weights.h5 or .tflite)")
     parser.add_argument("model_b", help="Path to model B (.weights.h5 or .tflite)")
-    parser.add_argument("--config", type=str, default="standard", help="Config preset name or path (default: standard)")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="standard",
+        help="Config preset name or path (default: standard)",
+    )
     parser.add_argument("--override", type=str, default=None, help="Override config YAML path")
     parser.add_argument("--json", action="store_true", help="Output results as JSON to stdout")
-    parser.add_argument("--output", type=str, default=None, help="Save JSON results to this file")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Save JSON results to this file",
+    )
     return parser
 
 
@@ -276,8 +355,9 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
-    from config.loader import load_full_config
     import dataclasses
+
+    from config.loader import load_full_config
 
     config_dc = load_full_config(args.config, args.override)
     config = dataclasses.asdict(config_dc)
@@ -309,18 +389,32 @@ def main() -> None:
 
     if args.json:
         out = {
-            "model_a": {"path": args.model_a, "metrics": {k: v for k, v in metrics_a.items() if isinstance(v, (int, float, type(None)))}},
-            "model_b": {"path": args.model_b, "metrics": {k: v for k, v in metrics_b.items() if isinstance(v, (int, float, type(None)))}},
+            "model_a": {
+                "path": args.model_a,
+                "metrics": {k: v for k, v in metrics_a.items() if isinstance(v, (int, float, type(None)))},
+            },
+            "model_b": {
+                "path": args.model_b,
+                "metrics": {k: v for k, v in metrics_b.items() if isinstance(v, (int, float, type(None)))},
+            },
             "delta": {},
         }
-        for key, _, fmt in _DISPLAY_METRICS:
+        for key, _, _fmt in _DISPLAY_METRICS:
             va = metrics_a.get(key)
             vb = metrics_b.get(key)
             if va is not None and vb is not None:
                 out["delta"][key] = float(va) - float(vb)
         print(json.dumps(out, indent=2))
         if args.output:
-            Path(args.output).write_text(json.dumps(out, indent=2))
+            output_path = Path(args.output)
+            # Create backup if output file already exists
+            if output_path.exists():
+                from datetime import datetime
+
+                backup_path = output_path.with_suffix(f".backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                output_path.rename(backup_path)
+                console.print(f"[yellow]Backup created:[/] {backup_path}")
+            output_path.write_text(json.dumps(out, indent=2))
         return
 
     # Rich comparison table
@@ -351,8 +445,14 @@ def main() -> None:
 
     if args.output:
         out = {
-            "model_a": {"path": args.model_a, "metrics": {k: v for k, v in metrics_a.items() if isinstance(v, (int, float, type(None)))}},
-            "model_b": {"path": args.model_b, "metrics": {k: v for k, v in metrics_b.items() if isinstance(v, (int, float, type(None)))}},
+            "model_a": {
+                "path": args.model_a,
+                "metrics": {k: v for k, v in metrics_a.items() if isinstance(v, (int, float, type(None)))},
+            },
+            "model_b": {
+                "path": args.model_b,
+                "metrics": {k: v for k, v in metrics_b.items() if isinstance(v, (int, float, type(None)))},
+            },
         }
         Path(args.output).write_text(json.dumps(out, indent=2))
         console.print(f"\n  Results saved to: {args.output}")

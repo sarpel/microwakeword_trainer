@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -35,7 +37,10 @@ def _strict_payload_shape_check(tflite_path: str, verification: dict | None = No
         observed = [tuple(int(v) for v in d.get("shape", [])) for d in payloads]
 
     if len(observed) != 6:
-        return False, f"Strict: expected 6 READ_VARIABLE payload tensors, found {len(observed)}"
+        return (
+            False,
+            f"Strict: expected 6 READ_VARIABLE payload tensors, found {len(observed)}",
+        )
 
     observed_sorted = sorted(observed)
     canonical_first_five = sorted(
@@ -56,13 +61,22 @@ def _strict_payload_shape_check(tflite_path: str, verification: dict | None = No
 
     dynamic_shapes = [shape for shape in observed_sorted if shape not in canonical_first_five]
     if len(dynamic_shapes) != 1:
-        return False, f"Strict payload shape mismatch: expected exactly one dynamic stream_5 shape, observed={observed_sorted}"
+        return (
+            False,
+            f"Strict payload shape mismatch: expected exactly one dynamic stream_5 shape, observed={observed_sorted}",
+        )
 
     stream_5 = dynamic_shapes[0]
     if len(stream_5) != 4 or stream_5[0] != 1 or stream_5[2] != 1 or stream_5[3] != 64 or stream_5[1] < 1:
-        return False, f"Strict payload shape mismatch: dynamic stream_5 shape invalid: {stream_5}"
+        return (
+            False,
+            f"Strict payload shape mismatch: dynamic stream_5 shape invalid: {stream_5}",
+        )
 
-    return True, f"Strict: READ_VARIABLE payload tensor shapes are valid (dynamic stream_5 accepted: {stream_5})."
+    return (
+        True,
+        f"Strict: READ_VARIABLE payload tensor shapes are valid (dynamic stream_5 accepted: {stream_5}).",
+    )
 
 
 def _build_output(verification: dict, strict_result: tuple[bool, str] | None = None) -> dict:
@@ -111,9 +125,17 @@ def _to_json_safe(obj: Any) -> Any:
 def main():
     parser = argparse.ArgumentParser(description="ESPHome verification utility with optional strict mode.")
     parser.add_argument("tflite_path", nargs="?", help="Path to the TFLite model to verify.")
-    parser.add_argument("--strict", action="store_true", help="Enable strict payload-shape validation for READ_VARIABLE tensors")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Enable strict payload-shape validation for READ_VARIABLE tensors",
+    )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON output")
-    parser.add_argument("--verbose", action="store_true", help="Print detailed checks and model details")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed checks and model details",
+    )
     args = parser.parse_args()
 
     evidence_dir = _ensure_evidence_dir()
@@ -130,9 +152,40 @@ def main():
         return 1
 
     try:
-        from src.export.verification import verify_tflite_model
+        from src.export.tflite import get_checkpoint_metadata
+        from src.export.verification import (
+            compute_expected_state_shapes,
+            verify_tflite_model,
+        )
 
-        verification = verify_tflite_model(str(model_path))
+        config_path = os.getenv("MWW_VERIFY_CONFIG", "config/presets/standard.yaml")
+        with open(config_path, "r", encoding="utf-8") as cfg_handle:
+            yaml_cfg = yaml.safe_load(cfg_handle) or {}
+
+        model_cfg = yaml_cfg.get("model", {})
+        pointwise_filters_str = str(model_cfg.get("pointwise_filters", "64,64,64,64"))
+        pointwise_filters = cast(list[int], [int(x.strip()) for x in pointwise_filters_str.split(",") if x.strip()])
+        if not pointwise_filters:
+            pointwise_filters = [64, 64, 64, 64]
+
+        mixconv_str = str(model_cfg.get("mixconv_kernel_sizes", "[5],[7,11],[9,15],[23]"))
+        mixconv_kernel_sizes = cast(list[list[int]], yaml.safe_load(f"[{mixconv_str}]") or [[5], [7, 11], [9, 15], [23]])
+
+        checkpoint_path = os.getenv("MWW_VERIFY_CHECKPOINT", "models/checkpoints/best_weights.weights.h5")
+        metadata = get_checkpoint_metadata(checkpoint_path, pointwise_filters=pointwise_filters[-1])
+        temporal_frames = int(metadata.get("temporal_frames", 6))
+
+        expected_shapes = compute_expected_state_shapes(
+            first_conv_kernel=int(model_cfg.get("first_conv_kernel_size", 5)),
+            stride=int(model_cfg.get("stride", 3)),
+            mel_bins=int(yaml_cfg.get("hardware", {}).get("mel_bins", 40)),
+            first_conv_filters=int(model_cfg.get("first_conv_filters", 32)),
+            mixconv_kernel_sizes=mixconv_kernel_sizes,
+            pointwise_filters=pointwise_filters,
+            temporal_frames=temporal_frames,
+        )
+
+        verification = verify_tflite_model(str(model_path), expected_state_shapes=expected_shapes)
         strict_result = _strict_payload_shape_check(str(model_path), verification=verification) if args.strict else None
         payload = _build_output(verification, strict_result=strict_result)
         payload_safe = cast(dict[str, Any], _to_json_safe(payload))

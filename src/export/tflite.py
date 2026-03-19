@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Generator, Optional
 
 # Suppress verbose TF/XLA logs before importing tensorflow
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
@@ -54,8 +54,24 @@ tf.get_logger().setLevel("ERROR")
 
 from src.export.verification import compute_expected_state_shapes, verify_tflite_model
 from src.model.architecture import build_core_layers
+from src.utils.text_utils import to_snake_case
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_pointwise_filters(value: object, default: Optional[list[int]] = None) -> list[int]:
+    """Normalize pointwise_filters config into a list[int]."""
+    if default is None:
+        default = [64, 64, 64, 64]
+
+    if isinstance(value, str):
+        parsed = [int(x.strip()) for x in value.split(",") if x.strip()]
+        return parsed or default
+
+    if isinstance(value, list):
+        return [int(x) for x in value] or default
+
+    return default
 
 
 def get_checkpoint_metadata(checkpoint_path: str, pointwise_filters: int = 64) -> dict:
@@ -115,6 +131,7 @@ def get_checkpoint_metadata(checkpoint_path: str, pointwise_filters: int = 64) -
     if dense_input_features is None or dense_output_features is None:
         raise ValueError(f"Dense layer kernel not found in checkpoint: {checkpoint_path}")
 
+    # temporal_frames computed from last pointwise filter count (passed via pointwise_filters param)
     temporal_frames = dense_input_features // pointwise_filters
 
     metadata = {
@@ -333,7 +350,7 @@ class StreamingExportModel(tf.keras.Model):
         # Export model call() expects list[dict] with depthwise/pointwise/bn/relu/residual* keys
         self.mixconv_layers = [cfg["export_layers"] for cfg in core_layers["blocks"]]
 
-        # Output dense layer
+        # Output dense layer (with fused sigmoid activation)
         self.dense = core_layers["dense"]
 
         # State variables will be created in build()
@@ -370,22 +387,60 @@ class StreamingExportModel(tf.keras.Model):
         state_configs = [
             # stream: initial conv ring buffer
             # kernel=5, stride=3 -> 5-3=2 frames
-            ("stream", (1, self.first_conv_kernel - self.stride, 1, self.mel_bins)),
+            (
+                "stream",
+                (1, self.first_conv_kernel - self.stride, 1, self.mel_bins),
+            ),
             # stream_1: after initial conv, before block 0
             # max_kernel=5, stride=1 -> 5-1=4 frames, filters=32
-            ("stream_1", (1, max(self.mixconv_kernel_sizes[0]) - 1, 1, self.first_conv_filters)),
+            (
+                "stream_1",
+                (
+                    1,
+                    max(self.mixconv_kernel_sizes[0]) - 1,
+                    1,
+                    self.first_conv_filters,
+                ),
+            ),
             # stream_2: after block 0, before block 1
             # max_kernel=11, stride=1 -> 11-1=10 frames, filters=64
-            ("stream_2", (1, max(self.mixconv_kernel_sizes[1]) - 1, 1, self.pointwise_filters[0])),
+            (
+                "stream_2",
+                (
+                    1,
+                    max(self.mixconv_kernel_sizes[1]) - 1,
+                    1,
+                    self.pointwise_filters[0],
+                ),
+            ),
             # stream_3: after block 1, before block 2
             # max_kernel=15, stride=1 -> 15-1=14 frames, filters=64
-            ("stream_3", (1, max(self.mixconv_kernel_sizes[2]) - 1, 1, self.pointwise_filters[1])),
+            (
+                "stream_3",
+                (
+                    1,
+                    max(self.mixconv_kernel_sizes[2]) - 1,
+                    1,
+                    self.pointwise_filters[1],
+                ),
+            ),
             # stream_4: after block 2, before block 3
             # max_kernel=23, stride=1 -> 23-1=22 frames, filters=64
-            ("stream_4", (1, max(self.mixconv_kernel_sizes[3]) - 1, 1, self.pointwise_filters[2])),
+            (
+                "stream_4",
+                (
+                    1,
+                    max(self.mixconv_kernel_sizes[3]) - 1,
+                    1,
+                    self.pointwise_filters[2],
+                ),
+            ),
             # stream_5: pre-flatten temporal buffer (inferred from checkpoint)
             # temporal_frames - 1 = retained history before flatten/dense
-            ("stream_5", (1, self.temporal_frames - 1, 1, self.pointwise_filters[3])),
+            (
+                "stream_5",
+                (1, self.temporal_frames - 1, 1, self.pointwise_filters[3]),
+            ),
         ]
 
         # Verify we have exactly 6 state variables
@@ -414,7 +469,7 @@ class StreamingExportModel(tf.keras.Model):
     @staticmethod
     def _split_channels(inputs: tf.Tensor, splits: list) -> list:
         """Split tensor along channel dimension."""
-        return tf.split(inputs, splits, axis=-1)
+        return list(tf.split(inputs, splits, axis=-1))
 
     def fold_batch_norms(self) -> None:
         """Fold BN statistics into the preceding pointwise conv kernels.
@@ -556,7 +611,6 @@ class StreamingExportModel(tf.keras.Model):
         # Flatten full concat: [1, temporal_frames, 1, 64] → [1, temporal_frames*64]
         x = tf.reshape(x, [1, -1])
 
-        # Dense output
         return self.dense(x)
 
 
@@ -706,12 +760,14 @@ def create_representative_dataset_from_data(
             avg_chunks_per_spec = 10  # Reasonable default
 
         # Calculate how many spectrograms we need
-        target_positive_chunks = int(target_chunks * 0.3)
+        # Read representative fraction from export config with safe fallback
+        rep_frac = export_cfg.get("representative_positive_fraction", 0.3) if isinstance(export_cfg, dict) else getattr(export_cfg, "representative_positive_fraction", 0.3)
+        target_positive_chunks = int(target_chunks * rep_frac)
         target_negative_chunks = target_chunks - target_positive_chunks
 
         n_positive_specs = min(
             len(positive_indices),
-            max(1, target_positive_chunks // avg_chunks_per_spec) if positive_indices else 0,
+            (max(1, target_positive_chunks // avg_chunks_per_spec) if positive_indices else 0),
         )
         n_negative_specs = min(
             len(negative_indices),
@@ -777,19 +833,6 @@ def create_representative_dataset_from_data(
                 return create_representative_dataset(config, target_chunks)
             raise ValueError("Quantized export requires real representative calibration data, but no valid calibration chunks could be extracted from feature store.")
 
-        # Representative dataset for INT8 quantization requires minimum 500 training samples
-        # with forced min/max boundary anchors (0.0 and 26.0).
-        required_chunks = max(500, target_chunks)
-
-        # If we extracted fewer than `required_chunks`, pad by repeating existing
-        # chunks (cycling) so the generator yields exactly `required_chunks`.
-        # The case of no chunks was handled above (fall back or raise).
-        if len(all_chunks) < required_chunks:
-            import itertools
-
-            needed = required_chunks - len(all_chunks)
-            all_chunks = all_chunks + list(itertools.islice(itertools.cycle(all_chunks), needed))
-
         positive_pct = (n_positive_used / max(1, n_positive_used + n_negative_used)) * 100
         print(
             f"  Using {len(all_chunks)} sequential calibration chunks from "
@@ -798,17 +841,26 @@ def create_representative_dataset_from_data(
         )
 
         def representative_dataset_gen():
-            # Boundary anchors for correct INT8 input range calibration
-            anchor_min = np.zeros((1, stride, mel_bins), dtype=np.float32)  # 0.0
-            anchor_max = np.full((1, stride, mel_bins), 26.0, dtype=np.float32)  # 26.0
-            yield [anchor_min]
-            yield [anchor_max]
-
-            # Yield chunks in sequential order — state accumulates across
-            # chunks from the same spectrogram, allowing the model to
-            # produce high-confidence outputs on positive samples
-            for chunk in all_chunks:
-                yield [chunk]
+            # Inject boundary anchor points into the first calibration chunk,
+            # matching the official reference implementation:
+            #   sample_fingerprints[0][0, 0] = 0.0  (minimum value anchor)
+            #   sample_fingerprints[0][0, 1] = 26.0 (maximum value anchor)
+            # This pins the INT8 quantization scale to exactly 26/255 ≈ 0.101961,
+            # which is the canonical value required by the ARCHITECTURAL_CONSTITUTION.
+            # Yielding separate all-zero / all-26 tensors does NOT produce the same
+            # effect because the quantizer sees a bimodal distribution rather than
+            # a single sample whose range is [0.0, 26.0].
+            if all_chunks:
+                # Mutate a copy so original data is preserved
+                first_chunk = all_chunks[0].copy()
+                first_chunk[0, 0, 0] = 0.0  # minimum anchor
+                first_chunk[0, 0, 1] = 26.0  # maximum anchor
+                yield [first_chunk]
+                for chunk in all_chunks[1:]:
+                    yield [chunk]
+            else:
+                for chunk in all_chunks:
+                    yield [chunk]
 
         return representative_dataset_gen
     finally:
@@ -836,7 +888,10 @@ def _select_export_probability_cutoff(
     Uses the same FAH/recall sweep utilities as the evaluation layer.
     Primary objective: minimize FAH while meeting target recall.
     """
-    from src.evaluation.metrics import compute_fah_at_target_recall, compute_recall_at_target_fah
+    from src.evaluation.metrics import (
+        compute_fah_at_target_recall,
+        compute_recall_at_target_fah,
+    )
 
     y_true = np.asarray(y_true, dtype=np.int32).reshape(-1)
     y_scores = np.asarray(y_scores, dtype=np.float32).reshape(-1)
@@ -903,7 +958,11 @@ def _select_export_probability_cutoff(
     cutoff = raw_cutoff
     fallback_applied = False
     # Guardrail: extremely low thresholds are unstable and produce false activations.
-    if (not np.isfinite(cutoff)) or cutoff < 0.05:
+    # Guardrail: cutoff == 1.0 is degenerate — the uint8 model's max representable
+    # probability is 255/255 ≈ 0.9961, so nothing ever triggers at threshold 1.0.
+    # This happens when the test split is too clean (FAH=0 at every threshold),
+    # causing the sweep to return the maximum threshold. Fall back to config default.
+    if (not np.isfinite(cutoff)) or cutoff < 0.05 or cutoff >= 1.0:
         cutoff = fallback_cutoff
         method = f"{method}_safety_fallback"
         fallback_applied = True
@@ -1103,12 +1162,11 @@ def export_streaming_tflite(
 
     # First, read checkpoint metadata to infer temporal dimensions
     print("\n[0/5] Analyzing checkpoint architecture...")
-    # Assume 64 pointwise filters in last block (standard architecture)
+    # Normalize pointwise_filters to handle both list and CSV-string config values.
+    pw_filters_list = [64, 64, 64, 64]
     if config is not None:
-        pw_filters_list = config.get("pointwise_filters", [64, 64, 64, 64])
-        pointwise_filters = pw_filters_list[-1] if pw_filters_list else 64
-    else:
-        pointwise_filters = 64  # Standard architecture default
+        pw_filters_list = _normalize_pointwise_filters(config.get("pointwise_filters", [64, 64, 64, 64]))
+    pointwise_filters = pw_filters_list[-1] if pw_filters_list else 64
 
     metadata = get_checkpoint_metadata(checkpoint_path, pointwise_filters=pointwise_filters)
     temporal_frames = metadata["temporal_frames"]
@@ -1146,7 +1204,7 @@ def export_streaming_tflite(
         first_conv_filters=config.get("first_conv_filters", 32),
         first_conv_kernel=config.get("first_conv_kernel", 5),
         stride=config.get("stride", 3),
-        pointwise_filters=config.get("pointwise_filters", [64, 64, 64, 64]),
+        pointwise_filters=pw_filters_list,
         mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
         residual_connections=config.get("residual_connections", [0, 1, 1, 1]),
         mel_bins=config.get("mel_bins", 40),
@@ -1157,7 +1215,12 @@ def export_streaming_tflite(
     # temporal_frames is only used internally for stream_5 ring buffer size; it must
     # NOT appear in the exported input signature or ESPHome will read stride=temporal_frames
     # from input->dims->data[1] and run at the wrong cadence.
-    _ = model(tf.zeros((1, config.get("stride", 3), config.get("mel_bins", 40)), dtype=tf.float32))
+    _ = model(
+        tf.zeros(
+            (1, config.get("stride", 3), config.get("mel_bins", 40)),
+            dtype=tf.float32,
+        )
+    )
 
     print("\n[2/5] Loading checkpoint weights...")
     loaded = load_weights_from_keras3_checkpoint(model, checkpoint_path)
@@ -1181,7 +1244,11 @@ def export_streaming_tflite(
 
         export_input_sig = [
             tf.TensorSpec(
-                shape=(1, config.get("stride", 3), config.get("mel_bins", 40)),  # stride frames per call, NOT temporal_frames
+                shape=(
+                    1,
+                    config.get("stride", 3),
+                    config.get("mel_bins", 40),
+                ),  # stride frames per call, NOT temporal_frames
                 dtype=tf.float32,
                 name="inputs",
             )
@@ -1206,6 +1273,7 @@ def export_streaming_tflite(
             # ASSIGN_VARIABLE. VAR_HANDLE resource handles themselves are not
             # quantized payload data.
             converter._experimental_variable_quantization = True
+            converter.experimental_new_quantizer = True
             converter.target_spec.supported_ops = {tf.lite.OpsSet.TFLITE_BUILTINS_INT8}
             converter.inference_input_type = tf.int8
             converter.inference_output_type = tf.uint8
@@ -1226,10 +1294,15 @@ def export_streaming_tflite(
 
     print("\n[4/5] Saving and verifying...")
 
-    # Save TFLite model
+    # Use snake_case wake_word for filename if available in config
+    export_cfg = config.get("export", {}) if config else {}
+    wake_word_display = export_cfg.get("wake_word", model_name)
+    wake_word_snake = to_snake_case(wake_word_display)
+
+    # Save TFLite model with wake_word-based filename
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    tflite_file = output_path / f"{model_name}.tflite"
+    tflite_file = output_path / f"{wake_word_snake}.tflite"
     tflite_file.write_bytes(tflite_model)
 
     print(f"✓ TFLite model saved to: {tflite_file}")
@@ -1267,7 +1340,12 @@ def export_streaming_tflite(
             metadata["export_observed_negative_chunks"] = int(auto_cutoff.get("observed_negative_chunks", 0))
             metadata["export_observed_positive_chunks"] = int(auto_cutoff.get("observed_positive_chunks", 0))
             metadata["export_raw_probability_cutoff"] = float(auto_cutoff.get("raw_probability_cutoff", auto_cutoff["probability_cutoff"]))
-            metadata["export_fallback_probability_cutoff"] = float(auto_cutoff.get("fallback_probability_cutoff", auto_cutoff["probability_cutoff"]))
+            metadata["export_fallback_probability_cutoff"] = float(
+                auto_cutoff.get(
+                    "fallback_probability_cutoff",
+                    auto_cutoff["probability_cutoff"],
+                )
+            )
             metadata["export_cutoff_fallback_applied"] = bool(auto_cutoff.get("fallback_applied", False))
             metadata["export_cutoff_source"] = "mww-export"
             _write_checkpoint_metadata(checkpoint_path, metadata)
@@ -1278,6 +1356,8 @@ def export_streaming_tflite(
     except (ValueError, TypeError, ZeroDivisionError) as e:
         print(f"  Warning: Auto probability_cutoff calculation failed, using configured/default cutoff: {e}")
     except Exception as e:
+        # Log unexpected exceptions but don't fail the export since model is already saved
+        print(f"  Warning: Unexpected exception during auto probability_cutoff calculation: {type(e).__name__}: {e}")
         # Re-raise unexpected exceptions for debugging
         print(f"  Error: Unexpected exception during auto probability_cutoff calculation: {type(e).__name__}: {e}")
         raise
@@ -1299,7 +1379,7 @@ def export_streaming_tflite(
             output_dir=output_dir,
             model_name=model_name,
             tflite_path=str(tflite_file),
-            analysis_results=verification if verification.get("valid") else None,
+            analysis_results=(verification if verification.get("valid") else None),
         )
         print(f"✓ Manifest saved to: {pkg['manifest_path']}")
     except Exception as e:
@@ -1348,7 +1428,10 @@ def _build_manifest_config(config: Optional[dict], model_name: str, metadata: di
     }
 
 
-def verify_exported_model(tflite_path: str, expected_state_shapes: list[tuple[int, ...]] | None = None) -> dict:
+def verify_exported_model(
+    tflite_path: str,
+    expected_state_shapes: list[tuple[int, ...]] | None = None,
+) -> dict:
     """Verify exported TFLite model meets ESPHome requirements.
 
     Args:
@@ -1402,8 +1485,8 @@ def convert_model_saved(
 
     # Build streaming export model with state variables
     # Infer temporal_frames from training model to support non-default configs
-    pointwise_filters = config.get("pointwise_filters", [64, 64, 64, 64])
-    last_pw = pointwise_filters[-1] if isinstance(pointwise_filters, list) else 64
+    pointwise_filters = _normalize_pointwise_filters(config.get("pointwise_filters", [64, 64, 64, 64]))
+    last_pw = pointwise_filters[-1] if pointwise_filters else 64
     # Dense kernel shape: (input_features, output_units). Infer temporal frames from input features step
     dense_kernel = model.output_dense.kernel
     temporal_frames = dense_kernel.shape[0] // last_pw
@@ -1412,7 +1495,7 @@ def convert_model_saved(
         first_conv_filters=config.get("first_conv_filters", 32),
         first_conv_kernel=config.get("first_conv_kernel", 5),
         stride=config.get("stride", 3),
-        pointwise_filters=config.get("pointwise_filters", [64, 64, 64, 64]),
+        pointwise_filters=pointwise_filters,
         mixconv_kernel_sizes=config.get("mixconv_kernel_sizes", [[5], [7, 11], [9, 15], [23]]),
         residual_connections=config.get("residual_connections", [0, 1, 1, 1]),
         mel_bins=config.get("mel_bins", 40),
@@ -1529,17 +1612,16 @@ def main():
                     "mel_bins": yaml_config.get("hardware", {}).get("mel_bins", 40),
                 }
                 export_cfg = yaml_config.get("export", {})
-                config["export"] = {
-                    "wake_word": export_cfg.get("wake_word", args.model_name),
-                    "author": export_cfg.get("author", "Sarpel GURAY"),
-                    "website": export_cfg.get("website", "https://github.com/sarpel/microwakeword_trainer"),
-                    "trained_languages": export_cfg.get("trained_languages", ["en"]),
-                    "probability_cutoff": export_cfg.get("probability_cutoff", 0.97),
-                    "sliding_window_size": export_cfg.get("sliding_window_size", 5),
-                    "tensor_arena_size": export_cfg.get("tensor_arena_size"),
-                    "minimum_esphome_version": export_cfg.get("minimum_esphome_version", "2024.7.0"),
-                    "arena_size_margin": export_cfg.get("arena_size_margin", 1.3),
-                }
+                config["export"] = dict(export_cfg)  # Pass ALL export config keys
+                # Apply defaults for mandatory keys if missing
+                config["export"].setdefault("wake_word", args.model_name)
+                config["export"].setdefault("author", "Sarpel GURAY")
+                config["export"].setdefault("website", "https://github.com/sarpel/microwakeword_trainer")
+                config["export"].setdefault("trained_languages", ["en"])
+                config["export"].setdefault("probability_cutoff", 0.97)
+                config["export"].setdefault("sliding_window_size", 5)
+                config["export"].setdefault("minimum_esphome_version", "2024.7.0")
+                config["export"].setdefault("arena_size_margin", 1.3)
                 config["hardware"] = {
                     "window_step_ms": yaml_config.get("hardware", {}).get("window_step_ms", 10),
                 }
@@ -1560,6 +1642,36 @@ def main():
     except Exception as e:
         print(f"Warning: Could not load config: {e}")
         print("Using default okay_nabu configuration")
+
+    # Auto-resolve data_dir from config paths.processed_dir if not explicitly provided
+    if args.data_dir is None:
+        try:
+            if os.path.isfile(args.config):
+                import yaml as _yaml
+
+                with open(args.config, "r") as _f:
+                    _yaml_cfg = _yaml.safe_load(_f)
+                _processed_dir = _yaml_cfg.get("paths", {}).get("processed_dir", "./data/processed")
+            else:
+                _processed_dir = "./data/processed"
+        except Exception:
+            _processed_dir = "./data/processed"
+        # Expand env vars in the path (e.g. ${DATA_DIR:-./data}/processed)
+        import re as _re
+
+        def _expand(s):
+            return _re.sub(
+                r"\$\{([^}:-]+)(?::-([^}]*))?\}",
+                lambda m: os.environ.get(m.group(1), m.group(2) or ""),
+                s,
+            )
+
+        _processed_dir = _expand(_processed_dir)
+        if os.path.isdir(_processed_dir):
+            args.data_dir = _processed_dir
+            print(f"ℹ️  Auto-resolved --data-dir: {_processed_dir}")
+        else:
+            print(f"⚠️  Default data dir '{_processed_dir}' not found; skipping calibration auto-resolve. Pass --data-dir explicitly.")
 
     # Export
     try:

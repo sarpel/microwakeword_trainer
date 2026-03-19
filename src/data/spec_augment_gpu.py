@@ -81,6 +81,10 @@ def spec_augment_gpu(
     # Transfer back to CPU
     spec_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(spec_gpu))
     del spec_gpu
+    # Removed per-iteration pool clearing to avoid performance degradation
+    # with MemoryAsyncPool. Use periodic cleanup or pressure-based clearing instead.
+    # cp.get_default_memory_pool().free_all_blocks()
+    # cp.get_default_pinned_memory_pool().free_all_blocks()
 
     return spec_cpu
 
@@ -134,7 +138,7 @@ def batch_spec_augment_gpu(
         mask_2d = (freq_indices[None, :] >= freq_mask_starts[:, None]) & (freq_indices[None, :] < (freq_mask_starts + freq_mask_sizes)[:, None])
         # Expand to 3D: (batch_size, num_time_frames, num_freq_bins) and apply
         mask_3d = mask_2d[:, None, :]  # Broadcast across time dimension
-        batch_gpu[mask_3d] = 0
+        batch_gpu = cp.where(mask_3d, 0, batch_gpu)
 
     # Apply time masks - fully vectorized across batch and frequency
     for _ in range(time_mask_count):
@@ -150,10 +154,14 @@ def batch_spec_augment_gpu(
         mask_2d = (time_indices[None, :] >= time_mask_starts[:, None]) & (time_indices[None, :] < (time_mask_starts + time_mask_sizes)[:, None])
         # Expand to 3D: (batch_size, num_time_frames, num_freq_bins) and apply
         mask_3d = mask_2d[:, :, None]  # Broadcast across frequency dimension
-        batch_gpu[mask_3d] = 0
+        batch_gpu = cp.where(mask_3d, 0, batch_gpu)
 
     # Transfer back to CPU using synchronous call (async requires pinned memory)
     batch_cpu = cast("np.ndarray[Any, Any]", cp.asnumpy(batch_gpu))
     del batch_gpu
+    # Batch calls are infrequent, so we perform cleanup here to prevent memory fragmentation
+    # and free pinned host memory accumulated from CPU<->GPU transfers.
+    cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
 
     return batch_cpu
