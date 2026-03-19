@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Generator, Optional
 
+from rich.markdown import args
+
 # Suppress verbose TF/XLA logs before importing tensorflow
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_XLA_FLAGS", "--tf_xla_enable_xla_devices=false")
@@ -1607,9 +1609,12 @@ def main():
         sys.exit(1)
 
     # Config file must exist and be readable
-    config_path = resolve_path_safe(args.config, allow_absolute=True)
-    if not config_path.exists():
-        logger.error("Config file not found: %s", config_path)
+    try:
+        config_path = resolve_path_safe(args.config, allow_absolute=True)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {args.config}")
+    except (ValueError, FileNotFoundError) as e:
+        logger.error("Invalid config path: %s", e)
         sys.exit(1)
 
     # Output directory - resolve safely

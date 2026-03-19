@@ -81,6 +81,9 @@ def resolve_path_safe(
         resolved.relative_to(base_dir)
     except ValueError as exc:
         raise ValueError(f"Path traversal detected: {user_path} resolves to {resolved} which escapes base directory {base_dir}") from exc
+    # Optionally verify existence
+    if not resolved.exists():
+        raise FileNotFoundError(f"Path does not exist: {resolved}")
 
     return resolved
 
@@ -112,7 +115,13 @@ def validate_path_within_dir(
         ValueError: Path escapes allowed directory
     """
     allowed_dir = Path(allowed_dir).resolve()
-    file_path = Path(file_path).resolve()
+    file_path = Path(file_path)
+
+    # If path is relative, resolve it relative to allowed_dir
+    if not file_path.is_absolute():
+        file_path = (allowed_dir / file_path).resolve()
+    else:
+        file_path = file_path.resolve()
 
     try:
         file_path.relative_to(allowed_dir)

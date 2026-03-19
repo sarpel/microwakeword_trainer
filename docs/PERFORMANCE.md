@@ -153,9 +153,9 @@ quantization:
 # Profile training step
 python -m cProfile -o profile.stats -m src.training.trainer
 
-# Profile with snakeviz
+# Visualize with snakeviz
 pip install snakeviz
-python -m cProfile -o - | snakeviz -
+snakeviz profile.stats
 ```
 
 ### Performance Monitoring

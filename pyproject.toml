@@ -123,7 +123,7 @@ select = [
 ignore = [
     # Allow assert (used in pytest)
     "S101",
-    # Pickle security (S301) RE-ENABLED after fixing CVE-2024-XXXX in population.py and clustering.py (March 18, 2026)
+    # Pickle security (S301) RE-ENABLED after fixing pickle usage in population.py and clustering.py (March 18, 2026)
     # Allow subprocess (used in export - list-based args, shell=False)
     "S603", "S607",
     # Allow OS calls (used in scripts)

@@ -2302,8 +2302,6 @@ class Trainer:
         # Ensure post-training held-out test evaluation uses the validated best
         # checkpoint (EMA-smoothed when EMA is enabled), not the restored raw
         # in-memory training weights.
-        if self.best_weights_path and os.path.exists(self.best_weights_path):
-            self.model.load_weights(self.best_weights_path)
 
         # Note: We do NOT reload best_weights here because:
         # 1. Training is complete - no need to reload weights

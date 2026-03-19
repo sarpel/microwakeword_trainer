@@ -79,7 +79,7 @@ training:
   ema_decay: 0.9995  # EMA smoothing factor (higher = slower decay, half-life ~6900 steps)
   random_seed: 42  # Random seed for reproducible runs
   # Intra-phase cosine LR decay (prevents flat LR stagnation)
-  cosine_decay_alpha: 0.1  # Intra-phase LR decay factor (LR ends at 30% of phase start)
+  cosine_decay_alpha: 0.1  # Intra-phase LR decay factor (LR ends at 10% of phase start)
   # Plateau-based LR reduction and early stopping
   plateau_lr_factor: 0.3  # LR reduction factor on plateau (0.3 = reduce to 30%)
   plateau_patience: 5  # Consecutive plateau evals before LR reduction
@@ -170,9 +170,9 @@ performance:
   tensorboard_log_dir: "./logs"  # TensorBoard log directory
   tensorboard_log_histograms: false  # Log weight histograms
   tensorboard_log_images: false  # Log image tensors
-  tensorboard_log_pr_curves: false  # Enable PR curve logging during training
-  tensorboard_log_roc_curves: false  # Enable ROC curve plotting during training
-  tensorboard_log_graph: false  # Log computation graph
+  tensorboard_log_pr_curves: false  # PR curve logging during training (disabled for performance)
+  tensorboard_log_roc_curves: false  # ROC curve plotting during training (disabled for performance)
+  tensorboard_log_graph: false  # Computation graph logging (disabled - large overhead)
   tensorboard_log_advanced_scalars: true  # Reduce eval-time TensorBoard overhead
   tensorboard_log_weight_histograms: false  # Log weight histograms separately
   tensorboard_image_interval: 2000  # Image logging interval in steps

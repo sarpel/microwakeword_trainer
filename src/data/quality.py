@@ -525,9 +525,7 @@ def score_directory(root: Path, config: QualityScoreConfig, mode: str, num_worke
                 results.append(r)
                 done += 1
                 if config.verbose:
-                    logger.debug("%s clip=%.3f%% snr=%.1fdB wqi=%.3f%s",
-                                 r.path.relative_to(root), r.clip_ratio * 100, r.snr_db, r.wqi,
-                                 f" [GATE: {r.discard_reason}]" if r.discard else "")
+                    logger.debug("%s clip=%.3f%% snr=%.1fdB wqi=%.3f%s", r.path.relative_to(root), r.clip_ratio * 100, r.snr_db, r.wqi, f" [GATE: {r.discard_reason}]" if r.discard else "")
                 elif done % 5000 == 0:
                     logger.debug("Progress: %d/%d scored", done, n)
     else:
@@ -559,12 +557,19 @@ def score_directory(root: Path, config: QualityScoreConfig, mode: str, num_worke
                 results.append(r)
                 done += 1
                 if config.verbose:
-                    logger.debug("%s clip=%.3f%% snr=%.1fdB vad=%.3f dnsmos=%.2f wqi=%.3f%s",
-                                 r.path.relative_to(root), r.clip_ratio * 100, r.snr_db, r.vad_conf,
-                                 r.dnsmos_ovrl, r.wqi, f" [GATE: {r.discard_reason}]" if r.discard else "")
+                    logger.debug(
+                        "%s clip=%.3f%% snr=%.1fdB vad=%.3f dnsmos=%.2f wqi=%.3f%s",
+                        r.path.relative_to(root),
+                        r.clip_ratio * 100,
+                        r.snr_db,
+                        r.vad_conf,
+                        r.dnsmos_ovrl,
+                        r.wqi,
+                        f" [GATE: {r.discard_reason}]" if r.discard else "",
+                    )
                 elif done % 1000 == 0:
                     logger.debug("Progress: %d/%d scored", done, n)
-        logger.debug("DNSMOS + Silero VAD loaded")
+        logger.debug("Scoring complete (%d files processed)", done)
 
     _apply_percentile_gate(results, config.discard_bottom_pct, config.min_wqi)
     return results

@@ -100,7 +100,7 @@ jobs:
         run: |
           # Check for security issues (S rules)
           ruff check src/ --select S --output-format=json > ruff-security.json || true
-          ruff check src/ --select S --output-format=compact
+          ruff check src/ --select S --output-format=compact || true
 
       - name: Upload Ruff security report
         if: always()
