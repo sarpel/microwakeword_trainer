@@ -1843,11 +1843,12 @@ Examples:
                 logger.error("Invalid checkpoint path: %s", e)
                 return 1
 
-        # Validate log file path if provided
+        # Validate log file path if provided (only check existence when move_now)
         if args.log_file:
             try:
                 log_path = resolve_path_safe(args.log_file, allow_absolute=True)
-                if not log_path.exists():
+                # Only require to file exist when we intend to read it (move_now)
+                if args.move_now and not log_path.exists():
                     logger.error("Log file not found: %s", args.log_file)
                     return 1
                 args.log_file = str(log_path)

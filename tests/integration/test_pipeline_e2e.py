@@ -13,7 +13,6 @@ import tensorflow as tf
 from src.export.tflite import export_streaming_tflite, verify_esphome_compatibility
 from src.export.verification import compute_expected_state_shapes
 from src.model.architecture import build_model
-from src.model.architecture import build_model
 
 
 @pytest.mark.integration

@@ -794,7 +794,12 @@ class ConfigLoader:
         canonical_name = self.PRESET_ALIASES.get(name, name)
 
         if canonical_name not in {"fast_test", "standard", "max_quality"}:
-            raise ValueError(f"Invalid preset '{name}'. Valid presets: {', '.join(sorted(self.VALID_PRESETS))}")
+            # Check if resolved path points to an existing file (path fallback)
+            resolved_path = resolve_config_path(name)
+            if resolved_path == name and not os.path.exists(name):
+                raise ValueError(f"Unknown config preset: {name}")
+            # Otherwise, it's a valid path, try to load it
+            return self.load(name)
 
         preset_path = self.presets_dir / f"{canonical_name}.yaml"
         return self.load(preset_path)
@@ -1211,6 +1216,8 @@ def resolve_config_path(config_preset: str) -> str:
         "standart": "config/presets/standard.yaml",
         "high_quality": "config/presets/max_quality.yaml",
     }
+    if config_preset not in aliases:
+        logger.warning("Unknown config preset %s; using input as path", config_preset)
     return aliases.get(config_preset, config_preset)
 
 

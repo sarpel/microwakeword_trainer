@@ -156,7 +156,11 @@ def load_feature_store_samples(config, max_positive=500, max_negative=500):
             break
 
     if observed_labels:
-        assert_labels_valid(np.asarray(observed_labels), context="isolate_quantization_gap")
+        try:
+            assert_labels_valid(np.asarray(observed_labels), context="isolate_quantization_gap")
+        except Exception as e:
+            print(f"Label validation failed: {e}", file=sys.stderr)
+            sys.exit(2)
 
     return positive_samples, negative_samples
 
@@ -414,6 +418,8 @@ def main():
     import shutil
 
     shutil.rmtree(float32_dir, ignore_errors=True)
+
+    sys.exit(0)
 
 
 if __name__ == "__main__":

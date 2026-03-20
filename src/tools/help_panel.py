@@ -65,12 +65,6 @@ def main() -> None:
     # Use config preset name directly (not full path) for cleaner command display
     config_preset = args.config
 
-    # Ensure models/exported directory exists for the commands shown
-    from pathlib import Path
-
-    export_dir = Path("models/exported")
-    export_dir.mkdir(parents=True, exist_ok=True)
-
     try:
         from src.training.rich_logger import RichTrainingLogger
     except ImportError:
