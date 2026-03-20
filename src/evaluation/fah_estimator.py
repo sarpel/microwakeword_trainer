@@ -5,6 +5,8 @@ from typing import Any
 
 import numpy as np
 
+from src.utils.label_guard import LABEL_POSITIVE, is_negative, validate_labels
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +32,15 @@ class FAHEstimator:
         ambient_duration_hours: float | None = None,
     ) -> dict[str, Any]:
         """Compute FAH metrics at a threshold."""
+        # FAH estimation is valid even with all-negative labels (measuring false
+        # alarm rate on ambient audio). Use validate_labels to check label values
+        # are valid, but only fail on truly invalid label values.
+        validation = validate_labels(y_true, context="FAH estimation")
+        # Only raise on structural errors (invalid label values), not missing classes
+        structural_errors = [e for e in validation.errors if "Invalid label values" in e]
+        if structural_errors:
+            raise ValueError(f"Label validation failed: {'; '.join(structural_errors)}")
+
         if ambient_duration_hours is not None:
             duration_hours = float(ambient_duration_hours)
             if duration_hours < 0:
@@ -47,7 +58,7 @@ class FAHEstimator:
         if len(y_true) != len(y_scores):
             raise ValueError(f"y_true and y_scores must have the same length, got {len(y_true)} vs {len(y_scores)}")
         y_pred = (y_scores >= threshold).astype(int)
-        fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+        fp = int(np.sum(is_negative(y_true) & (y_pred == LABEL_POSITIVE)))
         fah = fp / duration_hours if duration_hours > 0 else 0.0
 
         return {

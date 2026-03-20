@@ -6,6 +6,14 @@ from typing import Any
 
 import numpy as np
 
+from src.utils.label_guard import (
+    LABEL_POSITIVE,
+    assert_labels_valid,
+    check_label_distribution,
+    is_negative,
+    is_positive,
+)
+
 from .fah_estimator import FAHEstimator
 
 logger = logging.getLogger(__name__)
@@ -107,11 +115,12 @@ def _binarize_labels(y_true: np.ndarray) -> np.ndarray:
 
     This ensures consistent handling of hard-negative label 2 across all metrics.
     """
-    return np.asarray((y_true == 1).astype(np.int32))
+    return np.asarray(is_positive(y_true).astype(np.int32))
 
 
 def compute_roc_auc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
     """Compute ROC AUC score."""
+    assert_labels_valid(y_true, context="compute_roc_auc")
     # Use helper for consistent binarization
     y_true = _binarize_labels(y_true)
     if len(np.unique(y_true)) < 2:
@@ -148,6 +157,8 @@ def compute_precision_recall(
     sample_weight: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
     """Compute precision, recall, and F1 score, optionally weighted per sample."""
+    assert_labels_valid(y_true, context="compute_precision_recall")
+
     if sample_weight is None:
         weights = np.ones_like(y_true, dtype=float)
     else:
@@ -155,9 +166,11 @@ def compute_precision_recall(
         if len(weights) != len(y_true):
             raise ValueError(f"sample_weight length ({len(weights)}) must match number of samples ({len(y_true)})")
 
-    tp = np.sum(weights * ((y_true == 1) & (y_pred == 1)).astype(float))
-    fp = np.sum(weights * ((y_true == 0) & (y_pred == 1)).astype(float))
-    fn = np.sum(weights * ((y_true == 1) & (y_pred == 0)).astype(float))
+    positive_mask = is_positive(y_true)
+    negative_mask = is_negative(y_true)
+    tp = np.sum(weights * (positive_mask & (y_pred == LABEL_POSITIVE)).astype(float))
+    fp = np.sum(weights * (negative_mask & (y_pred == LABEL_POSITIVE)).astype(float))
+    fn = np.sum(weights * (positive_mask & (y_pred == 0)).astype(float))
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
@@ -229,6 +242,7 @@ def compute_roc_pr_curves(
     clip_ids: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute ROC and PR curves at multiple thresholds."""
+    assert_labels_valid(y_true, context="compute_roc_pr_curves")
     thresholds = np.linspace(0, 1, n_thresholds)
 
     tpr_list = []
@@ -247,10 +261,12 @@ def compute_roc_pr_curves(
         else:
             y_pred = (y_scores > thresh).astype(int)
 
-        tp = np.sum((y_true == 1) & (y_pred == 1))
-        fp = np.sum((y_true == 0) & (y_pred == 1))
-        tn = np.sum((y_true == 0) & (y_pred == 0))  # noqa: F841
-        fn = np.sum((y_true == 1) & (y_pred == 0))
+        positive_mask = is_positive(y_true)
+        negative_mask = is_negative(y_true)
+        tp = np.sum(positive_mask & (y_pred == LABEL_POSITIVE))
+        fp = np.sum(negative_mask & (y_pred == LABEL_POSITIVE))
+        tn = np.sum(negative_mask & (y_pred == 0))  # noqa: F841
+        fn = np.sum(positive_mask & (y_pred == 0))
 
         tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
         fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
@@ -325,12 +341,13 @@ def compute_recall_at_no_faph(
     clip_ids: np.ndarray | None = None,
 ) -> tuple[float, float]:
     """Compute recall at the lowest threshold yielding zero false positives."""
+    assert_labels_valid(y_true, context="compute_recall_at_no_faph")
     thresholds = _compute_thresholds(y_scores, n_thresholds=n_thresholds)
 
     y_pred_curr = np.array([], dtype=int)
 
     for thresh in thresholds:
-        neg_mask = y_true == 0
+        neg_mask = is_negative(y_true)
         if sliding_window_size > 1:
             y_pred_curr = apply_sliding_window_detection(
                 y_scores,
@@ -343,7 +360,7 @@ def compute_recall_at_no_faph(
             fp = np.sum(y_scores[neg_mask] > thresh)
 
         if fp == 0:
-            pos_mask = y_true == 1
+            pos_mask = is_positive(y_true)
             if sliding_window_size > 1:
                 tp = np.sum((y_pred_curr == 1) & pos_mask)
             else:
@@ -352,7 +369,7 @@ def compute_recall_at_no_faph(
             return float(recall), float(thresh)
 
     thresh = float(thresholds[-1])
-    pos_mask = y_true == 1
+    pos_mask = is_positive(y_true)
     if sliding_window_size > 1:
         y_pred = apply_sliding_window_detection(
             y_scores,
@@ -381,9 +398,11 @@ def compute_recall_at_target_fah(
     This selects the operating point with maximum recall among all thresholds
     satisfying ``fah <= target_fah``.
     """
+    assert_labels_valid(y_true, context="compute_recall_at_target_fah")
+
     thresholds = _compute_thresholds(y_scores, n_thresholds=n_thresholds)
-    neg_mask = y_true == 0
-    pos_mask = y_true == 1
+    neg_mask = is_negative(y_true)
+    pos_mask = is_positive(y_true)
     pos_total = np.sum(pos_mask)
     best_threshold = float(thresholds[-1])
     best_recall = 0.0
@@ -443,9 +462,11 @@ def compute_fah_at_target_recall(
     Returns:
         (best_fah, best_threshold, best_recall) tuple.
     """
+    assert_labels_valid(y_true, context="compute_fah_at_target_recall")
+
     thresholds = np.linspace(0, 1, n_thresholds)
-    neg_mask = y_true == 0
-    pos_mask = y_true == 1
+    neg_mask = is_negative(y_true)
+    pos_mask = is_positive(y_true)
     pos_total = np.sum(pos_mask)
     best_threshold = float(thresholds[-1])
     best_recall = 0.0
@@ -491,6 +512,7 @@ def compute_average_viable_recall(
     clip_ids: np.ndarray | None = None,
 ) -> float:
     """Compute average viable recall (AUC of recall vs normalized FAH)."""
+    assert_labels_valid(y_true, context="compute_average_viable_recall")
     thresholds = _compute_thresholds(y_scores, n_thresholds=n_thresholds)
 
     recalls = []
@@ -507,9 +529,11 @@ def compute_average_viable_recall(
         else:
             y_pred = (y_scores > thresh).astype(int)
 
-        tp = np.sum((y_true == 1) & (y_pred == 1))
-        fp = np.sum((y_true == 0) & (y_pred == 1))
-        fn = np.sum((y_true == 1) & (y_pred == 0))
+        positive_mask = is_positive(y_true)
+        negative_mask = is_negative(y_true)
+        tp = np.sum(positive_mask & (y_pred == LABEL_POSITIVE))
+        fp = np.sum(negative_mask & (y_pred == LABEL_POSITIVE))
+        fn = np.sum(positive_mask & (y_pred == 0))
 
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
         fah = fp / ambient_duration_hours if ambient_duration_hours > 0 else 0.0
@@ -661,6 +685,9 @@ class MetricsCalculator:
         if self.y_score is None:
             raise ValueError("MetricsCalculator.compute_all_metrics requires y_score")
 
+        assert_labels_valid(self.y_true, context="compute_all_metrics")
+        check_label_distribution(self.y_true, context="metrics")
+
         if self.sliding_window_size > 1:
             y_pred = apply_sliding_window_detection(
                 self.y_score,
@@ -757,6 +784,7 @@ def compute_fah_metrics(
     ambient_duration_hours: float,
     threshold: float = 0.5,
 ) -> dict[str, Any]:
+    assert_labels_valid(y_true, context="compute_fah_metrics")
     calculator = MetricsCalculator(
         y_true=y_true,
         y_score=y_scores,
@@ -774,6 +802,7 @@ def compute_all_metrics(
     sample_weight: np.ndarray | None = None,
     sliding_window_size: int = 1,
 ) -> dict[str, Any]:
+    assert_labels_valid(y_true, context="compute_all_metrics")
     calculator = MetricsCalculator(
         y_true=y_true,
         y_score=y_scores,

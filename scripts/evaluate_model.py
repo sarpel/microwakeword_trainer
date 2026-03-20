@@ -43,6 +43,13 @@ import matplotlib.pyplot as plt  # noqa: E402
 from src.evaluation.calibration import compute_brier_score, compute_calibration_curve
 from src.evaluation.fah_estimator import FAHEstimator
 from src.evaluation.metrics import MetricsCalculator
+from src.utils.label_guard import (
+    LABEL_POSITIVE,
+    assert_labels_valid,
+    check_label_distribution,
+    is_negative,
+    is_positive,
+)
 
 
 def evaluate_model(
@@ -234,10 +241,14 @@ def _evaluate_checkpoint(
     y_true: np.ndarray = np.array(_y_true_list)
     y_scores: np.ndarray = np.array(_y_scores_list)
 
+    assert_labels_valid(y_true, context="evaluate_model")
+    check_label_distribution(y_true, context="evaluate_model")
+    positive_mask = np.asarray(is_positive(y_true), dtype=bool)
+
     # Debug: Print prediction distribution
     console.print(f"\n[dim]Debug: y_true unique values: {np.unique(y_true)}[/]")
     console.print(f"[dim]Debug: y_scores range: [{y_scores.min():.4f}, {y_scores.max():.4f}], mean: {y_scores.mean():.4f}[/]")
-    console.print(f"[dim]Debug: Positive samples: {y_true.sum()}/{len(y_true)} ({100 * y_true.mean():.1f}%)[/]")
+    console.print(f"[dim]Debug: Positive samples (label={LABEL_POSITIVE}): {int(np.sum(positive_mask))}/{len(y_true)} ({100 * positive_mask.mean():.1f}%)[/]")
     console.print(f"[dim]Debug: Threshold source: {threshold_source}[/]")
     console.print(f"[dim]Debug: Predictions > {threshold:.2f}: {(y_scores > threshold).sum()}/{len(y_scores)}[/]")
 
@@ -412,10 +423,14 @@ def _evaluate_tflite(
     y_true: np.ndarray = np.array(_y_true_list2)
     y_scores: np.ndarray = np.array(_y_scores_list2)
 
+    assert_labels_valid(y_true, context="evaluate_model")
+    check_label_distribution(y_true, context="evaluate_model")
+    positive_mask = np.asarray(is_positive(y_true), dtype=bool)
+
     # Debug: Print prediction distribution
     console.print(f"\n[dim]Debug: y_true unique values: {np.unique(y_true)}[/]")
     console.print(f"[dim]Debug: y_scores range: [{y_scores.min():.4f}, {y_scores.max():.4f}], mean: {y_scores.mean():.4f}[/]")
-    console.print(f"[dim]Debug: Positive samples: {y_true.sum()}/{len(y_true)} ({100 * y_true.mean():.1f}%)[/]")
+    console.print(f"[dim]Debug: Positive samples (label={LABEL_POSITIVE}): {int(np.sum(positive_mask))}/{len(y_true)} ({100 * positive_mask.mean():.1f}%)[/]")
     console.print(f"[dim]Debug: Threshold source: {threshold_source}[/]")
     console.print(f"[dim]Debug: Predictions > {threshold:.2f}: {(y_scores > threshold).sum()}/{len(y_scores)}[/]")
 
@@ -493,8 +508,9 @@ def _bootstrap_confidence_intervals(
         m = calc.compute_all_metrics(ambient_duration_hours=ambient_hours, threshold=threshold)
 
         yp = (ys >= threshold).astype(int)
-        fp = int(np.sum((yt == 0) & (yp == 1)))
-        tn = int(np.sum((yt == 0) & (yp == 0)))
+        neg_mask = np.asarray(is_negative(yt), dtype=bool)
+        fp = int(np.sum(neg_mask & (yp == 1)))
+        tn = int(np.sum(neg_mask & (yp == 0)))
 
         metric_samples["accuracy"].append(float(m.get("accuracy", 0.0)))
         metric_samples["precision"].append(float(m.get("precision", 0.0)))
@@ -526,10 +542,12 @@ def _bootstrap_confidence_intervals(
 
 
 def _compute_confusion(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, Any]:
-    tp = int(np.sum((y_true == 1) & (y_pred == 1)))
-    fp = int(np.sum((y_true == 0) & (y_pred == 1)))
-    tn = int(np.sum((y_true == 0) & (y_pred == 0)))
-    fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+    pos_mask = np.asarray(is_positive(y_true), dtype=bool)
+    neg_mask = np.asarray(is_negative(y_true), dtype=bool)
+    tp = int(np.sum(pos_mask & (y_pred == 1)))
+    fp = int(np.sum(neg_mask & (y_pred == 1)))
+    tn = int(np.sum(neg_mask & (y_pred == 0)))
+    fn = int(np.sum(pos_mask & (y_pred == 0)))
 
     raw = [[tn, fp], [fn, tp]]
     row0 = tn + fp
@@ -574,6 +592,8 @@ def _threshold_sweep(
 ) -> dict[str, Any]:
     fah_estimator = FAHEstimator(ambient_duration_hours=ambient_hours)
     points: list[dict[str, float]] = []
+    pos_mask = np.asarray(is_positive(y_true), dtype=bool)
+    neg_mask = np.asarray(is_negative(y_true), dtype=bool)
 
     best_f1: tuple[float, float] = (-1.0, 0.5)
     best_bal_acc: tuple[float, float] = (-1.0, 0.5)
@@ -581,10 +601,10 @@ def _threshold_sweep(
 
     for threshold in thresholds:
         y_pred = (y_scores >= threshold).astype(int)
-        tp = int(np.sum((y_true == 1) & (y_pred == 1)))
-        fp = int(np.sum((y_true == 0) & (y_pred == 1)))
-        tn = int(np.sum((y_true == 0) & (y_pred == 0)))
-        fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+        tp = int(np.sum(pos_mask & (y_pred == 1)))
+        fp = int(np.sum(neg_mask & (y_pred == 1)))
+        tn = int(np.sum(neg_mask & (y_pred == 0)))
+        fn = int(np.sum(pos_mask & (y_pred == 0)))
 
         precision = _safe_div(tp, tp + fp)
         recall = _safe_div(tp, tp + fn)
@@ -747,8 +767,8 @@ def _plot_and_save_all(
 
     # 5) Score distributions
     fig = plt.figure(figsize=(8, 6))
-    pos_scores = y_scores[y_true == 1]
-    neg_scores = y_scores[y_true == 0]
+    pos_scores = y_scores[np.asarray(is_positive(y_true), dtype=bool)]
+    neg_scores = y_scores[np.asarray(is_negative(y_true), dtype=bool)]
     if len(pos_scores) > 0:
         plt.hist(
             pos_scores,
@@ -1141,7 +1161,9 @@ def _compute_metrics(
     tn = cm["tn"]
     fn = cm["fn"]
 
-    prevalence = _safe_div(int(np.sum(y_true == 1)), len(y_true))
+    pos_mask = np.asarray(is_positive(y_true), dtype=bool)
+    neg_mask = np.asarray(is_negative(y_true), dtype=bool)
+    prevalence = _safe_div(int(np.sum(pos_mask)), len(y_true))
     specificity = _safe_div(tn, tn + fp)
     npv = _safe_div(tn, tn + fn)
     fpr = _safe_div(fp, fp + tn)
@@ -1252,7 +1274,7 @@ def _compute_metrics(
     ranked_idx = np.argsort(-y_scores)
     ranked_true = y_true[ranked_idx]
     lift_analysis: dict[str, Any] = {}
-    n_pos_total = int(np.sum(y_true == 1))
+    n_pos_total = int(np.sum(pos_mask))
     for frac in top_k:
         k = max(1, int(len(y_true) * frac))
         captured = int(np.sum(ranked_true[:k]))
@@ -1276,8 +1298,8 @@ def _compute_metrics(
         "model_type": model_type,
         "split": split,
         "n_samples": int(len(y_true)),
-        "n_positive": int(np.sum(y_true == 1)),
-        "n_negative": int(np.sum(y_true == 0)),
+        "n_positive": int(np.sum(pos_mask)),
+        "n_negative": int(np.sum(neg_mask)),
         "prevalence": float(prevalence),
         "advanced_metrics": {
             "specificity": float(specificity),
@@ -1463,13 +1485,13 @@ def main() -> int:
         "--config",
         type=str,
         default="standard",
-        help="Config preset name or path",
+        help="Config preset name (fast_test, standard, max_quality, high_quality)",
     )
     parser.add_argument(
         "--override",
         type=str,
         default=None,
-        help="Optional override YAML path",
+        help="Optional override YAML path (for custom configs)",
     )
     parser.add_argument(
         "--split",

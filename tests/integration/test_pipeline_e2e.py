@@ -11,6 +11,8 @@ import pytest
 import tensorflow as tf
 
 from src.export.tflite import export_streaming_tflite, verify_esphome_compatibility
+from src.export.verification import compute_expected_state_shapes
+from src.model.architecture import build_model
 from src.model.architecture import build_model
 
 
@@ -64,7 +66,19 @@ def test_pipeline_build_save_export_verify(tmp_path: Path) -> None:
     tflite_path = Path(result["tflite_path"])
     assert tflite_path.exists(), "Expected exported TFLite file to exist"
 
-    verify_result = verify_esphome_compatibility(str(tflite_path))
+    # Compute config-aware expected state shapes for this specific test model.
+    # The test model uses input_shape=(15,40) which yields temporal_frames=4,
+    # differing from the default temporal_frames=6 in compute_expected_state_shapes().
+    expected_shapes = compute_expected_state_shapes(
+        first_conv_kernel=5,
+        stride=3,
+        mel_bins=40,
+        first_conv_filters=32,
+        mixconv_kernel_sizes=[[5], [7, 11], [9, 15], [23]],
+        pointwise_filters=[64, 64, 64, 64],
+        temporal_frames=4,  # Inferred from Dense: 256 / 64 = 4
+    )
+    verify_result = verify_esphome_compatibility(str(tflite_path), expected_state_shapes=expected_shapes)
     assert "valid" in verify_result and "checks" in verify_result
     checks = verify_result["checks"]
     critical_checks = {

@@ -4,7 +4,18 @@ from typing import Any
 import numpy as np
 import tensorflow as tf
 
+from src.utils.label_guard import LABEL_HARD_NEGATIVE, LABEL_NEGATIVE, LABEL_POSITIVE, VALID_LABELS
+
 from .tflite_utils import estimate_tensor_arena_size
+
+# LabelGuard constants are imported for future label-aware verification extensions.
+# This module currently validates exported TFLite graph/quantization invariants only.
+_LABEL_GUARD_EXPORT_VERIFICATION_REFERENCE = (
+    LABEL_NEGATIVE,
+    LABEL_POSITIVE,
+    LABEL_HARD_NEGATIVE,
+    VALID_LABELS,
+)
 
 
 def _sanitize_json(obj: Any) -> Any:
@@ -40,8 +51,10 @@ def _get_default_model_mixconv_kernel_sizes() -> list[list[int]]:
     from config.loader import ModelConfig
 
     raw = ModelConfig().mixconv_kernel_sizes
-    # Avoid blindly wrapping: if raw already starts with '[' and ends with ']', use it as-is
-    to_parse = raw if raw.startswith("[") and raw.endswith("]") else f"[{raw}]"
+    # Always wrap in brackets to ensure parsing as a list of groups.
+    # Raw value like "[5],[7,11],[9,15],[23]" starts/ends with ']'/'[' but
+    # ast.literal_eval treats comma-separated top-level values as a tuple.
+    to_parse = f"[{raw}]"
     try:
         parsed = ast.literal_eval(to_parse)
     except (SyntaxError, ValueError) as e:

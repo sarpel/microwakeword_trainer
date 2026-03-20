@@ -451,12 +451,9 @@ class RichTrainingLogger:
             colored = raw
             if P and P in colored:
                 colored = colored.replace(P, f"[/cyan][bold yellow]{P}[/bold yellow][cyan]")
-            config_token = f"--config {C}"
-            if C and config_token in colored:
-                colored = colored.replace(
-                    config_token,
-                    f"--config [/cyan][bold yellow]{C}[/bold yellow][cyan]",
-                )
+            # Match --config followed by the config path
+            if C and C in colored:
+                colored = colored.replace(C, f"[/cyan][bold yellow]{C}[/bold yellow][cyan]")
             return f"[cyan]{colored}[/cyan]"
 
         def _section(title: str, style: str, entries: list[tuple[str, str, str | None]]) -> Panel:
@@ -556,9 +553,9 @@ class RichTrainingLogger:
                 "bold blue",
                 [
                     (
-                        f"mww-export --checkpoint {P} --output models/exported/",
+                        f"mww-export --checkpoint {P} --config {C} --output models/exported/",
                         "Convert to ESPHome streaming TFLite with INT8 quantization and dual subgraphs",
-                        "--model-name NAME(wake_word) · --config PATH(max_quality.yaml) · --data-dir PATH(real-data INT8 calibration — better quantization accuracy)",
+                        "--model-name NAME(wake_word) · --data-dir PATH(real-data INT8 calibration — better quantization accuracy)",
                     ),
                 ],
             )

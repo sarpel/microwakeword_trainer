@@ -13,6 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.utils.label_guard import LABEL_HARD_NEGATIVE, LABEL_NEGATIVE, LABEL_POSITIVE, VALID_LABELS
+
 
 def _ensure_evidence_dir(base: str = ".sisyphus/evidence") -> Path:
     p = Path(base)
@@ -137,6 +139,10 @@ def main():
         help="Print detailed checks and model details",
     )
     args = parser.parse_args()
+
+    if not {LABEL_NEGATIVE, LABEL_POSITIVE, LABEL_HARD_NEGATIVE}.issubset(VALID_LABELS):
+        sys.stderr.write("ERROR: Label constants are inconsistent with VALID_LABELS\n")
+        return 1
 
     evidence_dir = _ensure_evidence_dir()
     if not args.tflite_path:

@@ -1542,9 +1542,13 @@ def convert_model_saved(
     return streaming_model
 
 
-def verify_esphome_compatibility(tflite_path: str, stride: int = 3) -> dict:
+def verify_esphome_compatibility(
+    tflite_path: str,
+    stride: int = 3,
+    expected_state_shapes: list[tuple[int, ...]] | None = None,
+) -> dict:
     """Verify TFLite model is compatible with ESPHome micro_wake_word."""
-    return verify_exported_model(tflite_path)
+    return verify_exported_model(tflite_path, expected_state_shapes=expected_state_shapes)
 
 
 def calculate_tensor_arena_size(tflite_path: str) -> int:
@@ -1573,8 +1577,8 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="config/presets/standard.yaml",
-        help="Path to configuration file",
+        default="config/presets/max_quality.yaml",
+        help="Path to configuration file (or preset name: max_quality, standard, fast_test)",
     )
     parser.add_argument(
         "--output",
@@ -1607,18 +1611,25 @@ def main():
         sys.exit(1)
 
     # Config file must exist and be readable
+    # First, resolve preset names to paths using shared utility
+    from config.loader import resolve_config_path
+
+    config_arg = resolve_config_path(args.config)
+
     try:
-        config_path = resolve_path_safe(args.config, allow_absolute=True)
+        config_path = resolve_path_safe(config_arg, allow_absolute=True)
         if not config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {args.config}")
+            raise FileNotFoundError(f"Config file not found: {config_arg}")
     except (ValueError, FileNotFoundError) as e:
         logger.error("Invalid config path: %s", e)
         sys.exit(1)
 
-    # Output directory - resolve safely
+    # Output directory - resolve safely and create if needed
     try:
+        output_dir_path = Path(args.output)
+        output_dir_path.mkdir(parents=True, exist_ok=True)
         output_dir = resolve_path_safe(args.output, allow_absolute=True)
-    except ValueError as e:
+    except (ValueError, OSError) as e:
         logger.error("Invalid output directory: %s", e)
         sys.exit(1)
 

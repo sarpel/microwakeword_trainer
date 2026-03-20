@@ -50,7 +50,7 @@ def main() -> None:
         "--config",
         type=str,
         default="max_quality",
-        help="Config preset name or path to substitute into commands (default: max_quality)",
+        help="Config preset name (max_quality, standard, fast_test) or path to config YAML (default: max_quality)",
     )
     parser.add_argument(
         "--checkpoint-dir",
@@ -62,14 +62,23 @@ def main() -> None:
 
     checkpoint = args.checkpoint or _autodetect_checkpoint(args.checkpoint_dir)
 
+    # Use config preset name directly (not full path) for cleaner command display
+    config_preset = args.config
+
+    # Ensure models/exported directory exists for the commands shown
+    from pathlib import Path
+
+    export_dir = Path("models/exported")
+    export_dir.mkdir(parents=True, exist_ok=True)
+
     try:
         from src.training.rich_logger import RichTrainingLogger
     except ImportError:
-        _print_fallback_next_steps(checkpoint, args.config)
+        _print_fallback_next_steps(checkpoint, config_preset)
         return
 
     logger = RichTrainingLogger()
-    logger.log_next_steps(checkpoint, args.config)
+    logger.log_next_steps(checkpoint, config_preset)
 
 
 if __name__ == "__main__":

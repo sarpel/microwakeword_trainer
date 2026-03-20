@@ -1168,6 +1168,52 @@ class ConfigLoader:
 _default_loader: Optional[ConfigLoader] = None
 
 
+def resolve_config_path(config_preset: str) -> str:
+    """
+    Resolve a config preset name to its full YAML file path.
+
+    If the input is already a path (ends with .yaml/.yml or contains /),
+    it is returned as-is. Otherwise, it is treated as a preset name and
+    resolved to config/presets/{name}.yaml.
+
+    Args:
+        config_preset: Preset name (e.g., 'max_quality', 'standard', 'fast_test')
+                      or path to config file
+
+    Returns:
+        Full path to the config file
+
+    Examples:
+        >>> resolve_config_path("max_quality")
+        'config/presets/max_quality.yaml'
+        >>> resolve_config_path("standard")
+        'config/presets/standard.yaml'
+        >>> resolve_config_path("my_config.yaml")
+        'my_config.yaml'
+    """
+    from pathlib import Path
+
+    # If it's already a path (contains .yaml or /), return as-is
+    if config_preset.endswith((".yaml", ".yml")) or "/" in config_preset:
+        return config_preset
+
+    # Check if it's a valid preset file
+    preset_path = Path(f"config/presets/{config_preset}.yaml")
+    if preset_path.exists():
+        return str(preset_path)
+
+    # Try common aliases
+    aliases = {
+        "max_quality": "config/presets/max_quality.yaml",
+        "standard": "config/presets/standard.yaml",
+        "fast_test": "config/presets/fast_test.yaml",
+        "test": "config/presets/fast_test.yaml",
+        "standart": "config/presets/standard.yaml",
+        "high_quality": "config/presets/max_quality.yaml",
+    }
+    return aliases.get(config_preset, config_preset)
+
+
 def get_default_loader() -> ConfigLoader:
     """Get or create default ConfigLoader instance."""
     global _default_loader

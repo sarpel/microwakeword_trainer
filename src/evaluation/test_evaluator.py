@@ -17,6 +17,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from src.utils.label_guard import (
+    LABEL_POSITIVE,
+    assert_labels_valid,
+    check_label_distribution,
+    is_negative,
+    is_positive,
+)
+
 from .calibration import compute_brier_score, compute_calibration_curve
 from .fah_estimator import FAHEstimator
 from .metrics import compute_roc_pr_curves
@@ -93,6 +101,10 @@ class TestEvaluator:
         self.console.print("\n[bold cyan]Running Comprehensive Test Evaluation...[/bold cyan]\n")
 
         y_true, y_score, raw_labels = self._run_inference(test_data_factory)
+
+        if y_true is not None:
+            assert_labels_valid(y_true, context="test_evaluator")
+            check_label_distribution(y_true, context="test_evaluator")
 
         if y_true is None or len(y_true) < 10:
             logger.warning("Test set too small (< 10 samples), skipping evaluation")
@@ -206,11 +218,13 @@ class TestEvaluator:
         """Compute basic classification metrics at the configured default threshold."""
         threshold = self.default_threshold
         y_pred = (y_score >= threshold).astype(np.int32)
+        positive_mask = is_positive(y_true)
+        negative_mask = is_negative(y_true)
 
-        tp = int(np.sum((y_true == 1) & (y_pred == 1)))
-        fp = int(np.sum((y_true == 0) & (y_pred == 1)))
-        tn = int(np.sum((y_true == 0) & (y_pred == 0)))
-        fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+        tp = int(np.sum(positive_mask & (y_pred == LABEL_POSITIVE)))
+        fp = int(np.sum(negative_mask & (y_pred == LABEL_POSITIVE)))
+        tn = int(np.sum(negative_mask & (y_pred == 0)))
+        fn = int(np.sum(positive_mask & (y_pred == 0)))
 
         accuracy = (tp + tn) / len(y_true) if len(y_true) > 0 else 0.0
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
@@ -334,7 +348,7 @@ class TestEvaluator:
     def _compute_calibration(self, y_true: np.ndarray, y_score: np.ndarray) -> dict:
         """Compute calibration metrics."""
         # Binarize labels: treat hard negatives (2) as negatives (0)
-        y_true_binary = (y_true == 1).astype(np.int32)
+        y_true_binary = is_positive(y_true).astype(np.int32)
         brier = compute_brier_score(y_true_binary, y_score)
         curve = compute_calibration_curve(y_true_binary, y_score, n_bins=10)
 
@@ -365,8 +379,8 @@ class TestEvaluator:
 
         pos_mask = raw_labels == 1
         if np.sum(pos_mask) > 0:
-            pos_tp = np.sum((y_true[pos_mask] == 1) & (y_pred[pos_mask] == 1))
-            pos_fn = np.sum((y_true[pos_mask] == 1) & (y_pred[pos_mask] == 0))
+            pos_tp = np.sum(is_positive(y_true[pos_mask]) & (y_pred[pos_mask] == LABEL_POSITIVE))
+            pos_fn = np.sum(is_positive(y_true[pos_mask]) & (y_pred[pos_mask] == 0))
             pos_tpr = pos_tp / (pos_tp + pos_fn) if (pos_tp + pos_fn) > 0 else 0.0
             results["positive"] = {
                 "count": int(np.sum(pos_mask)),
@@ -375,8 +389,8 @@ class TestEvaluator:
 
         neg_mask = raw_labels == 0
         if np.sum(neg_mask) > 0:
-            neg_tn = np.sum((y_true[neg_mask] == 0) & (y_pred[neg_mask] == 0))
-            neg_fp = np.sum((y_true[neg_mask] == 0) & (y_pred[neg_mask] == 1))
+            neg_tn = np.sum(is_negative(y_true[neg_mask]) & (y_pred[neg_mask] == 0))
+            neg_fp = np.sum(is_negative(y_true[neg_mask]) & (y_pred[neg_mask] == LABEL_POSITIVE))
             neg_tnr = neg_tn / (neg_tn + neg_fp) if (neg_tn + neg_fp) > 0 else 0.0
             results["negative"] = {
                 "count": int(np.sum(neg_mask)),
@@ -418,7 +432,7 @@ class TestEvaluator:
                 fah_metrics = fah_estimator.compute_fah_metrics(y_true, y_score, threshold=thresh)
                 fah = fah_metrics.get("ambient_false_positives_per_hour", float("inf"))
                 y_pred = (y_score >= thresh).astype(np.int32)
-                positive_mask = y_true == 1
+                positive_mask = is_positive(y_true)
                 n_positives = int(np.sum(positive_mask))
                 if n_positives > 0:
                     recall = float(np.sum(y_pred[positive_mask]) / n_positives)
@@ -453,10 +467,12 @@ class TestEvaluator:
         results = []
         for thresh in thresholds:
             y_pred = (y_score >= thresh).astype(np.int32)
+            positive_mask = is_positive(y_true)
+            negative_mask = is_negative(y_true)
 
-            tp = np.sum((y_true == 1) & (y_pred == 1))
-            fp = np.sum((y_true == 0) & (y_pred == 1))
-            fn = np.sum((y_true == 1) & (y_pred == 0))
+            tp = np.sum(positive_mask & (y_pred == LABEL_POSITIVE))
+            fp = np.sum(negative_mask & (y_pred == LABEL_POSITIVE))
+            fn = np.sum(positive_mask & (y_pred == 0))
 
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
@@ -484,8 +500,8 @@ class TestEvaluator:
         raw_labels: np.ndarray | None,
     ) -> dict:
         """Compute score distribution statistics."""
-        pos_scores = y_score[y_true == 1]
-        neg_scores = y_score[y_true == 0]
+        pos_scores = y_score[is_positive(y_true)]
+        neg_scores = y_score[is_negative(y_true)]
 
         results = {
             "positive": {
@@ -521,11 +537,13 @@ class TestEvaluator:
         """Compute confusion matrix at the configured default threshold."""
         threshold = self.default_threshold
         y_pred = (y_score >= threshold).astype(np.int32)
+        positive_mask = is_positive(y_true)
+        negative_mask = is_negative(y_true)
 
-        tp = int(np.sum((y_true == 1) & (y_pred == 1)))
-        fp = int(np.sum((y_true == 0) & (y_pred == 1)))
-        tn = int(np.sum((y_true == 0) & (y_pred == 0)))
-        fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+        tp = int(np.sum(positive_mask & (y_pred == LABEL_POSITIVE)))
+        fp = int(np.sum(negative_mask & (y_pred == LABEL_POSITIVE)))
+        tn = int(np.sum(negative_mask & (y_pred == 0)))
+        fn = int(np.sum(positive_mask & (y_pred == 0)))
 
         return {"tp": tp, "fp": fp, "tn": tn, "fn": fn}
 
@@ -695,8 +713,8 @@ class TestEvaluator:
         plt.close()
 
         plt.figure(figsize=(8, 6))
-        pos_scores = y_score[y_true == 1]
-        neg_scores = y_score[y_true == 0]
+        pos_scores = y_score[is_positive(y_true)]
+        neg_scores = y_score[is_negative(y_true)]
         plt.hist(pos_scores, bins=30, alpha=0.5, label="Positive", color="blue")
         plt.hist(neg_scores, bins=30, alpha=0.5, label="Negative", color="orange")
         if raw_labels is not None:
@@ -719,7 +737,7 @@ class TestEvaluator:
         plt.close()
 
         # Binarize labels for calibration: treat hard negatives (2) as negatives (0)
-        y_true_binary = (y_true == 1).astype(np.int32)
+        y_true_binary = is_positive(y_true).astype(np.int32)
         cal_curve = compute_calibration_curve(y_true_binary, y_score, n_bins=10)
         plt.figure(figsize=(8, 6))
         plt.plot(
@@ -746,10 +764,12 @@ class TestEvaluator:
         fah_estimator = FAHEstimator(ambient_duration_hours=scaled_duration)
 
         recalls, fahs_list = [], []
+        positive_mask = is_positive(y_true)
+        n_positive = max(np.sum(positive_mask), 1)
         for thresh in thresholds:
             fah_metrics = fah_estimator.compute_fah_metrics(y_true, y_score, threshold=thresh)
             mask = y_score >= thresh
-            recall = float(np.sum(mask & (y_true == 1)) / max(np.sum(y_true == 1), 1))
+            recall = float(np.sum(mask & positive_mask) / n_positive)
             recalls.append(recall)
             fahs_list.append(fah_metrics.get("ambient_false_positives_per_hour", 0))
 

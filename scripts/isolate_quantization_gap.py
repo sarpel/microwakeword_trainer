@@ -19,6 +19,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -29,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config.loader import load_full_config
 from src.export.tflite import export_streaming_tflite
+from src.utils.label_guard import LABEL_POSITIVE, assert_labels_valid, is_negative
 
 
 def run_tflite_streaming(interpreter, spectrogram: np.ndarray, stride: int) -> list[float]:
@@ -98,15 +100,17 @@ def load_feature_store_samples(config, max_positive=500, max_negative=500):
     from src.data.dataset import FeatureStore
 
     store = FeatureStore(data_dir)
+    store_any = cast(Any, store)
 
     clip_frames = int(config.hardware.clip_duration_ms / config.hardware.window_step_ms)
     mel_bins = config.hardware.mel_bins
 
     pos_count = 0
     neg_count = 0
+    observed_labels: list[int] = []
 
     for i in range(min(len(store), max_positive + max_negative)):
-        sample = store[i]
+        sample = store_any[i]
         if hasattr(sample, "label"):
             label = sample.label
             features = sample.features
@@ -134,15 +138,25 @@ def load_feature_store_samples(config, max_positive=500, max_negative=500):
         if spec.shape != (clip_frames, mel_bins):
             continue
 
-        if label == 1 and pos_count < max_positive:
+        try:
+            label_int = int(label)
+        except (TypeError, ValueError):
+            continue
+
+        observed_labels.append(label_int)
+
+        if label_int == LABEL_POSITIVE and pos_count < max_positive:
             positive_samples.append(spec.astype(np.float32))
             pos_count += 1
-        elif label == 0 and neg_count < max_negative:
+        elif bool(np.asarray(is_negative(label_int)).item()) and neg_count < max_negative:
             negative_samples.append(spec.astype(np.float32))
             neg_count += 1
 
         if pos_count >= max_positive and neg_count >= max_negative:
             break
+
+    if observed_labels:
+        assert_labels_valid(np.asarray(observed_labels), context="isolate_quantization_gap")
 
     return positive_samples, negative_samples
 
@@ -205,7 +219,7 @@ def main():
     # Build config dict for export (must parse string configs like main() does)
     import ast
 
-    pw_raw = config.model.pointwise_filters
+    pw_raw: Any = config.model.pointwise_filters
     if isinstance(pw_raw, str):
         pw_list = [int(x.strip()) for x in pw_raw.split(",")]
     elif isinstance(pw_raw, list):
@@ -221,7 +235,7 @@ def main():
     else:
         mc_list = [[5], [7, 11], [9, 15], [23]]
 
-    rc_raw = config.model.residual_connection
+    rc_raw: Any = config.model.residual_connection
     if isinstance(rc_raw, str):
         rc_list = [int(x.strip()) for x in rc_raw.split(",")]
     elif isinstance(rc_raw, list):

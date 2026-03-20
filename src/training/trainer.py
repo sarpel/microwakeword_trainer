@@ -48,6 +48,14 @@ from src.utils.checkpoint_validation import (
     validate_checkpoint_before_loading,
     validate_ema_state_before_swap,
 )
+from src.utils.label_guard import (
+    LABEL_HARD_NEGATIVE,
+    LABEL_POSITIVE,
+    assert_labels_valid,
+    check_label_distribution,
+    is_negative,
+    is_positive,
+)
 from src.utils.logging_config import setup_rich_logging
 from src.utils.path_utils import resolve_path_safe
 from src.utils.performance import get_system_info
@@ -154,8 +162,8 @@ class EvaluationMetrics:
 
         # [101, N] boolean masks — no dtype cast needed
         y_pred_2d = y_scores_2d >= cutoffs_arr
-        pos_mask = y_true_2d == 1
-        neg_mask = ~pos_mask
+        pos_mask = is_positive(y_true_2d)
+        neg_mask = is_negative(y_true_2d)
 
         # Vectorized sum along axis=1 (samples) — replaces 101-iteration Python dict loop
         self._tp_arr += np.sum(y_pred_2d & pos_mask, axis=1)
@@ -208,8 +216,8 @@ class EvaluationMetrics:
             # np.median(all_y_scores) gives ~0.0008 (dominated by negatives scoring near 0),
             # which marks everything as positive and freezes Precision/Recall/F1.
             # Instead use the midpoint between median-of-positives and median-of-negatives.
-            pos_mask = y_true == 1
-            neg_mask = y_true == 0
+            pos_mask = is_positive(y_true)
+            neg_mask = is_negative(y_true)
             if pos_mask.any() and neg_mask.any():
                 pos_median = float(np.median(y_scores[pos_mask]))
                 neg_median = float(np.median(y_scores[neg_mask]))
@@ -1569,8 +1577,8 @@ class Trainer:
         if metrics_tracker.all_y_true:
             y_true = np.array(metrics_tracker.all_y_true)
             y_score = np.array(metrics_tracker.all_y_scores)
-            pos_count = int(np.sum(y_true == 1))
-            neg_count = int(np.sum(y_true == 0))
+            pos_count = int(np.sum(is_positive(y_true)))
+            neg_count = int(np.sum(is_negative(y_true)))
             total_count = int(y_true.shape[0])
             metrics["val_positive_count"] = float(pos_count)
             metrics["val_negative_count"] = float(neg_count)
@@ -2394,17 +2402,27 @@ def train(config: dict) -> tf.keras.Model:
         trainer = Trainer(config)
 
         # Validate dataset class distribution
-        _LABEL_NAMES = {0: "negative", 1: "positive", 2: "hard_negative"}
+        _LABEL_NAMES = {
+            0: "negative",
+            LABEL_POSITIVE: "positive",
+            LABEL_HARD_NEGATIVE: "hard_negative",
+        }
         for split_name in ["train", "val", "test"]:
             dist = dataset.get_label_distribution(split_name)
             if not dist:
                 if split_name == "train":
                     raise RuntimeError(f"No samples found in {split_name} split!")
                 continue
+            split_labels = np.repeat(
+                np.array(list(dist.keys()), dtype=np.int32),
+                np.array(list(dist.values()), dtype=np.int64),
+            )
+            assert_labels_valid(split_labels, context=f"train.setup.{split_name}")
+            check_label_distribution(split_labels, context=f"train.setup.{split_name}")
             dist_str = ", ".join(f"{_LABEL_NAMES.get(k, f'label_{k}')}={v}" for k, v in sorted(dist.items()))
             trainer.logger.log_info(f"Dataset {split_name}: {dist_str} (total={sum(dist.values())})")
-            pos_count = dist.get(1, 0)
-            neg_count = dist.get(0, 0) + dist.get(2, 0)
+            pos_count = dist.get(LABEL_POSITIVE, 0)
+            neg_count = dist.get(0, 0) + dist.get(LABEL_HARD_NEGATIVE, 0)
             if pos_count == 0 and split_name == "train":
                 raise RuntimeError("No positive samples in training set!")
             if pos_count > 0 and neg_count / pos_count < 5.0 and split_name == "train":

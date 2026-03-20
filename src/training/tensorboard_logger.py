@@ -570,7 +570,7 @@ class TensorBoardLogger:
             for thresh in thresholds:
                 y_pred = (y_score >= thresh).astype(int)
                 tp = np.sum((y_true == 1) & (y_pred == 1))
-                fp = np.sum((y_true == 0) & (y_pred == 1))
+                fp = np.sum((y_true != 1) & (y_pred == 1))
                 fn = np.sum((y_true == 1) & (y_pred == 0))
 
                 recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0

@@ -38,6 +38,7 @@ from src.tuning.metrics import (
     compute_hypervolume,
 )
 from src.tuning.population import Population, partition_data
+from src.utils.label_guard import assert_labels_valid, check_label_distribution
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,8 @@ class MicroAutoTuner:
             features = np.zeros((0, max_time_frames, 40), dtype=np.float32)
             labels = np.zeros((0,), dtype=np.float32)
             weights = np.zeros((0,), dtype=np.float32)
+
+        check_label_distribution(labels, context="micro_autotuner._load_data")
 
         logger.info(f"Loaded {len(features)} samples ({pos_count} positive, {neg_count} negative, {hard_neg_count} hard_neg)")
         if self.console:
@@ -396,6 +399,7 @@ class MicroAutoTuner:
         self._ensure_tf_seed_for_determinism()
         model = self._create_model()
         dataset_dict = self._load_data()
+        assert_labels_valid(dataset_dict["labels"], context="micro_autotuner.tune")
         partition = partition_data(dataset_dict, self.config, self.auto_tuning_config)
 
         population = Population(model=model, size=int(self._get_cfg("population_size", 4)))

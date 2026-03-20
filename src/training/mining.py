@@ -54,6 +54,13 @@ import numpy as np
 import tensorflow as tf
 
 from src.training.rich_logger import RichTrainingLogger
+from src.utils.label_guard import (
+    LABEL_HARD_NEGATIVE,
+    LABEL_NEGATIVE,
+    LABEL_POSITIVE,
+    check_label_distribution,
+    validate_labels,
+)
 from src.utils.logging_config import setup_rich_logging
 from src.utils.path_utils import resolve_path_safe
 
@@ -211,7 +218,17 @@ class HardExampleMiner:
         else:
             gen = data_generator
 
+        labels_validated = False
         for features, labels, _ in cast(Any, gen):
+            if not labels_validated:
+                validation = validate_labels(labels, context=f"mining.epoch_{epoch}.mine_from_dataset")
+                if not validation.is_valid:
+                    raise ValueError("Label validation failed at mining entry: " + "; ".join(validation.errors))
+                for warning in validation.warnings:
+                    logger.warning(warning)
+                check_label_distribution(labels, context=f"mining.epoch_{epoch}.mine_from_dataset")
+                labels_validated = True
+
             predictions = model(features, training=False)
             if predictions.ndim == 2 and predictions.shape[1] > 1:
                 scores = predictions[:, 1].numpy()
@@ -581,6 +598,13 @@ def log_false_predictions_to_json(
     """
     _log = logger or logging.getLogger(__name__)
 
+    validation = validate_labels(y_true, context=f"mining.log_false_predictions.epoch_{epoch}")
+    if not validation.is_valid:
+        raise ValueError("Label validation failed for false prediction logging: " + "; ".join(validation.errors))
+    for warning in validation.warnings:
+        _log.warning(warning)
+    label_distribution = check_label_distribution(y_true, context=f"mining.log_false_predictions.epoch_{epoch}")
+
     # Find false positives: negative samples (label 0) with score >= threshold
     neg_mask = y_true == 0
     neg_scores = y_scores[neg_mask]
@@ -617,6 +641,17 @@ def log_false_predictions_to_json(
         "fp_threshold": float(fp_threshold),
         "total_val_samples": int(len(y_true)),
         "false_positive_count": int(len(fp_scores)),
+        "label_distribution": {
+            "negative": int(label_distribution.get("negative_count", 0)),
+            "positive": int(label_distribution.get("positive_count", 0)),
+            "hard_negative": int(label_distribution.get("hard_negative_count", 0)),
+            "all_negative": int(label_distribution.get("all_negative_count", 0)),
+            "label_ids": {
+                "negative": LABEL_NEGATIVE,
+                "positive": LABEL_POSITIVE,
+                "hard_negative": LABEL_HARD_NEGATIVE,
+            },
+        },
         "false_predictions": false_predictions,
     }
 
@@ -1888,11 +1923,10 @@ Examples:
                 dry_run=args.dry_run,
             )
         else:
+            confidence_threshold = float(args.threshold) if args.threshold is not None else 0.0
+            top_percent = float(args.top_percent) if args.top_percent is not None else 0.0
             if args.dry_run:
                 logger.info("DRY RUN — skipping extraction (would scan and report)")
-                confidence_threshold = float(args.threshold) if args.threshold is not None else 0.0
-                top_percent = float(args.top_percent) if args.top_percent is not None else 0.0
-            if args.dry_run:
                 result: dict[str, Any] = {
                     "total_hard_neg_files": 0,
                     "confidence_threshold": confidence_threshold,
@@ -1903,6 +1937,13 @@ Examples:
                 }
                 print("\nDRY RUN Results:")
             else:
+                result = run_top_fp_extraction(
+                    config,
+                    checkpoint_path=args.checkpoint,
+                    top_percent_override=args.top_percent,
+                    threshold_override=args.threshold,
+                    log_file_override=args.log_file,
+                )
                 print("\nExtraction Results:")
 
             print(f"  Total hard_neg files scanned: {result['total_hard_neg_files']}")

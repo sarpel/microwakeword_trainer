@@ -338,9 +338,9 @@ def create_parser() -> argparse.ArgumentParser:
         "--config",
         type=str,
         default="standard",
-        help="Config preset name or path (default: standard)",
+        help="Config preset name (fast_test, standard, max_quality, high_quality) (default: standard)",
     )
-    parser.add_argument("--override", type=str, default=None, help="Override config YAML path")
+    parser.add_argument("--override", type=str, default=None, help="Override config YAML path (for custom configs)")
     parser.add_argument("--json", action="store_true", help="Output results as JSON to stdout")
     parser.add_argument(
         "--output",

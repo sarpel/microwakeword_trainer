@@ -473,7 +473,6 @@ pytest --cov=src --cov=config tests/
 ```
 
 ---
-
 ## Documentation Map
 
 | File | Contents |
@@ -484,9 +483,15 @@ pytest --cov=src --cov=config tests/
 | `docs/ARCHITECTURE.md` | MixedNet architecture details |
 | `docs/CONFIGURATION.md` | Complete config reference |
 | `docs/TRAINING.md` | Training workflow and optimization |
+| `docs/COMMANDS.md` | Complete command reference (console scripts, Makefile, scripts) |
+| `docs/ENVIRONMENT.md` | Environment variables reference (paths, GPU, TensorFlow, debugging) |
+| `docs/CONTRIBUTING.md` | Development setup, testing procedures, code style guide |
+| `docs/EXPORT.md` | TFLite export and ESPHome deployment |
+| `docs/PERFORMANCE.md` | Performance tuning guide with optimization strategies |
+| `docs/TROUBLESHOOTING.md` | Comprehensive troubleshooting guide |
+| `docs/TENSORBOARD_CONFIG.md` | TensorBoard configuration and visualization |
 | `scripts/evaluate_model.py` | Advanced evaluation + JSON/image/executive reports |
 | `scripts/eval_dashboard.py` | Interactive HTML dashboard from `evaluation_report.json` |
-| `docs/EXPORT.md` | TFLite export and ESPHome deployment |
 | `specs/implementation_status.md` | Comprehensive implementation status and recent changes |
 | `specs/phase1_complete.yaml` | Phase 1 completion summary and best practices |
 | `specs/testing_plan.md` | Comprehensive testing strategy and procedures |
@@ -494,4 +499,4 @@ pytest --cov=src --cov=config tests/
 | `src/*/AGENTS.md` | Per-module agent guidelines |
 ---
 
-*Generated 2026-03-06*
+*Generated 2026-03-20*
