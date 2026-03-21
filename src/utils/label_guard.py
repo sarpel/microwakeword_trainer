@@ -59,7 +59,7 @@ def binarize_labels(labels: Any) -> np.ndarray | tf.Tensor:
 
 def _to_numpy(labels: Any) -> np.ndarray:
     if tf.is_tensor(labels):
-        return labels.numpy()
+        return np.asarray(labels.numpy())
     return np.asarray(labels)
 
 

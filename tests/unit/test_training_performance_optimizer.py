@@ -37,7 +37,7 @@ def test_create_datasets_uses_legacy_generators_when_tfdata_disabled():
     optimizer = perf.PerformanceOptimizer(config)
     dataset = _FakeDataset()
 
-    train_ds, val_ds = optimizer.create_datasets(dataset, max_time_frames=123)  # type: ignore[arg-type]
+    train_ds, val_ds = optimizer.create_datasets(dataset, max_time_frames=123)
 
     assert train_ds == "train_gen"
     assert val_ds == "val_gen"
